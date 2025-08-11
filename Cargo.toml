@@ -1,5 +1,5 @@
 [package]
-name = "splabot"
+name = "procon"
 version = "0.1.0"
 edition = "2024"
 
@@ -11,3 +11,8 @@ hidapi = "2.6.3"
 env_logger = "0.11.8"
 log = "0.4.27"
 chrono = { version = "0.4.41", features = ["serde"] }
+
+
+[[bin]]
+name = "procon"
+path = "src/bin/proconproxy.rs"
