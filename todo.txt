@@ -1,0 +1,17 @@
+# TODO List for ProCon HID Proxy
+
+## Console Dumper Improvements
+- [x] 1. ConsoleDump should process Frame instead of raw data (&[u8])
+- [x] 2. decode_procon_packet should output compact one-line button/stick status
+- [x] BONUS: Refactor ProConParser to static methods (no self needed)
+- [x] BONUS: ConsoleDumper now uses ProConParser::parse_input_report instead of duplicating logic
+- [ ] 3. Move dump operations to separate thread (lower priority)
+- [ ] 4. Set high priority and IO priority only for main proxy thread
+
+## Future Enhancements
+- [ ] Add command line arguments for options
+- [ ] Options from yaml/toml file.
+- [ ] Add packet filtering capabilities (based on time range)
+- [ ] Implement file-based dumper seek functionality
+- [ ] Implement a 3d visualization of the controller's movement
+  - what is the best way to do this?

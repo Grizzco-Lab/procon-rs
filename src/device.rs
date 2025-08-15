@@ -93,7 +93,11 @@ impl ProController {
     }
 
     /// Read data from the controller with timeout
-    pub fn read_timeout(&mut self, buffer: &mut [u8], timeout_ms: i32) -> Result<usize, hidapi::HidError> {
+    pub fn read_timeout(
+        &mut self,
+        buffer: &mut [u8],
+        timeout_ms: i32,
+    ) -> Result<usize, hidapi::HidError> {
         self.0.read_timeout(buffer, timeout_ms)
     }
 

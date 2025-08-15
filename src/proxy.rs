@@ -1,6 +1,6 @@
 use crate::device::ProController;
-use crate::dumper::Dumper;
-use anyhow::{bail, Result};
+use crate::dump::Dumper;
+use anyhow::{Result, bail};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
@@ -24,7 +24,10 @@ impl Proxy {
 
         // Check if HID gadget device exists
         if !std::path::Path::new(hidg_path).exists() {
-            bail!("HID gadget device {} not found. Please configure HID gadget first.", hidg_path);
+            bail!(
+                "HID gadget device {} not found. Please configure HID gadget first.",
+                hidg_path
+            );
         }
 
         Ok(Proxy {
@@ -81,7 +84,7 @@ impl Proxy {
             // Main proxy loop
             loop {
                 // Direction 1: Controller -> NS (Input reports)
-                match self.controller.read_timeout(&mut input_buffer, 10) {
+                match self.controller.read_timeout(&mut input_buffer, 20) {
                     Ok(size) => {
                         if size > 0 {
                             // Dump the input data

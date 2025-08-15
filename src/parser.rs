@@ -1,21 +1,19 @@
 use anyhow::{Result, anyhow};
 
-use crate::device::ProController;
 use crate::keystate::{ButtonState, ControllerState, GyroData, StickData};
 
-pub trait ProConParser {
-    fn parse_input_report(&self, data: &[u8]) -> Result<ControllerState>;
-}
+/// Static parser functions for Pro Controller data
+pub struct ProConParser;
 
-impl ProConParser for ProController {
-    fn parse_input_report(&self, data: &[u8]) -> Result<ControllerState> {
-        if data.len() < 64 {
+impl ProConParser {
+    pub fn parse_input_report(data: &[u8]) -> Result<ControllerState> {
+        if data.len() < 12 {
             return Err(anyhow!("Input report too short: {} bytes", data.len()));
         }
 
         // Parse button data (bytes 3-5)
         let button_data = [data[3], data[4], data[5]];
-        let buttons = self.parse_buttons(&button_data);
+        let buttons = Self::parse_buttons(&button_data);
 
         // Parse stick data
         let left_stick = StickData {
@@ -58,11 +56,8 @@ impl ProConParser for ProController {
             connection_info,
         })
     }
-}
 
-impl ProController {
-    #[inline]
-    pub fn parse_buttons(&self, button_data: &[u8; 3]) -> ButtonState {
+    pub fn parse_buttons(button_data: &[u8; 3]) -> ButtonState {
         ButtonState {
             // First byte (right buttons)
             y: (button_data[0] & 0x01) != 0,
