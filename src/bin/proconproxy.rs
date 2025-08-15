@@ -1,4 +1,5 @@
-use procon::device::ProController;
+use procon::dumper::NullDumper;
+use procon::proxy::Proxy;
 
 const HID_DEVICE_PATH: &str = "/dev/hidg0";
 
@@ -7,21 +8,14 @@ fn main() -> anyhow::Result<()> {
 
     log::info!("ProCon Proxy starting...");
 
-    // Connect to Pro Controller
-    let mut procon = ProController::connect()?;
-    log::info!("Pro Controller connected");
+    // Create dumper (using NullDumper for now)
+    let dumper = Box::new(NullDumper::new());
 
-    // Check if HID gadget device exists
-    if !std::path::Path::new(HID_DEVICE_PATH).exists() {
-        log::error!(
-            "HID gadget device {} not found. Please configure HID gadget first.",
-            HID_DEVICE_PATH
-        );
-        return Err(anyhow::anyhow!("HID gadget device not found"));
-    }
+    // Create and initialize proxy
+    let mut proxy = Proxy::new(dumper, HID_DEVICE_PATH)?;
 
-    // Start proxy loop with device path
-    procon.start_proxy(HID_DEVICE_PATH)?;
+    // Start proxy main loop
+    proxy.start()?;
 
     Ok(())
 }

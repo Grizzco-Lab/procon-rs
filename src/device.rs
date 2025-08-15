@@ -92,123 +92,13 @@ impl ProController {
         Ok(())
     }
 
-    pub fn start_proxy(&mut self, hidg_path: &str) -> anyhow::Result<()> {
-        log::info!("Starting non-blocking bidirectional proxy...");
-        log::info!("Press Ctrl+C to stop");
+    /// Read data from the controller with timeout
+    pub fn read_timeout(&mut self, buffer: &mut [u8], timeout_ms: i32) -> Result<usize, hidapi::HidError> {
+        self.0.read_timeout(buffer, timeout_ms)
+    }
 
-        use std::fs::File;
-        use std::io::{Read, Write};
-        use std::os::unix::io::AsRawFd;
-        use std::time::Duration;
-
-        let mut input_buffer = [0u8; 64];
-        let mut output_buffer = [0u8; 64];
-        let mut frame_count = 0u64;
-
-        loop {
-            // Try to open HID gadget device
-            let hidg_file = match File::options().read(true).write(true).open(hidg_path) {
-                Ok(f) => f,
-                Err(e) => {
-                    log::warn!("Failed to open HID gadget device: {} - retrying...", e);
-                    std::thread::sleep(Duration::from_millis(1000));
-                    continue;
-                }
-            };
-
-            // Set non-blocking mode for the HID gadget device
-            let fd = hidg_file.as_raw_fd();
-            unsafe {
-                let flags = libc::fcntl(fd, libc::F_GETFL);
-                if flags != -1 {
-                    libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
-                }
-            }
-
-            let mut hidg_device = hidg_file;
-            log::info!("HID gadget device opened in non-blocking mode");
-
-            // Main proxy loop
-            loop {
-                // Direction 1: Controller -> NS (Input reports)
-                match self.0.read_timeout(&mut input_buffer, 10) {
-                    Ok(size) => {
-                        if size > 0 {
-                            // Forward the raw HID report to the gadget device
-                            match hidg_device.write(&input_buffer[..size]) {
-                                Ok(written) => {
-                                    if written != size {
-                                        log::warn!(
-                                            "Partial input write: {} of {} bytes",
-                                            written,
-                                            size
-                                        );
-                                    }
-                                    frame_count += 1;
-                                    if frame_count % 100 == 0 {
-                                        log::debug!("Forwarded {} input frames", frame_count);
-                                    }
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "Failed to write input to HID gadget: {} - reopening device...",
-                                        e
-                                    );
-                                    break; // Break inner loop to reopen device
-                                }
-                            }
-                        }
-                    }
-                    Err(e) if e.to_string().contains("timeout") => {
-                        // Timeout is expected for short reads
-                    }
-                    Err(e) => {
-                        log::error!("Failed to read from Pro Controller: {}", e);
-                        if let Err(reconnect_err) = self.reconnect() {
-                            log::error!("Failed to reconnect: {}", reconnect_err);
-                            return Err(reconnect_err);
-                        }
-                        // Continue with reconnected device
-                        continue;
-                    }
-                }
-
-                // Direction 2: NS -> Controller (Output reports) - Non-blocking
-                match hidg_device.read(&mut output_buffer) {
-                    Ok(size) => {
-                        if size > 0 {
-                            // Forward output report to the controller
-                            match self.0.write(&output_buffer[..size]) {
-                                Ok(_) => {
-                                    log::debug!("Forwarded output report to controller");
-                                }
-                                Err(e) => {
-                                    log::warn!("Failed to write output to controller: {}", e);
-                                    if let Err(reconnect_err) = self.reconnect() {
-                                        log::error!(
-                                            "Failed to reconnect after output write failure: {}",
-                                            reconnect_err
-                                        );
-                                        return Err(reconnect_err);
-                                    }
-                                    // Continue with reconnected device
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // No output data available, this is expected for non-blocking read
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to read output from HID gadget: {} - reopening device...",
-                            e
-                        );
-                        break; // Break inner loop to reopen device
-                    }
-                }
-            }
-        }
+    /// Write data to the controller
+    pub fn write(&mut self, data: &[u8]) -> Result<usize, hidapi::HidError> {
+        self.0.write(data)
     }
 }
