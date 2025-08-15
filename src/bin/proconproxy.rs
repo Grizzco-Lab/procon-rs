@@ -13,7 +13,10 @@ fn main() -> anyhow::Result<()> {
 
     // Check if HID gadget device exists
     if !std::path::Path::new(HID_DEVICE_PATH).exists() {
-        log::error!("HID gadget device {} not found. Please configure HID gadget first.", HID_DEVICE_PATH);
+        log::error!(
+            "HID gadget device {} not found. Please configure HID gadget first.",
+            HID_DEVICE_PATH
+        );
         return Err(anyhow::anyhow!("HID gadget device not found"));
     }
 

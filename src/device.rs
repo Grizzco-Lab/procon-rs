@@ -42,6 +42,33 @@ impl ProController {
         }
     }
 
+    pub fn reconnect(&mut self) -> anyhow::Result<()> {
+        use std::time::Duration;
+
+        log::info!("Attempting to reconnect to Pro Controller...");
+
+        // Try to reconnect with a few retries
+        for attempt in 1..=20 {
+            std::thread::sleep(Duration::from_millis(500));
+
+            match Self::connect() {
+                Ok(new_controller) => {
+                    self.0 = new_controller.0;
+                    log::info!(
+                        "Pro Controller reconnected successfully on attempt {}",
+                        attempt
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    log::warn!("Reconnect attempt {} failed: {}", attempt, e);
+                }
+            }
+        }
+
+        bail!("Failed to reconnect to Pro Controller after 5 attempts")
+    }
+
     pub fn start_capture(&mut self) -> anyhow::Result<()> {
         log::info!("Starting Pro Controller data capture...");
         log::info!("Press Ctrl+C to stop");
@@ -137,7 +164,12 @@ impl ProController {
                     }
                     Err(e) => {
                         log::error!("Failed to read from Pro Controller: {}", e);
-                        return Err(e.into());
+                        if let Err(reconnect_err) = self.reconnect() {
+                            log::error!("Failed to reconnect: {}", reconnect_err);
+                            return Err(reconnect_err);
+                        }
+                        // Continue with reconnected device
+                        continue;
                     }
                 }
 
@@ -152,6 +184,15 @@ impl ProController {
                                 }
                                 Err(e) => {
                                     log::warn!("Failed to write output to controller: {}", e);
+                                    if let Err(reconnect_err) = self.reconnect() {
+                                        log::error!(
+                                            "Failed to reconnect after output write failure: {}",
+                                            reconnect_err
+                                        );
+                                        return Err(reconnect_err);
+                                    }
+                                    // Continue with reconnected device
+                                    continue;
                                 }
                             }
                         }
@@ -167,9 +208,6 @@ impl ProController {
                         break; // Break inner loop to reopen device
                     }
                 }
-
-                // Small sleep to prevent busy waiting
-                std::thread::sleep(Duration::from_millis(1));
             }
         }
     }
