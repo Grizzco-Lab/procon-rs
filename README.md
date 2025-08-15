@@ -1,19 +1,22 @@
-# Splabot - Nintendo Switch Pro Controller HID Dumper
+# Splabot - Nintendo Switch Pro Controller HID Proxy
 
-A Rust program that captures input data from Nintendo Switch Pro Controller via USB HID and outputs it as JSON with timestamps.
+A Rust program that acts as a proxy between a Nintendo Switch Pro Controller and a Nintendo Switch, forwarding HID input data in real-time.
 
 ## Features
 
-- Captures all button inputs (A, B, X, Y, L, R, ZL, ZR, +, -, Home, Capture, etc.)
-- Reads analog stick positions (left and right sticks)
-- Captures gyroscope and accelerometer data (3 samples per frame)
-- Outputs data in JSON format with precise timestamps
-- Real-time data streaming
+- Real-time HID data forwarding from Pro Controller to Nintendo Switch
+- Captures and forwards all button inputs (A, B, X, Y, L, R, ZL, ZR, +, -, Home, Capture, etc.)
+- Forwards analog stick positions (left and right sticks)
+- Forwards gyroscope and accelerometer data (3 samples per frame)
+- Low-latency proxy functionality for competitive gaming
+- Works with Raspberry Pi 4 HID gadget functionality
 
 ## Requirements
 
 - Rust (latest stable version)
 - Nintendo Switch Pro Controller connected via USB
+- Raspberry Pi 4 (or compatible device) with HID gadget functionality
+- `/dev/hidg0` device configured for HID gadget mode
 - Linux system with HID permissions
 
 ## Setup
@@ -28,86 +31,47 @@ A Rust program that captures input data from Nintendo Switch Pro Controller via 
 
 2. Connect your Nintendo Switch Pro Controller via USB
 
-3. Build and run the program:
+3. Build and run the proxy:
    ```bash
    cargo build --release
-   cargo run
+   cargo run --bin procon
    ```
 
-## Output Format
+## How It Works
 
-The program outputs JSON data for each frame with the following structure:
+The proxy program:
 
-```json
-{
-  "timestamp": "2024-01-15T10:30:45.123456Z",
-  "buttons": {
-    "a": false,
-    "b": false,
-    "x": false,
-    "y": false,
-    "l": false,
-    "r": false,
-    "zl": false,
-    "zr": false,
-    "plus": false,
-    "minus": false,
-    "home": false,
-    "capture": false,
-    "l_stick": false,
-    "r_stick": false,
-    "up": false,
-    "down": false,
-    "left": false,
-    "right": false,
-    "sl_left": false,
-    "sr_left": false,
-    "sl_right": false,
-    "sr_right": false
-  },
-  "left_stick": {
-    "x": 2048,
-    "y": 2048
-  },
-  "right_stick": {
-    "x": 2048,
-    "y": 2048
-  },
-  "gyro": [
-    {
-      "accel_x": 0,
-      "accel_y": 0,
-      "accel_z": 4096,
-      "gyro_x": 0,
-      "gyro_y": 0,
-      "gyro_z": 0
-    },
-    {
-      "accel_x": 0,
-      "accel_y": 0,
-      "accel_z": 4096,
-      "gyro_x": 0,
-      "gyro_y": 0,
-      "gyro_z": 0
-    },
-    {
-      "accel_x": 0,
-      "accel_y": 0,
-      "accel_z": 4096,
-      "gyro_x": 0,
-      "gyro_y": 0,
-      "gyro_z": 0
-    }
-  ],
-  "battery_level": 8,
-  "connection_info": 1
-}
-```
+1. Connects to the Nintendo Switch Pro Controller via USB HID
+2. Continuously reads HID input reports from the controller
+3. Forwards the raw HID data to `/dev/hidg0` (HID gadget device)
+4. The Nintendo Switch receives the data as if it's coming directly from a Pro Controller
+
+This creates a transparent proxy that allows the Nintendo Switch to see the Pi as a Pro Controller while the Pi forwards all data from the real controller.
+
+## Project Structure
+
+The codebase is organized into the following modules:
+
+- `src/lib.rs` - Main library entry point that exports all modules
+- `src/device.rs` - Nintendo Switch Pro Controller device connection and communication
+  - `ProController` struct that wraps HidDevice for controller communication
+  - Device discovery and connection functionality
+  - Data capture loop for reading input reports
+- `src/keystate.rs` - Data structures for controller state representation
+  - `ButtonState` - All button states (A, B, X, Y, triggers, etc.)
+  - `StickData` - Analog stick position data
+  - `GyroData` - Gyroscope and accelerometer sensor data
+  - `ControllerState` - Complete controller state with timestamp
+- `src/parser.rs` - Input report parsing functionality
+  - Parses raw HID input reports into structured controller state
+  - Handles button bit mapping, stick coordinate extraction, and gyro data
+- `src/bin/proconproxy.rs` - Main executable for proxy functionality
+  - Implements real-time HID data forwarding from Pro Controller to HID gadget device
 
 ## Notes
 
-- The program runs until interrupted with Ctrl+C
-- Stick values range from 0 to 4095 (center is around 2048)
-- Gyroscope and accelerometer values are raw sensor data
-- Battery level is reported as a value from 0-15
-- The controller sends 3 gyro/accel samples per input report for higher precision 
+- The proxy runs until interrupted with Ctrl+C
+- All HID data is forwarded as raw bytes with minimal latency
+- The program requires write access to `/dev/hidg0`
+- For optimal performance, run with real-time priority if needed
+- The controller sends data at approximately 60Hz (16.67ms intervals) 
