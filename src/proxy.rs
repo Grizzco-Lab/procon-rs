@@ -1,3 +1,4 @@
+use crate::config::ProxyConfig;
 use crate::device::ProController;
 use crate::dump::Dumper;
 use anyhow::{Result, bail};
@@ -6,25 +7,17 @@ use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::time::Duration;
 
-/// Timeout for reading from Pro Controller (milliseconds)
-const CONTROLLER_READ_TIMEOUT_MS: i32 = 20;
-
-/// Interval for logging frame count progress
-const FRAME_COUNT_LOG_INTERVAL: u64 = 100;
-
-/// Retry delay when HID gadget device fails to open (milliseconds)
-const HIDG_RETRY_DELAY_MS: u64 = 1000;
-
 pub struct Proxy {
     controller: ProController,
     hidg_device: Option<File>,
     dumper: Box<dyn Dumper>,
     hidg_path: String,
+    config: ProxyConfig,
 }
 
 impl Proxy {
-    /// Initialize a new proxy with the given dumper
-    pub fn new(dumper: Box<dyn Dumper>, hidg_path: &str) -> Result<Self> {
+    /// Initialize a new proxy with the given dumper and configuration
+    pub fn new(dumper: Box<dyn Dumper>, hidg_path: &str, config: ProxyConfig) -> Result<Self> {
         log::info!("Initializing Proxy...");
 
         // Connect to Pro Controller
@@ -44,6 +37,7 @@ impl Proxy {
             hidg_device: None,
             dumper,
             hidg_path: hidg_path.to_string(),
+            config,
         })
     }
 
@@ -84,7 +78,7 @@ impl Proxy {
                     Ok(()) => {}
                     Err(e) => {
                         log::warn!("Failed to open HID gadget device: {} - retrying...", e);
-                        std::thread::sleep(Duration::from_millis(HIDG_RETRY_DELAY_MS));
+                        std::thread::sleep(Duration::from_millis(self.config.hidg_retry_delay_ms));
                         continue;
                     }
                 }
@@ -95,7 +89,7 @@ impl Proxy {
                 // Direction 1: Controller -> NS (Input reports)
                 match self
                     .controller
-                    .read_timeout(&mut input_buffer, CONTROLLER_READ_TIMEOUT_MS)
+                    .read_timeout(&mut input_buffer, self.config.controller_read_timeout_ms)
                 {
                     Ok(size) => {
                         if size > 0 {
@@ -116,7 +110,7 @@ impl Proxy {
                                             );
                                         }
                                         frame_count += 1;
-                                        if frame_count % FRAME_COUNT_LOG_INTERVAL == 0 {
+                                        if frame_count % self.config.frame_count_log_interval == 0 {
                                             log::debug!("Forwarded {} input frames", frame_count);
                                         }
                                     }

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 WORKDIR=$(git rev-parse --show-toplevel)
 cd $WORKDIR
 

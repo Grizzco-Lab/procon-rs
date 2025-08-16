@@ -23,8 +23,12 @@ pub struct Config {
 /// Proxy-related configuration
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProxyConfig {
-    /// HID gadget device path for Nintendo Switch connection
-    pub hid_device_path: String,
+    /// Timeout for reading from Pro Controller (milliseconds)
+    pub controller_read_timeout_ms: i32,
+    /// Interval for logging frame count progress
+    pub frame_count_log_interval: u64,
+    /// Retry delay when HID gadget device fails to open (milliseconds)
+    pub hidg_retry_delay_ms: u64,
 }
 
 /// Dump-related configuration

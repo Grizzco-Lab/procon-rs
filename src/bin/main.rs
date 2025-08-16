@@ -1,6 +1,8 @@
+use anyhow::Context;
 use clap::Parser;
 use procon::config::Config;
 use procon::dump::{AsyncDumper, ConsoleDumper, FileDumper, MultiDumper};
+use procon::gadget::ProConGadget;
 use procon::priority::set_high_priority;
 use procon::proxy::Proxy;
 
@@ -53,6 +55,13 @@ fn main() -> anyhow::Result<()> {
     // Set high priority for main proxy thread
     set_high_priority(config.performance.enable_cpu_affinity);
 
+    // Setup USB gadget programmatically
+    let mut usb_gadget = ProConGadget::new();
+    let hid_device_path = usb_gadget
+        .setup()
+        .context("Failed to setup USB gadget - ensure you have root privileges")?;
+    log::info!("USB gadget configured at: {}", hid_device_path);
+
     // Create multi-dumper for async processing
     let mut multi_dumper = MultiDumper::new();
 
@@ -70,7 +79,7 @@ fn main() -> anyhow::Result<()> {
     let async_dumper = AsyncDumper::new(Box::new(multi_dumper));
 
     // Create and initialize proxy
-    let mut proxy = Proxy::new(Box::new(async_dumper), &config.proxy.hid_device_path)?;
+    let mut proxy = Proxy::new(Box::new(async_dumper), &hid_device_path, config.proxy)?;
 
     log::info!("Starting proxy with async dumping (dump thread runs at normal priority)");
     if config.console.enable {
@@ -80,7 +89,11 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Start proxy main loop (runs at high priority)
-    proxy.start()?;
+    let result = proxy.start();
 
+    // Cleanup USB gadget before exit
+    usb_gadget.cleanup();
+
+    result?;
     Ok(())
 }
