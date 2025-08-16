@@ -229,6 +229,8 @@ impl AsyncDumper {
                             // Shutdown requested
                             return;
                         }
+                        // Update queue size for the single processed message
+                        state.check_queue_overflow(1);
                     }
                     Err(_) => {
                         // Channel closed
