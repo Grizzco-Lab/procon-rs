@@ -6,6 +6,15 @@ use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::time::Duration;
 
+/// Timeout for reading from Pro Controller (milliseconds)
+const CONTROLLER_READ_TIMEOUT_MS: i32 = 20;
+
+/// Interval for logging frame count progress
+const FRAME_COUNT_LOG_INTERVAL: u64 = 100;
+
+/// Retry delay when HID gadget device fails to open (milliseconds)
+const HIDG_RETRY_DELAY_MS: u64 = 1000;
+
 pub struct Proxy {
     controller: ProController,
     hidg_device: Option<File>,
@@ -75,7 +84,7 @@ impl Proxy {
                     Ok(()) => {}
                     Err(e) => {
                         log::warn!("Failed to open HID gadget device: {} - retrying...", e);
-                        std::thread::sleep(Duration::from_millis(1000));
+                        std::thread::sleep(Duration::from_millis(HIDG_RETRY_DELAY_MS));
                         continue;
                     }
                 }
@@ -84,7 +93,10 @@ impl Proxy {
             // Main proxy loop
             loop {
                 // Direction 1: Controller -> NS (Input reports)
-                match self.controller.read_timeout(&mut input_buffer, 20) {
+                match self
+                    .controller
+                    .read_timeout(&mut input_buffer, CONTROLLER_READ_TIMEOUT_MS)
+                {
                     Ok(size) => {
                         if size > 0 {
                             // Dump the input data
@@ -104,7 +116,7 @@ impl Proxy {
                                             );
                                         }
                                         frame_count += 1;
-                                        if frame_count % 100 == 0 {
+                                        if frame_count % FRAME_COUNT_LOG_INTERVAL == 0 {
                                             log::debug!("Forwarded {} input frames", frame_count);
                                         }
                                     }

@@ -5,8 +5,8 @@
 - [x] 2. decode_procon_packet should output compact one-line button/stick status
 - [x] BONUS: Refactor ProConParser to static methods (no self needed)
 - [x] BONUS: ConsoleDumper now uses ProConParser::parse_input_report instead of duplicating logic
-- [ ] 3. Move dump operations to separate thread (lower priority)
-- [ ] 4. Set high priority and IO priority only for main proxy thread
+- [x] 3. Move dump operations to separate thread (the thread doesn't need high priority)
+- [x] 4. Set high priority and IO priority only for main proxy thread
 
 ## Future Enhancements
 - [ ] Add command line arguments for options
