@@ -6,3 +6,4 @@ pub mod keystate;
 pub mod parser;
 pub mod priority;
 pub mod proxy;
+pub mod web_visualization;

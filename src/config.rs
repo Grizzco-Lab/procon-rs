@@ -14,6 +14,8 @@ pub struct Config {
     pub dump: DumpConfig,
     /// Console output configuration
     pub console: ConsoleConfig,
+    /// Visualization configuration
+    pub visualization: VisualizationConfig,
     /// Performance configuration
     pub performance: PerformanceConfig,
     /// Logging configuration
@@ -21,7 +23,7 @@ pub struct Config {
 }
 
 /// Proxy-related configuration
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
     /// Timeout for reading from Pro Controller (milliseconds)
     pub controller_read_timeout_ms: i32,
@@ -43,6 +45,15 @@ pub struct DumpConfig {
 pub struct ConsoleConfig {
     /// Enable console output to terminal
     pub enable: bool,
+}
+
+/// Visualization configuration
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VisualizationConfig {
+    /// Enable web-based visualization server
+    pub web_enable: bool,
+    /// Port for web visualization server
+    pub web_port: u16,
 }
 
 /// Performance-related configuration

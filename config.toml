@@ -14,6 +14,12 @@ file_path = "/tmp/procon_hid_dump.bin"
 # Enable console output to terminal
 enable = false
 
+[visualization]
+# Enable web-based visualization server
+web_enable = true
+# Port for web visualization server
+web_port = 8080
+
 [performance]
 # Enable CPU affinity pinning to random core
 enable_cpu_affinity = false

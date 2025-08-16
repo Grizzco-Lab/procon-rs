@@ -5,6 +5,7 @@ use procon::dump::{AsyncDumper, ConsoleDumper, FileDumper, MultiDumper};
 use procon::gadget::ProConGadget;
 use procon::priority::set_high_priority;
 use procon::proxy::Proxy;
+use procon::web_visualization::WebVisualizationDumper;
 
 /// Nintendo Switch Pro Controller HID Proxy
 #[derive(Parser)]
@@ -75,6 +76,15 @@ fn main() -> anyhow::Result<()> {
         multi_dumper.add_dumper(console_dumper);
     }
 
+    // Add web visualization dumper only if enabled
+    let web_server = if config.visualization.web_enable {
+        let (web_dumper, server) = WebVisualizationDumper::new();
+        multi_dumper.add_dumper(Box::new(web_dumper));
+        Some(server)
+    } else {
+        None
+    };
+
     // Wrap in async dumper - this will run dumping in a separate thread
     let async_dumper = AsyncDumper::new(Box::new(multi_dumper));
 
@@ -86,6 +96,22 @@ fn main() -> anyhow::Result<()> {
         log::info!("Console output enabled");
     } else {
         log::info!("Console output disabled");
+    }
+    if config.visualization.web_enable {
+        log::info!("Web visualization server starting on port {}", config.visualization.web_port);
+    }
+
+    // Start web server if enabled
+    if let Some(server) = web_server {
+        let port = config.visualization.web_port;
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                if let Err(e) = server.start_server(port).await {
+                    log::error!("Web visualization server error: {}", e);
+                }
+            });
+        });
     }
 
     // Start proxy main loop (runs at high priority)

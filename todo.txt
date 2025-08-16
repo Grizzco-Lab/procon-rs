@@ -33,3 +33,5 @@ Bigger items
   - where to store the dataset? → Dropbox via rclone mount
 - [ ] gamestate capture
   - Is it encrypted?
+  - Is it possible to sound a beep or display some effect like a desktop pet when a particular boss is detected in the game state?
+  - How is desktop pet implemented? (it only covers a small area of the screen)
