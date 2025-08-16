@@ -113,22 +113,6 @@
       }
 
       /* Add Nintendo Switch logo area */
-      .controller::before {
-        content: "";
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: 120px;
-        height: 40px;
-        background: linear-gradient(
-          90deg,
-          rgba(255, 107, 53, 0.6),
-          rgba(247, 147, 30, 0.6)
-        );
-        border-radius: 20px;
-        opacity: 0.1;
-      }
 
       .button {
         position: absolute;
@@ -184,19 +168,10 @@
         background: linear-gradient(145deg, #555, #333);
       }
 
-      /* Nintendo-style button colors */
-      .btn-a.normal {
-        background: linear-gradient(145deg, #4a4a4a, #2a2a2a);
-        border-color: #666;
-      }
-      .btn-b.normal {
-        background: linear-gradient(145deg, #4a4a4a, #2a2a2a);
-        border-color: #666;
-      }
-      .btn-x.normal {
-        background: linear-gradient(145deg, #4a4a4a, #2a2a2a);
-        border-color: #666;
-      }
+      /* Face buttons default style */
+      .btn-a.normal,
+      .btn-b.normal,
+      .btn-x.normal,
       .btn-y.normal {
         background: linear-gradient(145deg, #4a4a4a, #2a2a2a);
         border-color: #666;
@@ -417,15 +392,6 @@
         gap: 20px;
       }
 
-      .info-bottom {
-        display: flex;
-        justify-content: flex-start;
-      }
-
-      .info-bottom .info-box {
-        max-width: 280px;
-      }
-
       .info-box {
         background: rgba(0, 0, 0, 0.3);
         padding: 18px;
@@ -510,10 +476,6 @@
         .info-row {
           grid-template-columns: 1fr;
           gap: 15px;
-        }
-
-        .info-bottom .info-box {
-          max-width: 100%;
         }
 
         /* Adjust button sizes for mobile */
@@ -611,7 +573,6 @@
           </div>
         </div>
       </div>
-      <div class="info-bottom"></div>
     </div>
 
     <script>
@@ -743,15 +704,12 @@
           if (data.gyro && data.gyro.length > 0) {
             this.updateGyro(data.gyro[0]); // Use first gyro sample
           } else {
-            // Debug: check if gyro data is missing
-            console.log("No gyro data in message:", data);
-            // Reset gyro display
+            // Reset gyro display when missing
             this.updateGyro({ gyro_x: 0, gyro_y: 0, gyro_z: 0 });
           }
         }
 
         updateStick(side, stick, pressed) {
-          const container = document.getElementById(`stick-${side}-container`);
           const knob = document.getElementById(`stick-${side}-knob`);
           const values = document.getElementById(`${side}-stick-values`);
 
@@ -809,17 +767,6 @@
           // Also update the small icon in gyro section for reference
           const controller3d = document.getElementById("controller-3d");
           controller3d.style.transform = `rotateX(${rotX * 2}deg) rotateY(${rotY * 2}deg) rotateZ(${rotZ * 2}deg)`;
-
-          // Debug log (can be removed later)
-          if (
-            Math.abs(gyro.gyro_x) > 100 ||
-            Math.abs(gyro.gyro_y) > 100 ||
-            Math.abs(gyro.gyro_z) > 100
-          ) {
-            console.log(
-              `Gyro: x=${gyro.gyro_x}, y=${gyro.gyro_y}, z=${gyro.gyro_z}, controller transform=${transform}`,
-            );
-          }
         }
 
         reconnect() {
@@ -834,30 +781,6 @@
       // Initialize when page loads
       document.addEventListener("DOMContentLoaded", () => {
         new ControllerVisualizer();
-
-        // Test gyro visualization after 2 seconds
-        setTimeout(() => {
-          const controller = document.querySelector(".controller");
-          const controller3d = document.getElementById("controller-3d");
-          if (controller) {
-            // Test rotation to verify CSS is working on main controller
-            controller.style.transform =
-              "rotateX(10deg) rotateY(10deg) rotateZ(5deg)";
-            if (controller3d) {
-              controller3d.style.transform =
-                "rotateX(20deg) rotateY(20deg) rotateZ(10deg)";
-            }
-            console.log("Applied test rotation to main controller");
-
-            // Reset after 3 seconds
-            setTimeout(() => {
-              controller.style.transform = "";
-              if (controller3d) {
-                controller3d.style.transform = "";
-              }
-            }, 3000);
-          }
-        }, 2000);
       });
     </script>
   </body>
