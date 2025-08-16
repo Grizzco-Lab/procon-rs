@@ -1,77 +1,106 @@
-# Splabot - Nintendo Switch Pro Controller HID Proxy
+# ProCon Proxy
 
-A Rust program that acts as a proxy between a Nintendo Switch Pro Controller and a Nintendo Switch, forwarding HID input data in real-time.
+A Rust program that proxies Nintendo Switch Pro Controller HID data.
 
 ## Features
 
-- Real-time HID data forwarding from Pro Controller to Nintendo Switch
-- Captures and forwards all button inputs (A, B, X, Y, L, R, ZL, ZR, +, -, Home, Capture, etc.)
-- Forwards analog stick positions (left and right sticks)
-- Forwards gyroscope and accelerometer data (3 samples per frame)
-- Low-latency proxy functionality for competitive gaming
-- Works with Raspberry Pi 4 HID gadget functionality
+- Forwards HID data between Pro Controller and Nintendo Switch
+- Automatic USB gadget setup
+- Bidirectional communication (input/output reports)
+- Optional data dumping to file or console
+- Configurable via TOML file
 
 ## Requirements
 
-- Rust (latest stable version)
-- Nintendo Switch Pro Controller connected via USB
-- Raspberry Pi 4 (or compatible device) with HID gadget functionality
-- `/dev/hidg0` device configured for HID gadget mode
-- Linux system with HID permissions
+- Raspberry Pi 4 (or compatible device with USB device controller)
+- Linux with USB gadget support
+- Nintendo Switch Pro Controller (USB connection)
+- Rust
 
-## Setup
+## Usage
 
-1. Make sure your user has permission to access HID devices:
-   ```bash
-   sudo usermod -a -G input $USER
-   # or create a udev rule for the Pro Controller
-   echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="057e", ATTRS{idProduct}=="2009", MODE="0666"' | sudo tee /etc/udev/rules.d/99-nintendo-pro-controller.rules
-   sudo udevadm control --reload-rules
-   ```
+```bash
+./scripts/run.sh
+```
 
-2. Connect your Nintendo Switch Pro Controller via USB
+That's it. The script builds and runs with proper permissions.
 
-3. Build and run the proxy:
-   ```bash
-   cargo build --release
-   cargo run --bin procon
-   ```
+## Configuration
+
+The proxy uses a TOML configuration file (`config.toml`) for customization:
+
+```toml
+[proxy]
+# Timeout for reading from Pro Controller (milliseconds)  
+controller_read_timeout_ms = 20
+# Interval for logging frame count progress
+frame_count_log_interval = 100
+# Retry delay when HID gadget device fails to open (milliseconds)
+hidg_retry_delay_ms = 1000
+
+[dump]
+# File path for binary dump output
+file_path = "/tmp/procon_hid_dump.bin"
+
+[console]
+# Enable console output to terminal
+enable = false
+
+[performance]
+# Enable CPU affinity pinning to random core
+enable_cpu_affinity = false
+
+[logging]
+# Log level: error, warn, info, debug, trace
+level = "info"
+```
 
 ## How It Works
 
 The proxy program:
 
-1. Connects to the Nintendo Switch Pro Controller via USB HID
-2. Continuously reads HID input reports from the controller
-3. Forwards the raw HID data to `/dev/hidg0` (HID gadget device)
-4. The Nintendo Switch receives the data as if it's coming directly from a Pro Controller
+1. **Automatic Setup**: Creates and configures USB gadget with Nintendo Pro Controller device IDs
+2. **Controller Connection**: Connects to the physical Pro Controller via USB HID
+3. **Bidirectional Forwarding**: 
+   - **Input Reports**: Controller → Pi → Nintendo Switch (button presses, stick positions, gyro data)
+   - **Output Reports**: Nintendo Switch → Pi → Controller (rumble commands, LED control)
+4. **Data Logging**: Optional console output and binary file dumping for analysis
+5. **Error Recovery**: Automatic reconnection if controller or gadget device disconnects
 
-This creates a transparent proxy that allows the Nintendo Switch to see the Pi as a Pro Controller while the Pi forwards all data from the real controller.
+The result is a transparent proxy where the Nintendo Switch sees the Pi as a genuine Pro Controller while the Pi forwards all communication from the real controller.
 
 ## Project Structure
 
 The codebase is organized into the following modules:
 
-- `src/lib.rs` - Main library entry point that exports all modules
-- `src/device.rs` - Nintendo Switch Pro Controller device connection and communication
-  - `ProController` struct that wraps HidDevice for controller communication
-  - Device discovery and connection functionality
-  - Data capture loop for reading input reports
-- `src/keystate.rs` - Data structures for controller state representation
-  - `ButtonState` - All button states (A, B, X, Y, triggers, etc.)
-  - `StickData` - Analog stick position data
-  - `GyroData` - Gyroscope and accelerometer sensor data
-  - `ControllerState` - Complete controller state with timestamp
-- `src/parser.rs` - Input report parsing functionality
-  - Parses raw HID input reports into structured controller state
-  - Handles button bit mapping, stick coordinate extraction, and gyro data
-- `src/bin/proconproxy.rs` - Main executable for proxy functionality
-  - Implements real-time HID data forwarding from Pro Controller to HID gadget device
+- **`src/bin/main.rs`** - Main executable entry point with command-line argument parsing
+- **`src/config.rs`** - Configuration management using TOML format
+- **`src/gadget.rs`** - USB gadget management for automatic device setup
+- **`src/proxy.rs`** - Core proxy functionality for bidirectional HID forwarding
+- **`src/device.rs`** - Nintendo Switch Pro Controller device connection and communication
+- **`src/dump.rs`** - Data dumping functionality (console output, file logging, async processing)
+- **`src/parser.rs`** - HID input report parsing into structured controller state
+- **`src/keystate.rs`** - Data structures for controller state representation
+- **`src/priority.rs`** - Process priority and CPU affinity management for real-time performance
 
-## Notes
+### Core Components
 
-- The proxy runs until interrupted with Ctrl+C
-- All HID data is forwarded as raw bytes with minimal latency
-- The program requires write access to `/dev/hidg0`
-- For optimal performance, run with real-time priority if needed
-- The controller sends data at approximately 60Hz (16.67ms intervals) 
+- **`ProController`** - Manages connection and communication with the physical controller
+- **`ProConGadget`** - Handles automatic USB gadget configuration and cleanup
+- **`Proxy`** - Orchestrates bidirectional data forwarding between controller and Nintendo Switch
+- **`AsyncDumper`** - Provides high-performance, non-blocking data logging to prevent proxy latency
+
+## Performance Features
+
+- **Real-time Priority**: Optional high process priority for minimal latency
+- **CPU Affinity**: Optional CPU core pinning for consistent performance  
+- **Asynchronous Dumping**: Data logging runs in separate thread to avoid blocking proxy
+- **Non-blocking I/O**: All device operations use timeouts to prevent hanging
+- **Backpressure Handling**: Intelligent packet dropping when logging falls behind
+
+## Troubleshooting
+
+- **"Failed to setup USB gadget"**: Ensure you're running with root privileges (`sudo`)
+- **"No USB device controller found"**: Verify your device supports USB gadget mode
+- **"Pro Controller not found"**: Check USB connection and device permissions
+- **High CPU usage**: Try enabling CPU affinity in the configuration 

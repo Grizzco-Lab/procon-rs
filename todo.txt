@@ -9,9 +9,9 @@
 - [x] 4. Set high priority and IO priority only for main proxy thread
 
 ## Future Enhancements
-- [ ] Refactor the code. Looks like we only have one entry point for the moment. Make it main.go
-- [ ] Add command line arguments for options
-- [ ] Options from yaml/toml file.
+- [x] Refactor the code. Looks like we only have one entry point for the moment. Make it main.go
+- [x] Add command line arguments for options
+- [x] Options from yaml/toml file.
 - [ ] Add packet filtering capabilities (based on time range)
 - [ ] Implement file-based dumper seek functionality
 - [ ] Implement a 3d visualization of the controller's movement
