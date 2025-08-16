@@ -2,7 +2,7 @@
 
 - Do not add any unused packages
 - Do not manually edit Cargo.toml or Cargo.lock. Only edit by calling `cargo add` or `cargo rm`. Use -F for features. Try not to include unused features.
-- Call `cargo fmt` to format the code after finish editing.
+- Call `cargo fmt` to format the code after finish editing. Use `prettier` for html.
 - All the comments and docs must be in English. Chinese should never appear in the code.
 - Keep it simple.
 - rust has great inline doc feature (/// to struct, member, functions, and //! to the top of the file). You should leverage it as if you're really writing rust.

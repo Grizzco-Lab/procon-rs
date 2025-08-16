@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nintendo Switch Pro Controller</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 20px;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #0f0f23, #1a1a2e);
+        color: white;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .header {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+
+      .header h1 {
+        margin: 0;
+        font-size: 2.5em;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+      }
+
+      .status {
+        padding: 10px 20px;
+        border-radius: 25px;
+        margin: 10px 0;
+        font-weight: bold;
+        text-align: center;
+      }
+
+      .status.connected {
+        background: rgba(76, 175, 80, 0.3);
+        border: 2px solid #4caf50;
+      }
+
+      .status.disconnected {
+        background: rgba(244, 67, 54, 0.3);
+        border: 2px solid #f44336;
+      }
+
+      .controller-container {
+        position: relative;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 20px;
+        padding: 30px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(10px);
+      }
+
+      .controller {
+        width: 600px;
+        height: 300px;
+        position: relative;
+        background: linear-gradient(145deg, #2a2a2a, #1a1a1a);
+        border-radius: 90px;
+        border: 3px solid #444;
+        box-shadow:
+          0 20px 40px rgba(0, 0, 0, 0.8),
+          inset 0 -3px 6px rgba(255, 255, 255, 0.1),
+          inset 0 3px 6px rgba(0, 0, 0, 0.6);
+        transition: transform 0.1s ease;
+      }
+
+      /* Add Nintendo Switch logo area */
+      .controller::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 120px;
+        height: 40px;
+        background: linear-gradient(90deg, #ff6b35, #f7931e);
+        border-radius: 20px;
+        opacity: 0.1;
+      }
+
+      .button {
+        position: absolute;
+        border-radius: 50%;
+        border: 2px solid #666;
+        transition: all 0.1s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 12px;
+        color: white;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+        box-shadow:
+          0 4px 8px rgba(0, 0, 0, 0.4),
+          inset 0 -2px 4px rgba(0, 0, 0, 0.3),
+          inset 0 2px 4px rgba(255, 255, 255, 0.1);
+      }
+
+      .button.pressed {
+        background: #ff4444 !important;
+        border-color: #ff6666;
+        transform: scale(1.1) translateY(1px);
+        box-shadow:
+          0 0 15px rgba(255, 68, 68, 0.6),
+          inset 0 2px 8px rgba(0, 0, 0, 0.5);
+      }
+
+      .button.normal {
+        background: linear-gradient(145deg, #555, #333);
+      }
+
+      /* Face buttons - Nintendo layout: A bottom, B left, X top, Y right */
+      .btn-a {
+        width: 35px;
+        height: 35px;
+        right: 80px;
+        bottom: 80px;
+      }
+      .btn-b {
+        width: 35px;
+        height: 35px;
+        right: 110px;
+        bottom: 110px;
+      }
+      .btn-x {
+        width: 35px;
+        height: 35px;
+        right: 80px;
+        bottom: 140px;
+      }
+      .btn-y {
+        width: 35px;
+        height: 35px;
+        right: 50px;
+        bottom: 110px;
+      }
+
+      /* D-pad */
+      .btn-up {
+        width: 30px;
+        height: 30px;
+        left: 80px;
+        bottom: 140px;
+      }
+      .btn-down {
+        width: 30px;
+        height: 30px;
+        left: 80px;
+        bottom: 80px;
+      }
+      .btn-left {
+        width: 30px;
+        height: 30px;
+        left: 50px;
+        bottom: 110px;
+      }
+      .btn-right {
+        width: 30px;
+        height: 30px;
+        left: 110px;
+        bottom: 110px;
+      }
+
+      /* Shoulder buttons */
+      .btn-l {
+        width: 40px;
+        height: 25px;
+        left: 60px;
+        top: 20px;
+        border-radius: 15px;
+      }
+      .btn-r {
+        width: 40px;
+        height: 25px;
+        right: 60px;
+        top: 20px;
+        border-radius: 15px;
+      }
+      .btn-zl {
+        width: 45px;
+        height: 20px;
+        left: 40px;
+        top: -5px;
+        border-radius: 12px;
+      }
+      .btn-zr {
+        width: 45px;
+        height: 20px;
+        right: 40px;
+        top: -5px;
+        border-radius: 12px;
+      }
+
+      /* System buttons */
+      .btn-minus {
+        width: 25px;
+        height: 15px;
+        left: 200px;
+        top: 60px;
+        border-radius: 8px;
+      }
+      .btn-plus {
+        width: 25px;
+        height: 15px;
+        right: 200px;
+        top: 60px;
+        border-radius: 8px;
+      }
+      .btn-home {
+        width: 30px;
+        height: 30px;
+        left: 285px;
+        top: 40px;
+      }
+      .btn-capture {
+        width: 25px;
+        height: 25px;
+        left: 160px;
+        top: 45px;
+      }
+
+      /* Analog sticks */
+      .stick-container {
+        position: absolute;
+        width: 80px;
+        height: 80px;
+        background: #444;
+        border: 3px solid #666;
+        border-radius: 50%;
+        box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+      }
+
+      .stick-left {
+        left: 160px;
+        bottom: 40px;
+      }
+      .stick-right {
+        right: 160px;
+        bottom: 40px;
+      }
+
+      .stick-knob {
+        position: absolute;
+        width: 30px;
+        height: 30px;
+        background: #888;
+        border: 2px solid #aaa;
+        border-radius: 50%;
+        transition: all 0.05s ease;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+
+      .stick-knob.pressed {
+        background: #ff4444;
+        border-color: #ff6666;
+        box-shadow: 0 0 10px rgba(255, 68, 68, 0.6);
+      }
+
+      .info-panel {
+        margin-top: 20px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        max-width: 600px;
+      }
+
+      .info-box {
+        background: rgba(0, 0, 0, 0.3);
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+      }
+
+      .info-box h3 {
+        margin: 0 0 10px 0;
+        color: #4caf50;
+      }
+
+      .stick-values {
+        font-family: monospace;
+        font-size: 14px;
+      }
+
+      /* Gyroscope visualization */
+      .gyro-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 15px;
+      }
+
+      .gyro-3d {
+        width: 120px;
+        height: 120px;
+        perspective: 400px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+      }
+
+      .controller-3d {
+        width: 60px;
+        height: 60px;
+        font-size: 30px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        transform-style: preserve-3d;
+        transition: transform 0.1s ease;
+      }
+
+      .gyro-values {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        text-align: center;
+        font-size: 0.9em;
+      }
+
+      @media (max-width: 768px) {
+        .controller {
+          width: 400px;
+          height: 200px;
+        }
+
+        .controller-container {
+          padding: 15px;
+        }
+
+        .header h1 {
+          font-size: 1.8em;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>🎮 Nintendo Switch Pro Controller</h1>
+      <div id="connection-status" class="status disconnected">
+        Connecting to WebSocket...
+      </div>
+    </div>
+
+    <div class="controller-container">
+      <div class="controller">
+        <!-- Face buttons -->
+        <div class="button normal btn-a" id="btn-a">A</div>
+        <div class="button normal btn-b" id="btn-b">B</div>
+        <div class="button normal btn-x" id="btn-x">X</div>
+        <div class="button normal btn-y" id="btn-y">Y</div>
+
+        <!-- D-pad -->
+        <div class="button normal btn-up" id="btn-up">▲</div>
+        <div class="button normal btn-down" id="btn-down">▼</div>
+        <div class="button normal btn-left" id="btn-left">◄</div>
+        <div class="button normal btn-right" id="btn-right">►</div>
+
+        <!-- Shoulder buttons -->
+        <div class="button normal btn-l" id="btn-l">L</div>
+        <div class="button normal btn-r" id="btn-r">R</div>
+        <div class="button normal btn-zl" id="btn-zl">ZL</div>
+        <div class="button normal btn-zr" id="btn-zr">ZR</div>
+
+        <!-- System buttons -->
+        <div class="button normal btn-minus" id="btn-minus">-</div>
+        <div class="button normal btn-plus" id="btn-plus">+</div>
+        <div class="button normal btn-home" id="btn-home">🏠</div>
+        <div class="button normal btn-capture" id="btn-capture">📷</div>
+
+        <!-- Analog sticks -->
+        <div class="stick-container stick-left" id="stick-left-container">
+          <div class="stick-knob" id="stick-left-knob"></div>
+        </div>
+        <div class="stick-container stick-right" id="stick-right-container">
+          <div class="stick-knob" id="stick-right-knob"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-panel">
+      <div class="info-box">
+        <h3>📡 Connection Info</h3>
+        <div>Status: <span id="ws-status">Disconnected</span></div>
+        <div>Last Update: <span id="last-update">Never</span></div>
+        <div>Battery: <span id="battery">Unknown</span></div>
+      </div>
+      <div class="info-box">
+        <h3>🕹️ Analog Sticks</h3>
+        <div class="stick-values">
+          <div>Left: <span id="left-stick-values">Center</span></div>
+          <div>Right: <span id="right-stick-values">Center</span></div>
+        </div>
+      </div>
+      <div class="info-box">
+        <h3>🔄 Gyroscope</h3>
+        <div class="gyro-container">
+          <div class="gyro-3d" id="gyro-3d">
+            <div class="controller-3d" id="controller-3d">🎮</div>
+          </div>
+          <div class="gyro-values">
+            <div>X: <span id="gyro-x">0</span>°/s</div>
+            <div>Y: <span id="gyro-y">0</span>°/s</div>
+            <div>Z: <span id="gyro-z">0</span>°/s</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      class ControllerVisualizer {
+        constructor() {
+          this.ws = null;
+          this.isConnected = false;
+          this.lastUpdate = null;
+          this.connect();
+        }
+
+        connect() {
+          const protocol =
+            window.location.protocol === "https:" ? "wss:" : "ws:";
+          const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+          try {
+            this.ws = new WebSocket(wsUrl);
+            this.setupWebSocket();
+          } catch (error) {
+            console.error("WebSocket connection failed:", error);
+            this.updateConnectionStatus(false);
+            this.reconnect();
+          }
+        }
+
+        setupWebSocket() {
+          this.ws.onopen = () => {
+            console.log("WebSocket connected");
+            this.updateConnectionStatus(true);
+            // Initially show connected status until device status is received
+            this.updateDeviceStatus(true);
+          };
+
+          this.ws.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+              if (data.type === "controller_state") {
+                this.updateController(data);
+              } else if (data.type === "device_status") {
+                this.updateDeviceStatus(data.connected);
+              }
+            } catch (error) {
+              console.error("Failed to parse WebSocket message:", error);
+            }
+          };
+
+          this.ws.onclose = () => {
+            console.log("WebSocket disconnected");
+            this.updateConnectionStatus(false);
+            this.reconnect();
+          };
+
+          this.ws.onerror = (error) => {
+            console.error("WebSocket error:", error);
+            this.updateConnectionStatus(false);
+          };
+        }
+
+        updateConnectionStatus(connected) {
+          this.isConnected = connected;
+          const wsStatusEl = document.getElementById("ws-status");
+
+          if (connected) {
+            wsStatusEl.textContent = "Connected";
+          } else {
+            wsStatusEl.textContent = "Disconnected";
+          }
+        }
+
+        updateDeviceStatus(connected) {
+          const statusEl = document.getElementById("connection-status");
+
+          if (connected) {
+            statusEl.textContent = "✅ Connected to Pro Controller";
+            statusEl.className = "status connected";
+          } else {
+            statusEl.textContent = "❌ Controller Disconnected";
+            statusEl.className = "status disconnected";
+          }
+        }
+
+        updateController(data) {
+          this.lastUpdate = new Date();
+          document.getElementById("last-update").textContent =
+            this.lastUpdate.toLocaleTimeString();
+
+          // Update battery (convert 0-8 level to percentage and descriptive text)
+          const batteryLevel = data.battery;
+          let batteryText = "Unknown";
+          if (batteryLevel !== undefined && batteryLevel !== null) {
+            const percentage = Math.round((batteryLevel / 8) * 100);
+            let status = "";
+            if (batteryLevel >= 7) status = " (Full)";
+            else if (batteryLevel >= 5) status = " (Good)";
+            else if (batteryLevel >= 3) status = " (Medium)";
+            else if (batteryLevel >= 1) status = " (Low)";
+            else status = " (Critical)";
+
+            batteryText = `${percentage}%${status}`;
+          }
+          document.getElementById("battery").textContent = batteryText;
+
+          // Update buttons
+          const buttons = data.buttons;
+          Object.keys(buttons).forEach((buttonName) => {
+            const element = document.getElementById(
+              `btn-${buttonName.replace("_", "-")}`,
+            );
+            if (element) {
+              if (buttons[buttonName]) {
+                element.classList.add("pressed");
+                element.classList.remove("normal");
+              } else {
+                element.classList.remove("pressed");
+                element.classList.add("normal");
+              }
+            }
+          });
+
+          // Update analog sticks
+          this.updateStick("left", data.sticks.left, data.buttons.l_stick);
+          this.updateStick("right", data.sticks.right, data.buttons.r_stick);
+
+          // Update gyroscope
+          if (data.gyro && data.gyro.length > 0) {
+            this.updateGyro(data.gyro[0]); // Use first gyro sample
+          } else {
+            // Debug: check if gyro data is missing
+            console.log("No gyro data in message:", data);
+            // Reset gyro display
+            this.updateGyro({ gyro_x: 0, gyro_y: 0, gyro_z: 0 });
+          }
+        }
+
+        updateStick(side, stick, pressed) {
+          const container = document.getElementById(`stick-${side}-container`);
+          const knob = document.getElementById(`stick-${side}-knob`);
+          const values = document.getElementById(`${side}-stick-values`);
+
+          // Convert stick values (0-4095, center ~2048) to percentages
+          const xPercent = ((stick.x - 2048) / 2048) * 100;
+          const yPercent = ((stick.y - 2048) / 2048) * 100;
+
+          // Position knob (container is 80px, knob is 30px)
+          const containerSize = 80;
+          const knobSize = 30;
+          const maxOffset = (containerSize - knobSize) / 2;
+
+          const xOffset = (xPercent / 100) * maxOffset;
+          const yOffset = -(yPercent / 100) * maxOffset; // Invert Y
+
+          const centerX = (containerSize - knobSize) / 2;
+          const centerY = (containerSize - knobSize) / 2;
+
+          knob.style.left = `${centerX + xOffset}px`;
+          knob.style.top = `${centerY + yOffset}px`;
+
+          // Update pressed state
+          if (pressed) {
+            knob.classList.add("pressed");
+          } else {
+            knob.classList.remove("pressed");
+          }
+
+          // Update values display
+          values.textContent = `X:${xPercent.toFixed(0)}% Y:${yPercent.toFixed(0)}%`;
+        }
+
+        updateGyro(gyro) {
+          // Update gyro values display
+          document.getElementById("gyro-x").textContent = gyro.gyro_x;
+          document.getElementById("gyro-y").textContent = gyro.gyro_y;
+          document.getElementById("gyro-z").textContent = gyro.gyro_z;
+
+          // Update entire controller rotation instead of just the small icon
+          const controller = document.querySelector(".controller");
+
+          // Convert gyro values to rotation (scale for smooth rotation)
+          const scale = 0.05; // Smaller scale for smoother controller rotation
+          const rotX = gyro.gyro_x * scale;
+          const rotY = gyro.gyro_y * scale;
+          const rotZ = gyro.gyro_z * scale;
+
+          // Apply rotation transform to entire controller
+          const transform = `rotateX(${rotX}deg) rotateY(${rotY}deg) rotateZ(${rotZ}deg)`;
+          controller.style.transform = transform;
+
+          // Also update the small icon in gyro section for reference
+          const controller3d = document.getElementById("controller-3d");
+          controller3d.style.transform = `rotateX(${rotX * 2}deg) rotateY(${rotY * 2}deg) rotateZ(${rotZ * 2}deg)`;
+
+          // Debug log (can be removed later)
+          if (
+            Math.abs(gyro.gyro_x) > 100 ||
+            Math.abs(gyro.gyro_y) > 100 ||
+            Math.abs(gyro.gyro_z) > 100
+          ) {
+            console.log(
+              `Gyro: x=${gyro.gyro_x}, y=${gyro.gyro_y}, z=${gyro.gyro_z}, controller transform=${transform}`,
+            );
+          }
+        }
+
+        reconnect() {
+          setTimeout(() => {
+            if (!this.isConnected) {
+              this.connect();
+            }
+          }, 2000);
+        }
+      }
+
+      // Initialize when page loads
+      document.addEventListener("DOMContentLoaded", () => {
+        new ControllerVisualizer();
+
+        // Test gyro visualization after 2 seconds
+        setTimeout(() => {
+          const controller = document.querySelector(".controller");
+          const controller3d = document.getElementById("controller-3d");
+          if (controller) {
+            // Test rotation to verify CSS is working on main controller
+            controller.style.transform =
+              "rotateX(10deg) rotateY(10deg) rotateZ(5deg)";
+            if (controller3d) {
+              controller3d.style.transform =
+                "rotateX(20deg) rotateY(20deg) rotateZ(10deg)";
+            }
+            console.log("Applied test rotation to main controller");
+
+            // Reset after 3 seconds
+            setTimeout(() => {
+              controller.style.transform = "";
+              if (controller3d) {
+                controller3d.style.transform = "";
+              }
+            }, 3000);
+          }
+        }, 2000);
+      });
+    </script>
+  </body>
+</html>

@@ -77,12 +77,12 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Add web visualization dumper only if enabled
-    let web_server = if config.visualization.web_enable {
+    let (web_server, web_dumper) = if config.visualization.web_enable {
         let (web_dumper, server) = WebVisualizationDumper::new();
-        multi_dumper.add_dumper(Box::new(web_dumper));
-        Some(server)
+        multi_dumper.add_dumper(Box::new(web_dumper.clone()));
+        (Some(server), Some(web_dumper))
     } else {
-        None
+        (None, None)
     };
 
     // Wrap in async dumper - this will run dumping in a separate thread
@@ -98,7 +98,10 @@ fn main() -> anyhow::Result<()> {
         log::info!("Console output disabled");
     }
     if config.visualization.web_enable {
-        log::info!("Web visualization server starting on port {}", config.visualization.web_port);
+        log::info!(
+            "Web visualization server starting on port {}",
+            config.visualization.web_port
+        );
     }
 
     // Start web server if enabled
@@ -111,6 +114,32 @@ fn main() -> anyhow::Result<()> {
                     log::error!("Web visualization server error: {}", e);
                 }
             });
+        });
+    }
+
+    // Start device connection monitoring if web visualization is enabled
+    if let Some(web_dumper_ref) = web_dumper {
+        std::thread::spawn(move || {
+            let mut last_connected = true;
+
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(2000)); // Check every 2 seconds
+
+                let should_be_connected = web_dumper_ref.is_device_connected();
+
+                if should_be_connected != last_connected {
+                    log::info!(
+                        "Device connection status changed: {}",
+                        if should_be_connected {
+                            "connected"
+                        } else {
+                            "disconnected"
+                        }
+                    );
+                    web_dumper_ref.update_device_status(should_be_connected);
+                    last_connected = should_be_connected;
+                }
+            }
         });
     }
 
