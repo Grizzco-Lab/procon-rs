@@ -352,6 +352,7 @@ pub struct ConsoleDumper {
 }
 
 impl ConsoleDumper {
+    /// Create a new console dumper
     pub fn new() -> Self {
         ConsoleDumper { frame_count: 0 }
     }

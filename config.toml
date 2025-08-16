@@ -1,0 +1,19 @@
+[proxy]
+# HID gadget device path for Nintendo Switch connection
+hid_device_path = "/dev/hidg0"
+
+[dump]
+# File path for binary dump output
+file_path = "/tmp/procon_hid_dump.bin"
+
+[console]
+# Enable console output to terminal
+enable = false
+
+[performance]
+# Enable CPU affinity pinning to random core
+enable_cpu_affinity = false
+
+[logging]
+# Log level: error, warn, info, debug, trace
+level = "info"
