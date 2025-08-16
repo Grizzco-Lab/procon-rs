@@ -5,10 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nintendo Switch Pro Controller</title>
     <style>
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap");
       body {
         margin: 0;
         padding: 20px;
-        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        font-family:
+          "SF Pro",
+          "SF Pro Display",
+          "SF Pro Text",
+          "JetBrains Mono",
+          "Inter",
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          "Helvetica Neue",
+          Arial,
+          "Noto Sans",
+          sans-serif,
+          "Apple Color Emoji",
+          "Segoe UI Emoji";
         background: linear-gradient(135deg, #0d223a, #132d4f);
         color: white;
         min-height: 100vh;
@@ -24,7 +40,9 @@
 
       .header h1 {
         margin: 0;
-        font-size: 2.5em;
+        font-size: 2.2rem;
+        font-weight: 700;
+        letter-spacing: 0.5px;
         text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
       }
 
@@ -32,7 +50,8 @@
         padding: 10px 20px;
         border-radius: 25px;
         margin: 10px 0;
-        font-weight: bold;
+        font-weight: 600;
+        font-size: 0.95rem;
         text-align: center;
       }
 
@@ -409,19 +428,26 @@
 
       .info-box {
         background: rgba(0, 0, 0, 0.3);
-        padding: 15px;
-        border-radius: 10px;
+        padding: 18px;
+        border-radius: 12px;
         border: 1px solid rgba(255, 255, 255, 0.2);
+        font-size: 1rem;
+        line-height: 1.6;
       }
 
       .info-box h3 {
         margin: 0 0 10px 0;
         color: #4caf50;
+        font-weight: 700;
+        font-size: 1.4rem;
+        line-height: 1.2;
       }
 
       .stick-values {
-        font-family: monospace;
-        font-size: 14px;
+        font-family: inherit;
+        font-size: 1rem;
+        line-height: 1.6;
+        font-variant-numeric: tabular-nums;
       }
 
       /* Gyroscope visualization */
@@ -460,7 +486,10 @@
         flex-direction: column;
         gap: 5px;
         text-align: center;
-        font-size: 0.9em;
+        font-family: inherit;
+        font-size: 1rem;
+        line-height: 1.6;
+        font-variant-numeric: tabular-nums;
       }
 
       @media (max-width: 768px) {
