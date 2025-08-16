@@ -29,7 +29,7 @@ impl WebVisualizationServer {
         Self {
             controller_state: Arc::new(Mutex::new(None)),
             broadcaster,
-            is_device_connected: Arc::new(Mutex::new(true)), // Default to connected
+            is_device_connected: Arc::new(Mutex::new(false)), // Default to disconnected until data arrives
         }
     }
 
@@ -116,6 +116,7 @@ impl WebVisualizationServer {
     pub async fn start_server(&self, port: u16) -> Result<()> {
         let controller_state = Arc::clone(&self.controller_state);
         let broadcaster = self.broadcaster.clone();
+        let is_device_connected = Arc::clone(&self.is_device_connected);
 
         // Static HTML page
         let html_page = self.get_html_page();
@@ -128,8 +129,9 @@ impl WebVisualizationServer {
             .and(warp::ws())
             .and(warp::any().map(move || broadcaster.clone()))
             .and(warp::any().map(move || Arc::clone(&controller_state)))
-            .map(|ws: warp::ws::Ws, broadcaster, state| {
-                ws.on_upgrade(move |websocket| handle_websocket(websocket, broadcaster, state))
+            .and(warp::any().map(move || Arc::clone(&is_device_connected)))
+            .map(|ws: warp::ws::Ws, broadcaster, state, device_status| {
+                ws.on_upgrade(move |websocket| handle_websocket(websocket, broadcaster, state, device_status))
             });
 
         let routes = html_route.or(websocket_route);
@@ -138,7 +140,7 @@ impl WebVisualizationServer {
             "Starting web visualization server on http://0.0.0.0:{}",
             port
         );
-        log::info!("Open http://your-rpi-ip:{} in your browser", port);
+        log::info!("Open http://your-ip:{} in your browser", port);
 
         warp::serve(routes).run(([0, 0, 0, 0], port)).await;
 
@@ -156,6 +158,7 @@ async fn handle_websocket(
     websocket: WebSocket,
     broadcaster: broadcast::Sender<String>,
     controller_state: Arc<Mutex<Option<ControllerState>>>,
+    is_device_connected: Arc<Mutex<bool>>,
 ) {
     let (mut ws_tx, mut ws_rx) = websocket.split();
     let mut rx = broadcaster.subscribe();
@@ -206,6 +209,16 @@ async fn handle_websocket(
 
         let _ = ws_tx.send(Message::text(json_data)).await;
     }
+
+    // Send current device status immediately
+    let connected = *is_device_connected.lock().await;
+    let status_data = json!({
+        "type": "device_status",
+        "connected": connected,
+        "timestamp": chrono::Utc::now().timestamp_millis()
+    })
+    .to_string();
+    let _ = ws_tx.send(Message::text(status_data)).await;
 
     // Handle messages
     let mut ping_interval = interval(Duration::from_secs(30));

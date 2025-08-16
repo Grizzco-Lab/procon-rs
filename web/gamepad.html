@@ -9,7 +9,7 @@
         margin: 0;
         padding: 20px;
         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-        background: linear-gradient(135deg, #0f0f23, #1a1a2e);
+        background: linear-gradient(135deg, #0d223a, #132d4f);
         color: white;
         min-height: 100vh;
         display: flex;
@@ -53,6 +53,8 @@
         padding: 30px;
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
         backdrop-filter: blur(10px);
+        perspective: 1000px;
+        perspective-origin: center center;
       }
 
       .controller {
@@ -62,11 +64,33 @@
         background: linear-gradient(145deg, #2a2a2a, #1a1a1a);
         border-radius: 90px;
         border: 3px solid #444;
+        transition: transform 0.1s ease;
+        transform-style: preserve-3d;
+
+        /* 3D depth effect with multiple shadows */
         box-shadow:
-          0 20px 40px rgba(0, 0, 0, 0.8),
+          0 25px 50px rgba(0, 0, 0, 0.8),
+          0 15px 30px rgba(0, 0, 0, 0.6),
+          0 5px 15px rgba(0, 0, 0, 0.4),
           inset 0 -3px 6px rgba(255, 255, 255, 0.1),
           inset 0 3px 6px rgba(0, 0, 0, 0.6);
-        transition: transform 0.1s ease;
+      }
+
+      /* Create 3D thickness effect */
+      .controller::after {
+        content: "";
+        position: absolute;
+        top: 5px;
+        left: 5px;
+        right: 5px;
+        bottom: 5px;
+        background: linear-gradient(145deg, #1a1a1a, #0a0a0a);
+        border-radius: 85px;
+        z-index: -1;
+        transform: translateZ(-20px);
+        box-shadow:
+          0 0 20px rgba(0, 0, 0, 0.8),
+          inset 0 2px 10px rgba(0, 0, 0, 0.9);
       }
 
       /* Add Nintendo Switch logo area */
@@ -78,7 +102,11 @@
         transform: translate(-50%, -50%);
         width: 120px;
         height: 40px;
-        background: linear-gradient(90deg, #ff6b35, #f7931e);
+        background: linear-gradient(
+          90deg,
+          rgba(255, 107, 53, 0.6),
+          rgba(247, 147, 30, 0.6)
+        );
         border-radius: 20px;
         opacity: 0.1;
       }
@@ -95,10 +123,33 @@
         font-size: 12px;
         color: white;
         text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+        transform-style: preserve-3d;
+        z-index: 2;
+
+        /* Enhanced 3D button effect */
         box-shadow:
-          0 4px 8px rgba(0, 0, 0, 0.4),
-          inset 0 -2px 4px rgba(0, 0, 0, 0.3),
-          inset 0 2px 4px rgba(255, 255, 255, 0.1);
+          0 6px 12px rgba(0, 0, 0, 0.5),
+          0 3px 6px rgba(0, 0, 0, 0.3),
+          inset 0 -3px 6px rgba(0, 0, 0, 0.4),
+          inset 0 3px 6px rgba(255, 255, 255, 0.15);
+      }
+
+      /* Add 3D depth to buttons */
+      .button::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        right: 2px;
+        bottom: 2px;
+        background: linear-gradient(
+          145deg,
+          rgba(0, 0, 0, 0.2),
+          rgba(255, 255, 255, 0.05)
+        );
+        border-radius: 50%;
+        z-index: -1;
+        transform: translateZ(-3px);
       }
 
       .button.pressed {
@@ -114,29 +165,56 @@
         background: linear-gradient(145deg, #555, #333);
       }
 
-      /* Face buttons - Nintendo layout: A bottom, B left, X top, Y right */
+      /* Nintendo-style button colors */
+      .btn-a.normal {
+        background: linear-gradient(145deg, #4a4a4a, #2a2a2a);
+        border-color: #666;
+      }
+      .btn-b.normal {
+        background: linear-gradient(145deg, #4a4a4a, #2a2a2a);
+        border-color: #666;
+      }
+      .btn-x.normal {
+        background: linear-gradient(145deg, #4a4a4a, #2a2a2a);
+        border-color: #666;
+      }
+      .btn-y.normal {
+        background: linear-gradient(145deg, #4a4a4a, #2a2a2a);
+        border-color: #666;
+      }
+
+      /* D-pad with distinctive look */
+      .btn-up.normal,
+      .btn-down.normal,
+      .btn-left.normal,
+      .btn-right.normal {
+        background: linear-gradient(145deg, #3a3a3a, #1a1a1a);
+        border-color: #555;
+      }
+
+      /* Face buttons - Nintendo layout: A right, B bottom, X top, Y left */
       .btn-a {
         width: 35px;
         height: 35px;
-        right: 80px;
-        bottom: 80px;
+        right: 60px;
+        bottom: 110px;
       }
       .btn-b {
         width: 35px;
         height: 35px;
-        right: 110px;
-        bottom: 110px;
+        right: 95px;
+        bottom: 75px;
       }
       .btn-x {
         width: 35px;
         height: 35px;
-        right: 80px;
-        bottom: 140px;
+        right: 95px;
+        bottom: 145px;
       }
       .btn-y {
         width: 35px;
         height: 35px;
-        right: 50px;
+        right: 130px;
         bottom: 110px;
       }
 
@@ -224,15 +302,34 @@
         top: 45px;
       }
 
-      /* Analog sticks */
+      /* Analog sticks with 3D effect */
       .stick-container {
         position: absolute;
         width: 80px;
         height: 80px;
-        background: #444;
+        background: linear-gradient(145deg, #3a3a3a, #1a1a1a);
         border: 3px solid #666;
         border-radius: 50%;
-        box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+        transform-style: preserve-3d;
+        box-shadow:
+          0 8px 16px rgba(0, 0, 0, 0.6),
+          0 4px 8px rgba(0, 0, 0, 0.4),
+          inset 0 0 15px rgba(0, 0, 0, 0.7),
+          inset 0 -2px 4px rgba(255, 255, 255, 0.1);
+      }
+
+      /* Add depth to stick containers */
+      .stick-container::after {
+        content: "";
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        right: 3px;
+        bottom: 3px;
+        background: linear-gradient(145deg, #2a2a2a, #0a0a0a);
+        border-radius: 50%;
+        z-index: -1;
+        transform: translateZ(-10px);
       }
 
       .stick-left {
@@ -248,25 +345,66 @@
         position: absolute;
         width: 30px;
         height: 30px;
-        background: #888;
+        background: linear-gradient(145deg, #999, #666);
         border: 2px solid #aaa;
         border-radius: 50%;
         transition: all 0.05s ease;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        transform-style: preserve-3d;
+        box-shadow:
+          0 4px 8px rgba(0, 0, 0, 0.5),
+          0 2px 4px rgba(0, 0, 0, 0.3),
+          inset 0 -1px 2px rgba(0, 0, 0, 0.3),
+          inset 0 1px 2px rgba(255, 255, 255, 0.2);
+      }
+
+      /* Add 3D depth to stick knobs */
+      .stick-knob::after {
+        content: "";
+        position: absolute;
+        top: 1px;
+        left: 1px;
+        right: 1px;
+        bottom: 1px;
+        background: linear-gradient(
+          145deg,
+          rgba(255, 255, 255, 0.1),
+          rgba(0, 0, 0, 0.2)
+        );
+        border-radius: 50%;
+        transform: translateZ(-2px);
       }
 
       .stick-knob.pressed {
-        background: #ff4444;
-        border-color: #ff6666;
-        box-shadow: 0 0 10px rgba(255, 68, 68, 0.6);
+        background: linear-gradient(145deg, #ff6666, #ff4444);
+        border-color: #ff8888;
+        box-shadow:
+          0 0 12px rgba(255, 68, 68, 0.8),
+          0 2px 4px rgba(255, 68, 68, 0.6),
+          inset 0 1px 3px rgba(255, 255, 255, 0.3);
+        transform: translateY(1px);
       }
 
       .info-panel {
         margin-top: 20px;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
+        display: flex;
+        flex-direction: column;
         gap: 20px;
-        max-width: 600px;
+        max-width: 900px;
+      }
+
+      .info-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 20px;
+      }
+
+      .info-bottom {
+        display: flex;
+        justify-content: flex-start;
+      }
+
+      .info-bottom .info-box {
+        max-width: 280px;
       }
 
       .info-box {
@@ -333,10 +471,40 @@
 
         .controller-container {
           padding: 15px;
+          perspective: 800px;
         }
 
         .header h1 {
           font-size: 1.8em;
+        }
+
+        .info-row {
+          grid-template-columns: 1fr;
+          gap: 15px;
+        }
+
+        .info-bottom .info-box {
+          max-width: 100%;
+        }
+
+        /* Adjust button sizes for mobile */
+        .btn-a,
+        .btn-b,
+        .btn-x,
+        .btn-y {
+          width: 28px;
+          height: 28px;
+          font-size: 10px;
+        }
+
+        .stick-container {
+          width: 60px;
+          height: 60px;
+        }
+
+        .stick-knob {
+          width: 24px;
+          height: 24px;
         }
       }
     </style>
@@ -386,32 +554,35 @@
     </div>
 
     <div class="info-panel">
-      <div class="info-box">
-        <h3>📡 Connection Info</h3>
-        <div>Status: <span id="ws-status">Disconnected</span></div>
-        <div>Last Update: <span id="last-update">Never</span></div>
-        <div>Battery: <span id="battery">Unknown</span></div>
-      </div>
-      <div class="info-box">
-        <h3>🕹️ Analog Sticks</h3>
-        <div class="stick-values">
-          <div>Left: <span id="left-stick-values">Center</span></div>
-          <div>Right: <span id="right-stick-values">Center</span></div>
+      <div class="info-row">
+        <div class="info-box">
+          <h3>📡 Connection Info</h3>
+          <div>Status: <span id="ws-status">Disconnected</span></div>
+          <div>Last Update: <span id="last-update">Never</span></div>
+          <div>Battery: <span id="battery">Unknown</span></div>
         </div>
-      </div>
-      <div class="info-box">
-        <h3>🔄 Gyroscope</h3>
-        <div class="gyro-container">
-          <div class="gyro-3d" id="gyro-3d">
-            <div class="controller-3d" id="controller-3d">🎮</div>
-          </div>
-          <div class="gyro-values">
-            <div>X: <span id="gyro-x">0</span>°/s</div>
-            <div>Y: <span id="gyro-y">0</span>°/s</div>
-            <div>Z: <span id="gyro-z">0</span>°/s</div>
+        <div class="info-box">
+          <h3>🕹️ Analog Sticks</h3>
+          <div class="stick-values">
+            <div>Left: <span id="left-stick-values">Center</span></div>
+            <div>Right: <span id="right-stick-values">Center</span></div>
           </div>
         </div>
+        <div class="info-box">
+          <h3>🔄 Gyroscope</h3>
+          <div class="gyro-container">
+            <div class="gyro-3d" id="gyro-3d">
+              <div class="controller-3d" id="controller-3d">🎮</div>
+            </div>
+            <div class="gyro-values">
+              <div>X: <span id="gyro-x">0</span>°/s</div>
+              <div>Y: <span id="gyro-y">0</span>°/s</div>
+              <div>Z: <span id="gyro-z">0</span>°/s</div>
+            </div>
+          </div>
+        </div>
       </div>
+      <div class="info-bottom"></div>
     </div>
 
     <script>
@@ -442,8 +613,6 @@
           this.ws.onopen = () => {
             console.log("WebSocket connected");
             this.updateConnectionStatus(true);
-            // Initially show connected status until device status is received
-            this.updateDeviceStatus(true);
           };
 
           this.ws.onmessage = (event) => {
@@ -462,12 +631,14 @@
           this.ws.onclose = () => {
             console.log("WebSocket disconnected");
             this.updateConnectionStatus(false);
+            this.updateDeviceStatus(false);
             this.reconnect();
           };
 
           this.ws.onerror = (error) => {
             console.error("WebSocket error:", error);
             this.updateConnectionStatus(false);
+            this.updateDeviceStatus(false);
           };
         }
 
@@ -511,12 +682,15 @@
             else if (batteryLevel >= 1) status = " (Low)";
             else status = " (Critical)";
 
-            batteryText = `${percentage}%${status}`;
+            const icon = batteryLevel <= 1 ? "🪫" : "🔋";
+            batteryText = `${icon} ${percentage}%${status}`;
           }
           document.getElementById("battery").textContent = batteryText;
 
           // Update buttons
           const buttons = data.buttons;
+          // Receiving a controller_state implies device is connected
+          this.updateDeviceStatus(true);
           Object.keys(buttons).forEach((buttonName) => {
             const element = document.getElementById(
               `btn-${buttonName.replace("_", "-")}`,
@@ -592,9 +766,12 @@
 
           // Convert gyro values to rotation (scale for smooth rotation)
           const scale = 0.05; // Smaller scale for smoother controller rotation
-          const rotX = gyro.gyro_x * scale;
-          const rotY = gyro.gyro_y * scale;
-          const rotZ = gyro.gyro_z * scale;
+          // Map device axes -> screen axes
+          // Swap X/Y so that two swapped axes are corrected; keep Z as-is.
+          // All three remain inverted to match perceived movement.
+          const rotX = gyro.gyro_y * scale; // device Y -> screen X
+          const rotY = gyro.gyro_x * scale; // device X -> screen Y
+          const rotZ = -gyro.gyro_z * scale; // device Z -> screen Z
 
           // Apply rotation transform to entire controller
           const transform = `rotateX(${rotX}deg) rotateY(${rotY}deg) rotateZ(${rotZ}deg)`;
