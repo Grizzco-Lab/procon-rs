@@ -114,7 +114,7 @@ config, so they survive restarts.
 
 | File | Contents |
 |---|---|
-| `controller.bin` | 80-byte frames: Unix ms (u64 LE), report size (u8), sequence number (u32 LE), 3 padding bytes, 64 report bytes |
+| `controller.bin` | 80-byte frames: Unix ms (u64 LE), report size (u8), sequence number (u32 LE), µs from the proxy reading the report to the Switch taking it (u16 LE, 0 if unknown), 1 padding byte, 64 report bytes |
 | `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses |
 | `session.json` | Start/stop times, each video file's first-frame Unix ms, the proxy's clock offset and dropped frames |
 

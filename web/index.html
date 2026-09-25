@@ -49,6 +49,10 @@
           <span class="chip-dot"></span
           ><span class="chip-text">No controller input</span>
         </span>
+        <span class="chip" id="chip-latency" data-level="off">
+          <span class="chip-dot"></span
+          ><span class="chip-text">Proxy latency unknown</span>
+        </span>
         <span class="chip chip-rec" id="chip-rec" data-state="idle">
           <span class="chip-dot"></span
           ><span class="chip-text">Not recording</span>
@@ -422,6 +426,10 @@
         <div class="rec-actions">
           <button type="button" class="btn" id="btn-replay-play" disabled>
             <span class="glyph glyph-play"></span>Play
+          </button>
+          <button type="button" class="btn" id="btn-replay-pause" disabled>
+            <span class="glyph glyph-pause"></span
+            ><span id="btn-replay-pause-text">Pause</span>
           </button>
           <button type="button" class="btn" id="btn-replay-stop" disabled>
             <span class="glyph glyph-stop"></span>Stop

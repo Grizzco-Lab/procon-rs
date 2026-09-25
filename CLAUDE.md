@@ -82,6 +82,8 @@ cargo clippy
 
 **Remote wakeup (`src/wake.rs`)**: when the sleeping Switch stops reading reports, Home sets the DWC2 `DCTL.RmtWkUpSig` bit through `/dev/mem` (the dwc2 driver has no wakeup op)
 
+**Proxy (`src/proxy.rs`)** forwards input and output on separate threads: a write to the controller blocks ~9 ms, and the Switch sends rumble constantly. Each frame's `forward_us` is the time from reading the report to the Switch taking it (poll POLLOUT on the gadget); the dashboard shows it as the "Proxy +x ms" chip
+
 **Frame link (`src/stream.rs`)**: proxy-side `FrameStreamer` (TCP, header then 80-byte frames, heartbeats) and host-side `receive_frames` (sequence gaps, clock offset)
 
 **Recorder (`src/recorder.rs`)**: Session folders `<prefix>YYYY-MM-DD_HH-MM-SS/` with `controller.bin`; start/pause/resume/stop

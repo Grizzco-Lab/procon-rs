@@ -516,6 +516,7 @@ $("dir-form").addEventListener("submit", async (event) => {
 
 const replay = {
   playing: false,
+  paused: false,
   positionMs: 0,
   durationMs: 0,
   receivedAt: 0,
@@ -523,15 +524,30 @@ const replay = {
 
 function renderReplay(status) {
   replay.playing = status.playing;
+  replay.paused = status.paused;
   replay.positionMs = status.position_ms;
   replay.durationMs = status.duration_ms;
   replay.receivedAt = performance.now();
 
   const loaded = status.path !== null;
   const badge = $("replay-badge");
-  badge.dataset.state = status.playing ? "playing" : "idle";
-  badge.textContent = status.playing ? "Playing" : loaded ? "Loaded" : "Empty";
+  badge.dataset.state = status.paused
+    ? "paused"
+    : status.playing
+      ? "playing"
+      : "idle";
+  badge.textContent = status.paused
+    ? "Paused"
+    : status.playing
+      ? "Playing"
+      : loaded
+        ? "Loaded"
+        : "Empty";
   $("btn-replay-play").disabled = !loaded || status.playing;
+  const pause = $("btn-replay-pause");
+  pause.disabled = !status.playing;
+  pause.classList.toggle("is-resume", status.paused);
+  $("btn-replay-pause-text").textContent = status.paused ? "Resume" : "Pause";
   $("btn-replay-stop").disabled = !status.playing;
   $("replay-form").querySelector("button").disabled = status.playing;
 
@@ -548,7 +564,7 @@ function renderReplay(status) {
 
 function updateReplayClock(now) {
   let position = replay.positionMs;
-  if (replay.playing) position += now - replay.receivedAt;
+  if (replay.playing && !replay.paused) position += now - replay.receivedAt;
   position = Math.min(position, replay.durationMs);
   const text = formatClock(position);
   const clock = $("replay-clock");
@@ -559,6 +575,12 @@ function updateReplayClock(now) {
 
 $("btn-replay-play").addEventListener("click", () =>
   sendCommand({ action: "play_replay" }, "replay-error"),
+);
+$("btn-replay-pause").addEventListener("click", () =>
+  sendCommand(
+    { action: replay.paused ? "resume_replay" : "pause_replay" },
+    "replay-error",
+  ),
 );
 $("btn-replay-stop").addEventListener("click", () =>
   sendCommand({ action: "stop_replay" }, "replay-error"),
@@ -780,6 +802,7 @@ function renderStatus(status) {
     input ? "good" : "critical",
     input ? "Controller input" : "No controller input",
   );
+  renderLatency(link.forward_us);
   $("input-rate").textContent = input
     ? `${link.input_rate.toFixed(1)} Hz · clock ${offset}`
     : "No input";
@@ -848,6 +871,24 @@ function renderStatus(status) {
   }
 }
 
+/** Time reports spend in the proxy, from reading them to the Switch taking them */
+function renderLatency(forward) {
+  if (!forward) {
+    setChip("chip-latency", "off", "Proxy latency unknown");
+    return;
+  }
+  const mean = forward.mean / 1000;
+  const max = forward.max / 1000;
+  setChip(
+    "chip-latency",
+    max < 4 ? "good" : max < 10 ? "warning" : "critical",
+    `Proxy +${mean.toFixed(1)} ms`,
+    `From the proxy reading a report to the Switch taking it: mean ${mean.toFixed(2)} ms, ` +
+      `max ${max.toFixed(2)} ms over the last half second. The controller's own USB ` +
+      `polling (up to 8 ms) comes on top, as it would without the proxy.`,
+  );
+}
+
 // ----------------------------------------------------------------- websocket
 
 let latestState = null;
@@ -856,6 +897,7 @@ let latestOrientation = null;
 function markOffline() {
   setChip("chip-link", "off", "Dashboard offline, reconnecting…");
   setChip("chip-controller", "off", "No controller input");
+  setChip("chip-latency", "off", "Proxy latency unknown");
   procon.classList.add("is-idle");
   $("procon-3d").classList.add("is-idle");
 }

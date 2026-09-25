@@ -5,6 +5,7 @@
 //! sent to the proxy's replay port at its `t_ms`, and the Switch sees it
 //! instead of, or mixed with, the controller (see [`crate::replay`]). Stopping,
 //! or reaching the end, closes the connection and gives the controller back.
+//! Pausing does too, until Resume reconnects and carries on where it paused.
 
 use crate::recorder::expand_home;
 use crate::replay::{self, Action};
@@ -33,6 +34,7 @@ struct Track {
 #[derive(Default)]
 struct Shared {
     playing: AtomicBool,
+    paused: AtomicBool,
     stop: AtomicBool,
     mix: AtomicBool,
     position_ms: AtomicU64,
@@ -49,6 +51,8 @@ pub struct PlayerStatus {
     pub duration_ms: u64,
     pub position_ms: u64,
     pub playing: bool,
+    /// Playing but paused, with the controller back
+    pub paused: bool,
     /// Combine with the controller instead of replacing it
     pub mix: bool,
     pub error: Option<String>,
@@ -101,23 +105,18 @@ impl Player {
             None => anyhow::bail!("load a file first"),
         };
         // Connect here so a missing proxy is reported right away
-        let socket = self
-            .address
-            .to_socket_addrs()?
-            .next()
-            .context("replay address did not resolve")?;
-        let mut stream = TcpStream::connect_timeout(&socket, Duration::from_secs(3))
-            .with_context(|| format!("cannot reach the proxy's replay port {}", self.address))?;
-        stream.set_nodelay(true)?;
+        let stream = connect(&self.address)?;
 
         let shared = Arc::clone(&self.shared);
+        let address = self.address.clone();
         shared.stop.store(false, Ordering::Relaxed);
+        shared.paused.store(false, Ordering::Relaxed);
         shared.position_ms.store(0, Ordering::Relaxed);
         shared.playing.store(true, Ordering::Relaxed);
         *shared.error.lock().unwrap() = None;
         log::info!("Replaying {} actions to {}", actions.len(), self.address);
         thread::spawn(move || {
-            if let Err(e) = send_actions(&mut stream, &actions, &shared) {
+            if let Err(e) = send_actions(stream, &address, &actions, &shared) {
                 log::warn!("Replay stopped: {:#}", e);
                 *shared.error.lock().unwrap() = Some(format!("{e:#}"));
             }
@@ -130,6 +129,13 @@ impl Player {
     /// Stop playing; the controller takes over
     pub fn stop(&self) {
         self.shared.stop.store(true, Ordering::Relaxed);
+    }
+
+    /// Pause, handing the Switch back to the controller, or resume
+    pub fn set_paused(&self, paused: bool) -> Result<()> {
+        ensure!(self.is_playing(), "nothing is playing");
+        self.shared.paused.store(paused, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Mix with the controller from the next action on
@@ -154,20 +160,57 @@ impl Player {
             duration_ms: actions.last().and_then(|a| a.t_ms).unwrap_or(0),
             position_ms: self.shared.position_ms.load(Ordering::Relaxed),
             playing: self.is_playing(),
+            paused: self.is_playing() && self.shared.paused.load(Ordering::Relaxed),
             mix: self.mix(),
             error: self.shared.error.lock().unwrap().clone(),
         }
     }
 }
 
-/// Send each action at its `t_ms`, until the end or Stop
-fn send_actions(stream: &mut TcpStream, actions: &[Action], shared: &Shared) -> Result<()> {
-    let start = Instant::now();
+/// Connect to the proxy's replay port
+fn connect(address: &str) -> Result<TcpStream> {
+    let socket = address
+        .to_socket_addrs()?
+        .next()
+        .context("replay address did not resolve")?;
+    let stream = TcpStream::connect_timeout(&socket, Duration::from_secs(3))
+        .with_context(|| format!("cannot reach the proxy's replay port {address}"))?;
+    stream.set_nodelay(true)?;
+    Ok(stream)
+}
+
+/// Send each action at its `t_ms`, until the end or Stop; while paused, the
+/// connection is closed and the timeline waits
+fn send_actions(
+    stream: TcpStream,
+    address: &str,
+    actions: &[Action],
+    shared: &Shared,
+) -> Result<()> {
+    let mut stream = Some(stream);
+    // Where t_ms = 0 falls, moved later by every pause
+    let mut start = Instant::now();
     for action in actions {
         let due = Duration::from_millis(action.t_ms.unwrap_or(0));
         loop {
             if shared.stop.load(Ordering::Relaxed) {
                 return Ok(());
+            }
+            if shared.paused.load(Ordering::Relaxed) {
+                if stream.take().is_some() {
+                    log::info!("Replay paused; the controller is back");
+                }
+                let paused_at = Instant::now();
+                while shared.paused.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed)
+                {
+                    thread::sleep(STOP_CHECK);
+                }
+                start += paused_at.elapsed();
+                continue;
+            }
+            if stream.is_none() {
+                stream = Some(connect(address)?);
+                log::info!("Replay resumed");
             }
             let Some(wait) = due.checked_sub(start.elapsed()) else {
                 break;
@@ -181,6 +224,8 @@ fn send_actions(stream: &mut TcpStream, actions: &[Action], shared: &Shared) -> 
         let mut line = serde_json::to_vec(&action)?;
         line.push(b'\n');
         stream
+            .as_mut()
+            .expect("connected above")
             .write_all(&line)
             .context("the proxy closed the replay connection")?;
         shared

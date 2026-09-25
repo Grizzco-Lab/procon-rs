@@ -113,6 +113,20 @@ pub struct LinkStats {
     /// Host clock minus proxy clock in ms, as the lowest difference seen over the
     /// last window; it includes the one-way network delay (well under 1 ms on a LAN)
     pub clock_offset_ms: AtomicI64,
+    /// Sum, count and maximum of [`Frame::forward_us`] since the dashboard last took them
+    pub forward_sum_us: AtomicU64,
+    pub forward_count: AtomicU64,
+    pub forward_max_us: AtomicU64,
+}
+
+impl LinkStats {
+    /// Mean and maximum time reports spent in the proxy since the last call, in µs
+    pub fn take_forward_us(&self) -> Option<(f64, u64)> {
+        let count = self.forward_count.swap(0, Ordering::Relaxed);
+        let sum = self.forward_sum_us.swap(0, Ordering::Relaxed);
+        let max = self.forward_max_us.swap(0, Ordering::Relaxed);
+        (count > 0).then(|| (sum as f64 / count as f64, max))
+    }
 }
 
 /// Host side: keep a connection to the proxy at `address` and feed its reports into `dumper`
@@ -176,6 +190,16 @@ fn receive_once(address: &str, dumper: &mut dyn Dumper, stats: &LinkStats) -> Re
         }
         next_seq = Some(seq.wrapping_add(1));
         stats.frames.fetch_add(1, Ordering::Relaxed);
+        let forward_us = frame.forward_us as u64;
+        if forward_us > 0 {
+            stats
+                .forward_sum_us
+                .fetch_add(forward_us, Ordering::Relaxed);
+            stats.forward_count.fetch_add(1, Ordering::Relaxed);
+            stats
+                .forward_max_us
+                .fetch_max(forward_us, Ordering::Relaxed);
+        }
         dumper.dump(&frame)?;
     }
 }

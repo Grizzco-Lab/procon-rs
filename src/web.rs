@@ -284,6 +284,9 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
                     "input_rate": input_rate,
                     "dropped": link.dropped.load(Ordering::Relaxed),
                     "clock_offset_ms": link.clock_offset_ms.load(Ordering::Relaxed),
+                    // Time reports spend in the proxy since the last status, in µs
+                    "forward_us": link.take_forward_us()
+                        .map(|(mean, max)| json!({ "mean": mean, "max": max })),
                 },
                 "recorder": recorder,
                 "replay": studio.player.status(),

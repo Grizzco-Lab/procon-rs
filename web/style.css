@@ -156,6 +156,10 @@ body[data-rec="recording"] .topbar {
   background: var(--good);
 }
 
+.chip[data-level="warning"] .chip-dot {
+  background: var(--warning);
+}
+
 .chip[data-level="critical"] .chip-dot {
   background: var(--critical);
 }

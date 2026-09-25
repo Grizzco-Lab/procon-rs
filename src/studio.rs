@@ -64,6 +64,8 @@ pub enum Command {
     SetPreviewMatchesRecording { enabled: bool },
     LoadReplay { path: String },
     PlayReplay,
+    PauseReplay,
+    ResumeReplay,
     StopReplay,
     SetReplayMix { enabled: bool },
 }
@@ -186,6 +188,8 @@ impl Studio {
                 self.save_state()?;
             }
             Command::PlayReplay => self.player.play()?,
+            Command::PauseReplay => self.player.set_paused(true)?,
+            Command::ResumeReplay => self.player.set_paused(false)?,
             Command::StopReplay => self.player.stop(),
             Command::SetReplayMix { enabled } => {
                 self.player.set_mix(enabled);

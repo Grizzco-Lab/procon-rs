@@ -34,8 +34,12 @@ pub struct Frame {
     pub packet_size: u8,
     /// Capture sequence number, so gaps reveal dropped frames (zero in older files)
     pub seq: u32,
+    /// Microseconds from reading the report to the Switch taking it from the
+    /// gadget, saturating at 65535; zero when unknown (the Switch did not take
+    /// it, heartbeats, older files)
+    pub forward_us: u16,
     /// Padding to 16-byte alignment
-    _padding: [u8; 3],
+    _padding: [u8; 1],
     /// HID data (NS Pro Controller full report is 64 bytes)
     pub data: [u8; 64],
 }
@@ -56,7 +60,8 @@ impl Frame {
             timestamp_ms: unix_ms(),
             packet_size: data.len().min(64) as u8,
             seq,
-            _padding: [0; 3],
+            forward_us: 0,
+            _padding: [0; 1],
             data: [0; 64],
         };
 
