@@ -1,6 +1,6 @@
 use crate::config::ProxyConfig;
 use crate::device::ProController;
-use crate::dump::Dumper;
+use crate::dump::{Dumper, Frame};
 use anyhow::{Result, bail};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -70,6 +70,8 @@ impl Proxy {
         let mut input_buffer = [0u8; 64];
         let mut output_buffer = [0u8; 64];
         let mut frame_count = 0u64;
+        // Numbers every report read, so consumers can spot dropped frames
+        let mut seq = 0u32;
 
         loop {
             // Ensure HID gadget device is open
@@ -93,8 +95,10 @@ impl Proxy {
                 {
                     Ok(size) => {
                         if size > 0 {
-                            // Dump the input data
-                            if let Err(e) = self.dumper.dump(&input_buffer[..size]) {
+                            // Timestamp once here so every dumper sees the same frame
+                            let frame = Frame::new(seq, &input_buffer[..size]);
+                            seq = seq.wrapping_add(1);
+                            if let Err(e) = self.dumper.dump(&frame) {
                                 log::warn!("Failed to dump input data: {}", e);
                             }
 

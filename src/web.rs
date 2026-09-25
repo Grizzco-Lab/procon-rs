@@ -1,21 +1,22 @@
-//! Web dashboard: live controller view, recording controls and system stats
+//! Studio dashboard server: live controller view, video preview, recording controls
 //!
 //! - `GET /`, `/style.css`, `/app.js`: the page, embedded from `web/`
-//! - `GET /ws`: WebSocket pushing `{"type":"state"}` for every input report
-//!   and `{"type":"status"}` once per second
-//! - `POST /api/recorder`: `{"action":"start"|"pause"|"resume"|"stop"}` or
-//!   `{"action":"set_dir","dir":"..."}`, answered with the recorder status
+//! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
+//!   report, `{"type":"status"}` text once per second, and the video preview
+//!   as binary JPEG messages
+//! - `POST /api/command`: a [`Command`] such as `{"action":"start"}`, answered
+//!   with `{"recorder": ...}` or `{"error": "..."}`
 
-use crate::dump::Dumper;
+use crate::dump::{Dumper, Frame};
 use crate::parser::ProConParser;
-use crate::recorder::Recorder;
+use crate::studio::{Command, Studio};
+use alloc::collections::VecDeque;
 use alloc::ffi::CString;
 use alloc::sync::Arc;
 use anyhow::Result;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::Ordering;
 use core::time::Duration;
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
 use serde_json::json;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -30,8 +31,6 @@ use warp::ws::{Message, WebSocket};
 pub struct LiveFeed {
     /// Latest controller state as JSON
     state: watch::Sender<String>,
-    /// Reports seen, used for the input rate and connection status
-    frames: Arc<AtomicU64>,
 }
 
 impl LiveFeed {
@@ -41,9 +40,8 @@ impl LiveFeed {
 }
 
 impl Dumper for LiveFeed {
-    fn dump(&mut self, data: &[u8]) -> Result<()> {
-        self.frames.fetch_add(1, Ordering::Relaxed);
-
+    fn dump(&mut self, frame: &Frame) -> Result<()> {
+        let data = frame.payload();
         // Skip parsing while no browser is watching
         if self.state.receiver_count() > 0
             && data.first() == Some(&0x30)
@@ -60,78 +58,57 @@ impl Dumper for LiveFeed {
     }
 }
 
-/// Dashboard web server
-pub struct WebServer {
-    feed: LiveFeed,
-    recorder: Recorder,
-    /// Packets dropped by the async dumper
-    dropped: Arc<AtomicU64>,
-}
+/// Serve the dashboard on all interfaces
+pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, port: u16) {
+    let status = watch::Sender::new(String::new());
+    tokio::spawn(publish_status(Arc::clone(&studio), status.clone()));
 
-/// Recorder command sent by the dashboard
-#[derive(Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
-enum Command {
-    Start,
-    Pause,
-    Resume,
-    Stop,
-    SetDir { dir: String },
-}
+    let index = warp::path::end().map(|| warp::reply::html(include_str!("../web/index.html")));
+    let style = warp::path!("style.css")
+        .map(|| asset(include_str!("../web/style.css"), "text/css; charset=utf-8"));
+    let script = warp::path!("app.js").map(|| {
+        asset(
+            include_str!("../web/app.js"),
+            "text/javascript; charset=utf-8",
+        )
+    });
 
-impl WebServer {
-    pub fn new(feed: LiveFeed, recorder: Recorder, dropped: Arc<AtomicU64>) -> Self {
-        Self {
-            feed,
-            recorder,
-            dropped,
-        }
-    }
-
-    /// Serve the dashboard on all interfaces
-    pub async fn run(self, port: u16) {
-        let status = watch::Sender::new(String::new());
-        tokio::spawn(publish_status(
-            Arc::clone(&self.feed.frames),
-            self.recorder.clone(),
-            self.dropped,
-            status.clone(),
-        ));
-
-        let index = warp::path::end().map(|| warp::reply::html(include_str!("../web/index.html")));
-        let style = warp::path!("style.css")
-            .map(|| asset(include_str!("../web/style.css"), "text/css; charset=utf-8"));
-        let script = warp::path!("app.js").map(|| {
-            asset(
-                include_str!("../web/app.js"),
-                "text/javascript; charset=utf-8",
-            )
+    let video = studio.video.clone();
+    let websocket = warp::path!("ws")
+        .and(warp::ws())
+        .map(move |ws: warp::ws::Ws| {
+            let state = feed.state.subscribe();
+            let status = status.subscribe();
+            let preview = video.subscribe();
+            ws.on_upgrade(move |socket| stream_to_client(socket, state, status, preview))
         });
 
-        let feed = self.feed.state;
-        let websocket = warp::path!("ws")
-            .and(warp::ws())
-            .map(move |ws: warp::ws::Ws| {
-                let state = feed.subscribe();
-                let status = status.subscribe();
-                ws.on_upgrade(move |socket| stream_to_client(socket, state, status))
-            });
+    let api = warp::path!("api" / "command")
+        .and(warp::post())
+        .and(warp::body::content_length_limit(4096))
+        .and(warp::body::json())
+        .map(move |command: Command| {
+            // Commands may wait for ffmpeg to restart; keep that off the async workers
+            match tokio::task::block_in_place(|| studio.run(command)) {
+                Ok(()) => {
+                    let reply = json!({ "recorder": studio.recorder.status() });
+                    warp::reply::with_status(warp::reply::json(&reply), StatusCode::OK)
+                }
+                Err(e) => {
+                    log::warn!("Command failed: {:#}", e);
+                    let error = json!({ "error": format!("{e:#}") });
+                    warp::reply::with_status(warp::reply::json(&error), StatusCode::BAD_REQUEST)
+                }
+            }
+        });
 
-        let recorder = self.recorder;
-        let api = warp::path!("api" / "recorder")
-            .and(warp::post())
-            .and(warp::body::content_length_limit(4096))
-            .and(warp::body::json())
-            .map(move |command: Command| run_command(&recorder, command));
+    let routes = warp::get()
+        .and(index.or(style).or(script))
+        .or(websocket)
+        .or(api);
 
-        let routes = warp::get()
-            .and(index.or(style).or(script))
-            .or(websocket)
-            .or(api);
-
-        log::info!("Dashboard on http://0.0.0.0:{}", port);
-        warp::serve(routes).run(([0, 0, 0, 0], port)).await;
-    }
+    log::info!("Dashboard on http://0.0.0.0:{}", port);
+    warp::serve(routes).run(([0, 0, 0, 0], port)).await;
 }
 
 /// Reply with an embedded static file
@@ -139,34 +116,12 @@ fn asset(body: &'static str, content_type: &'static str) -> impl warp::Reply {
     warp::reply::with_header(body, "content-type", content_type)
 }
 
-/// Apply a dashboard command and reply with the new recorder status
-fn run_command(
-    recorder: &Recorder,
-    command: Command,
-) -> warp::reply::WithStatus<warp::reply::Json> {
-    let result = match command {
-        Command::Start => recorder.start(),
-        Command::Pause => recorder.pause(),
-        Command::Resume => recorder.resume(),
-        Command::Stop => recorder.stop(),
-        Command::SetDir { dir } => recorder.set_dir(&dir),
-    };
-
-    match result {
-        Ok(()) => warp::reply::with_status(warp::reply::json(&recorder.status()), StatusCode::OK),
-        Err(e) => {
-            log::warn!("Recorder command failed: {:#}", e);
-            let error = json!({ "error": format!("{e:#}") });
-            warp::reply::with_status(warp::reply::json(&error), StatusCode::BAD_REQUEST)
-        }
-    }
-}
-
-/// Forward controller state and status updates to one browser
+/// Forward controller state, status and preview frames to one browser
 async fn stream_to_client(
     socket: WebSocket,
     mut state: watch::Receiver<String>,
     mut status: watch::Receiver<String>,
+    mut preview: watch::Receiver<Arc<Vec<u8>>>,
 ) {
     let (mut tx, mut rx) = socket.split();
     // Send the current status right away instead of waiting for the next tick
@@ -174,7 +129,7 @@ async fn stream_to_client(
     let mut ping = tokio::time::interval(Duration::from_secs(30));
 
     loop {
-        // A slow client simply skips intermediate states
+        // A slow client simply skips intermediate states and frames
         let message = tokio::select! {
             changed = state.changed() => match changed {
                 Ok(()) => Message::text(state.borrow_and_update().clone()),
@@ -182,6 +137,10 @@ async fn stream_to_client(
             },
             changed = status.changed() => match changed {
                 Ok(()) => Message::text(status.borrow_and_update().clone()),
+                Err(_) => break,
+            },
+            changed = preview.changed() => match changed {
+                Ok(()) => Message::binary(preview.borrow_and_update().to_vec()),
                 Err(_) => break,
             },
             _ = ping.tick() => Message::ping(Vec::new()),
@@ -197,45 +156,70 @@ async fn stream_to_client(
     }
 }
 
+/// Status ticks the input and write rates are averaged over
+const RATE_WINDOW: usize = 6;
+
 /// Publish a status snapshot every second
-async fn publish_status(
-    frames: Arc<AtomicU64>,
-    recorder: Recorder,
-    dropped: Arc<AtomicU64>,
-    status: watch::Sender<String>,
-) {
+async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
     let mut tick = tokio::time::interval(Duration::from_secs(1));
-    // (time, reports seen, bytes recorded) at the previous tick
-    let mut last: Option<(Instant, u64, u64)> = None;
+    // (time, reports received, bytes recorded) over the last few ticks; video files
+    // grow in bursts as the muxer flushes, so rates are averaged over this window
+    let mut history: VecDeque<(Instant, u64, u64)> = VecDeque::new();
 
     loop {
         tick.tick().await;
 
-        let now = Instant::now();
-        let frame_count = frames.load(Ordering::Relaxed);
-        let recorder = recorder.status();
-        let (input_rate, write_rate) = match last {
-            Some((then, then_frames, then_bytes)) => {
-                let secs = now.duration_since(then).as_secs_f64();
+        let snapshot = {
+            let studio = Arc::clone(&studio);
+            // Status reads files and locks shared by blocking code
+            tokio::task::spawn_blocking(move || {
                 (
-                    frame_count.saturating_sub(then_frames) as f64 / secs,
-                    recorder.bytes.saturating_sub(then_bytes) as f64 / secs,
+                    studio.recorder.status(),
+                    studio.video.status(),
+                    disk_space(&studio.recorder.prefix_dir()),
                 )
-            }
-            None => (0.0, 0.0),
+            })
+            .await
         };
-        last = Some((now, frame_count, recorder.bytes));
+        let Ok((recorder, video, disk)) = snapshot else {
+            continue;
+        };
 
-        let (disk_free, disk_total) = disk_space(Path::new(&recorder.dir)).unwrap_or_default();
+        let link = &studio.link;
+        let now = Instant::now();
+        let frames = link.frames.load(Ordering::Relaxed);
+        let bytes = recorder.bytes + video.bytes;
+        history.push_back((now, frames, bytes));
+        if history.len() > RATE_WINDOW {
+            history.pop_front();
+        }
+        let (then, then_frames, then_bytes) = history[0];
+        let secs = now.duration_since(then).as_secs_f64();
+        let (input_rate, write_rate) = if secs > 0.0 {
+            (
+                frames.saturating_sub(then_frames) as f64 / secs,
+                bytes.saturating_sub(then_bytes) as f64 / secs,
+            )
+        } else {
+            (0.0, 0.0)
+        };
+
+        let (disk_free, disk_total) = disk.unwrap_or_default();
         let (mem_available, mem_total) = memory().unwrap_or_default();
 
         status.send_replace(
             json!({
                 "type": "status",
-                "controller": { "connected": input_rate > 0.0, "rate": input_rate },
+                "link": {
+                    "address": studio.pi_address,
+                    "connected": link.connected.load(Ordering::Relaxed),
+                    "input_rate": input_rate,
+                    "dropped": link.dropped.load(Ordering::Relaxed),
+                    "clock_offset_ms": link.clock_offset_ms.load(Ordering::Relaxed),
+                },
                 "recorder": recorder,
+                "video": video,
                 "write_rate": write_rate,
-                "dropped": dropped.load(Ordering::Relaxed),
                 "disk": { "free": disk_free, "total": disk_total },
                 "memory": { "available": mem_available, "total": mem_total },
             })

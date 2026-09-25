@@ -6,7 +6,7 @@ use procon::gadget::ProConGadget;
 use procon::priority::set_high_priority;
 use procon::proxy::Proxy;
 use procon::recorder::Recorder;
-use procon::web::{LiveFeed, WebServer};
+use procon::stream::FrameStreamer;
 
 /// Nintendo Switch Pro Controller HID Proxy
 #[derive(Parser)]
@@ -67,12 +67,15 @@ fn main() -> anyhow::Result<()> {
     // Create multi-dumper for async processing
     let mut multi_dumper = MultiDumper::new();
 
-    // Add recorder; the dashboard starts and stops sessions unless autostart is set
-    let recorder = Recorder::new(&config.dump.dir);
+    // Stream frames to the studio host, which records them with the video
+    multi_dumper.add_dumper(Box::new(FrameStreamer::listen(config.stream.port)?));
+
+    // Optional local backup: one session from launch until exit
     if config.dump.autostart {
+        let recorder = Recorder::new(config.dump.prefix.as_str());
         recorder.start()?;
+        multi_dumper.add_dumper(Box::new(recorder));
     }
-    multi_dumper.add_dumper(Box::new(recorder.clone()));
 
     // Add console dumper only if enabled
     if config.console.enable {
@@ -80,15 +83,8 @@ fn main() -> anyhow::Result<()> {
         multi_dumper.add_dumper(console_dumper);
     }
 
-    // Add live feed for the web dashboard only if enabled
-    let live_feed = config.visualization.web_enable.then(LiveFeed::new);
-    if let Some(feed) = &live_feed {
-        multi_dumper.add_dumper(Box::new(feed.clone()));
-    }
-
     // Wrap in async dumper - this will run dumping in a separate thread
     let async_dumper = AsyncDumper::new(Box::new(multi_dumper));
-    let dropped = async_dumper.drop_counter();
 
     // Create and initialize proxy
     let mut proxy = Proxy::new(Box::new(async_dumper), &hid_device_path, config.proxy)?;
@@ -98,16 +94,6 @@ fn main() -> anyhow::Result<()> {
         log::info!("Console output enabled");
     } else {
         log::info!("Console output disabled");
-    }
-
-    // Start web dashboard if enabled
-    if let Some(feed) = live_feed {
-        let server = WebServer::new(feed, recorder, dropped);
-        let port = config.visualization.web_port;
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(server.run(port));
-        });
     }
 
     // Start proxy main loop (runs at high priority)

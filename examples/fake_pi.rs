@@ -1,17 +1,16 @@
-//! Dashboard demo with a synthetic controller; no Pro Controller or USB gadget needed
+//! Stand-in for the Pi: streams a synthetic controller like `procon` does
 //!
 //! ```sh
-//! cargo run --example web_demo [port]
+//! cargo run --example fake_pi [port]
 //! ```
 //!
-//! Then open <http://localhost:8080> (or the given port). Recordings go to the
-//! system temp directory.
+//! Then point `studio.toml`'s `[pi] address` at `localhost:7331` (or the given
+//! port) and run `procon-studio`. No Pro Controller or USB gadget needed.
 
 use core::f64::consts::TAU;
 use core::time::Duration;
-use procon::dump::{AsyncDumper, Dumper, MultiDumper};
-use procon::recorder::Recorder;
-use procon::web::{LiveFeed, WebServer};
+use procon::dump::{Dumper, Frame};
+use procon::stream::FrameStreamer;
 
 /// (byte offset, bit mask) of every Pro Controller button in an input report
 const BUTTONS: [(usize, u8); 18] = [
@@ -41,25 +40,14 @@ fn main() -> anyhow::Result<()> {
         .init();
     let port = match std::env::args().nth(1) {
         Some(port) => port.parse()?,
-        None => 8080,
+        None => 7331,
     };
 
-    let recorder = Recorder::new(std::env::temp_dir());
-    let feed = LiveFeed::new();
-    let mut multi_dumper = MultiDumper::new();
-    multi_dumper.add_dumper(Box::new(recorder.clone()));
-    multi_dumper.add_dumper(Box::new(feed.clone()));
-    let mut dumper = AsyncDumper::new(Box::new(multi_dumper));
-
-    let server = WebServer::new(feed, recorder, dumper.drop_counter());
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(server.run(port));
-    });
+    let mut streamer = FrameStreamer::listen(port)?;
 
     // A wired Pro Controller reports every 8 ms
-    for tick in 0.. {
-        dumper.dump(&fake_report(tick))?;
+    for tick in 0u64.. {
+        streamer.dump(&Frame::new(tick as u32, &fake_report(tick)))?;
         std::thread::sleep(Duration::from_millis(8));
     }
     Ok(())

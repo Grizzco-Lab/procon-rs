@@ -24,20 +24,24 @@ const QUEUE_WARNING_THRESHOLD: f64 = 0.8;
 /// Interval for checking and logging queue size warnings
 const QUEUE_CHECK_INTERVAL: u64 = 100;
 
+/// One controller report as stored in dump files and sent to the studio host
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct Frame {
-    /// Millisecond Unix timestamp
+    /// Millisecond Unix timestamp, taken when the report was read
     pub timestamp_ms: u64,
-    /// Actual packet size
+    /// Actual packet size; zero marks a heartbeat without data
     pub packet_size: u8,
+    /// Capture sequence number, so gaps reveal dropped frames (zero in older files)
+    pub seq: u32,
     /// Padding to 16-byte alignment
-    _padding: [u8; 7],
+    _padding: [u8; 3],
     /// HID data (NS Pro Controller full report is 64 bytes)
     pub data: [u8; 64],
 }
 
-const FRAME_SIZE: usize = mem::size_of::<Frame>();
+/// Size of a [`Frame`] in bytes
+pub const FRAME_SIZE: usize = mem::size_of::<Frame>();
 
 // Compile-time assertion that our assumptions are correct
 const _: () = {
@@ -46,16 +50,13 @@ const _: () = {
 };
 
 impl Frame {
-    fn new(data: &[u8]) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-
+    /// Timestamp `data` with the current time
+    pub fn new(seq: u32, data: &[u8]) -> Self {
         let mut frame = Frame {
-            timestamp_ms: now,
+            timestamp_ms: unix_ms(),
             packet_size: data.len().min(64) as u8,
-            _padding: [0; 7],
+            seq,
+            _padding: [0; 3],
             data: [0; 64],
         };
 
@@ -64,21 +65,39 @@ impl Frame {
         frame
     }
 
-    fn as_bytes(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self as *const _ as *const u8, FRAME_SIZE) }
+    /// The HID report carried by this frame; empty for a heartbeat
+    pub fn payload(&self) -> &[u8] {
+        &self.data[..self.packet_size as usize]
     }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, FRAME_SIZE) }
+    }
+
+    pub fn from_bytes(bytes: &[u8; FRAME_SIZE]) -> Self {
+        // SAFETY: Frame is plain packed data, valid for any bit pattern
+        unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const Frame) }
+    }
+}
+
+/// Current Unix time in milliseconds
+pub fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }
 
 /// Trait for dumping Pro Controller input data
 pub trait Dumper: Send {
-    fn dump(&mut self, data: &[u8]) -> Result<()>;
+    fn dump(&mut self, frame: &Frame) -> Result<()>;
     fn flush(&mut self) -> Result<()>;
 }
 
 /// Message type for async dumper communication
 #[derive(Clone)]
 enum DumpMessage {
-    Data(Vec<u8>),
+    Data(Frame),
     Flush,
     Shutdown,
 }
@@ -185,11 +204,6 @@ impl AsyncDumper {
         }
     }
 
-    /// Counter of packets dropped because the dump queue was full
-    pub fn drop_counter(&self) -> Arc<AtomicU64> {
-        Arc::clone(&self.drop_count)
-    }
-
     /// Worker function that runs in the dump thread
     fn dump_thread_worker(
         receiver: Receiver<DumpMessage>,
@@ -250,7 +264,7 @@ impl AsyncDumper {
 }
 
 impl Dumper for AsyncDumper {
-    fn dump(&mut self, data: &[u8]) -> Result<()> {
+    fn dump(&mut self, frame: &Frame) -> Result<()> {
         // Check current queue size and implement backpressure
         let current_size = self.queue_size.load(Ordering::Relaxed);
 
@@ -262,7 +276,7 @@ impl Dumper for AsyncDumper {
         }
 
         // Try to send the message
-        match self.sender.send(DumpMessage::Data(data.to_vec())) {
+        match self.sender.send(DumpMessage::Data(*frame)) {
             Ok(()) => {
                 // Update queue size estimate
                 self.queue_size.fetch_add(1, Ordering::Relaxed);
@@ -339,8 +353,7 @@ impl FileDumper {
 }
 
 impl Dumper for FileDumper {
-    fn dump(&mut self, data: &[u8]) -> Result<()> {
-        let frame = Frame::new(data);
+    fn dump(&mut self, frame: &Frame) -> Result<()> {
         self.writer.write_all(frame.as_bytes())?;
         self.frame_count += 1;
 
@@ -493,12 +506,10 @@ impl ConsoleDumper {
 }
 
 impl Dumper for ConsoleDumper {
-    fn dump(&mut self, data: &[u8]) -> Result<()> {
-        let frame = Frame::new(data);
-
+    fn dump(&mut self, frame: &Frame) -> Result<()> {
         let timestamp = self.format_timestamp(frame.timestamp_ms);
 
-        let decoded = self.decode_frame_compact(&frame);
+        let decoded = self.decode_frame_compact(frame);
         println!("{} #{:08} {}", timestamp, self.frame_count, decoded);
 
         self.frame_count += 1;
@@ -528,9 +539,9 @@ impl MultiDumper {
 }
 
 impl Dumper for MultiDumper {
-    fn dump(&mut self, data: &[u8]) -> Result<()> {
+    fn dump(&mut self, frame: &Frame) -> Result<()> {
         for dumper in &mut self.dumpers {
-            dumper.dump(data)?;
+            dumper.dump(frame)?;
         }
         Ok(())
     }

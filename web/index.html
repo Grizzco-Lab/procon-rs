@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="studio">
+<html lang="en" data-theme="studio" data-layout="auto">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -12,15 +12,19 @@
     />
     <link rel="stylesheet" href="style.css" />
     <script>
-      // Style proposal picker: ?theme=<name> or the last choice (temporary)
+      // Apply the saved view before first paint; ?theme= and ?layout= override it
       (() => {
-        const themes = ["studio", "joy", "telemetry"];
-        const asked = new URLSearchParams(location.search).get("theme");
-        const theme = themes.includes(asked)
-          ? asked
-          : localStorage.getItem("procon-theme");
-        if (themes.includes(theme))
-          document.documentElement.dataset.theme = theme;
+        const params = new URLSearchParams(location.search);
+        const views = {
+          theme: ["studio", "joy", "telemetry"],
+          layout: ["auto", "phone"],
+        };
+        for (const [key, allowed] of Object.entries(views)) {
+          const value =
+            params.get(key) ?? localStorage.getItem(`procon-${key}`);
+          if (allowed.includes(value))
+            document.documentElement.dataset[key] = value;
+        }
       })();
     </script>
   </head>
@@ -37,20 +41,31 @@
         <span class="brand-name">ProCon <b>Studio</b></span>
       </div>
       <div class="status-strip">
-        <span class="chip" id="chip-controller" data-level="off">
+        <span class="chip" id="chip-link" data-level="off">
           <span class="chip-dot"></span
           ><span class="chip-text">Connecting…</span>
+        </span>
+        <span class="chip" id="chip-controller" data-level="off">
+          <span class="chip-dot"></span
+          ><span class="chip-text">No controller input</span>
         </span>
         <span class="chip chip-rec" id="chip-rec" data-state="idle">
           <span class="chip-dot"></span
           ><span class="chip-text">Not recording</span>
         </span>
       </div>
-      <nav class="theme-picker" aria-label="Style proposal">
-        <span class="theme-picker-label">Style</span>
-        <button type="button" data-pick="studio">A · Studio</button>
-        <button type="button" data-pick="joy">B · Joy</button>
-        <button type="button" data-pick="telemetry">C · Telemetry</button>
+      <nav class="theme-picker" aria-label="View">
+        <span class="theme-picker-label">View</span>
+        <button type="button" data-pick="studio">Studio</button>
+        <button type="button" data-pick="joy">Joy</button>
+        <button type="button" data-pick="telemetry">Telemetry</button>
+        <button
+          type="button"
+          id="pick-phone"
+          title="Single-column phone layout"
+        >
+          Phone
+        </button>
       </nav>
     </header>
 
@@ -58,16 +73,21 @@
       <section class="panel p-video" aria-labelledby="h-video">
         <header class="panel-head">
           <h2 id="h-video">Video</h2>
-          <span class="panel-note">Capture card</span>
+          <select
+            id="video-input"
+            class="select"
+            aria-label="Video input"
+          ></select>
         </header>
         <div class="screen">
-          <div class="no-signal">
+          <img id="video-img" alt="Video preview" hidden />
+          <div class="no-signal" id="no-signal">
             <svg viewBox="0 0 48 48" aria-hidden="true">
               <rect x="5" y="9" width="38" height="25" rx="3" />
               <path d="M17 41h14M24 34v7M9 13l30 17" />
             </svg>
-            <p>No video source</p>
-            <small>Capture card preview will show here</small>
+            <p id="video-title">No video source</p>
+            <small id="video-message">Pick an input above</small>
           </div>
         </div>
       </section>
@@ -317,11 +337,11 @@
           </button>
         </div>
         <form class="dir-form" id="dir-form">
-          <label for="dir-input">Output directory</label>
+          <label for="dir-input">Save to (path prefix)</label>
           <div class="dir-row">
             <input
               id="dir-input"
-              name="dir"
+              name="prefix"
               type="text"
               spellcheck="false"
               autocomplete="off"
@@ -330,7 +350,7 @@
           </div>
         </form>
         <div class="rec-file">
-          <span class="rec-file-label" id="rec-file-label">Last file</span>
+          <span class="rec-file-label" id="rec-file-label">Next session</span>
           <span class="path" id="rec-file">None yet</span>
         </div>
         <p class="notice" id="rec-error" role="alert" hidden></p>
@@ -343,16 +363,16 @@
         </header>
         <div class="tiles">
           <div class="tile">
-            <span class="tile-label">File size</span>
+            <span class="tile-label">Controller data</span>
             <span class="tile-value" id="stat-size">0 B</span>
+          </div>
+          <div class="tile">
+            <span class="tile-label">Video</span>
+            <span class="tile-value" id="stat-video">0 B</span>
           </div>
           <div class="tile">
             <span class="tile-label">Write rate</span>
             <span class="tile-value" id="stat-rate">0 B/s</span>
-          </div>
-          <div class="tile">
-            <span class="tile-label">Frames</span>
-            <span class="tile-value" id="stat-frames">0</span>
           </div>
           <div class="tile" id="tile-dropped">
             <span class="tile-label">Dropped</span>

@@ -1,6 +1,7 @@
-//! Configuration management for ProCon proxy
+//! Configuration for the Pi proxy (`config.toml`) and the studio host (`studio.toml`)
 
 use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -14,8 +15,8 @@ pub struct Config {
     pub dump: DumpConfig,
     /// Console output configuration
     pub console: ConsoleConfig,
-    /// Visualization configuration
-    pub visualization: VisualizationConfig,
+    /// Frame streaming to the studio host
+    pub stream: StreamConfig,
     /// Performance configuration
     pub performance: PerformanceConfig,
     /// Logging configuration
@@ -33,13 +34,13 @@ pub struct ProxyConfig {
     pub hidg_retry_delay_ms: u64,
 }
 
-/// Dump-related configuration
+/// Local backup recording on the Pi
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DumpConfig {
-    /// Directory for recording session files; the dashboard can change it at runtime
-    pub dir: String,
-    /// Start recording at launch instead of waiting for the dashboard
+    /// Record a session from launch until exit, next to what the studio records
     pub autostart: bool,
+    /// Path prefix of that session folder, e.g. "/home/pi/procon-"
+    pub prefix: String,
 }
 
 /// Console output configuration
@@ -49,13 +50,11 @@ pub struct ConsoleConfig {
     pub enable: bool,
 }
 
-/// Visualization configuration
+/// Frame streaming configuration
 #[derive(Debug, Serialize, Deserialize)]
-pub struct VisualizationConfig {
-    /// Enable web-based visualization server
-    pub web_enable: bool,
-    /// Port for web visualization server
-    pub web_port: u16,
+pub struct StreamConfig {
+    /// TCP port the studio host connects to
+    pub port: u16,
 }
 
 /// Performance-related configuration
@@ -75,13 +74,7 @@ pub struct LoggingConfig {
 impl Config {
     /// Load configuration from a TOML file
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let contents = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read config file: {}", path.as_ref().display()))?;
-
-        let config: Config = toml::from_str(&contents)
-            .with_context(|| format!("Failed to parse config file: {}", path.as_ref().display()))?;
-
-        Ok(config)
+        load(path)
     }
 
     /// Save configuration to a TOML file
@@ -97,17 +90,82 @@ impl Config {
 
     /// Validate configuration values
     pub fn validate(&self) -> Result<()> {
-        // Validate log level
-        match self.logging.level.to_lowercase().as_str() {
-            "error" | "warn" | "info" | "debug" | "trace" => {}
-            _ => anyhow::bail!("Invalid log level: {}", self.logging.level),
-        }
-
-        // Validate the dump directory exists
-        if !Path::new(&self.dump.dir).is_dir() {
-            anyhow::bail!("Dump directory does not exist: {}", self.dump.dir);
-        }
-
-        Ok(())
+        self.logging.validate()
     }
+}
+
+impl LoggingConfig {
+    /// Check the log level is one env_logger knows
+    pub fn validate(&self) -> Result<()> {
+        match self.level.to_lowercase().as_str() {
+            "error" | "warn" | "info" | "debug" | "trace" => Ok(()),
+            _ => anyhow::bail!("Invalid log level: {}", self.level),
+        }
+    }
+}
+
+/// Load any configuration struct from a TOML file
+pub fn load<T: DeserializeOwned, P: AsRef<Path>>(path: P) -> Result<T> {
+    let contents = fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read config file: {}", path.as_ref().display()))?;
+
+    toml::from_str(&contents)
+        .with_context(|| format!("Failed to parse config file: {}", path.as_ref().display()))
+}
+
+/// Studio host configuration (`studio.toml`)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StudioConfig {
+    /// Where the Pi streams frames from
+    pub pi: PiConfig,
+    /// Dashboard server
+    pub web: WebConfig,
+    /// Session recording defaults
+    pub recording: RecordingConfig,
+    /// Video capture
+    pub video: VideoConfig,
+    /// Logging configuration
+    pub logging: LoggingConfig,
+}
+
+/// The Pi running `procon`
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PiConfig {
+    /// `host:port` of the Pi's `[stream]` port
+    pub address: String,
+}
+
+/// Dashboard server configuration
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WebConfig {
+    /// Port for the dashboard
+    pub port: u16,
+}
+
+/// Session recording defaults
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RecordingConfig {
+    /// Path prefix for session folders until one is set from the dashboard
+    pub prefix: String,
+}
+
+/// Video capture configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoConfig {
+    /// Input at first launch: "screen", a device like "/dev/video0", or "" for none
+    pub input: String,
+    /// Capture frame rate
+    pub fps: u32,
+    /// Extra ffmpeg input options for V4L2 devices, such as format and size
+    pub v4l2_args: Vec<String>,
+    /// ffmpeg filter applied to recorded frames
+    pub record_filter: String,
+    /// ffmpeg encoder options for recordings
+    pub encoder: Vec<String>,
+    /// Recording file extension
+    pub extension: String,
+    /// Preview height in pixels
+    pub preview_height: u32,
+    /// Preview frame rate
+    pub preview_fps: u32,
 }

@@ -38,24 +38,39 @@ const signed = (n) => (n < 0 ? `−${Math.abs(n)}` : String(n));
 
 // ------------------------------------------------------ style proposal picker
 
-// Temporary: lets the three proposals be compared on live data
-function markTheme() {
-  const current = document.documentElement.dataset.theme;
+// Style and layout are remembered per browser, so a phone and a desktop can differ
+const root = document.documentElement;
+
+function setView(key, value) {
+  root.dataset[key] = value;
+  try {
+    localStorage.setItem(`procon-${key}`, value);
+  } catch {
+    // Private windows may refuse storage; the choice still applies until reload
+  }
+  markView();
+}
+
+function markView() {
   for (const button of document.querySelectorAll("[data-pick]")) {
     button.setAttribute(
       "aria-pressed",
-      String(button.dataset.pick === current),
+      String(button.dataset.pick === root.dataset.theme),
     );
   }
+  $("pick-phone").setAttribute(
+    "aria-pressed",
+    String(root.dataset.layout === "phone"),
+  );
 }
+
 for (const button of document.querySelectorAll("[data-pick]")) {
-  button.addEventListener("click", () => {
-    document.documentElement.dataset.theme = button.dataset.pick;
-    localStorage.setItem("procon-theme", button.dataset.pick);
-    markTheme();
-  });
+  button.addEventListener("click", () => setView("theme", button.dataset.pick));
 }
-markTheme();
+$("pick-phone").addEventListener("click", () =>
+  setView("layout", root.dataset.layout === "phone" ? "auto" : "phone"),
+);
+markView();
 
 // ----------------------------------------------------------- controller view
 
@@ -287,17 +302,18 @@ function renderRecorder(status) {
   $("btn-pause-text").textContent =
     status.state === "paused" ? "Resume" : "Pause";
 
-  // Keep what the user typed until it is applied; a running session shows its real directory
+  // Keep what the user typed until it is applied; a running session shows its real prefix
   const active = status.state !== "idle";
   const input = $("dir-input");
   if (active) delete input.dataset.edited;
-  if (!input.dataset.edited) input.value = status.dir;
+  if (!input.dataset.edited) input.value = status.prefix;
 
-  $("rec-file-label").textContent = active ? "File" : "Last file";
-  $("rec-file").textContent = status.file ?? "None yet";
-  $("rec-file").title = status.file ?? "";
+  // While idle, show the folder the next session gets
+  const shown = active ? status.session : status.next;
+  $("rec-file-label").textContent = active ? "Session folder" : "Next session";
+  $("rec-file").textContent = `${shown}/`;
+  $("rec-file").title = shown;
   $("stat-size").textContent = formatBytes(status.bytes);
-  $("stat-frames").textContent = status.frames.toLocaleString("en-US");
 
   if (status.error) showError(status.error);
   updateClock(performance.now());
@@ -326,10 +342,11 @@ function setButtons() {
   $("btn-record").disabled = recorder.busy || active;
   $("btn-pause").disabled = recorder.busy || !active;
   $("btn-stop").disabled = recorder.busy || !active;
-  // The directory can only change between sessions
+  // The prefix and video input can only change between sessions
   const form = $("dir-form");
-  form.elements.dir.disabled = active;
+  form.elements.prefix.disabled = active;
   form.querySelector("button").disabled = recorder.busy || active;
+  $("video-input").disabled = recorder.busy || active;
 }
 
 function showError(message) {
@@ -342,7 +359,7 @@ async function sendCommand(body) {
   recorder.busy = true;
   setButtons();
   try {
-    const response = await fetch("/api/recorder", {
+    const response = await fetch("/api/command", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -356,7 +373,7 @@ async function sendCommand(body) {
     }
     if (!response.ok) throw new Error(reply.error ?? `HTTP ${response.status}`);
     showError(null);
-    renderRecorder(reply);
+    renderRecorder(reply.recorder);
     return true;
   } catch (error) {
     showError(error.message);
@@ -380,11 +397,64 @@ $("dir-input").addEventListener("input", (event) => {
 $("dir-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const input = $("dir-input");
-  if (await sendCommand({ action: "set_dir", dir: input.value })) {
+  if (await sendCommand({ action: "set_prefix", prefix: input.value })) {
     delete input.dataset.edited;
     input.blur();
   }
 });
+
+// --------------------------------------------------------------------- video
+
+const video = {
+  /** Object URL of the frame on screen, revoked when the next one arrives */
+  url: null,
+  live: false,
+};
+
+$("video-input").addEventListener("change", (event) =>
+  sendCommand({ action: "set_video_input", input: event.target.value }),
+);
+
+function showPreview(blob) {
+  if (!video.live) return;
+  const img = $("video-img");
+  const previous = video.url;
+  video.url = URL.createObjectURL(blob);
+  img.src = video.url;
+  if (previous) URL.revokeObjectURL(previous);
+}
+
+function renderVideo(status) {
+  // Rebuild the input list only when it changes, so an open menu stays open
+  const select = $("video-input");
+  const options = [{ id: "", name: "No video" }, ...status.inputs];
+  const key = JSON.stringify(options);
+  if (select.dataset.key !== key) {
+    select.dataset.key = key;
+    select.replaceChildren(
+      ...options.map(({ id, name }) => new Option(name, id)),
+    );
+  }
+  select.value = status.input ?? "";
+
+  video.live = status.live;
+  $("video-img").hidden = !status.live;
+  $("no-signal").hidden = status.live;
+  if (!status.input) {
+    $("video-title").textContent = "No video source";
+    $("video-message").textContent = "Pick an input above";
+  } else if (status.error) {
+    $("video-title").textContent = "Video input unavailable";
+    // A busy capture card is almost always OBS holding it
+    $("video-message").textContent = status.error.includes("busy")
+      ? "The device is busy. Close OBS or anything else using it."
+      : status.error;
+  } else {
+    $("video-title").textContent = "Starting video…";
+    $("video-message").textContent = status.input;
+  }
+  $("stat-video").textContent = formatBytes(status.bytes);
+}
 
 // ---------------------------------------------------------------- status tick
 
@@ -400,23 +470,39 @@ function renderMeter(id, used, text) {
   meter.querySelector(".meter-value").textContent = text;
 }
 
+function setChip(id, level, text, title = "") {
+  const chip = $(id);
+  chip.dataset.level = level;
+  chip.title = title;
+  chip.querySelector(".chip-text").textContent = text;
+}
+
 function renderStatus(status) {
-  const controller = $("chip-controller");
-  controller.dataset.level = status.controller.connected ? "good" : "critical";
-  controller.querySelector(".chip-text").textContent = status.controller
-    .connected
-    ? "Controller connected"
-    : "No controller input";
-  $("input-rate").textContent = status.controller.connected
-    ? `${status.controller.rate.toFixed(1)} Hz input`
+  const link = status.link;
+  const offset = `${link.clock_offset_ms >= 0 ? "+" : "−"}${Math.abs(link.clock_offset_ms)} ms`;
+  setChip(
+    "chip-link",
+    link.connected ? "good" : "critical",
+    link.connected ? "Pi connected" : "Pi not connected",
+    `${link.address}${link.connected ? `, host clock ${offset} vs Pi` : ""}`,
+  );
+  const input = link.connected && link.input_rate > 0;
+  setChip(
+    "chip-controller",
+    input ? "good" : "critical",
+    input ? "Controller input" : "No controller input",
+  );
+  $("input-rate").textContent = input
+    ? `${link.input_rate.toFixed(1)} Hz · clock ${offset}`
     : "No input";
-  procon.classList.toggle("is-idle", !status.controller.connected);
+  procon.classList.toggle("is-idle", !input);
 
   renderRecorder(status.recorder);
+  renderVideo(status.video);
   $("stat-rate").textContent = `${formatBytes(status.write_rate)}/s`;
-  $("stat-dropped").textContent = status.dropped.toLocaleString("en-US");
-  $("tile-dropped").dataset.level = status.dropped > 0 ? "warning" : "ok";
-  $("dropped-note").textContent = status.dropped > 0 ? "⚠ Frames dropped" : "";
+  $("stat-dropped").textContent = link.dropped.toLocaleString("en-US");
+  $("tile-dropped").dataset.level = link.dropped > 0 ? "warning" : "ok";
+  $("dropped-note").textContent = link.dropped > 0 ? "⚠ Frames dropped" : "";
 
   const disk = status.disk;
   if (disk.total > 0) {
@@ -450,17 +536,21 @@ function renderStatus(status) {
 let latestState = null;
 
 function markOffline() {
-  const chip = $("chip-controller");
-  chip.dataset.level = "off";
-  chip.querySelector(".chip-text").textContent =
-    "Dashboard offline, reconnecting…";
+  setChip("chip-link", "off", "Dashboard offline, reconnecting…");
+  setChip("chip-controller", "off", "No controller input");
   procon.classList.add("is-idle");
 }
 
 function connect() {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${scheme}://${location.host}/ws`);
+  socket.binaryType = "blob";
   socket.onmessage = (event) => {
+    // Binary messages are video preview JPEGs
+    if (event.data instanceof Blob) {
+      showPreview(event.data.slice(0, event.data.size, "image/jpeg"));
+      return;
+    }
     const message = JSON.parse(event.data);
     if (message.type === "state") {
       latestState = message.state;

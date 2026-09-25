@@ -7,20 +7,18 @@ frame_count_log_interval = 100
 hidg_retry_delay_ms = 1000
 
 [dump]
-# Directory for recording sessions (procon-YYYYMMDD-HHMMSS.bin); the dashboard can change it
-dir = "/tmp"
-# Start recording at launch instead of waiting for the dashboard's Record button
+# Local backup: record one session from launch until exit, besides what the studio records
 autostart = false
+# Path prefix of that session folder (<prefix>YYYY-MM-DD_HH-MM-SS/controller.bin)
+prefix = "/tmp/procon-"
 
 [console]
 # Enable console output to terminal
 enable = false
 
-[visualization]
-# Enable web-based visualization server
-web_enable = true
-# Port for web visualization server
-web_port = 8080
+[stream]
+# TCP port the studio host connects to for live frames
+port = 7331
 
 [performance]
 # Enable CPU affinity pinning to random core

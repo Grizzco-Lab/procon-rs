@@ -15,6 +15,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Nintendo Switch Pro Controller HID proxy written in Rust. It forwards HID data bidirectionally between a physical Pro Controller and Nintendo Switch via USB gadget functionality on Raspberry Pi 4.
 
+It has two binaries: `procon` runs on the Pi (proxy + frame streaming over TCP), and `procon-studio` runs on a Linux host with the capture card (dashboard, ffmpeg video capture, session recording). `cargo run --example fake_pi` stands in for the Pi.
+
 ## Common Commands
 
 ### Build and Run
@@ -73,12 +75,18 @@ cargo clippy
 
 **Parser/KeyState (`src/parser.rs`, `src/keystate.rs`)**: HID input report parsing into structured controller state
 
-**Recorder (`src/recorder.rs`)**: File dumper with start/pause/resume/stop; one `procon-YYYYMMDD-HHMMSS.bin` per session in a configurable directory
+**Frame link (`src/stream.rs`)**: Pi-side `FrameStreamer` (TCP, header then 80-byte frames, heartbeats) and host-side `receive_frames` (sequence gaps, clock offset)
 
-**Web dashboard (`src/web.rs`, `web/`)**: warp server with the embedded page, a WebSocket (`state` per input report, `status` once per second) and `POST /api/recorder` for recording commands. `cargo run --example web_demo` runs it with a synthetic controller.
+**Recorder (`src/recorder.rs`)**: Session folders `<prefix>YYYY-MM-DD_HH-MM-SS/` with `controller.bin`; start/pause/resume/stop
+
+**Video (`src/video.rs`)**: One ffmpeg process per input: MJPEG preview on stdout, plus an encoded file while recording; stopped with SIGINT
+
+**Studio (`src/studio.rs`)**: Host coordinator; starts/stops recorder and video together, writes `session.json`, saves dashboard settings to `studio.state.json`
+
+**Web dashboard (`src/web.rs`, `web/`)**: warp server with the embedded page, a WebSocket (`state` per input report, `status` once per second, preview JPEGs as binary) and `POST /api/command`
 
 ### Data Flow
-1. **Initialization**: USB gadget auto-setup → Recorder and dumper setup → Controller connection → Web dashboard
+1. **Initialization**: USB gadget auto-setup → Frame streamer and dumper setup → Controller connection
 2. **Main Loop**: Bidirectional forwarding with timeout-based non-blocking I/O
 3. **Error Recovery**: Automatic device reconnection and cleanup
 
@@ -97,12 +105,11 @@ frame_count_log_interval = 100       # Frame counting log frequency
 hidg_retry_delay_ms = 1000          # HID gadget retry delay
 
 [dump]
-dir = "/tmp"                        # Recording directory (changeable from the dashboard)
-autostart = false                   # Record at launch without the dashboard
+autostart = false                   # Local backup session on the Pi
+prefix = "/tmp/procon-"
 
-[visualization]
-web_enable = true                   # Web dashboard
-web_port = 8080
+[stream]
+port = 7331                         # Studio host connects here
 
 [performance]
 enable_cpu_affinity = false         # Pin to random CPU core

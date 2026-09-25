@@ -77,6 +77,11 @@ h2 {
   margin: 0;
 }
 
+/* Components set their own display, which would otherwise beat the attribute */
+[hidden] {
+  display: none !important;
+}
+
 /* ----------------------------------------------------------- top bar */
 
 .topbar {
@@ -199,6 +204,10 @@ body[data-rec="recording"] .topbar {
   cursor: pointer;
 }
 
+#pick-phone {
+  margin-left: 6px;
+}
+
 .theme-picker button[aria-pressed="true"] {
   background: var(--text);
   border-color: var(--text);
@@ -273,6 +282,24 @@ body[data-rec="recording"] .topbar {
   border-radius: var(--radius-sm);
   background: var(--screen);
   overflow: hidden;
+}
+
+#video-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.select {
+  max-width: 60%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
 }
 
 .no-signal {
@@ -1154,7 +1181,11 @@ input:focus-visible {
   background: #ffffff;
 }
 
-[data-theme="joy"] .theme-picker button[aria-pressed="true"] {
+[data-theme="joy"] #pick-phone {
+  margin-left: 6px;
+}
+
+.theme-picker button[aria-pressed="true"] {
   background: var(--text);
   border-color: var(--text);
   color: #ffffff;
@@ -1351,7 +1382,11 @@ input:focus-visible {
   text-transform: uppercase;
 }
 
-[data-theme="telemetry"] .theme-picker button[aria-pressed="true"] {
+[data-theme="telemetry"] #pick-phone {
+  margin-left: 6px;
+}
+
+.theme-picker button[aria-pressed="true"] {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
@@ -1562,17 +1597,28 @@ input:focus-visible {
   :root[data-theme] .layout {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
-      "controller controller"
+      "video controller"
       "recorder stats"
-      "motion motion"
-      "video video";
+      "motion motion";
   }
+}
+
+/* Phone layout: chosen from the View menu, or automatic on narrow screens */
+:root[data-layout="phone"] .layout {
+  max-width: 480px;
+  margin: 0 auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "recorder" "controller" "video" "stats" "motion";
+}
+
+:root[data-layout="phone"] .p-motion {
+  display: flex;
 }
 
 @media (max-width: 720px) {
   :root[data-theme] .layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "recorder" "controller" "stats" "motion" "video";
+    grid-template-areas: "recorder" "controller" "video" "stats" "motion";
   }
 
   :root[data-theme] .p-motion {

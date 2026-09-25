@@ -9,4 +9,7 @@ pub mod parser;
 pub mod priority;
 pub mod proxy;
 pub mod recorder;
+pub mod stream;
+pub mod studio;
+pub mod video;
 pub mod web;
