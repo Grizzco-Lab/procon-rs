@@ -67,13 +67,13 @@ cargo clippy
 - Runs at high priority for minimal latency
 - Auto-reconnection on device failures
 
-**ProController (`src/device.rs`)**: Manages physical controller connection via USB HID
+**ProController (`src/device.rs`)**: The physical controller through hidapi; reconnects as long as it takes. `set_poll_interval` sets `usbhid.jspoll` and rebinds the controller to hid-generic (Linux's hid-nintendo cannot set up a controller the Switch already set up)
 
 **ProConGadget (`src/gadget.rs`)**: Handles automatic USB gadget setup and cleanup with Nintendo Pro Controller device IDs
 
 **AsyncDumper (`src/dump.rs`)**: High-performance data logging system:
 - Runs in separate thread to avoid blocking proxy
-- Supports file and console output
+- Supports file output and fan-out to several dumpers
 - Backpressure handling with intelligent packet dropping
 
 **Parser/KeyState (`src/parser.rs`, `src/keystate.rs`)**: HID input report parsing into structured controller state
@@ -113,8 +113,7 @@ cargo clippy
 
 ```toml
 [proxy]
-controller_read_timeout_ms = 20      # Controller read timeout
-frame_count_log_interval = 100       # Frame counting log frequency
+controller_poll_ms = 1               # usbhid.jspoll; rumble writes ~2 ms instead of ~9; 0 = 8 ms
 hidg_retry_delay_ms = 1000          # HID gadget retry delay
 
 [dump]

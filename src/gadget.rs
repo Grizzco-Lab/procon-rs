@@ -10,6 +10,12 @@ pub struct ProConGadget {
     reg_gadget: Option<RegGadget>,
 }
 
+impl Default for ProConGadget {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProConGadget {
     /// Create a new ProCon gadget manager
     pub fn new() -> Self {
@@ -104,13 +110,11 @@ fn find_hidg_device() -> Option<String> {
     // Look for /dev/hidg* devices (usually hidg0, hidg1, etc.)
     for i in 0..10 {
         let device_path = format!("/dev/hidg{}", i);
-        if std::path::Path::new(&device_path).exists() {
-            // Verify it's a character device
-            if let Ok(metadata) = fs::metadata(&device_path) {
-                if metadata.file_type().is_char_device() {
-                    return Some(device_path);
-                }
-            }
+        // An existing character device
+        if let Ok(metadata) = fs::metadata(&device_path)
+            && metadata.file_type().is_char_device()
+        {
+            return Some(device_path);
         }
     }
 

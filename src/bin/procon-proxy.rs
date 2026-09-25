@@ -1,7 +1,8 @@
 use anyhow::Context;
 use clap::Parser;
 use procon::config::Config;
-use procon::dump::{AsyncDumper, ConsoleDumper, MultiDumper};
+use procon::device::set_poll_interval;
+use procon::dump::{AsyncDumper, MultiDumper};
 use procon::gadget::ProConGadget;
 use procon::priority::set_high_priority;
 use procon::proxy::Proxy;
@@ -58,6 +59,10 @@ fn main() -> anyhow::Result<()> {
     // Set high priority for main proxy thread
     set_high_priority(config.performance.enable_cpu_affinity);
 
+    if let Err(e) = set_poll_interval(config.proxy.controller_poll_ms) {
+        log::warn!("Cannot set the controller polling interval: {:#}", e);
+    }
+
     // Setup USB gadget programmatically
     let mut usb_gadget = ProConGadget::new();
     let hid_device_path = usb_gadget
@@ -78,12 +83,6 @@ fn main() -> anyhow::Result<()> {
         multi_dumper.add_dumper(Box::new(recorder));
     }
 
-    // Add console dumper only if enabled
-    if config.console.enable {
-        let console_dumper = Box::new(ConsoleDumper::new());
-        multi_dumper.add_dumper(console_dumper);
-    }
-
     // Wrap in async dumper - this will run dumping in a separate thread
     let async_dumper = AsyncDumper::new(Box::new(multi_dumper));
 
@@ -100,11 +99,6 @@ fn main() -> anyhow::Result<()> {
     )?;
 
     log::info!("Starting proxy with async dumping (dump thread runs at normal priority)");
-    if config.console.enable {
-        log::info!("Console output enabled");
-    } else {
-        log::info!("Console output disabled");
-    }
 
     // Start proxy main loop (runs at high priority)
     let result = proxy.start();

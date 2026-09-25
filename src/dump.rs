@@ -1,5 +1,4 @@
 use anyhow::Result;
-use smallvec::SmallVec;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::mem;
@@ -9,9 +8,6 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use crate::keystate::{ButtonState, StickData};
-use crate::parser::ProConParser;
 
 const FLUSH_INTERVAL: u64 = 1000;
 
@@ -168,7 +164,7 @@ impl AsyncDumperState {
             .fetch_sub(batch_processed, Ordering::Relaxed);
 
         // Log warnings periodically
-        if self.processed_count % QUEUE_CHECK_INTERVAL == 0 {
+        if self.processed_count.is_multiple_of(QUEUE_CHECK_INTERVAL) {
             let size = self.queue_size.load(Ordering::Relaxed);
             let drops = self.drop_count.load(Ordering::Relaxed);
 
@@ -180,7 +176,11 @@ impl AsyncDumperState {
                     drops
                 );
             }
-            if drops > 0 && self.processed_count % (QUEUE_CHECK_INTERVAL * 10) == 0 {
+            if drops > 0
+                && self
+                    .processed_count
+                    .is_multiple_of(QUEUE_CHECK_INTERVAL * 10)
+            {
                 log::warn!("Total packets dropped due to backpressure: {}", drops);
             }
         }
@@ -334,25 +334,11 @@ impl FileDumper {
         })
     }
 
-    pub fn frame_count(&self) -> u64 {
-        self.frame_count
-    }
-
     /// Flush buffered frames and wait until they reach the disk
     pub fn sync(&mut self) -> Result<()> {
         self.writer.flush()?;
         self.writer.get_ref().sync_all()?;
         Ok(())
-    }
-
-    /// Calculate file position for a given frame number
-    pub fn frame_offset(frame_number: u64) -> u64 {
-        frame_number * FRAME_SIZE as u64
-    }
-
-    /// Get the size of each frame in bytes
-    pub fn get_frame_size() -> usize {
-        FRAME_SIZE
     }
 }
 
@@ -362,7 +348,7 @@ impl Dumper for FileDumper {
         self.frame_count += 1;
 
         // Flush every FLUSH_INTERVAL frames
-        if self.frame_count % FLUSH_INTERVAL == 0 {
+        if self.frame_count.is_multiple_of(FLUSH_INTERVAL) {
             self.writer.flush()?;
             log::debug!("Dumped {} frames", self.frame_count);
         }
@@ -376,165 +362,15 @@ impl Dumper for FileDumper {
     }
 }
 
-/// Console dumper that outputs formatted packet information to stdout (tcpdump-style)
-pub struct ConsoleDumper {
-    frame_count: u64,
-}
-
-impl ConsoleDumper {
-    /// Create a new console dumper
-    pub fn new() -> Self {
-        ConsoleDumper { frame_count: 0 }
-    }
-    fn format_timestamp(&self, timestamp_ms: u64) -> String {
-        let ms = timestamp_ms % 1000;
-        let sec = (timestamp_ms / 1000) % 60;
-        let min = (timestamp_ms / 60000) % 60;
-        let hour = (timestamp_ms / 3600000) % 24;
-        format!("{:02}:{:02}:{:02}.{:03}", hour, min, sec, ms)
-    }
-
-    fn format_buttons(&self, buttons: &ButtonState) -> String {
-        let mut pressed: SmallVec<[&str; 8]> = SmallVec::new();
-
-        // Face buttons
-        if buttons.a {
-            pressed.push("A");
-        }
-        if buttons.b {
-            pressed.push("B");
-        }
-        if buttons.x {
-            pressed.push("X");
-        }
-        if buttons.y {
-            pressed.push("Y");
-        }
-
-        // Shoulder buttons
-        if buttons.l {
-            pressed.push("L");
-        }
-        if buttons.r {
-            pressed.push("R");
-        }
-        if buttons.zl {
-            pressed.push("ZL");
-        }
-        if buttons.zr {
-            pressed.push("ZR");
-        }
-
-        // D-pad
-        if buttons.up {
-            pressed.push("UP");
-        }
-        if buttons.down {
-            pressed.push("DN");
-        }
-        if buttons.left {
-            pressed.push("LT");
-        }
-        if buttons.right {
-            pressed.push("RT");
-        }
-
-        // System buttons
-        if buttons.minus {
-            pressed.push("-");
-        }
-        if buttons.plus {
-            pressed.push("+");
-        }
-        if buttons.home {
-            pressed.push("HOME");
-        }
-        if buttons.capture {
-            pressed.push("CAP");
-        }
-
-        // Stick clicks
-        if buttons.l_stick {
-            pressed.push("LS");
-        }
-        if buttons.r_stick {
-            pressed.push("RS");
-        }
-
-        if pressed.is_empty() {
-            "---".to_string()
-        } else {
-            pressed.join(",")
-        }
-    }
-
-    fn format_sticks(&self, left: &StickData, right: &StickData) -> String {
-        // Convert to percentage (center is ~2048)
-        let left_x_pct = ((left.x as i32 - 2048) * 100 / 2048).clamp(-100, 100);
-        let left_y_pct = ((left.y as i32 - 2048) * 100 / 2048).clamp(-100, 100);
-        let right_x_pct = ((right.x as i32 - 2048) * 100 / 2048).clamp(-100, 100);
-        let right_y_pct = ((right.y as i32 - 2048) * 100 / 2048).clamp(-100, 100);
-
-        format!(
-            "L:{:+3},{:+3} R:{:+3},{:+3}",
-            left_x_pct, left_y_pct, right_x_pct, right_y_pct
-        )
-    }
-
-    fn decode_frame_compact(&self, frame: &Frame) -> String {
-        let data = &frame.data[..frame.packet_size as usize];
-
-        if data.is_empty() {
-            return "Empty".to_string();
-        }
-
-        match data[0] {
-            0x30 => {
-                // Input report - use ProConParser to get ControllerState
-                match ProConParser::parse_input_report(data) {
-                    Ok(state) => {
-                        let buttons = self.format_buttons(&state.buttons);
-                        let sticks = self.format_sticks(&state.left_stick, &state.right_stick);
-                        format!("Input [{}] {}", buttons, sticks)
-                    }
-                    Err(_) => "Input (parse error)".to_string(),
-                }
-            }
-            0x21 => "SubcommandReply".to_string(),
-            0x81 => "RequestMac".to_string(),
-            0x01 => "Subcommand".to_string(),
-            0x10 => "Rumble".to_string(),
-            _ => format!("Unknown(0x{:02x})", data[0]),
-        }
-    }
-}
-
-impl Dumper for ConsoleDumper {
-    fn dump(&mut self, frame: &Frame) -> Result<()> {
-        let timestamp = self.format_timestamp(frame.timestamp_ms);
-
-        let decoded = self.decode_frame_compact(frame);
-        println!("{} #{:08} {}", timestamp, self.frame_count, decoded);
-
-        self.frame_count += 1;
-        Ok(())
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        Ok(())
-    }
-}
-
 /// Multi-dumper that can write to multiple dumpers simultaneously
+#[derive(Default)]
 pub struct MultiDumper {
     dumpers: Vec<Box<dyn Dumper>>,
 }
 
 impl MultiDumper {
     pub fn new() -> Self {
-        MultiDumper {
-            dumpers: Vec::new(),
-        }
+        Self::default()
     }
 
     pub fn add_dumper(&mut self, dumper: Box<dyn Dumper>) {

@@ -1,8 +1,7 @@
 [proxy]
-# Timeout for reading from Pro Controller (milliseconds)
-controller_read_timeout_ms = 20
-# Interval for logging frame count progress
-frame_count_log_interval = 100
+# Poll the controller every this many ms (Linux usbhid.jspoll); 0 keeps the 8 ms it
+# asks. Input still arrives on its own 8 ms beat; at 1, rumble writes take ~2 ms, not ~9
+controller_poll_ms = 1
 # Retry delay when HID gadget device fails to open (milliseconds)
 hidg_retry_delay_ms = 1000
 
@@ -11,10 +10,6 @@ hidg_retry_delay_ms = 1000
 autostart = false
 # Path prefix of that session folder (<prefix>YYYY-MM-DD_HH-MM-SS/controller.bin)
 prefix = "/tmp/procon-"
-
-[console]
-# Enable console output to terminal
-enable = false
 
 [stream]
 # TCP port the studio host connects to for live frames

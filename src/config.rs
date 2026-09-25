@@ -13,8 +13,6 @@ pub struct Config {
     pub proxy: ProxyConfig,
     /// Dump configuration  
     pub dump: DumpConfig,
-    /// Console output configuration
-    pub console: ConsoleConfig,
     /// Frame streaming to the studio host
     pub stream: StreamConfig,
     /// Actions replayed to the Switch
@@ -28,10 +26,10 @@ pub struct Config {
 /// Proxy-related configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
-    /// Timeout for reading from Pro Controller (milliseconds)
-    pub controller_read_timeout_ms: i32,
-    /// Interval for logging frame count progress
-    pub frame_count_log_interval: u64,
+    /// Poll the controller every this many ms (Linux's `usbhid.jspoll`), 0 for
+    /// the 8 ms it asks; input arrives on its own 8 ms beat either way, but
+    /// rumble writes take ~2 ms instead of ~9 at 1
+    pub controller_poll_ms: u32,
     /// Retry delay when HID gadget device fails to open (milliseconds)
     pub hidg_retry_delay_ms: u64,
 }
@@ -43,13 +41,6 @@ pub struct DumpConfig {
     pub autostart: bool,
     /// Path prefix of that session folder, e.g. "/home/pi/procon-"
     pub prefix: String,
-}
-
-/// Console output configuration
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ConsoleConfig {
-    /// Enable console output to terminal
-    pub enable: bool,
 }
 
 /// Frame streaming configuration
@@ -84,17 +75,6 @@ impl Config {
     /// Load configuration from a TOML file
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         load(path)
-    }
-
-    /// Save configuration to a TOML file
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let contents =
-            toml::to_string_pretty(self).context("Failed to serialize config to TOML")?;
-
-        fs::write(&path, contents)
-            .with_context(|| format!("Failed to write config file: {}", path.as_ref().display()))?;
-
-        Ok(())
     }
 
     /// Validate configuration values

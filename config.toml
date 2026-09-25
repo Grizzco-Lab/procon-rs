@@ -30,7 +30,7 @@ extension = "mkv"
 preview_height = 1080
 preview_fps = 60
 # Low latency NVENC; use ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-b:v", "6M"] without an NVIDIA GPU
-preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerolatency", "1", "-b:v", "6M", "-maxrate", "8M", "-bufsize", "2M"]
+preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerolatency", "1", "-delay", "0", "-b:v", "6M", "-maxrate", "8M", "-bufsize", "2M"]
 
 [logging]
 # Log level: error, warn, info, debug, trace

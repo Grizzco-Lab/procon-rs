@@ -258,6 +258,12 @@ body[data-rec="recording"] .topbar {
   grid-area: motion;
 }
 
+/* Sits right after the title; the input menu keeps the far end */
+.preview-delay {
+  margin-inline-end: auto;
+  font-variant-numeric: tabular-nums;
+}
+
 .panel-head {
   display: flex;
   align-items: center;

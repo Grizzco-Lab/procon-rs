@@ -6,10 +6,12 @@
 //!   into raw 1080p frames at the capture rate. Reopening a capture card is
 //!   slow (the Elgato 4K X only streams on every other start), so nothing but
 //!   choosing another input restarts it.
-//! - The preview encoder scales those frames to the preview size and rate and
-//!   encodes low-latency H.264 as fragmented MP4, one frame per fragment,
-//!   which the dashboard plays with a `<video>` element. Changing the preview
-//!   restarts only this process.
+//! - The preview encoder gets those frames thinned to the preview rate,
+//!   scales them to the preview size and encodes low-latency H.264 as
+//!   fragmented MP4, one frame per fragment, which the dashboard plays with a
+//!   `<video>` element. Every frame sent comes out as one fragment, which is
+//!   how its encoding time is measured. Changing the preview restarts only
+//!   this process.
 //! - A recording encoder per video file, fed the same frames from Record on,
 //!   so a file begins with the next frame and pausing never touches the input.
 //!
@@ -18,6 +20,7 @@
 
 use crate::config::VideoConfig;
 use crate::dump::unix_ms;
+use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, ensure};
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -143,6 +146,9 @@ pub struct VideoStatus {
     /// Preview height and frame rate in use
     pub preview_height: u32,
     pub preview_fps: u32,
+    /// Time from a frame reaching the preview encoder to its fragment coming
+    /// out, smoothed; `None` while the preview is not live
+    pub preview_encode_ms: Option<f64>,
     /// The preview follows the recording size and rate
     pub preview_matches_recording: bool,
     /// Why ffmpeg is not running
@@ -151,6 +157,15 @@ pub struct VideoStatus {
 
 /// A raw frame shared by the preview and the recording
 type SharedFrame = Arc<Vec<u8>>;
+
+/// The preview encoder's input, and how to thin the capture rate to its rate
+#[derive(Clone)]
+struct PreviewFeed {
+    frames: SyncSender<SharedFrame>,
+    /// Keep `fps` frames of every `capture_fps`
+    fps: u32,
+    capture_fps: u32,
+}
 
 /// An ffmpeg fed raw frames on stdin through a queue
 struct Worker {
@@ -186,7 +201,11 @@ pub struct Video {
     inner: Arc<Mutex<Inner>>,
     /// Where grabbed frames go; separate locks, as the grabber's reader takes
     /// them for every frame
-    preview_feed: Arc<Mutex<Option<SyncSender<SharedFrame>>>>,
+    preview_feed: Arc<Mutex<Option<PreviewFeed>>>,
+    /// When each frame still inside the preview encoder was sent to it
+    preview_sent: Arc<Mutex<VecDeque<Instant>>>,
+    /// Smoothed preview encoding time in µs
+    preview_encode_us: Arc<AtomicU64>,
     recording: Arc<Mutex<Option<Recording>>>,
     /// Preview stream for the browsers
     preview: broadcast::Sender<PreviewChunk>,
@@ -224,6 +243,8 @@ impl Video {
                 error: None,
             })),
             preview_feed: Arc::default(),
+            preview_sent: Arc::default(),
+            preview_encode_us: Arc::default(),
             recording: Arc::default(),
             // A few seconds of frames; a browser further behind catches up at a keyframe
             preview: broadcast::channel(256).0,
@@ -376,15 +397,18 @@ impl Video {
             .map(|r| r.path.display().to_string());
         let inner = self.lock();
         let (preview_height, preview_fps) = preview_quality(&inner);
+        let live = unix_ms().saturating_sub(self.last_preview_ms.load(Ordering::Relaxed)) < 2000;
+        let encode_us = self.preview_encode_us.load(Ordering::Relaxed);
         VideoStatus {
             input: inner.input.clone(),
             inputs: list_inputs(),
             recording,
-            live: unix_ms().saturating_sub(self.last_preview_ms.load(Ordering::Relaxed)) < 2000,
+            live,
             record_height: size_16_9(inner.config.record_height).1,
             record_fps: inner.config.record_fps,
             preview_height,
             preview_fps,
+            preview_encode_ms: (live && encode_us > 0).then(|| encode_us as f64 / 1000.0),
             preview_matches_recording: inner.preview_matches_recording,
             error: inner.error.clone(),
         }
@@ -448,6 +472,8 @@ impl Video {
     fn restart_preview(&self, inner: &mut Inner) {
         self.preview_generation.fetch_add(1, Ordering::SeqCst);
         *lock(&self.preview_feed) = None;
+        lock(&self.preview_sent).clear();
+        self.preview_encode_us.store(0, Ordering::Relaxed);
         if let Some(mut worker) = inner.preview.take() {
             // A preview has nothing worth finishing
             let _ = worker.child.kill();
@@ -461,7 +487,11 @@ impl Video {
         let args = preview_args(inner);
         match spawn_worker(&args, PREVIEW_QUEUE, true) {
             Ok((worker, Some(stdout))) => {
-                *lock(&self.preview_feed) = Some(worker.frames.clone());
+                *lock(&self.preview_feed) = Some(PreviewFeed {
+                    frames: worker.frames.clone(),
+                    fps: preview_quality(inner).1,
+                    capture_fps: inner.config.fps,
+                });
                 inner.preview = Some(worker);
                 let generation = self.preview_generation.load(Ordering::SeqCst);
                 let video = self.clone();
@@ -506,13 +536,23 @@ impl Video {
     /// dies on its own, retry after a pause
     fn read_frames(&self, mut stdout: ChildStdout, generation: u64) {
         let mut frame = vec![0u8; FRAME_BYTES];
+        // Counts toward the next frame kept for the preview
+        let mut preview_phase = 0;
         // Read to the end even when stale, so ffmpeg can exit
         while stdout.read_exact(&mut frame).is_ok() {
             if !self.grabber_is_current(generation) {
                 continue;
             }
             self.last_frame_ms.store(unix_ms(), Ordering::Relaxed);
-            let preview = lock(&self.preview_feed).clone();
+            // Thin the capture rate to the preview rate
+            let preview = lock(&self.preview_feed).clone().filter(|feed| {
+                preview_phase += feed.fps;
+                let keep = preview_phase >= feed.capture_fps;
+                if keep {
+                    preview_phase -= feed.capture_fps;
+                }
+                keep
+            });
             let mut recording = lock(&self.recording);
             if preview.is_none() && recording.is_none() {
                 continue;
@@ -521,7 +561,14 @@ impl Video {
             let shared = Arc::new(core::mem::replace(&mut frame, vec![0u8; FRAME_BYTES]));
             if let Some(preview) = preview {
                 // A busy preview skips a frame
-                let _ = preview.try_send(Arc::clone(&shared));
+                if preview.frames.try_send(Arc::clone(&shared)).is_ok() {
+                    let mut sent = lock(&self.preview_sent);
+                    // Out of step with the fragments somehow: start counting afresh
+                    if sent.len() > 30 {
+                        sent.clear();
+                    }
+                    sent.push_back(Instant::now());
+                }
             }
             if let Some(recording) = recording.as_mut() {
                 recording.first_frame_ms.get_or_insert_with(unix_ms);
@@ -578,6 +625,14 @@ impl Video {
                 *lock(&self.preview_init) = Some(chunk.clone());
             } else {
                 self.last_preview_ms.store(unix_ms(), Ordering::Relaxed);
+                if let Some(sent) = lock(&self.preview_sent).pop_front() {
+                    let took = sent.elapsed().as_micros() as u64;
+                    let smoothed = match self.preview_encode_us.load(Ordering::Relaxed) {
+                        0 => took,
+                        before => (before * 7 + took) / 8,
+                    };
+                    self.preview_encode_us.store(smoothed, Ordering::Relaxed);
+                }
             }
             // No browser watching is fine
             let _ = self.preview.send(chunk);
@@ -694,13 +749,13 @@ fn preview_quality(inner: &Inner) -> (u32, u32) {
     }
 }
 
-/// Input options for raw frames from the grabber, arriving at the capture rate
-fn raw_input(config: &VideoConfig) -> Vec<String> {
+/// Input options for raw frames from the grabber, arriving at `fps`
+fn raw_input(fps: u32) -> Vec<String> {
     let mut args: Vec<String> = ["-f", "rawvideo", "-pix_fmt", "yuv420p", "-video_size"]
         .map(String::from)
         .to_vec();
     args.push(format!("{}x{}", WORK_SIZE.0, WORK_SIZE.1));
-    args.extend(["-framerate".to_string(), config.fps.to_string()]);
+    args.extend(["-framerate".to_string(), fps.to_string()]);
     args.extend(["-i", "pipe:0"].map(String::from));
     args
 }
@@ -744,11 +799,12 @@ fn preview_args(inner: &Inner) -> Vec<String> {
     let mut args: Vec<String> = ["-hide_banner", "-nostats", "-loglevel", "warning"]
         .map(String::from)
         .to_vec();
-    // Stamp frames as they arrive, so a skipped frame never slows the clock
-    args.extend(["-use_wallclock_as_timestamps", "1"].map(String::from));
-    args.extend(raw_input(config));
+    // Frames come already thinned to the preview rate; encode each one. A
+    // skipped frame only makes the player fall behind a little, which it catches up
+    args.extend(raw_input(fps));
     args.push("-vf".to_string());
-    args.push(format!("scale={width}:{height},fps={fps}"));
+    args.push(format!("scale={width}:{height}"));
+    args.extend(["-fps_mode", "passthrough"].map(String::from));
     args.extend(config.preview_encoder.iter().cloned());
     // A keyframe every second, so a browser can join quickly, and one frame
     // per MP4 fragment for low latency
@@ -779,7 +835,7 @@ fn recording_args(config: &VideoConfig, path: &Path) -> Vec<String> {
     let mut args: Vec<String> = ["-hide_banner", "-nostats", "-loglevel", "warning"]
         .map(String::from)
         .to_vec();
-    args.extend(raw_input(config));
+    args.extend(raw_input(config.fps));
     args.push("-vf".to_string());
     args.push(format!("scale={width}:{height},fps={}", config.record_fps));
     args.extend(config.encoder.iter().cloned());

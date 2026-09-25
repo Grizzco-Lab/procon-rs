@@ -26,6 +26,8 @@ const HOME: (usize, u8) = (4, 0x10);
 const WAKE_RETRY: Duration = Duration::from_secs(1);
 /// Longest wait for the Switch to take a report; it polls every millisecond
 const PICKUP_TIMEOUT_MS: i32 = 20;
+/// Longest wait for an input report; the controller sends one every 8–16 ms
+const READ_TIMEOUT_MS: i32 = 1000;
 
 pub struct Proxy {
     controller: ProController,
@@ -83,7 +85,6 @@ impl Proxy {
 
         let mut input_buffer = [0u8; 64];
         let mut hidg: Option<File> = None;
-        let mut frame_count = 0u64;
         // Numbers every report read, so consumers can spot dropped frames
         let mut seq = 0u32;
         // The Switch stopped taking reports (asleep), and when we last tried waking it
@@ -107,13 +108,13 @@ impl Proxy {
 
             let size = match self
                 .controller
-                .read_timeout(&mut input_buffer, self.config.controller_read_timeout_ms)
+                .read_timeout(&mut input_buffer, READ_TIMEOUT_MS)
             {
                 Ok(0) => continue,
                 Ok(size) => size,
                 Err(e) => {
                     log::error!("Failed to read from Pro Controller: {}", e);
-                    self.controller.reconnect()?;
+                    self.controller.reconnect();
                     continue;
                 }
             };
@@ -133,10 +134,6 @@ impl Proxy {
                     }
                     if let Some(waited) = wait_for_pickup(gadget, read_at) {
                         frame.forward_us = waited.as_micros().clamp(1, u16::MAX as u128) as u16;
-                    }
-                    frame_count += 1;
-                    if frame_count.is_multiple_of(self.config.frame_count_log_interval) {
-                        log::debug!("Forwarded {} input frames", frame_count);
                     }
                 }
                 // The Switch is not reading (asleep): drop the report and keep

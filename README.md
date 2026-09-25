@@ -135,10 +135,9 @@ cargo run --example fake_proxy
 
 ```toml
 [proxy]
-# Timeout for reading from Pro Controller (milliseconds)
-controller_read_timeout_ms = 20
-# Interval for logging frame count progress
-frame_count_log_interval = 100
+# Poll the controller every this many ms (Linux usbhid.jspoll); 0 keeps the 8 ms it
+# asks. Input still arrives on its own 8 ms beat; at 1, rumble writes take ~2 ms, not ~9
+controller_poll_ms = 1
 # Retry delay when HID gadget device fails to open (milliseconds)
 hidg_retry_delay_ms = 1000
 
@@ -147,10 +146,6 @@ hidg_retry_delay_ms = 1000
 autostart = false
 # Path prefix of that session folder (<prefix>YYYY-MM-DD_HH-MM-SS/controller.bin)
 prefix = "/tmp/procon-"
-
-[console]
-# Enable console output to terminal
-enable = false
 
 [stream]
 # TCP port the studio host connects to for live frames
@@ -200,7 +195,7 @@ The codebase is organized into the following modules:
 - **`src/gadget.rs`** - USB gadget management for automatic device setup
 - **`src/proxy.rs`** - Core proxy functionality for bidirectional HID forwarding
 - **`src/device.rs`** - Nintendo Switch Pro Controller device connection and communication
-- **`src/dump.rs`** - Data dumping functionality (console output, file logging, async processing)
+- **`src/dump.rs`** - Frame format and dumpers (file, async, fan-out to several)
 - **`src/stream.rs`** - Frame link: proxy-side TCP streamer and studio-side receiver
 - **`src/recorder.rs`** - Session folders and the controller file, with start/pause/resume/stop
 - **`src/video.rs`** - ffmpeg capture: input list, live preview and recorded segments

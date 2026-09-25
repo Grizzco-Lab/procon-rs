@@ -617,7 +617,43 @@ const player = {
   buffer: null,
   /** Fragments waiting for the buffer to finish its last append */
   queue: [],
+  /** Seconds between the newest frame received and the one on screen */
+  lag: null,
+  /** Server's time to encode a frame, ms */
+  encodeMs: null,
+  shownAt: 0,
 };
+
+/**
+ * Stay a frame or two behind the newest frame: play a little faster while
+ * further behind, which catches up without visible jumps
+ */
+function keepLive(now) {
+  const el = player.el;
+  const ranges = el.buffered;
+  if (!player.buffer || !ranges.length || el.paused) {
+    player.lag = null;
+  } else {
+    player.lag = Math.max(0, ranges.end(ranges.length - 1) - el.currentTime);
+    const rate =
+      player.lag > 0.06 ? Math.min(1.5, 1 + (player.lag - 0.03) * 3) : 1;
+    if (el.playbackRate !== rate) el.playbackRate = rate;
+  }
+
+  if (now - player.shownAt < 250) return;
+  player.shownAt = now;
+  const note = $("preview-delay");
+  if (player.lag === null || player.encodeMs === null) {
+    note.textContent = "";
+    return;
+  }
+  const lagMs = player.lag * 1000;
+  note.textContent = `Preview +${Math.round(player.encodeMs + lagMs)} ms`;
+  note.title =
+    `Encoding ${player.encodeMs.toFixed(0)} ms + player buffer ${lagMs.toFixed(0)} ms. ` +
+    `Not counted: the capture card and HDMI before it, and the network (well under ` +
+    `a millisecond on a LAN).`;
+}
 
 /** Codec string from the init segment's avcC box, e.g. "avc1.64002a" */
 function avcCodec(init) {
@@ -669,9 +705,9 @@ function pump() {
   const ranges = player.el.buffered;
   if (ranges.length) {
     const end = ranges.end(ranges.length - 1);
-    // Stay within a few frames of live; the stream never needs rewinding
+    // Jump only when far behind (a stall); keepLive handles small lags
     if (
-      end - player.el.currentTime > 0.3 ||
+      end - player.el.currentTime > 1 ||
       player.el.currentTime < ranges.start(ranges.length - 1)
     ) {
       player.el.currentTime = end - 0.02;
@@ -726,6 +762,7 @@ for (const id of ["video-height", "video-fps"]) {
 }
 
 function renderVideo(status) {
+  player.encodeMs = status.preview_encode_ms;
   // Rebuild the input list only when it changes, so an open menu stays open
   const select = $("video-input");
   const options = [{ id: "", name: "No video" }, ...status.inputs];
@@ -937,6 +974,7 @@ function frame(now) {
   drawChart(now);
   updateClock(now);
   updateReplayClock(now);
+  keepLive(now);
   requestAnimationFrame(frame);
 }
 

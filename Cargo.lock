@@ -912,7 +912,6 @@ dependencies = [
  "num_cpus",
  "serde",
  "serde_json",
- "smallvec",
  "tokio",
  "toml",
  "usb-gadget",
