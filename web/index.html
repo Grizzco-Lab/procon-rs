@@ -378,6 +378,25 @@
             <button type="submit" class="btn btn-small">Set</button>
           </div>
         </form>
+        <div class="quality">
+          <label for="video-height">Video quality</label>
+          <div class="quality-row">
+            <select id="video-height" class="select">
+              <option value="0">Source size</option>
+              <option value="1080">1080p</option>
+              <option value="720">720p</option>
+              <option value="540">540p</option>
+              <option value="360">360p</option>
+            </select>
+            <select id="video-fps" class="select" aria-label="Video frame rate">
+              <option value="60">60 fps</option>
+              <option value="30">30 fps</option>
+              <option value="20">20 fps</option>
+              <option value="15">15 fps</option>
+              <option value="10">10 fps</option>
+            </select>
+          </div>
+        </div>
         <div class="rec-file">
           <span class="rec-file-label" id="rec-file-label">Next session</span>
           <span class="path" id="rec-file">None yet</span>
@@ -392,20 +411,28 @@
         </header>
         <div class="tiles">
           <div class="tile">
-            <span class="tile-label">Controller data</span>
-            <span class="tile-value" id="stat-size">0 B</span>
+            <span class="tile-label">Controller</span>
+            <span class="tile-value" id="rate-controller">0 B/s</span>
+            <span class="tile-note" id="note-controller"
+              >0 B/h · 0 B so far</span
+            >
           </div>
           <div class="tile">
             <span class="tile-label">Video</span>
-            <span class="tile-value" id="stat-video">0 B</span>
+            <span class="tile-value" id="rate-video">0 B/s</span>
+            <span class="tile-note" id="note-video">0 B/h · 0 B so far</span>
           </div>
           <div class="tile">
-            <span class="tile-label">Write rate</span>
-            <span class="tile-value" id="stat-rate">0 B/s</span>
+            <span class="tile-label">This session</span>
+            <span class="tile-value" id="size-session">0 B</span>
+            <span class="tile-note" id="note-session"
+              >controller and video</span
+            >
           </div>
-          <div class="tile" id="tile-dropped">
-            <span class="tile-label">Dropped</span>
-            <span class="tile-value" id="stat-dropped">0</span>
+          <div class="tile">
+            <span class="tile-label">All sessions</span>
+            <span class="tile-value" id="size-all">Counting…</span>
+            <span class="tile-note">in the save folder</span>
           </div>
         </div>
         <div class="meter" id="meter-disk" data-level="ok">

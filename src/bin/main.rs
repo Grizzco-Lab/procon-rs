@@ -43,8 +43,16 @@ fn main() -> anyhow::Result<()> {
         .video_input
         .unwrap_or_else(|| config.video.input.clone());
 
+    let mut video_config = config.video;
+    if let Some(height) = saved.video_height {
+        video_config.record_height = height;
+    }
+    if let Some(fps) = saved.video_fps {
+        video_config.record_fps = fps;
+    }
+
     let recorder = Recorder::new(&prefix);
-    let video = Video::new(config.video, Some(input).filter(|id| !id.is_empty()));
+    let video = Video::new(video_config, Some(input).filter(|id| !id.is_empty()));
     let link = Arc::new(LinkStats::default());
     let feed = LiveFeed::new();
 

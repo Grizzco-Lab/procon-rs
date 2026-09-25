@@ -802,6 +802,7 @@ input:focus-visible {
   gap: 6px;
 }
 
+.quality label,
 .dir-form label,
 .rec-file-label,
 .tile-label,
@@ -830,6 +831,22 @@ input:focus-visible {
 
 .dir-row input:disabled {
   color: var(--text-2);
+}
+
+.quality {
+  display: grid;
+  gap: 6px;
+}
+
+.quality-row {
+  display: flex;
+  gap: 8px;
+}
+
+.quality-row .select {
+  flex: 1;
+  max-width: none;
+  height: 36px;
 }
 
 .rec-file {
@@ -880,9 +897,9 @@ input:focus-visible {
   white-space: nowrap;
 }
 
-.tile[data-level="warning"] .tile-value::before {
-  content: "⚠ ";
-  color: var(--warning);
+.tile-note {
+  color: var(--text-3);
+  font-size: 12px;
 }
 
 .meter {

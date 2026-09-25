@@ -25,6 +25,10 @@ pub struct SavedState {
     pub prefix: Option<String>,
     /// Video input id; empty for none
     pub video_input: Option<String>,
+    /// Recorded height, 0 for the source size
+    pub video_height: Option<u32>,
+    /// Recorded frame rate
+    pub video_fps: Option<u32>,
 }
 
 impl SavedState {
@@ -47,6 +51,7 @@ pub enum Command {
     Stop,
     SetPrefix { prefix: String },
     SetVideoInput { input: String },
+    SetVideoQuality { height: u32, fps: u32 },
 }
 
 /// One recorded video file of the session
@@ -151,8 +156,54 @@ impl Studio {
                 self.video.set_input(input)?;
                 self.save_state()?;
             }
+            Command::SetVideoQuality { height, fps } => {
+                self.video.set_quality(height, fps)?;
+                self.save_state()?;
+            }
         }
         Ok(())
+    }
+
+    /// Bytes of video in the current or last session
+    pub fn video_bytes(&self) -> u64 {
+        let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(session) = session.as_ref() else {
+            return 0;
+        };
+        session
+            .segments
+            .iter()
+            .filter_map(|segment| std::fs::metadata(session.dir.join(&segment.file)).ok())
+            .map(|meta| meta.len())
+            .sum()
+    }
+
+    /// Bytes of the other sessions under the path prefix (folders holding a
+    /// `session.json`), leaving out the current or last one, which is counted live
+    ///
+    /// Walks the folder, so call it now and then rather than on every tick.
+    pub fn other_sessions_bytes(&self) -> u64 {
+        let current = self
+            .session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|session| session.dir.clone());
+        let prefix = self.recorder.prefix();
+        let name = prefix.rsplit('/').next().unwrap_or_default().to_string();
+        let Ok(entries) = std::fs::read_dir(self.recorder.prefix_dir()) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&name))
+            .map(|entry| entry.path())
+            .filter(|dir| dir.join("session.json").is_file() && Some(dir) != current.as_ref())
+            .filter_map(|dir| std::fs::read_dir(dir).ok())
+            .flat_map(|files| files.flatten())
+            .filter_map(|file| file.metadata().ok())
+            .map(|meta| meta.len())
+            .sum()
     }
 
     /// Record the next video file of the session, if there is a video input
@@ -208,9 +259,12 @@ impl Studio {
 
     /// Save dashboard settings next to the config file
     fn save_state(&self) -> Result<()> {
+        let (height, fps) = self.video.quality();
         let state = SavedState {
             prefix: Some(self.recorder.prefix()),
             video_input: Some(self.video.input().unwrap_or_default()),
+            video_height: Some(height),
+            video_fps: Some(fps),
         };
         // Write then rename, so a crash never leaves a half-written file
         let temp = self.state_path.with_extension("tmp");

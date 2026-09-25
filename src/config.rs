@@ -158,8 +158,10 @@ pub struct VideoConfig {
     pub fps: u32,
     /// Extra ffmpeg input options for V4L2 devices, such as format and size
     pub v4l2_args: Vec<String>,
-    /// ffmpeg filter applied to recorded frames
-    pub record_filter: String,
+    /// Recorded height in pixels, 0 for the source size; the dashboard can change it
+    pub record_height: u32,
+    /// Recorded frame rate; the dashboard can change it
+    pub record_fps: u32,
     /// ffmpeg encoder options for recordings
     pub encoder: Vec<String>,
     /// Recording file extension

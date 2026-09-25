@@ -417,7 +417,6 @@ function renderRecorder(status) {
   $("rec-file-label").textContent = active ? "Session folder" : "Next session";
   $("rec-file").textContent = `${shown}/`;
   $("rec-file").title = shown;
-  $("stat-size").textContent = formatBytes(status.bytes);
 
   if (status.error) showError(status.error);
   updateClock(performance.now());
@@ -451,6 +450,8 @@ function setButtons() {
   form.elements.prefix.disabled = active;
   form.querySelector("button").disabled = recorder.busy || active;
   $("video-input").disabled = recorder.busy || active;
+  $("video-height").disabled = recorder.busy || active;
+  $("video-fps").disabled = recorder.busy || active;
 }
 
 function showError(message) {
@@ -518,6 +519,16 @@ const video = {
 $("video-input").addEventListener("change", (event) =>
   sendCommand({ action: "set_video_input", input: event.target.value }),
 );
+// Smaller or slower recordings save disk; they apply from the next recording
+for (const id of ["video-height", "video-fps"]) {
+  $(id).addEventListener("change", () =>
+    sendCommand({
+      action: "set_video_quality",
+      height: Number($("video-height").value),
+      fps: Number($("video-fps").value),
+    }),
+  );
+}
 
 function showPreview(blob) {
   if (!video.live) return;
@@ -557,7 +568,14 @@ function renderVideo(status) {
     $("video-title").textContent = "Starting video…";
     $("video-message").textContent = status.input;
   }
-  $("stat-video").textContent = formatBytes(status.bytes);
+  // Keep an open menu alone; only follow the server when not being edited
+  for (const [id, value] of [
+    ["video-height", status.record_height],
+    ["video-fps", status.record_fps],
+  ]) {
+    const select = $(id);
+    if (document.activeElement !== select) select.value = String(value);
+  }
 }
 
 // ---------------------------------------------------------------- status tick
@@ -604,10 +622,26 @@ function renderStatus(status) {
 
   renderRecorder(status.recorder);
   renderVideo(status.video);
-  $("stat-rate").textContent = `${formatBytes(status.write_rate)}/s`;
-  $("stat-dropped").textContent = link.dropped.toLocaleString("en-US");
-  $("tile-dropped").dataset.level = link.dropped > 0 ? "warning" : "ok";
-  $("dropped-note").textContent = link.dropped > 0 ? "⚠ Frames dropped" : "";
+  // Rates per second and per hour, next to what has been written so far
+  const { rates, sizes } = status;
+  for (const stream of ["controller", "video"]) {
+    $(`rate-${stream}`).textContent = `${formatBytes(rates[stream])}/s`;
+    $(`note-${stream}`).textContent =
+      `${formatBytes(rates[stream] * 3600)}/h · ${formatBytes(sizes[stream])} so far`;
+  }
+  const writeRate = rates.controller + rates.video;
+  $("size-session").textContent = formatBytes(sizes.controller + sizes.video);
+  $("note-session").textContent =
+    writeRate > 0
+      ? `${formatBytes(writeRate * 3600)}/h in total`
+      : "controller and video";
+  if (sizes.all_sessions !== null) {
+    $("size-all").textContent = formatBytes(sizes.all_sessions);
+  }
+  $("dropped-note").textContent =
+    link.dropped > 0
+      ? `⚠ ${link.dropped.toLocaleString("en-US")} frames dropped`
+      : "No frames dropped";
 
   const disk = status.disk;
   if (disk.total > 0) {
@@ -619,8 +653,8 @@ function renderStatus(status) {
     );
     const level = levelOf(used);
     const left =
-      status.write_rate > 0
-        ? `Room for about ${formatSpan(disk.free / status.write_rate)} at this rate`
+      writeRate > 0
+        ? `Room for about ${formatSpan(disk.free / writeRate)} at this rate`
         : "";
     $("disk-note").textContent =
       level === "ok" ? left : `⚠ Low disk space. ${left}`;

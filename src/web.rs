@@ -174,19 +174,33 @@ async fn stream_to_client(
     }
 }
 
-/// Status ticks the input and write rates are averaged over
-const RATE_WINDOW: usize = 6;
+/// How often the dashboard gets a status snapshot
+const STATUS_EVERY: Duration = Duration::from_millis(500);
 
-/// Publish a status snapshot every second
+/// Rates are averaged over this many ticks (3 s), smoothing out muxer flushes
+const RATE_WINDOW: usize = 7;
+
+/// Re-count the size of every session this often; it walks the folder
+const ALL_SESSIONS_EVERY: Duration = Duration::from_secs(10);
+
+/// Counters at one status tick, for rates
+struct Sample {
+    at: Instant,
+    frames: u64,
+    controller_bytes: u64,
+    video_bytes: u64,
+}
+
+/// Publish a status snapshot twice a second
 async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
-    // (time, reports received, bytes recorded) over the last few ticks; video files
-    // grow in bursts as the muxer flushes, so rates are averaged over this window
-    let mut history: VecDeque<(Instant, u64, u64)> = VecDeque::new();
+    let mut tick = tokio::time::interval(STATUS_EVERY);
+    let mut history: VecDeque<Sample> = VecDeque::new();
+    let mut other_sessions: Option<(Instant, u64)> = None;
 
     loop {
         tick.tick().await;
 
+        let recount = other_sessions.is_none_or(|(at, _)| at.elapsed() >= ALL_SESSIONS_EVERY);
         let snapshot = {
             let studio = Arc::clone(&studio);
             // Status reads files and locks shared by blocking code
@@ -194,33 +208,43 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
                 (
                     studio.recorder.status(),
                     studio.video.status(),
+                    studio.video_bytes(),
+                    recount.then(|| studio.other_sessions_bytes()),
                     disk_space(&studio.recorder.prefix_dir()),
                 )
             })
             .await
         };
-        let Ok((recorder, video, disk)) = snapshot else {
+        let Ok((recorder, video, video_bytes, recounted, disk)) = snapshot else {
             continue;
         };
+        if let Some(bytes) = recounted {
+            other_sessions = Some((Instant::now(), bytes));
+        }
 
         let link = &studio.link;
-        let now = Instant::now();
-        let frames = link.frames.load(Ordering::Relaxed);
-        let bytes = recorder.bytes + video.bytes;
-        history.push_back((now, frames, bytes));
+        let now = Sample {
+            at: Instant::now(),
+            frames: link.frames.load(Ordering::Relaxed),
+            controller_bytes: recorder.bytes,
+            video_bytes,
+        };
+        let then = history.front().unwrap_or(&now);
+        let secs = now.at.duration_since(then.at).as_secs_f64();
+        let rate = |now: u64, then: u64| {
+            if secs > 0.0 {
+                now.saturating_sub(then) as f64 / secs
+            } else {
+                0.0
+            }
+        };
+        let input_rate = rate(now.frames, then.frames);
+        let controller_rate = rate(now.controller_bytes, then.controller_bytes);
+        let video_rate = rate(now.video_bytes, then.video_bytes);
+        history.push_back(now);
         if history.len() > RATE_WINDOW {
             history.pop_front();
         }
-        let (then, then_frames, then_bytes) = history[0];
-        let secs = now.duration_since(then).as_secs_f64();
-        let (input_rate, write_rate) = if secs > 0.0 {
-            (
-                frames.saturating_sub(then_frames) as f64 / secs,
-                bytes.saturating_sub(then_bytes) as f64 / secs,
-            )
-        } else {
-            (0.0, 0.0)
-        };
 
         let (disk_free, disk_total) = disk.unwrap_or_default();
         let (mem_available, mem_total) = memory().unwrap_or_default();
@@ -237,7 +261,15 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
                 },
                 "recorder": recorder,
                 "video": video,
-                "write_rate": write_rate,
+                // Bytes per second, and bytes of the current or last session
+                "rates": { "controller": controller_rate, "video": video_rate },
+                "sizes": {
+                    "controller": recorder.bytes,
+                    "video": video_bytes,
+                    // Earlier sessions, recounted now and then, plus this one live
+                    "all_sessions": other_sessions
+                        .map(|(_, bytes)| bytes + recorder.bytes + video_bytes),
+                },
                 "disk": { "free": disk_free, "total": disk_total },
                 "memory": { "available": mem_available, "total": mem_total },
             })

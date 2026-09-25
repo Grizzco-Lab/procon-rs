@@ -69,8 +69,12 @@ run `./scripts/run-proxy.sh` there.
   `/data/procon/mk8-2026-09-24_21-40-05/`. The prefix's folder must exist.
 - **Video input**: the screen or any V4L2 device, such as the Elgato 4K X. A
   capture card can only be opened by one program, so close OBS first.
-- **Data**: controller and video sizes, write rate, dropped frames, free disk
-  space (with the time left at the current rate) and free memory.
+- **Video quality**: recorded size (source, 1080p, 720p, 540p, 360p) and frame
+  rate (60 to 10 fps), to keep files small; the capture itself stays full rate.
+- **Data**: controller and video write rates per second and per hour, this
+  session's size, all sessions in the save folder, dropped frames, free disk
+  space (with the time left at the current rate) and free memory. Updates twice
+  a second.
 - **Controller**: a 3D model (three.js, loaded from a CDN; the flat drawing is
   the fallback). **Splatoon mode** tracks the controller's real pose from the
   gyro and accelerometer, Y recenters it, and a sensitivity slider (-5 to +5)

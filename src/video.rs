@@ -81,10 +81,12 @@ pub struct VideoStatus {
     pub inputs: Vec<VideoInput>,
     /// File being recorded
     pub recording: Option<String>,
-    /// Size of that file so far
-    pub bytes: u64,
     /// Preview frames arrived within the last two seconds
     pub live: bool,
+    /// Recorded height, 0 for the source size
+    pub record_height: u32,
+    /// Recorded frame rate
+    pub record_fps: u32,
     /// Why ffmpeg is not running
     pub error: Option<String>,
 }
@@ -160,6 +162,26 @@ impl Video {
         self.lock().input.clone()
     }
 
+    /// Size and rate of the next recording; not while recording
+    pub fn set_quality(&self, height: u32, fps: u32) -> Result<()> {
+        ensure!(fps > 0, "the frame rate must be above zero");
+        let mut inner = self.lock();
+        ensure!(
+            inner.recording.is_none(),
+            "stop recording before changing the video quality"
+        );
+        // Only recordings use it, so the running preview needs no restart
+        inner.config.record_height = height;
+        inner.config.record_fps = fps;
+        Ok(())
+    }
+
+    /// Recorded height (0 for source) and frame rate
+    pub fn quality(&self) -> (u32, u32) {
+        let inner = self.lock();
+        (inner.config.record_height, inner.config.record_fps)
+    }
+
     /// File extension for recordings
     pub fn extension(&self) -> String {
         self.lock().config.extension.clone()
@@ -191,15 +213,13 @@ impl Video {
     /// Take a snapshot for the dashboard
     pub fn status(&self) -> VideoStatus {
         let inner = self.lock();
-        let recording = inner.recording.as_ref();
         VideoStatus {
             input: inner.input.clone(),
             inputs: list_inputs(),
-            recording: recording.map(|p| p.display().to_string()),
-            bytes: recording
-                .and_then(|p| std::fs::metadata(p).ok())
-                .map_or(0, |m| m.len()),
+            recording: inner.recording.as_ref().map(|p| p.display().to_string()),
             live: unix_ms().saturating_sub(self.last_preview_ms.load(Ordering::Relaxed)) < 2000,
+            record_height: inner.config.record_height,
+            record_fps: inner.config.record_fps,
             error: inner.error.clone(),
         }
     }
@@ -378,13 +398,24 @@ fn ffmpeg_args(config: &VideoConfig, input: &str, recording: Option<&Path>) -> V
     );
     match recording {
         Some(path) => {
+            // Scale down only, never up, and drop frames to the chosen rate
+            let size = match config.record_height {
+                0 => String::new(),
+                height => format!("scale=-2:'min({height},ih)',"),
+            };
             args.push("-filter_complex".to_string());
             args.push(format!(
-                "[0:v]split=2[rec][pv];[rec]{}[r];[pv]{preview}[p]",
-                config.record_filter
+                "[0:v]split=2[rec][pv];[rec]{size}fps={},format=yuv420p[r];[pv]{preview}[p]",
+                config.record_fps
             ));
             args.extend(["-map", "[r]"].map(String::from));
             args.extend(config.encoder.iter().cloned());
+            if matches!(config.extension.as_str(), "mkv" | "webm") {
+                // Write a cluster every second: steady file growth, little lost on a crash
+                args.extend(["-cluster_time_limit", "1000"].map(String::from));
+            }
+            // Hand every packet to the file right away, so its size shows the real rate
+            args.extend(["-flush_packets", "1"].map(String::from));
             args.extend(["-y".to_string(), path.display().to_string()]);
             args.extend(["-map", "[p]"].map(String::from));
         }
