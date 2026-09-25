@@ -456,13 +456,14 @@ function setButtons() {
   $("preview-match").disabled = recorder.busy;
 }
 
-function showError(message) {
-  const notice = $("rec-error");
+function showError(message, id = "rec-error") {
+  const notice = $(id);
   notice.hidden = !message;
   notice.textContent = message ?? "";
 }
 
-async function sendCommand(body) {
+/** Send a dashboard command; errors show in the notice `errorId` */
+async function sendCommand(body, errorId = "rec-error") {
   recorder.busy = true;
   setButtons();
   try {
@@ -479,11 +480,12 @@ async function sendCommand(body) {
       reply = { error: text || `HTTP ${response.status}` };
     }
     if (!response.ok) throw new Error(reply.error ?? `HTTP ${response.status}`);
-    showError(null);
+    showError(null, errorId);
     renderRecorder(reply.recorder);
+    renderReplay(reply.replay);
     return true;
   } catch (error) {
-    showError(error.message);
+    showError(error.message, errorId);
     return false;
   } finally {
     recorder.busy = false;
@@ -509,6 +511,76 @@ $("dir-form").addEventListener("submit", async (event) => {
     input.blur();
   }
 });
+
+// -------------------------------------------------------------------- replay
+
+const replay = {
+  playing: false,
+  positionMs: 0,
+  durationMs: 0,
+  receivedAt: 0,
+};
+
+function renderReplay(status) {
+  replay.playing = status.playing;
+  replay.positionMs = status.position_ms;
+  replay.durationMs = status.duration_ms;
+  replay.receivedAt = performance.now();
+
+  const loaded = status.path !== null;
+  const badge = $("replay-badge");
+  badge.dataset.state = status.playing ? "playing" : "idle";
+  badge.textContent = status.playing ? "Playing" : loaded ? "Loaded" : "Empty";
+  $("btn-replay-play").disabled = !loaded || status.playing;
+  $("btn-replay-stop").disabled = !status.playing;
+  $("replay-form").querySelector("button").disabled = status.playing;
+
+  const input = $("replay-input");
+  if (!input.dataset.edited) input.value = status.path ?? "";
+  $("replay-file").textContent = loaded
+    ? `${status.actions} actions, ${formatClock(status.duration_ms)}`
+    : "Nothing yet";
+  $("replay-file").title = status.path ?? "";
+  $("replay-mix").checked = status.mix;
+  if (status.error) showError(status.error, "replay-error");
+  updateReplayClock(performance.now());
+}
+
+function updateReplayClock(now) {
+  let position = replay.positionMs;
+  if (replay.playing) position += now - replay.receivedAt;
+  position = Math.min(position, replay.durationMs);
+  const text = formatClock(position);
+  const clock = $("replay-clock");
+  if (clock.textContent !== text) clock.textContent = text;
+  const share = replay.durationMs ? position / replay.durationMs : 0;
+  $("replay-progress").style.width = `${(share * 100).toFixed(2)}%`;
+}
+
+$("btn-replay-play").addEventListener("click", () =>
+  sendCommand({ action: "play_replay" }, "replay-error"),
+);
+$("btn-replay-stop").addEventListener("click", () =>
+  sendCommand({ action: "stop_replay" }, "replay-error"),
+);
+$("replay-input").addEventListener("input", (event) => {
+  event.target.dataset.edited = "true";
+});
+$("replay-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("replay-input");
+  const body = { action: "load_replay", path: input.value };
+  if (await sendCommand(body, "replay-error")) {
+    delete input.dataset.edited;
+    input.blur();
+  }
+});
+$("replay-mix").addEventListener("change", (event) =>
+  sendCommand(
+    { action: "set_replay_mix", enabled: event.target.checked },
+    "replay-error",
+  ),
+);
 
 // --------------------------------------------------------------------- video
 
@@ -715,6 +787,7 @@ function renderStatus(status) {
   $("procon-3d").classList.toggle("is-idle", !input);
 
   renderRecorder(status.recorder);
+  renderReplay(status.replay);
   renderVideo(status.video);
   // Live rate per second; per hour uses the session's average, which is far
   // steadier than the live rate (video bitrate swings with what is on screen)
@@ -821,6 +894,7 @@ function frame(now) {
   }
   drawChart(now);
   updateClock(now);
+  updateReplayClock(now);
   requestAnimationFrame(frame);
 }
 

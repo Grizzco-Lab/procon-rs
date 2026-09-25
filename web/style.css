@@ -244,6 +244,9 @@ body[data-rec="recording"] .topbar {
 .p-recorder {
   grid-area: recorder;
 }
+.p-replay {
+  grid-area: replay;
+}
 .p-stats {
   grid-area: stats;
 }
@@ -692,6 +695,11 @@ body[data-rec="recording"] .topbar {
   color: #ffffff;
 }
 
+.rec-badge[data-state="playing"] {
+  background: var(--accent);
+  color: #ffffff;
+}
+
 .rec-badge[data-state="paused"] {
   background: color-mix(in oklab, var(--warning) 22%, var(--panel));
   color: var(--text);
@@ -789,11 +797,32 @@ input:focus-visible {
   border-inline-end-width: 0;
 }
 
+.glyph-play {
+  width: 0;
+  height: 0;
+  border-block: 6px solid transparent;
+  border-inline-start: 10px solid currentColor;
+}
+
 .glyph-stop {
   width: 10px;
   height: 10px;
   border-radius: 2px;
   background: currentColor;
+}
+
+/* How far the replay has played */
+.replay-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--inset);
+  overflow: hidden;
+}
+
+.replay-progress {
+  width: 0;
+  height: 100%;
+  background: var(--accent);
 }
 
 .dir-form {
@@ -1151,10 +1180,10 @@ input:focus-visible {
  */
 
 [data-theme="studio"] .layout {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   grid-template-areas:
-    "video video video controller controller controller"
-    "recorder recorder stats stats motion motion";
+    "video video video video controller controller controller controller"
+    "recorder recorder replay replay stats stats motion motion";
 }
 
 /* Both monitors keep 16:9; the controller is fitted inside its screen */
@@ -1234,6 +1263,7 @@ input:focus-visible {
   grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
   grid-template-areas:
     "controller recorder"
+    "controller replay"
     "controller stats"
     "video motion";
 }
@@ -1443,7 +1473,7 @@ input:focus-visible {
   grid-template-columns: repeat(12, minmax(0, 1fr));
   grid-template-areas:
     "controller controller controller controller controller video video video video recorder recorder recorder"
-    "motion motion motion motion motion motion motion motion motion stats stats stats";
+    "motion motion motion motion motion motion replay replay replay stats stats stats";
 }
 
 [data-theme="telemetry"] .topbar {
@@ -1528,6 +1558,9 @@ input:focus-visible {
 }
 [data-theme="telemetry"] .p-stats {
   --panel-no: "05";
+}
+[data-theme="telemetry"] .p-replay {
+  --panel-no: "06";
 }
 
 [data-theme="telemetry"] .panel-note {
@@ -1699,8 +1732,8 @@ input:focus-visible {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
       "video controller"
-      "recorder stats"
-      "motion motion";
+      "recorder replay"
+      "stats motion";
   }
 }
 
@@ -1709,7 +1742,7 @@ input:focus-visible {
   max-width: 480px;
   margin: 0 auto;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "recorder" "controller" "video" "stats" "motion";
+  grid-template-areas: "recorder" "controller" "video" "replay" "stats" "motion";
 }
 
 :root[data-layout="phone"] .p-motion {
@@ -1719,7 +1752,7 @@ input:focus-visible {
 @media (max-width: 720px) {
   :root[data-theme] .layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "recorder" "controller" "video" "stats" "motion";
+    grid-template-areas: "recorder" "controller" "video" "replay" "stats" "motion";
   }
 
   :root[data-theme] .p-motion {

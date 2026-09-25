@@ -4,10 +4,13 @@
 //! `video-01.mkv`, `video-02.mkv`, … (one per stretch between pauses) and
 //! `session.json` describing how to line them up.
 //!
-//! Settings changed from the dashboard (path prefix, video input) are saved to a
-//! small JSON state file so they survive restarts.
+//! It also holds the replay [`Player`], which plays loaded actions to the Switch.
+//!
+//! Settings changed from the dashboard (path prefix, video input, replay file)
+//! are saved to a small JSON state file so they survive restarts.
 
 use crate::dump::unix_ms;
+use crate::player::Player;
 use crate::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
 use crate::stream::LinkStats;
 use crate::video::Video;
@@ -31,6 +34,10 @@ pub struct SavedState {
     pub video_fps: Option<u32>,
     /// The preview follows the recording size and rate
     pub preview_matches_recording: Option<bool>,
+    /// Last loaded replay file
+    pub replay_path: Option<String>,
+    /// Replay mixes with the controller
+    pub replay_mix: Option<bool>,
 }
 
 impl SavedState {
@@ -55,6 +62,10 @@ pub enum Command {
     SetVideoInput { input: String },
     SetVideoQuality { height: u32, fps: u32 },
     SetPreviewMatchesRecording { enabled: bool },
+    LoadReplay { path: String },
+    PlayReplay,
+    StopReplay,
+    SetReplayMix { enabled: bool },
 }
 
 /// One recorded video file of the session
@@ -80,6 +91,7 @@ struct Session {
 pub struct Studio {
     pub recorder: Recorder,
     pub video: Video,
+    pub player: Player,
     pub link: Arc<LinkStats>,
     pub proxy_address: String,
     state_path: PathBuf,
@@ -90,6 +102,7 @@ impl Studio {
     pub fn new(
         recorder: Recorder,
         video: Video,
+        player: Player,
         link: Arc<LinkStats>,
         proxy_address: String,
         state_path: PathBuf,
@@ -97,6 +110,7 @@ impl Studio {
         Self {
             recorder,
             video,
+            player,
             link,
             proxy_address,
             state_path,
@@ -165,6 +179,16 @@ impl Studio {
             }
             Command::SetPreviewMatchesRecording { enabled } => {
                 self.video.set_preview_matches_recording(enabled)?;
+                self.save_state()?;
+            }
+            Command::LoadReplay { path } => {
+                self.player.load(&path)?;
+                self.save_state()?;
+            }
+            Command::PlayReplay => self.player.play()?,
+            Command::StopReplay => self.player.stop(),
+            Command::SetReplayMix { enabled } => {
+                self.player.set_mix(enabled);
                 self.save_state()?;
             }
         }
@@ -276,6 +300,8 @@ impl Studio {
             video_height: Some(height),
             video_fps: Some(fps),
             preview_matches_recording: Some(self.video.preview_matches_recording()),
+            replay_path: self.player.path(),
+            replay_mix: Some(self.player.mix()),
         };
         // Write then rename, so a crash never leaves a half-written file
         let temp = self.state_path.with_extension("tmp");

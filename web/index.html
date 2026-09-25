@@ -408,6 +408,55 @@
         <p class="notice" id="rec-error" role="alert" hidden></p>
       </section>
 
+      <section class="panel p-replay" aria-labelledby="h-replay">
+        <header class="panel-head">
+          <h2 id="h-replay">Replay</h2>
+          <span class="rec-badge" id="replay-badge" data-state="idle"
+            >Empty</span
+          >
+        </header>
+        <div class="rec-clock" id="replay-clock">00:00:00</div>
+        <div class="replay-track" aria-hidden="true">
+          <div class="replay-progress" id="replay-progress"></div>
+        </div>
+        <div class="rec-actions">
+          <button type="button" class="btn" id="btn-replay-play" disabled>
+            <span class="glyph glyph-play"></span>Play
+          </button>
+          <button type="button" class="btn" id="btn-replay-stop" disabled>
+            <span class="glyph glyph-stop"></span>Stop
+          </button>
+        </div>
+        <form class="dir-form" id="replay-form">
+          <label for="replay-input"
+            >Load a session folder, controller.bin or .jsonl</label
+          >
+          <div class="dir-row">
+            <input
+              id="replay-input"
+              name="path"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <button type="submit" class="btn btn-small">Load</button>
+          </div>
+        </form>
+        <label class="check" for="replay-mix">
+          <input type="checkbox" id="replay-mix" />
+          Mix with the controller
+          <span class="check-note"
+            >Buttons combine; each stick and the gyro take whichever moves
+            more</span
+          >
+        </label>
+        <div class="rec-file">
+          <span class="rec-file-label">Loaded</span>
+          <span class="path" id="replay-file">Nothing yet</span>
+        </div>
+        <p class="notice" id="replay-error" role="alert" hidden></p>
+      </section>
+
       <section class="panel p-stats" aria-labelledby="h-stats">
         <header class="panel-head">
           <h2 id="h-stats">Data</h2>

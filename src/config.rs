@@ -17,6 +17,8 @@ pub struct Config {
     pub console: ConsoleConfig,
     /// Frame streaming to the studio host
     pub stream: StreamConfig,
+    /// Actions replayed to the Switch
+    pub replay: ReplayConfig,
     /// Performance configuration
     pub performance: PerformanceConfig,
     /// Logging configuration
@@ -54,6 +56,13 @@ pub struct ConsoleConfig {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamConfig {
     /// TCP port the studio host connects to
+    pub port: u16,
+}
+
+/// Replay configuration
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReplayConfig {
+    /// TCP port that takes JSON-line actions (see `replay`)
     pub port: u16,
 }
 
@@ -133,6 +142,8 @@ pub struct StudioConfig {
 pub struct RemoteProxyConfig {
     /// `host:port` of the proxy's `[stream]` port
     pub address: String,
+    /// `host:port` of the proxy's `[replay]` port
+    pub replay_address: String,
 }
 
 /// Dashboard server configuration

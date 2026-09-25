@@ -8,6 +8,7 @@ use alloc::sync::Arc;
 use clap::Parser;
 use procon::config::{self, StudioConfig};
 use procon::dump::MultiDumper;
+use procon::player::Player;
 use procon::recorder::{Recorder, RecorderState};
 use procon::stream::{self, LinkStats};
 use procon::studio::{Command, SavedState, Studio};
@@ -57,6 +58,16 @@ fn main() -> anyhow::Result<()> {
         Some(input).filter(|id| !id.is_empty()),
         saved.preview_matches_recording.unwrap_or(false),
     );
+    let player = Player::new(
+        config.proxy.replay_address,
+        saved.replay_mix.unwrap_or(false),
+    );
+    // The file may be gone since; then the panel starts empty
+    if let Some(path) = saved.replay_path
+        && let Err(e) = player.load(&path)
+    {
+        log::warn!("Could not reload replay file: {:#}", e);
+    }
     let link = Arc::new(LinkStats::default());
     let feed = LiveFeed::new();
 
@@ -71,6 +82,7 @@ fn main() -> anyhow::Result<()> {
     let studio = Arc::new(Studio::new(
         recorder,
         video,
+        player,
         link,
         config.proxy.address,
         state_path,

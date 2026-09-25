@@ -78,6 +78,10 @@ cargo clippy
 
 **Parser/KeyState (`src/parser.rs`, `src/keystate.rs`)**: HID input report parsing into structured controller state
 
+**Replay (`src/replay.rs`, `src/player.rs`)**: JSON-line `Action`s, loaded from a session, `controller.bin` or `.jsonl`; the studio's Replay panel (`Player`) sends them to the proxy's replay port, and while it is connected the latest action overwrites (or, with `mix`, combines with) input reports before they are recorded and forwarded
+
+**Remote wakeup (`src/wake.rs`)**: when the sleeping Switch stops reading reports, Home sets the DWC2 `DCTL.RmtWkUpSig` bit through `/dev/mem` (the dwc2 driver has no wakeup op)
+
 **Frame link (`src/stream.rs`)**: proxy-side `FrameStreamer` (TCP, header then 80-byte frames, heartbeats) and host-side `receive_frames` (sequence gaps, clock offset)
 
 **Recorder (`src/recorder.rs`)**: Session folders `<prefix>YYYY-MM-DD_HH-MM-SS/` with `controller.bin`; start/pause/resume/stop
@@ -117,6 +121,9 @@ prefix = "/tmp/procon-"
 
 [stream]
 port = 7331                         # Studio host connects here
+
+[replay]
+port = 7332                         # JSON-line actions replace the controller's
 
 [performance]
 enable_cpu_affinity = false         # Pin to random CPU core

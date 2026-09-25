@@ -1,6 +1,8 @@
 [proxy]
 # The machine running `procon-proxy`: its address and [stream] port
 address = "192.168.4.94:7331"
+# Its [replay] port, where the replay panel plays actions
+replay_address = "192.168.4.94:7332"
 
 [web]
 # Dashboard port (8080 is taken on this host)

@@ -63,6 +63,28 @@ Then start the studio, with the proxy's address in `config.toml`:
 and open `http://<host>:8090`. To build on the Pi itself instead of deploying,
 run `./scripts/run-proxy.sh` there.
 
+### Replaying actions
+
+To check what a model predicts, play its actions to the Switch from the
+dashboard's Replay panel: load a session folder, a `controller.bin` or a
+`.jsonl` of actions, then Play. The studio sends them to the proxy's
+`[replay]` port (7332, `replay_address` in `config.toml`); while it plays, the
+Switch gets the replayed input instead of the controller's (and that is what
+gets recorded), and the controller takes over again on Stop or at the end.
+"Mix with the controller" combines the two instead: buttons pressed on either
+count, and each stick and the gyro take whichever moves more.
+
+A `.jsonl` file has one action per line:
+
+```json
+{"t_ms": 40, "buttons": ["zr"], "left_stick": [2048, 3500], "right_stick": [1200, 2048], "gyro": [0, -300, 12]}
+```
+
+Fields left out keep the controller's own values. Sticks are raw 12-bit
+(center ≈ 2048), `gyro`/`accel` raw IMU units; see `src/replay.rs`. A model
+can also connect to the replay port itself and stream lines (without `t_ms`)
+as it predicts them.
+
 ## Dashboard
 
 - **View**: Studio, Joy or Telemetry style, plus a Phone layout (single column,
@@ -134,6 +156,10 @@ enable = false
 # TCP port the studio host connects to for live frames
 port = 7331
 
+[replay]
+# TCP port for JSON-line actions that replace the controller's while a client is connected
+port = 7332
+
 [performance]
 # Enable CPU affinity pinning to random core
 enable_cpu_affinity = false
@@ -166,6 +192,9 @@ The codebase is organized into the following modules:
 
 - **`src/bin/main.rs`** - Main executable (`procon`): studio with dashboard, video and recording
 - **`src/bin/procon-proxy.rs`** - USB proxy executable (`procon-proxy`): proxy and frame streaming
+- **`src/replay.rs`** - Action format, loading replay files, and the proxy's replay port
+- **`src/player.rs`** - Replay panel: plays loaded actions to the proxy
+- **`src/wake.rs`** - USB remote wakeup, so Home wakes a sleeping Switch
 - **`src/motion.rs`** - Controller orientation from the IMU for Splatoon mode
 - **`src/config.rs`** - Configuration management using TOML format
 - **`src/gadget.rs`** - USB gadget management for automatic device setup
@@ -208,4 +237,8 @@ The codebase is organized into the following modules:
 - **"Failed to setup USB gadget"**: Ensure you're running with root privileges (`sudo`)
 - **"No USB device controller found"**: Verify your device supports USB gadget mode
 - **"Pro Controller not found"**: Check USB connection and device permissions
-- **High CPU usage**: Try enabling CPU affinity in the configuration 
+- **High CPU usage**: Try enabling CPU affinity in the configuration
+- **Switch asleep**: the proxy logs "Switch stopped taking input" and drops
+  reports until it wakes. Home signals USB remote wakeup (the gadget advertises
+  it, and `src/wake.rs` drives the Pi 4's DWC2 controller directly, since its
+  Linux driver cannot); the log says whether the bus was suspended 

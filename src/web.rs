@@ -5,7 +5,7 @@
 //!   report, `{"type":"status"}` text twice a second, and the video preview
 //!   as binary fragmented-MP4 messages (an init segment, then one per frame)
 //! - `POST /api/command`: a [`Command`] such as `{"action":"start"}`, answered
-//!   with `{"recorder": ...}` or `{"error": "..."}`
+//!   with `{"recorder": ..., "replay": ...}` or `{"error": "..."}`
 
 use crate::dump::{Dumper, Frame};
 use crate::motion::Orientation;
@@ -110,7 +110,10 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, port: u16) {
             // Commands may wait for ffmpeg to restart; keep that off the async workers
             match tokio::task::block_in_place(|| studio.run(command)) {
                 Ok(()) => {
-                    let reply = json!({ "recorder": studio.recorder.status() });
+                    let reply = json!({
+                        "recorder": studio.recorder.status(),
+                        "replay": studio.player.status(),
+                    });
                     warp::reply::with_status(warp::reply::json(&reply), StatusCode::OK)
                 }
                 Err(e) => {
@@ -283,6 +286,7 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
                     "clock_offset_ms": link.clock_offset_ms.load(Ordering::Relaxed),
                 },
                 "recorder": recorder,
+                "replay": studio.player.status(),
                 "video": video,
                 // Bytes per second, and bytes of the current or last session
                 "rates": { "controller": controller_rate, "video": video_rate },

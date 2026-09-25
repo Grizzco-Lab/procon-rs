@@ -20,6 +20,10 @@ enable = false
 # TCP port the studio host connects to for live frames
 port = 7331
 
+[replay]
+# TCP port for JSON-line actions that replace the controller's while a client is connected
+port = 7332
+
 [performance]
 # Enable CPU affinity pinning to random core
 enable_cpu_affinity = false

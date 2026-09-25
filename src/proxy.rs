@@ -1,23 +1,40 @@
 use crate::config::ProxyConfig;
 use crate::device::ProController;
 use crate::dump::{Dumper, Frame};
+use crate::replay::Replay;
+use crate::wake::RemoteWakeup;
 use anyhow::{Result, bail};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::io::AsRawFd;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Home button in byte 4 of an input report
+const HOME: (usize, u8) = (4, 0x10);
+/// Least time between wakeup attempts while Home is held
+const WAKE_RETRY: Duration = Duration::from_secs(1);
 
 pub struct Proxy {
     controller: ProController,
     hidg_device: Option<File>,
     dumper: Box<dyn Dumper>,
+    /// Actions from a replay client, applied to input reports while one is connected
+    replay: Replay,
+    /// Wakes a sleeping Switch when Home is pressed
+    wakeup: Option<RemoteWakeup>,
     hidg_path: String,
     config: ProxyConfig,
 }
 
 impl Proxy {
     /// Initialize a new proxy with the given dumper and configuration
-    pub fn new(dumper: Box<dyn Dumper>, hidg_path: &str, config: ProxyConfig) -> Result<Self> {
+    pub fn new(
+        dumper: Box<dyn Dumper>,
+        replay: Replay,
+        wakeup: Option<RemoteWakeup>,
+        hidg_path: &str,
+        config: ProxyConfig,
+    ) -> Result<Self> {
         log::info!("Initializing Proxy...");
 
         // Connect to Pro Controller
@@ -36,6 +53,8 @@ impl Proxy {
             controller,
             hidg_device: None,
             dumper,
+            replay,
+            wakeup,
             hidg_path: hidg_path.to_string(),
             config,
         })
@@ -72,6 +91,9 @@ impl Proxy {
         let mut frame_count = 0u64;
         // Numbers every report read, so consumers can spot dropped frames
         let mut seq = 0u32;
+        // The Switch stopped taking reports (asleep), and when we last tried waking it
+        let mut host_idle = false;
+        let mut last_wake: Option<Instant> = None;
 
         loop {
             // Ensure HID gadget device is open
@@ -95,6 +117,9 @@ impl Proxy {
                 {
                     Ok(size) => {
                         if size > 0 {
+                            // Recordings see what the Switch sees
+                            self.replay.apply(&mut input_buffer[..size]);
+
                             // Timestamp once here so every dumper sees the same frame
                             let frame = Frame::new(seq, &input_buffer[..size]);
                             seq = seq.wrapping_add(1);
@@ -106,6 +131,10 @@ impl Proxy {
                             if let Some(ref mut hidg_device) = self.hidg_device {
                                 match hidg_device.write(&input_buffer[..size]) {
                                     Ok(written) => {
+                                        if host_idle {
+                                            log::info!("Switch is taking input again");
+                                            host_idle = false;
+                                        }
                                         if written != size {
                                             log::warn!(
                                                 "Partial input write: {} of {} bytes",
@@ -116,6 +145,30 @@ impl Proxy {
                                         frame_count += 1;
                                         if frame_count % self.config.frame_count_log_interval == 0 {
                                             log::debug!("Forwarded {} input frames", frame_count);
+                                        }
+                                    }
+                                    // The Switch is not reading (asleep): drop the report
+                                    // and keep the device, which reopening would not change
+                                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                        if !host_idle {
+                                            log::info!(
+                                                "Switch stopped taking input (asleep?); press Home to wake it"
+                                            );
+                                            host_idle = true;
+                                        }
+                                        let home = input_buffer[HOME.0] & HOME.1 != 0;
+                                        if let Some(wakeup) = &self.wakeup
+                                            && home
+                                            && last_wake.is_none_or(|at| at.elapsed() >= WAKE_RETRY)
+                                        {
+                                            last_wake = Some(Instant::now());
+                                            if wakeup.wake() {
+                                                log::info!("Home pressed: signalled USB resume");
+                                            } else {
+                                                log::info!(
+                                                    "Home pressed, but the bus is not suspended; cannot wake"
+                                                );
+                                            }
                                         }
                                     }
                                     Err(e) => {

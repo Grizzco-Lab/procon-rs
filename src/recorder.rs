@@ -81,17 +81,22 @@ fn session_dir(prefix: &str) -> PathBuf {
 /// Clean up a typed prefix: expand `~` to the home folder, and treat an
 /// existing folder as a folder even without a trailing `/`
 fn normalize_prefix(prefix: &str) -> String {
-    let prefix = prefix.trim();
-    let mut prefix = match (prefix.strip_prefix('~'), std::env::var("HOME")) {
-        (Some(rest), Ok(home)) if rest.is_empty() || rest.starts_with('/') => {
-            format!("{home}{rest}")
-        }
-        _ => prefix.to_string(),
-    };
+    let mut prefix = expand_home(prefix);
     if !prefix.ends_with('/') && Path::new(&prefix).is_dir() {
         prefix.push('/');
     }
     prefix
+}
+
+/// Trim a typed path and expand a leading `~` to the home folder
+pub fn expand_home(path: &str) -> String {
+    let path = path.trim();
+    match (path.strip_prefix('~'), std::env::var("HOME")) {
+        (Some(rest), Ok(home)) if rest.is_empty() || rest.starts_with('/') => {
+            format!("{home}{rest}")
+        }
+        _ => path.to_string(),
+    }
 }
 
 /// Directory that must exist for `prefix` to be usable

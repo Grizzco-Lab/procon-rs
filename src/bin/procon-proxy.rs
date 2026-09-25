@@ -6,6 +6,7 @@ use procon::gadget::ProConGadget;
 use procon::priority::set_high_priority;
 use procon::proxy::Proxy;
 use procon::recorder::Recorder;
+use procon::replay::Replay;
 use procon::stream::FrameStreamer;
 
 /// Nintendo Switch Pro Controller HID Proxy
@@ -87,7 +88,16 @@ fn main() -> anyhow::Result<()> {
     let async_dumper = AsyncDumper::new(Box::new(multi_dumper));
 
     // Create and initialize proxy
-    let mut proxy = Proxy::new(Box::new(async_dumper), &hid_device_path, config.proxy)?;
+    // Model or file actions sent here replace the controller's while connected
+    let replay = Replay::listen(config.replay.port)?;
+
+    let mut proxy = Proxy::new(
+        Box::new(async_dumper),
+        replay,
+        usb_gadget.remote_wakeup(),
+        &hid_device_path,
+        config.proxy,
+    )?;
 
     log::info!("Starting proxy with async dumping (dump thread runs at normal priority)");
     if config.console.enable {

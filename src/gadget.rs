@@ -1,5 +1,6 @@
 //! USB gadget management for Nintendo Switch Pro Controller emulation
 
+use crate::wake::RemoteWakeup;
 use anyhow::{Context, Result};
 use usb_gadget::function::hid::Hid;
 use usb_gadget::*;
@@ -34,13 +35,17 @@ impl ProConGadget {
 
         let (_hid, hid_handle) = hid_builder.build();
 
+        // Like a real controller, ask the Switch to let us wake it (bmAttributes 0xA0)
+        let mut config = Config::new("Configuration 1").with_function(hid_handle);
+        config.remote_wakeup = true;
+
         // Create gadget with Nintendo Pro Controller IDs
         let reg_gadget = Gadget::new(
             Class::new(0, 0, 0),     // HID class will be set by the function
             Id::new(0x057E, 0x2009), // Nintendo vendor ID, Pro Controller product ID
             Strings::new("Proxy Co.", "NS Pro Proxy", "0001"),
         )
-        .with_config(Config::new("Configuration 1").with_function(hid_handle))
+        .with_config(config)
         .bind(&default_udc().context("No USB device controller found")?)
         .context("Failed to bind gadget to UDC")?;
 
@@ -59,6 +64,18 @@ impl ProConGadget {
 
         log::info!("USB gadget successfully created at: {}", device_path);
         Ok(device_path)
+    }
+
+    /// Remote wakeup through the bound controller, if it supports it
+    pub fn remote_wakeup(&self) -> Option<RemoteWakeup> {
+        let udc = self.reg_gadget.as_ref()?.udc().ok()??;
+        match RemoteWakeup::open(&udc.to_string_lossy()) {
+            Ok(wakeup) => Some(wakeup),
+            Err(e) => {
+                log::warn!("Home cannot wake the Switch: {:#}", e);
+                None
+            }
+        }
     }
 
     /// Cleanup the USB gadget
