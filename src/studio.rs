@@ -58,7 +58,7 @@ pub enum Command {
 #[derive(Serialize)]
 struct Segment {
     file: String,
-    /// Unix ms of the first frame; add a frame's timestamp in the file to get its time
+    /// Unix ms of the first frame; frame `n` came `n / fps` seconds later
     start_unix_ms: Option<u64>,
 }
 
@@ -233,6 +233,7 @@ impl Studio {
     /// Describe the session in `session.json`
     fn write_session(&self, session: &Session) -> Result<()> {
         let recorder = self.recorder.status();
+        let (height, fps) = self.video.quality();
         let description = json!({
             "started_at_unix_ms": session.started_at_ms,
             "stopped_at_unix_ms": session.stopped_at_ms,
@@ -249,6 +250,8 @@ impl Studio {
             },
             "video": {
                 "input": session.video_input,
+                "height": height,
+                "fps": fps,
                 "segments": session.segments,
             },
         });

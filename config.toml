@@ -17,15 +17,13 @@ input = "/dev/video0"
 fps = 60
 # Elgato 4K X mode, the same one OBS uses: YUYV 1920x1080
 v4l2_args = ["-input_format", "yuyv422", "-video_size", "1920x1080"]
-# Recorded frames: 1080p at most (the screen is 4K), 4:2:0 for the encoder
+# Recorded size (1080, 720, 540 or 360; 16:9) and frame rate; the dashboard
+# preview shows the same, and the dashboard can change both
 record_height = 720
 record_fps = 30
 # NVENC H.264; use ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"] without an NVIDIA GPU
 encoder = ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "23", "-bf", "0"]
 extension = "mkv"
-# Dashboard preview size and rate
-preview_height = 360
-preview_fps = 30
 
 [logging]
 # Log level: error, warn, info, debug, trace

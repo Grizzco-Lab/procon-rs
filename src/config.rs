@@ -166,8 +166,4 @@ pub struct VideoConfig {
     pub encoder: Vec<String>,
     /// Recording file extension
     pub extension: String,
-    /// Preview height in pixels
-    pub preview_height: u32,
-    /// Preview frame rate
-    pub preview_fps: u32,
 }

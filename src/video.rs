@@ -1,32 +1,45 @@
 //! Video capture with ffmpeg: a live preview, plus recording to files
 //!
-//! One ffmpeg process owns the input, since a capture card can only be opened
-//! once. It always writes a small MJPEG preview to stdout; while recording it
-//! also encodes the same frames into a file. Starting or stopping a recording
-//! restarts ffmpeg, so the preview blinks for a moment.
+//! A capture ffmpeg owns the input for as long as it is selected: a capture
+//! card can only be opened once, and reopening it is slow (the Elgato 4K X
+//! only streams on every other start). It writes two streams:
 //!
-//! Input timestamps are wall-clock (`-use_wallclock_as_timestamps`), and ffmpeg
-//! reports the first one as `start:` in its log. That Unix time plus a frame's
-//! timestamp in the file gives the frame's wall-clock time.
+//! - raw frames, already scaled to the recording size and rate, on fd 3
+//! - the same frames as an MJPEG preview on stdout, so the dashboard shows
+//!   exactly what gets recorded
+//!
+//! Recording starts a separate encoder ffmpeg and feeds it those raw frames,
+//! so a file begins with the first frame after Record, and pausing never
+//! touches the device. Frames come at a constant rate: frame `n` of a file was
+//! captured `n / fps` seconds after its first frame, whose Unix time is kept.
 
 use crate::config::VideoConfig;
 use crate::dump::unix_ms;
 use alloc::sync::Arc;
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 use serde::Serialize;
-use std::io::{BufRead, BufReader, Read};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Mutex, MutexGuard};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Instant;
 use tokio::sync::watch;
 
 /// How long a new ffmpeg may take to deliver its first frame
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// Seconds of frames queued for an encoder that is still starting up
+const ENCODER_QUEUE_SECS: u32 = 3;
+
+/// Recording heights the dashboard offers; widths follow 16:9
+pub const RECORD_HEIGHTS: [u32; 4] = [1080, 720, 540, 360];
 
 /// Input id for capturing the X11 screen
 pub const SCREEN: &str = "screen";
@@ -73,6 +86,17 @@ pub fn list_inputs() -> Vec<VideoInput> {
     inputs
 }
 
+/// Width and height of recorded frames: 16:9 at the configured height
+fn record_size(config: &VideoConfig) -> (u32, u32) {
+    let height = if RECORD_HEIGHTS.contains(&config.record_height) {
+        config.record_height
+    } else {
+        RECORD_HEIGHTS[0]
+    };
+    // Even sizes, as 4:2:0 frames need
+    ((height * 16 / 9 + 1) & !1, height)
+}
+
 /// Snapshot of the video capture for the dashboard
 #[derive(Debug, Serialize)]
 pub struct VideoStatus {
@@ -83,7 +107,7 @@ pub struct VideoStatus {
     pub recording: Option<String>,
     /// Preview frames arrived within the last two seconds
     pub live: bool,
-    /// Recorded height, 0 for the source size
+    /// Recorded height
     pub record_height: u32,
     /// Recorded frame rate
     pub record_fps: u32,
@@ -91,43 +115,54 @@ pub struct VideoStatus {
     pub error: Option<String>,
 }
 
+/// A file being encoded from the capture's raw frames
+struct Recording {
+    path: PathBuf,
+    /// Frames for the encoder; dropping it ends the file
+    frames: SyncSender<Vec<u8>>,
+    /// Unix ms of the file's first frame, once it arrived
+    first_frame_ms: Option<u64>,
+    /// Frames lost because the encoder fell behind
+    dropped: u64,
+    encoder: Child,
+    writer: JoinHandle<()>,
+}
+
 struct Inner {
     config: VideoConfig,
     input: Option<String>,
-    /// File the running ffmpeg records into
-    recording: Option<PathBuf>,
+    /// The capture ffmpeg
     child: Option<Child>,
-    /// Unix ms of the first frame of the running ffmpeg, from its log
-    started_at_ms: Option<u64>,
     error: Option<String>,
 }
 
-/// Handle to the capture process; clones share it
+/// Handle to the capture and recording processes; clones share them
 #[derive(Clone)]
 pub struct Video {
     inner: Arc<Mutex<Inner>>,
+    /// The file being recorded; its own lock, as the frame reader takes it for every frame
+    recording: Arc<Mutex<Option<Recording>>>,
     /// Latest preview JPEG
     preview: watch::Sender<Arc<Vec<u8>>>,
     /// Bumped before every restart so threads of an old ffmpeg know they are stale.
     /// Kept outside the lock: an old ffmpeg's pipes must be drained without it,
-    /// or it blocks on a full pipe and never finishes its files.
+    /// or it blocks on a full pipe and never exits.
     generation: Arc<AtomicU64>,
     /// Unix ms of the latest preview frame
     last_preview_ms: Arc<AtomicU64>,
 }
 
 impl Video {
-    /// Start previewing `input` (if any)
+    /// Start capturing `input` (if any)
     pub fn new(config: VideoConfig, input: Option<String>) -> Self {
         let video = Self {
             inner: Arc::new(Mutex::new(Inner {
                 config,
                 input,
-                recording: None,
                 child: None,
-                started_at_ms: None,
                 error: None,
             })),
+            recording: Arc::default(),
             preview: watch::Sender::default(),
             generation: Arc::default(),
             last_preview_ms: Arc::default(),
@@ -140,6 +175,10 @@ impl Video {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    fn recording(&self) -> MutexGuard<'_, Option<Recording>> {
+        self.recording.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Receive preview JPEGs
     pub fn subscribe(&self) -> watch::Receiver<Arc<Vec<u8>>> {
         self.preview.subscribe()
@@ -147,11 +186,11 @@ impl Video {
 
     /// Switch to another input, or none; not while recording
     pub fn set_input(&self, input: Option<String>) -> Result<()> {
-        let mut inner = self.lock();
         ensure!(
-            inner.recording.is_none(),
+            self.recording().is_none(),
             "stop recording before changing the video input"
         );
+        let mut inner = self.lock();
         inner.input = input;
         self.restart(&mut inner);
         Ok(())
@@ -162,24 +201,32 @@ impl Video {
         self.lock().input.clone()
     }
 
-    /// Size and rate of the next recording; not while recording
+    /// Size and rate of recordings; not while recording
     pub fn set_quality(&self, height: u32, fps: u32) -> Result<()> {
-        ensure!(fps > 0, "the frame rate must be above zero");
-        let mut inner = self.lock();
         ensure!(
-            inner.recording.is_none(),
+            RECORD_HEIGHTS.contains(&height),
+            "the height must be one of {:?}",
+            RECORD_HEIGHTS
+        );
+        ensure!(fps > 0, "the frame rate must be above zero");
+        ensure!(
+            self.recording().is_none(),
             "stop recording before changing the video quality"
         );
-        // Only recordings use it, so the running preview needs no restart
-        inner.config.record_height = height;
-        inner.config.record_fps = fps;
+        let mut inner = self.lock();
+        if (inner.config.record_height, inner.config.record_fps) != (height, fps) {
+            inner.config.record_height = height;
+            inner.config.record_fps = fps;
+            // The capture scales frames for recording, so it restarts with the new size
+            self.restart(&mut inner);
+        }
         Ok(())
     }
 
-    /// Recorded height (0 for source) and frame rate
+    /// Recorded height and frame rate
     pub fn quality(&self) -> (u32, u32) {
         let inner = self.lock();
-        (inner.config.record_height, inner.config.record_fps)
+        (record_size(&inner.config).1, inner.config.record_fps)
     }
 
     /// File extension for recordings
@@ -187,52 +234,87 @@ impl Video {
         self.lock().config.extension.clone()
     }
 
-    /// Start recording into `path`, restarting ffmpeg; false when there is no input
+    /// Start encoding captured frames into `path`; false when there is no input
     pub fn start_recording(&self, path: &Path) -> bool {
-        let mut inner = self.lock();
+        let inner = self.lock();
         if inner.input.is_none() {
             return false;
         }
-        inner.recording = Some(path.to_path_buf());
-        self.restart(&mut inner);
-        true
+        match spawn_encoder(&inner.config, path) {
+            Ok(recording) => {
+                log::info!("Recording video to {}", path.display());
+                *self.recording() = Some(recording);
+                true
+            }
+            Err(e) => {
+                log::error!("Cannot start the video encoder: {:#}", e);
+                drop(inner);
+                self.lock().error = Some(format!("{e:#}"));
+                false
+            }
+        }
     }
 
-    /// Finish the recording and go back to preview only
+    /// Finish the file being recorded
     ///
-    /// Returns the Unix ms of the recording's first frame when ffmpeg reported it.
+    /// Returns the Unix ms of its first frame, when one arrived.
     pub fn stop_recording(&self) -> Option<u64> {
-        let mut inner = self.lock();
-        inner.recording.as_ref()?;
-        let started_at = inner.started_at_ms;
-        inner.recording = None;
-        self.restart(&mut inner);
-        started_at
+        let recording = self.recording().take()?;
+        let Recording {
+            path,
+            frames,
+            first_frame_ms,
+            dropped,
+            mut encoder,
+            writer,
+        } = recording;
+        // Closing the queue lets the writer finish, which ends the encoder's input
+        drop(frames);
+        let _ = writer.join();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if let Ok(Some(_)) = encoder.try_wait() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        if let Ok(None) = encoder.try_wait() {
+            log::warn!("The video encoder did not finish, killing it");
+            let _ = encoder.kill();
+            let _ = encoder.wait();
+        }
+        if dropped > 0 {
+            log::warn!("{} video frames dropped in {}", dropped, path.display());
+        }
+        first_frame_ms
     }
 
     /// Take a snapshot for the dashboard
     pub fn status(&self) -> VideoStatus {
+        let recording = self
+            .recording()
+            .as_ref()
+            .map(|r| r.path.display().to_string());
         let inner = self.lock();
         VideoStatus {
             input: inner.input.clone(),
             inputs: list_inputs(),
-            recording: inner.recording.as_ref().map(|p| p.display().to_string()),
+            recording,
             live: unix_ms().saturating_sub(self.last_preview_ms.load(Ordering::Relaxed)) < 2000,
-            record_height: inner.config.record_height,
+            record_height: record_size(&inner.config).1,
             record_fps: inner.config.record_fps,
             error: inner.error.clone(),
         }
     }
 
-    /// Stop the running ffmpeg and start one for the current input and recording
+    /// Stop the capture ffmpeg and start one for the current input
     fn restart(&self, inner: &mut Inner) {
         self.generation.fetch_add(1, Ordering::SeqCst);
-        if let Some(child) = inner.child.take() {
-            // An ffmpeg that never produced a frame has nothing to save
-            let graceful = self.last_preview_ms.load(Ordering::Relaxed) != 0;
-            stop_child(child, graceful);
+        if let Some(mut child) = inner.child.take() {
+            // The capture writes no files, so there is nothing to finish
+            let _ = child.kill();
+            let _ = child.wait();
         }
-        inner.started_at_ms = None;
         inner.error = None;
         self.last_preview_ms.store(0, Ordering::Relaxed);
 
@@ -254,25 +336,58 @@ impl Video {
     }
 
     fn spawn(&self, inner: &Inner, input: &str) -> Result<Child> {
-        let args = ffmpeg_args(&inner.config, input, inner.recording.as_deref());
+        // A pipe for the raw frames, handed to ffmpeg as fd 3
+        let mut fds = [0; 2];
+        // SAFETY: pipe2 fills both descriptors, which we then own
+        if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+            bail!("cannot create a pipe: {}", std::io::Error::last_os_error());
+        }
+        let (read_end, write_end) =
+            unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        // A bigger pipe means fewer wakeups for large frames; best effort
+        unsafe { libc::fcntl(write_end.as_raw_fd(), libc::F_SETPIPE_SZ, 1 << 20) };
+
+        let args = capture_args(&inner.config, input);
         log::info!("Starting ffmpeg {}", args.join(" "));
-        let mut child = Command::new("ffmpeg")
+        let mut command = Command::new("ffmpeg");
+        command
             .args(&args)
             .stdin(Stdio::null())
             // Own process group: a terminal Ctrl+C reaches the studio, which then stops ffmpeg in order
             .process_group(0)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        let raw_fd = write_end.as_raw_fd();
+        // SAFETY: only async-signal-safe calls between fork and exec
+        unsafe {
+            command.pre_exec(move || {
+                if raw_fd == 3 {
+                    // Already fd 3: just let it survive exec
+                    libc::fcntl(3, libc::F_SETFD, 0);
+                } else if libc::dup2(raw_fd, 3) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = command
             .spawn()
             .context("cannot run ffmpeg; is it installed?")?;
+        // Only ffmpeg writes now, so the reader sees the end when it exits
+        drop(write_end);
 
         let generation = self.generation.load(Ordering::SeqCst);
         let stdout = child.stdout.take().context("no ffmpeg stdout")?;
         let stderr = child.stderr.take().context("no ffmpeg stderr")?;
+        let (width, height) = record_size(&inner.config);
+        let frame_size = (width * height * 3 / 2) as usize;
         let video = self.clone();
         thread::spawn(move || video.read_preview(stdout, generation));
         let video = self.clone();
         thread::spawn(move || video.read_log(stderr, generation));
+        let video = self.clone();
+        let pipe = File::from(read_end);
+        thread::spawn(move || video.read_frames(pipe, frame_size, generation));
         Ok(child)
     }
 
@@ -299,10 +414,32 @@ impl Video {
         self.generation.load(Ordering::SeqCst) == generation
     }
 
+    /// Hand raw frames to the recording, if any; otherwise drop them
+    fn read_frames(&self, mut pipe: File, frame_size: usize, generation: u64) {
+        let mut frame = vec![0u8; frame_size];
+        // Read to the end even when stale, so ffmpeg can exit
+        while pipe.read_exact(&mut frame).is_ok() {
+            if !self.is_current(generation) {
+                continue;
+            }
+            let mut recording = self.recording();
+            let Some(recording) = recording.as_mut() else {
+                continue;
+            };
+            recording.first_frame_ms.get_or_insert_with(unix_ms);
+            match recording.frames.try_send(frame.clone()) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => recording.dropped += 1,
+                // The encoder is gone; stop_recording reports it
+                Err(TrySendError::Disconnected(_)) => {}
+            }
+        }
+    }
+
     /// Publish preview frames; when ffmpeg dies on its own, retry after a pause
     fn read_preview(&self, stdout: ChildStdout, generation: u64) {
         let mut reader = BufReader::new(stdout);
-        // Read to the end even when stale, so ffmpeg can finish
+        // Read to the end even when stale, so ffmpeg can exit
         while let Some(jpeg) = next_part(&mut reader) {
             if self.is_current(generation) {
                 self.preview.send_replace(Arc::new(jpeg));
@@ -325,56 +462,81 @@ impl Video {
         }
     }
 
-    /// Pick the start time and errors out of the ffmpeg log
+    /// Keep the capture's errors for the dashboard
     fn read_log(&self, stderr: impl Read, generation: u64) {
-        // Read to the end even when stale, so ffmpeg can finish
+        // Read to the end even when stale, so ffmpeg can exit
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if !self.is_current(generation) {
-                continue;
-            }
-            let mut inner = self.lock();
-            // "  Duration: N/A, start: 1790310939.087875, bitrate: ..."
-            if inner.started_at_ms.is_none()
-                && let Some(start) = line.split("start: ").nth(1)
-                && let Ok(secs) = start
-                    .split(',')
-                    .next()
-                    .unwrap_or_default()
-                    .trim()
-                    .parse::<f64>()
-            {
-                inner.started_at_ms = Some((secs * 1000.0) as u64);
-            } else if line.contains("rror") || line.contains("busy") {
+            if self.is_current(generation) && (line.contains("rror") || line.contains("busy")) {
                 log::warn!("ffmpeg: {}", line);
-                inner.error = Some(line.trim().to_string());
+                self.lock().error = Some(line.trim().to_string());
             }
         }
     }
 }
 
-/// Ask ffmpeg to finish its files, then make sure it is gone
-///
-/// Without `graceful` it is killed right away.
-fn stop_child(mut child: Child, graceful: bool) {
-    if graceful {
-        // SIGINT makes ffmpeg flush and close its outputs, like Ctrl+C in a terminal
-        // SAFETY: plain signal to a child we own
-        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if let Ok(Some(_)) = child.try_wait() {
-                return;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        log::warn!("ffmpeg did not quit, killing it");
+/// Start an encoder ffmpeg for `path`, fed raw frames through a queue
+fn spawn_encoder(config: &VideoConfig, path: &Path) -> Result<Recording> {
+    let (width, height) = record_size(config);
+    let mut args: Vec<String> = ["-hide_banner", "-nostats", "-loglevel", "warning"]
+        .map(String::from)
+        .to_vec();
+    args.extend(["-f", "rawvideo", "-pix_fmt", "yuv420p", "-video_size"].map(String::from));
+    args.push(format!("{width}x{height}"));
+    args.extend(["-framerate".to_string(), config.record_fps.to_string()]);
+    args.extend(["-i", "pipe:0"].map(String::from));
+    args.extend(config.encoder.iter().cloned());
+    if matches!(config.extension.as_str(), "mkv" | "webm") {
+        // Write a cluster every second: steady file growth, little lost on a crash
+        args.extend(["-cluster_time_limit", "1000"].map(String::from));
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    // Hand every packet to the file right away, so its size shows the real rate
+    args.extend(["-flush_packets", "1"].map(String::from));
+    args.extend(["-y".to_string(), path.display().to_string()]);
+
+    log::info!("Starting ffmpeg {}", args.join(" "));
+    let mut encoder = Command::new("ffmpeg")
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .context("cannot run ffmpeg; is it installed?")?;
+    let stdin = encoder.stdin.take().context("no encoder stdin")?;
+    if let Some(stderr) = encoder.stderr.take() {
+        thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                log::warn!("ffmpeg encoder: {}", line);
+            }
+        });
+    }
+
+    // Room for the encoder to start up without losing frames
+    let (frames, queue) =
+        sync_channel(config.record_fps.max(1) as usize * ENCODER_QUEUE_SECS as usize);
+    let writer = thread::spawn(move || write_frames(stdin, queue));
+    Ok(Recording {
+        path: path.to_path_buf(),
+        frames,
+        first_frame_ms: None,
+        dropped: 0,
+        encoder,
+        writer,
+    })
 }
 
-/// Command line for capturing `input`, previewing to stdout and optionally recording
-fn ffmpeg_args(config: &VideoConfig, input: &str, recording: Option<&Path>) -> Vec<String> {
+/// Feed queued frames to the encoder until the queue closes
+fn write_frames(mut stdin: impl Write, queue: Receiver<Vec<u8>>) {
+    for frame in queue {
+        if let Err(e) = stdin.write_all(&frame) {
+            log::error!("Video encoder stopped taking frames: {}", e);
+            return;
+        }
+    }
+}
+
+/// Command line for capturing `input`: preview on stdout, raw recording frames on fd 3
+fn capture_args(config: &VideoConfig, input: &str) -> Vec<String> {
     let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "info"]
         .map(String::from)
         .to_vec();
@@ -392,36 +554,24 @@ fn ffmpeg_args(config: &VideoConfig, input: &str, recording: Option<&Path>) -> V
         args.extend(["-i".to_string(), input.to_string()]);
     }
 
-    let preview = format!(
-        "scale=-2:{},fps={}",
-        config.preview_height, config.preview_fps
+    // Recording frames: fit into 16:9 at the chosen size, padded if the source
+    // has another shape, at a constant rate. The preview is the same frames,
+    // in the full-range color JPEG expects.
+    let (width, height) = record_size(config);
+    args.push("-filter_complex".to_string());
+    args.push(format!(
+        "[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,\
+         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={},format=yuv420p,split=2[r][pv];\
+         [pv]scale=out_range=full,format=yuvj420p[p]",
+        config.record_fps
+    ));
+    args.extend(["-map", "[r]", "-f", "rawvideo", "pipe:3"].map(String::from));
+    args.extend(
+        [
+            "-map", "[p]", "-c:v", "mjpeg", "-q:v", "5", "-f", "mpjpeg", "pipe:1",
+        ]
+        .map(String::from),
     );
-    match recording {
-        Some(path) => {
-            // Scale down only, never up, and drop frames to the chosen rate
-            let size = match config.record_height {
-                0 => String::new(),
-                height => format!("scale=-2:'min({height},ih)',"),
-            };
-            args.push("-filter_complex".to_string());
-            args.push(format!(
-                "[0:v]split=2[rec][pv];[rec]{size}fps={},format=yuv420p[r];[pv]{preview}[p]",
-                config.record_fps
-            ));
-            args.extend(["-map", "[r]"].map(String::from));
-            args.extend(config.encoder.iter().cloned());
-            if matches!(config.extension.as_str(), "mkv" | "webm") {
-                // Write a cluster every second: steady file growth, little lost on a crash
-                args.extend(["-cluster_time_limit", "1000"].map(String::from));
-            }
-            // Hand every packet to the file right away, so its size shows the real rate
-            args.extend(["-flush_packets", "1"].map(String::from));
-            args.extend(["-y".to_string(), path.display().to_string()]);
-            args.extend(["-map", "[p]"].map(String::from));
-        }
-        None => args.extend(["-vf".to_string(), preview]),
-    }
-    args.extend(["-c:v", "mjpeg", "-q:v", "7", "-f", "mpjpeg", "pipe:1"].map(String::from));
     args
 }
 

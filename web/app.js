@@ -622,18 +622,29 @@ function renderStatus(status) {
 
   renderRecorder(status.recorder);
   renderVideo(status.video);
-  // Rates per second and per hour, next to what has been written so far
+  // Live rate per second; per hour uses the session's average, which is far
+  // steadier than the live rate (video bitrate swings with what is on screen)
   const { rates, sizes } = status;
+  const recordedSecs = status.recorder.elapsed_ms / 1000;
+  const perHour = (bytes) =>
+    recordedSecs >= 5
+      ? `${formatBytes((bytes / recordedSecs) * 3600)}/h avg`
+      : "…/h";
   for (const stream of ["controller", "video"]) {
     $(`rate-${stream}`).textContent = `${formatBytes(rates[stream])}/s`;
     $(`note-${stream}`).textContent =
-      `${formatBytes(rates[stream] * 3600)}/h · ${formatBytes(sizes[stream])} so far`;
+      `${perHour(sizes[stream])} · ${formatBytes(sizes[stream])} so far`;
   }
-  const writeRate = rates.controller + rates.video;
-  $("size-session").textContent = formatBytes(sizes.controller + sizes.video);
+  const sessionBytes = sizes.controller + sizes.video;
+  // Time left on disk only makes sense while writing
+  const writeRate =
+    status.recorder.state === "recording" && recordedSecs >= 5
+      ? sessionBytes / recordedSecs
+      : 0;
+  $("size-session").textContent = formatBytes(sessionBytes);
   $("note-session").textContent =
-    writeRate > 0
-      ? `${formatBytes(writeRate * 3600)}/h in total`
+    recordedSecs >= 5
+      ? `${perHour(sessionBytes)} in total`
       : "controller and video";
   if (sizes.all_sessions !== null) {
     $("size-all").textContent = formatBytes(sizes.all_sessions);

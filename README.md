@@ -5,8 +5,9 @@ it together with the console's video, for building training datasets.
 
 ![The studio dashboard](doc/demo.png)
 
-For the hardware setup, wiring and a tour of the dashboard, open
-[doc/procon-studio.html](doc/procon-studio.html) in a browser.
+For the hardware setup, wiring and a tour of the dashboard, see
+[crazyboycjr.github.io/procon-rs](https://crazyboycjr.github.io/procon-rs/)
+(source: [doc/index.html](doc/index.html)).
 
 ## Features
 
@@ -69,8 +70,8 @@ run `./scripts/run-proxy.sh` there.
   `/data/procon/mk8-2026-09-24_21-40-05/`. The prefix's folder must exist.
 - **Video input**: the screen or any V4L2 device, such as the Elgato 4K X. A
   capture card can only be opened by one program, so close OBS first.
-- **Video quality**: recorded size (source, 1080p, 720p, 540p, 360p) and frame
-  rate (60 to 10 fps), to keep files small; the capture itself stays full rate.
+- **Video quality**: recorded size (1080p, 720p, 540p, 360p) and frame rate (60
+  to 10 fps), to keep files small. The preview shows exactly what gets recorded.
 - **Data**: controller and video write rates per second and per hour, this
   session's size, all sessions in the save folder, dropped frames, free disk
   space (with the time left at the current rate) and free memory. Updates twice
@@ -91,8 +92,8 @@ config, so they survive restarts.
 | `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses |
 | `session.json` | Start/stop times, each video file's first-frame Unix ms, the proxy's clock offset and dropped frames |
 
-To line up the data: a video frame's wall-clock time is its segment's
-`start_unix_ms` plus the frame's timestamp in the file; a controller frame's
+To line up the data: frames in a video file come at a constant rate, so frame
+`n` was captured at its segment's `start_unix_ms` plus `n / video.fps` seconds; a controller frame's
 host time is its proxy timestamp plus `proxy.clock_offset_ms`.
 
 To work on the studio without a Pi, stream a synthetic controller and point

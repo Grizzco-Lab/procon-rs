@@ -1021,10 +1021,11 @@
           </div>
         </div>
         <p class="note">
-          To line things up: a video frame's time is its file's
-          <code>start_unix_ms</code> plus its timestamp inside the file. A
-          controller frame's time on the PC is its Pi timestamp plus
-          <code>pi.clock_offset_ms</code>.
+          To line things up: video frames come at a constant rate, so frame
+          <em>n</em> of a file was captured at its
+          <code>start_unix_ms</code> plus <em>n</em> /
+          <code>video.fps</code> seconds. A controller frame's time on the PC is
+          its proxy timestamp plus <code>proxy.clock_offset_ms</code>.
         </p>
       </section>
 
