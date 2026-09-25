@@ -1,11 +1,12 @@
 use anyhow::Context;
 use clap::Parser;
 use procon::config::Config;
-use procon::dump::{AsyncDumper, ConsoleDumper, FileDumper, MultiDumper};
+use procon::dump::{AsyncDumper, ConsoleDumper, MultiDumper};
 use procon::gadget::ProConGadget;
 use procon::priority::set_high_priority;
 use procon::proxy::Proxy;
-use procon::web_visualization::WebVisualizationDumper;
+use procon::recorder::Recorder;
+use procon::web::{LiveFeed, WebServer};
 
 /// Nintendo Switch Pro Controller HID Proxy
 #[derive(Parser)]
@@ -66,9 +67,12 @@ fn main() -> anyhow::Result<()> {
     // Create multi-dumper for async processing
     let mut multi_dumper = MultiDumper::new();
 
-    // Add file dumper
-    let file_dumper = Box::new(FileDumper::new(&config.dump.file_path)?);
-    multi_dumper.add_dumper(file_dumper);
+    // Add recorder; the dashboard starts and stops sessions unless autostart is set
+    let recorder = Recorder::new(&config.dump.dir);
+    if config.dump.autostart {
+        recorder.start()?;
+    }
+    multi_dumper.add_dumper(Box::new(recorder.clone()));
 
     // Add console dumper only if enabled
     if config.console.enable {
@@ -76,17 +80,15 @@ fn main() -> anyhow::Result<()> {
         multi_dumper.add_dumper(console_dumper);
     }
 
-    // Add web visualization dumper only if enabled
-    let (web_server, web_dumper) = if config.visualization.web_enable {
-        let (web_dumper, server) = WebVisualizationDumper::new();
-        multi_dumper.add_dumper(Box::new(web_dumper.clone()));
-        (Some(server), Some(web_dumper))
-    } else {
-        (None, None)
-    };
+    // Add live feed for the web dashboard only if enabled
+    let live_feed = config.visualization.web_enable.then(LiveFeed::new);
+    if let Some(feed) = &live_feed {
+        multi_dumper.add_dumper(Box::new(feed.clone()));
+    }
 
     // Wrap in async dumper - this will run dumping in a separate thread
     let async_dumper = AsyncDumper::new(Box::new(multi_dumper));
+    let dropped = async_dumper.drop_counter();
 
     // Create and initialize proxy
     let mut proxy = Proxy::new(Box::new(async_dumper), &hid_device_path, config.proxy)?;
@@ -97,49 +99,14 @@ fn main() -> anyhow::Result<()> {
     } else {
         log::info!("Console output disabled");
     }
-    if config.visualization.web_enable {
-        log::info!(
-            "Web visualization server starting on port {}",
-            config.visualization.web_port
-        );
-    }
 
-    // Start web server if enabled
-    if let Some(server) = web_server {
+    // Start web dashboard if enabled
+    if let Some(feed) = live_feed {
+        let server = WebServer::new(feed, recorder, dropped);
         let port = config.visualization.web_port;
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
-                if let Err(e) = server.start_server(port).await {
-                    log::error!("Web visualization server error: {}", e);
-                }
-            });
-        });
-    }
-
-    // Start device connection monitoring if web visualization is enabled
-    if let Some(web_dumper_ref) = web_dumper {
-        std::thread::spawn(move || {
-            let mut last_connected = true;
-
-            loop {
-                std::thread::sleep(std::time::Duration::from_millis(2000)); // Check every 2 seconds
-
-                let should_be_connected = web_dumper_ref.is_device_connected();
-
-                if should_be_connected != last_connected {
-                    log::info!(
-                        "Device connection status changed: {}",
-                        if should_be_connected {
-                            "connected"
-                        } else {
-                            "disconnected"
-                        }
-                    );
-                    web_dumper_ref.update_device_status(should_be_connected);
-                    last_connected = should_be_connected;
-                }
-            }
+            rt.block_on(server.run(port));
         });
     }
 

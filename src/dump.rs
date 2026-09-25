@@ -3,6 +3,7 @@ use smallvec::SmallVec;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::mem;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -184,6 +185,11 @@ impl AsyncDumper {
         }
     }
 
+    /// Counter of packets dropped because the dump queue was full
+    pub fn drop_counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.drop_count)
+    }
+
     /// Worker function that runs in the dump thread
     fn dump_thread_worker(
         receiver: Receiver<DumpMessage>,
@@ -293,15 +299,15 @@ pub struct FileDumper {
 }
 
 impl FileDumper {
-    pub fn new(file_path: &str) -> Result<Self> {
+    pub fn new(file_path: impl AsRef<Path>) -> Result<Self> {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(file_path)?;
+            .open(&file_path)?;
 
         let writer = BufWriter::new(file);
 
-        log::info!("FileDumper created: {}", file_path);
+        log::info!("FileDumper created: {}", file_path.as_ref().display());
         log::info!("Frame size: {} bytes", FRAME_SIZE);
 
         Ok(FileDumper {
@@ -312,6 +318,13 @@ impl FileDumper {
 
     pub fn frame_count(&self) -> u64 {
         self.frame_count
+    }
+
+    /// Flush buffered frames and wait until they reach the disk
+    pub fn sync(&mut self) -> Result<()> {
+        self.writer.flush()?;
+        self.writer.get_ref().sync_all()?;
+        Ok(())
     }
 
     /// Calculate file position for a given frame number

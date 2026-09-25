@@ -73,8 +73,12 @@ cargo clippy
 
 **Parser/KeyState (`src/parser.rs`, `src/keystate.rs`)**: HID input report parsing into structured controller state
 
+**Recorder (`src/recorder.rs`)**: File dumper with start/pause/resume/stop; one `procon-YYYYMMDD-HHMMSS.bin` per session in a configurable directory
+
+**Web dashboard (`src/web.rs`, `web/`)**: warp server with the embedded page, a WebSocket (`state` per input report, `status` once per second) and `POST /api/recorder` for recording commands. `cargo run --example web_demo` runs it with a synthetic controller.
+
 ### Data Flow
-1. **Initialization**: USB gadget auto-setup → Controller connection → Dumper setup
+1. **Initialization**: USB gadget auto-setup → Recorder and dumper setup → Controller connection → Web dashboard
 2. **Main Loop**: Bidirectional forwarding with timeout-based non-blocking I/O
 3. **Error Recovery**: Automatic device reconnection and cleanup
 
@@ -91,6 +95,14 @@ cargo clippy
 controller_read_timeout_ms = 20      # Controller read timeout
 frame_count_log_interval = 100       # Frame counting log frequency
 hidg_retry_delay_ms = 1000          # HID gadget retry delay
+
+[dump]
+dir = "/tmp"                        # Recording directory (changeable from the dashboard)
+autostart = false                   # Record at launch without the dashboard
+
+[visualization]
+web_enable = true                   # Web dashboard
+web_port = 8080
 
 [performance]
 enable_cpu_affinity = false         # Pin to random CPU core

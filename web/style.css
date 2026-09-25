@@ -1,0 +1,1599 @@
+/*
+ * ProCon Studio dashboard
+ *
+ * Shared structure first, then three style proposals selected by
+ * <html data-theme>: studio (A), joy (B) and telemetry (C).
+ */
+
+/* ------------------------------------------------------------ tokens */
+
+:root {
+  color-scheme: dark;
+
+  /* Status colors are fixed across themes */
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+
+  /* A: Studio, the default */
+  --bg: #0d0e10;
+  --page-deco: none;
+  --panel: #15161a;
+  --panel-border: #24262b;
+  --panel-shadow: none;
+  --inset: #1b1d21;
+  --inset-border: #25282e;
+  --screen: #050506;
+  --text: #eceef1;
+  --text-2: #a3a7b0;
+  --text-3: #6d717a;
+  --accent: #4d9bff;
+  --accent-ink: #ffffff;
+  --rec: #e5484d;
+  --btn-bg: #202227;
+  --btn-border: #2e3137;
+  --btn-hover: #282a30;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --gap: 14px;
+  --pad: 16px;
+  --font-ui: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-num: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --fill: #3987e5;
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --grid: #222429;
+  --axis: #34373d;
+}
+
+/* ------------------------------------------------------------- base */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--page-deco), var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+h2 {
+  margin: 0;
+}
+
+/* ----------------------------------------------------------- top bar */
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 10px var(--gap);
+  border-bottom: 1px solid var(--panel-border);
+}
+
+body[data-rec="recording"] .topbar {
+  box-shadow: inset 0 2px 0 var(--rec);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.brand b {
+  font-weight: 700;
+}
+
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  fill: var(--accent-ink);
+}
+
+.brand-mark .brand-eye {
+  fill: var(--accent);
+}
+
+.status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.chip[data-level="good"] .chip-dot {
+  background: var(--good);
+}
+
+.chip[data-level="critical"] .chip-dot {
+  background: var(--critical);
+}
+
+.chip-rec[data-state="recording"] {
+  color: var(--text);
+  border-color: color-mix(in oklab, var(--rec) 55%, transparent);
+  background: color-mix(in oklab, var(--rec) 14%, var(--panel));
+}
+
+.chip-rec[data-state="recording"] .chip-dot {
+  background: var(--rec);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.chip-rec[data-state="paused"] .chip-dot {
+  background: var(--warning);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.theme-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.theme-picker-label {
+  margin-right: 4px;
+  color: var(--text-3);
+}
+
+.theme-picker button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.theme-picker button[aria-pressed="true"] {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ layout */
+
+.layout {
+  display: grid;
+  gap: var(--gap);
+  padding: var(--gap);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: var(--pad);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--panel-shadow);
+}
+
+.p-video {
+  grid-area: video;
+}
+.p-controller {
+  grid-area: controller;
+}
+.p-recorder {
+  grid-area: recorder;
+}
+.p-stats {
+  grid-area: stats;
+}
+.p-motion {
+  grid-area: motion;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 22px;
+}
+
+.panel-head h2 {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.panel-note {
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------- video */
+
+.screen {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  background: var(--screen);
+  overflow: hidden;
+}
+
+.no-signal {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 16px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.no-signal svg {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 6px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.no-signal p {
+  margin: 0;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.no-signal small {
+  font-size: 12px;
+}
+
+/* -------------------------------------------------------- controller */
+
+.battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.battery-icon {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1.5px solid var(--text-3);
+  border-radius: 4px;
+}
+
+.battery-icon i {
+  width: 4px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--inset-border);
+}
+
+.battery[data-level="1"] i:nth-child(-n + 1),
+.battery[data-level="2"] i:nth-child(-n + 2),
+.battery[data-level="3"] i:nth-child(-n + 3),
+.battery[data-level="4"] i {
+  background: var(--good);
+}
+
+.battery[data-level="1"] i:nth-child(1) {
+  background: var(--critical);
+}
+
+.stage {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: 3% 7%;
+  border-radius: var(--radius-sm);
+  perspective: 1100px;
+}
+
+.procon {
+  display: block;
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+  overflow: visible;
+  transition:
+    transform 80ms linear,
+    opacity 0.3s;
+}
+
+.procon.is-idle {
+  opacity: 0.45;
+}
+
+/* ----------------------------------------------------- controller svg */
+
+.procon {
+  --pc-face-hi: #3c3e43;
+  --pc-face-lo: #202124;
+  --pc-grip-l-hi: #2b2c30;
+  --pc-grip-l-lo: #17181a;
+  --pc-grip-r-hi: #2b2c30;
+  --pc-grip-r-lo: #17181a;
+  --pc-well-hi: #27282c;
+  --pc-well-lo: #0b0c0d;
+  --pc-btn-hi: #3d3f45;
+  --pc-btn-lo: #121315;
+  --pc-cap-hi: #4b4d53;
+  --pc-cap-lo: #1c1d20;
+  --pc-edge: rgba(255, 255, 255, 0.1);
+  --pc-outline: rgba(255, 255, 255, 0.06);
+  --pc-ink: #d7d9de;
+  --pc-label: #8b8f98;
+  --pc-dot: rgba(0, 0, 0, 0.35);
+  --pc-gloss: rgba(255, 255, 255, 0.09);
+  --pc-seam: rgba(0, 0, 0, 0.55);
+  --pc-side-l: #26272b;
+  --pc-side-r: #26272b;
+  --pc-bumper: #111214;
+  --pc-press: #4d9bff;
+  --pc-press-ink: #ffffff;
+  --pc-halo: rgba(77, 155, 255, 0.35);
+  filter: drop-shadow(0 22px 28px rgba(0, 0, 0, 0.5));
+}
+
+.pc-face-hi {
+  stop-color: var(--pc-face-hi);
+}
+.pc-face-lo {
+  stop-color: var(--pc-face-lo);
+}
+.pc-grip-l-hi {
+  stop-color: var(--pc-grip-l-hi);
+}
+.pc-grip-l-lo {
+  stop-color: var(--pc-grip-l-lo);
+}
+.pc-grip-r-hi {
+  stop-color: var(--pc-grip-r-hi);
+}
+.pc-grip-r-lo {
+  stop-color: var(--pc-grip-r-lo);
+}
+.pc-well-hi {
+  stop-color: var(--pc-well-hi);
+}
+.pc-well-lo {
+  stop-color: var(--pc-well-lo);
+}
+.pc-btn-hi {
+  stop-color: var(--pc-btn-hi);
+}
+.pc-btn-lo {
+  stop-color: var(--pc-btn-lo);
+}
+.pc-cap-hi {
+  stop-color: var(--pc-cap-hi);
+}
+.pc-cap-lo {
+  stop-color: var(--pc-cap-lo);
+}
+.pc-gloss-hi {
+  stop-color: var(--pc-gloss);
+}
+.pc-gloss-lo {
+  stop-color: var(--pc-gloss);
+  stop-opacity: 0;
+}
+.pc-dot {
+  fill: var(--pc-dot);
+}
+
+.pc-body {
+  fill: url(#pc-face-fill);
+  stroke: var(--pc-outline);
+  stroke-width: 3;
+}
+.pc-grip-l {
+  fill: url(#pc-grip-l-fill);
+}
+.pc-grip-r {
+  fill: url(#pc-grip-r-fill);
+}
+.pc-grip-dots {
+  fill: url(#pc-dots);
+}
+.pc-gloss {
+  fill: url(#pc-gloss-fill);
+}
+.pc-rim {
+  fill: none;
+  stroke: var(--pc-edge);
+  stroke-width: 4;
+}
+.pc-seam {
+  fill: none;
+  stroke: var(--pc-seam);
+  stroke-width: 2;
+}
+
+.pc-trigger,
+.pc-bumper {
+  fill: none;
+  stroke-linecap: round;
+}
+.pc-trigger {
+  stroke-width: 26;
+}
+.pc-trigger[data-btn="zl"] {
+  stroke: var(--pc-side-l);
+}
+.pc-trigger[data-btn="zr"] {
+  stroke: var(--pc-side-r);
+}
+.pc-bumper {
+  stroke: var(--pc-bumper);
+  stroke-width: 18;
+}
+
+.pc-label {
+  fill: var(--pc-label);
+  font: 700 22px var(--font-ui);
+  text-anchor: middle;
+}
+
+.pc-well {
+  fill: url(#pc-well-fill);
+}
+.pc-well-soft {
+  opacity: 0.45;
+}
+.pc-stick-base {
+  fill: var(--pc-btn-lo);
+}
+.pc-stick-ridge {
+  fill: none;
+  stroke: var(--pc-btn-hi);
+  stroke-width: 7;
+  stroke-dasharray: 2.2 3.2;
+  opacity: 0.7;
+}
+.pc-stick-top {
+  fill: url(#pc-cap-fill);
+}
+
+.pc-dpad {
+  fill: url(#pc-btn-fill);
+  stroke: var(--pc-edge);
+  stroke-width: 1.5;
+}
+.pc-arm {
+  fill: transparent;
+}
+.pc-arrow {
+  fill: var(--pc-ink);
+  opacity: 0.55;
+}
+
+.pc-btn circle,
+.pc-btn rect {
+  fill: url(#pc-btn-fill);
+  stroke: var(--pc-edge);
+  stroke-width: 1.5;
+}
+.pc-btn text {
+  fill: var(--pc-ink);
+  font: 600 30px var(--font-ui);
+  text-anchor: middle;
+}
+.pc-btn .pc-glyph {
+  fill: none;
+  stroke: var(--pc-ink);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+.pc-glyph-fill {
+  fill: var(--pc-ink);
+}
+.pc-btn .pc-home-ring {
+  fill: none;
+  stroke: var(--pc-well-hi);
+  stroke-width: 4;
+}
+
+/* Pressed */
+.pc-btn.on circle,
+.pc-btn.on rect {
+  fill: var(--pc-press);
+  stroke: var(--pc-halo);
+  stroke-width: 10;
+}
+.pc-arm.on {
+  fill: var(--pc-press);
+}
+.pc-btn.on text,
+.pc-btn.on .pc-glyph-fill {
+  fill: var(--pc-press-ink);
+}
+.pc-btn.on .pc-glyph {
+  stroke: var(--pc-press-ink);
+}
+.pc-btn.on .pc-home-ring {
+  fill: none;
+  stroke: var(--pc-press);
+  stroke-width: 4;
+}
+.pc-trigger.on,
+.pc-bumper.on {
+  stroke: var(--pc-press);
+}
+.pc-stick.on .pc-stick-base {
+  fill: var(--pc-press);
+}
+
+/* ---------------------------------------------------------- recorder */
+
+.rec-badge {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--inset);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rec-badge[data-state="recording"] {
+  background: var(--rec);
+  color: #ffffff;
+}
+
+.rec-badge[data-state="paused"] {
+  background: color-mix(in oklab, var(--warning) 22%, var(--panel));
+  color: var(--text);
+}
+
+.rec-clock {
+  font-size: 52px;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-rec="idle"] .rec-clock {
+  color: var(--text-3);
+}
+
+.rec-actions {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 8px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--btn-border);
+  border-radius: var(--radius-sm);
+  background: var(--btn-bg);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    opacity 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--btn-hover);
+}
+
+.btn:focus-visible,
+.theme-picker button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-record {
+  border-color: transparent;
+  background: var(--rec);
+  color: #ffffff;
+}
+
+.btn-record:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--rec) 88%, #ffffff);
+}
+
+.btn-small {
+  height: 36px;
+}
+
+.glyph {
+  display: inline-block;
+  flex: none;
+}
+
+.glyph-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.glyph-pause {
+  width: 10px;
+  height: 11px;
+  border-inline: 3.5px solid currentColor;
+}
+
+.is-resume .glyph-pause {
+  width: 0;
+  height: 0;
+  border-block: 6px solid transparent;
+  border-inline: 10px solid currentColor;
+  border-inline-end-width: 0;
+}
+
+.glyph-stop {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.dir-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.dir-form label,
+.rec-file-label,
+.tile-label,
+.meter-label,
+.readout-label {
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.dir-row {
+  display: flex;
+  gap: 8px;
+}
+
+.dir-row input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  font-family: var(--font-num);
+  font-size: 13px;
+}
+
+.dir-row input:disabled {
+  color: var(--text-2);
+}
+
+.rec-file {
+  display: grid;
+  gap: 2px;
+}
+
+.path {
+  font-family: var(--font-num);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.notice {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklab, var(--critical) 60%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--critical) 12%, var(--panel));
+  font-size: 13px;
+}
+
+.notice::before {
+  content: "⚠ ";
+}
+
+/* -------------------------------------------------------- data tiles */
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tile {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.tile-value {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.tile[data-level="warning"] .tile-value::before {
+  content: "⚠ ";
+  color: var(--warning);
+}
+
+.meter {
+  display: grid;
+  gap: 6px;
+}
+
+.meter-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.meter-value {
+  font-size: 12.5px;
+  text-align: right;
+}
+
+.meter-track {
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--meter) 22%, var(--panel));
+  overflow: hidden;
+}
+
+.meter {
+  --meter: var(--fill);
+}
+.meter[data-level="warning"] {
+  --meter: var(--warning);
+}
+.meter[data-level="critical"] {
+  --meter: var(--critical);
+}
+
+.meter-fill {
+  width: 0;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--meter);
+  transition: width 0.4s;
+}
+
+.meter-note {
+  min-height: 1.2em;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------ motion */
+
+.sticks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.readout {
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.readout-value {
+  font-family: var(--font-num);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chart {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.chart-title {
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.legend {
+  display: flex;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.key i,
+.tip-row i {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.key b {
+  min-width: 3.5ch;
+  color: var(--text);
+  font-family: var(--font-num);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.s1 i {
+  background: var(--s1);
+}
+.s2 i {
+  background: var(--s2);
+}
+.s3 i {
+  background: var(--s3);
+}
+
+.chart-body {
+  position: relative;
+}
+
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: 150px;
+  touch-action: pan-y;
+}
+
+.chart-svg .grid {
+  stroke: var(--grid);
+  stroke-width: 1;
+}
+.chart-svg .grid.baseline {
+  stroke: var(--axis);
+}
+.chart-svg .tick {
+  fill: var(--text-3);
+  font: 11px var(--font-num);
+  text-anchor: end;
+  dominant-baseline: middle;
+}
+.chart-svg .series {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.chart-svg .series.s1 {
+  stroke: var(--s1);
+}
+.chart-svg .series.s2 {
+  stroke: var(--s2);
+}
+.chart-svg .series.s3 {
+  stroke: var(--s3);
+}
+.chart-svg .crosshair {
+  stroke: var(--text-3);
+  stroke-width: 1;
+}
+.chart-svg .dot {
+  stroke: var(--panel);
+  stroke-width: 2;
+}
+.chart-svg .dot.s1 {
+  fill: var(--s1);
+}
+.chart-svg .dot.s2 {
+  fill: var(--s2);
+}
+.chart-svg .dot.s3 {
+  fill: var(--s3);
+}
+
+.chart-tip {
+  position: absolute;
+  top: 4px;
+  display: grid;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.chart-tip[hidden] {
+  display: none;
+}
+
+.tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.tip-row b {
+  color: var(--text);
+  font-family: var(--font-num);
+  font-weight: 600;
+}
+
+.tip-note {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+/* ============================================================ A: Studio
+ * Dark pro tool in the spirit of OBS studio mode: two monitors on top
+ * (video, controller) and docks underneath.
+ */
+
+[data-theme="studio"] .layout {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-areas:
+    "video video video controller controller controller"
+    "recorder recorder stats stats motion motion";
+}
+
+/* Both monitors keep 16:9; the controller is fitted inside its screen */
+[data-theme="studio"] .p-controller .stage {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+  padding: 3% 5%;
+  background:
+    radial-gradient(ellipse at 50% 40%, #1d2029, transparent 70%), var(--screen);
+}
+
+[data-theme="studio"] .p-controller .procon {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+}
+
+[data-theme="studio"] .p-video .screen {
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      transparent 0 14px,
+      rgba(255, 255, 255, 0.018) 14px 28px
+    ),
+    var(--screen);
+}
+
+/* ============================================================== B: Joy
+ * Light and rounded, after the Switch home menu: white cards, Nintendo
+ * red actions, Joy-Con colored controller.
+ */
+
+[data-theme="joy"] {
+  color-scheme: light;
+  --bg: #e9ebee;
+  --panel: #ffffff;
+  --panel-border: transparent;
+  --panel-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.05), 0 10px 30px rgba(16, 24, 40, 0.07);
+  --inset: #f3f4f6;
+  --inset-border: transparent;
+  --screen: #e3e6ea;
+  --text: #1f2124;
+  --text-2: #5c6069;
+  --text-3: #8c9099;
+  --accent: #e60012;
+  --accent-ink: #ffffff;
+  --rec: #e60012;
+  --btn-bg: #ffffff;
+  --btn-border: #d8dbe0;
+  --btn-hover: #f4f5f7;
+  --radius: 26px;
+  --radius-sm: 16px;
+  --gap: 18px;
+  --pad: 22px;
+  --font-ui: "M PLUS Rounded 1c", Nunito, system-ui, sans-serif;
+  --font-num: "M PLUS Rounded 1c", Nunito, system-ui, sans-serif;
+  --fill: #2a78d6;
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --grid: #eceef1;
+  --axis: #d0d3d9;
+}
+
+[data-theme="joy"] body {
+  font-size: 15px;
+}
+
+[data-theme="joy"] .layout {
+  max-width: 1360px;
+  margin: 0 auto;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  grid-template-areas:
+    "controller recorder"
+    "controller stats"
+    "video motion";
+}
+
+[data-theme="joy"] .topbar {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 18px var(--gap) 4px;
+  border-bottom: 0;
+}
+
+[data-theme="joy"] body[data-rec="recording"] .topbar {
+  box-shadow: none;
+}
+
+[data-theme="joy"] .brand {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+[data-theme="joy"] .brand b {
+  font-weight: 800;
+  color: var(--accent);
+}
+
+[data-theme="joy"] .brand-mark {
+  width: 36px;
+  height: 36px;
+  padding: 6px;
+  border-radius: 12px;
+}
+
+[data-theme="joy"] .chip {
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  box-shadow: var(--panel-shadow);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+[data-theme="joy"] .theme-picker button {
+  height: 32px;
+  border-radius: 999px;
+  border-color: #d8dbe0;
+  background: #ffffff;
+}
+
+[data-theme="joy"] .theme-picker button[aria-pressed="true"] {
+  background: var(--text);
+  border-color: var(--text);
+  color: #ffffff;
+}
+
+[data-theme="joy"] .panel-head h2 {
+  color: var(--text);
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+[data-theme="joy"] .p-controller .stage {
+  padding: 6% 8%;
+  background:
+    radial-gradient(
+      circle at 18% 70%,
+      rgba(0, 195, 227, 0.16),
+      transparent 42%
+    ),
+    radial-gradient(
+      circle at 82% 70%,
+      rgba(255, 69, 84, 0.14),
+      transparent 42%
+    ),
+    #f6f7f9;
+}
+
+[data-theme="joy"] .rec-clock {
+  font-size: 56px;
+  font-weight: 800;
+}
+
+[data-theme="joy"] .btn {
+  height: 48px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+[data-theme="joy"] .btn-small {
+  height: 40px;
+}
+
+[data-theme="joy"] .btn-record {
+  box-shadow: 0 6px 16px rgba(230, 0, 18, 0.28);
+}
+
+[data-theme="joy"] .dir-row input {
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+}
+
+[data-theme="joy"] .tile-value {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+[data-theme="joy"] .meter-track,
+[data-theme="joy"] .meter-fill {
+  height: 12px;
+  border-radius: 6px;
+}
+
+[data-theme="joy"] .chart-tip {
+  box-shadow: var(--panel-shadow);
+}
+
+[data-theme="joy"] .procon {
+  --pc-face-hi: #ffffff;
+  --pc-face-lo: #e2e5ea;
+  --pc-grip-l-hi: #22d3f0;
+  --pc-grip-l-lo: #00a6c4;
+  --pc-grip-r-hi: #ff6f7b;
+  --pc-grip-r-lo: #e5323f;
+  --pc-well-hi: #d6d9df;
+  --pc-well-lo: #b4b8c1;
+  --pc-btn-hi: #4c4f57;
+  --pc-btn-lo: #202226;
+  --pc-cap-hi: #5d6068;
+  --pc-cap-lo: #2a2c31;
+  --pc-edge: rgba(0, 0, 0, 0.08);
+  --pc-outline: rgba(16, 24, 40, 0.08);
+  --pc-ink: #f4f5f7;
+  --pc-label: #5c6069;
+  --pc-dot: rgba(255, 255, 255, 0.28);
+  --pc-gloss: rgba(255, 255, 255, 0.7);
+  --pc-seam: rgba(16, 24, 40, 0.16);
+  --pc-side-l: #00a6c4;
+  --pc-side-r: #e5323f;
+  --pc-bumper: #c9ccd3;
+  --pc-press: #ffcc1f;
+  --pc-press-ink: #1f2124;
+  --pc-halo: rgba(255, 204, 31, 0.45);
+  filter: drop-shadow(0 18px 22px rgba(16, 24, 40, 0.16));
+}
+
+[data-theme="joy"] .pc-bumper[data-btn="l"] {
+  stroke: var(--pc-side-l);
+}
+
+[data-theme="joy"] .pc-bumper[data-btn="r"] {
+  stroke: var(--pc-side-r);
+}
+
+[data-theme="joy"] .pc-bumper.on,
+[data-theme="joy"] .pc-trigger.on {
+  stroke: var(--pc-press);
+}
+
+/* ======================================================== C: Telemetry
+ * Dense instrument panel: monospace, hairlines, numbered panels, a
+ * wireframe controller and a wide oscilloscope strip.
+ */
+
+[data-theme="telemetry"] {
+  --bg: #07090b;
+  --page-deco:
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px) 0 0 / 24px
+      24px,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px) 0
+      0 / 24px 24px;
+  --panel: #0b0e11;
+  --panel-border: #1c232b;
+  --inset: #0f1317;
+  --inset-border: #1c232b;
+  --screen: #000000;
+  --text: #d5dce3;
+  --text-2: #8795a3;
+  --text-3: #56626f;
+  --accent: #f5a524;
+  --accent-ink: #0b0e11;
+  --rec: #ff4d4f;
+  --btn-bg: #0f1317;
+  --btn-border: #2a333d;
+  --btn-hover: #151b21;
+  --radius: 3px;
+  --radius-sm: 2px;
+  --gap: 10px;
+  --pad: 14px;
+  --font-ui: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --font-num: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --fill: #3987e5;
+  --grid: #151b21;
+  --axis: #2a333d;
+}
+
+[data-theme="telemetry"] body {
+  font-size: 13px;
+}
+
+[data-theme="telemetry"] .layout {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-areas:
+    "controller controller controller controller controller video video video video recorder recorder recorder"
+    "motion motion motion motion motion motion motion motion motion stats stats stats";
+}
+
+[data-theme="telemetry"] .topbar {
+  padding: 8px var(--gap);
+  background: var(--panel);
+}
+
+[data-theme="telemetry"] .brand {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+[data-theme="telemetry"] .brand-mark {
+  width: 22px;
+  height: 22px;
+  padding: 3px;
+  border-radius: 2px;
+}
+
+[data-theme="telemetry"] .chip {
+  height: 24px;
+  border-radius: 2px;
+  background: transparent;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+[data-theme="telemetry"] .chip-dot {
+  border-radius: 1px;
+}
+
+[data-theme="telemetry"] .theme-picker button {
+  height: 24px;
+  border-radius: 2px;
+  text-transform: uppercase;
+}
+
+[data-theme="telemetry"] .theme-picker button[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+[data-theme="telemetry"] .panel {
+  gap: 10px;
+}
+
+[data-theme="telemetry"] .panel-head {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+[data-theme="telemetry"] .panel-head h2 {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  color: var(--text);
+}
+
+/* Panels are numbered in reading order, not DOM order */
+[data-theme="telemetry"] .panel-head h2::before {
+  content: var(--panel-no) " / ";
+  color: var(--accent);
+}
+[data-theme="telemetry"] .p-controller {
+  --panel-no: "01";
+}
+[data-theme="telemetry"] .p-video {
+  --panel-no: "02";
+}
+[data-theme="telemetry"] .p-recorder {
+  --panel-no: "03";
+}
+[data-theme="telemetry"] .p-motion {
+  --panel-no: "04";
+}
+[data-theme="telemetry"] .p-stats {
+  --panel-no: "05";
+}
+
+[data-theme="telemetry"] .panel-note {
+  font-size: 11.5px;
+}
+
+[data-theme="telemetry"] .p-video .screen {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.03) 0 1px,
+      transparent 1px 3px
+    ),
+    var(--screen);
+}
+
+[data-theme="telemetry"] .no-signal p {
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+[data-theme="telemetry"] .rec-clock {
+  font-size: 44px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+[data-theme="telemetry"] .btn {
+  height: 36px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+[data-theme="telemetry"] .rec-badge {
+  border-radius: 2px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+[data-theme="telemetry"] .tile-value {
+  font-size: 19px;
+  font-weight: 500;
+}
+
+[data-theme="telemetry"] .meter-track,
+[data-theme="telemetry"] .meter-fill {
+  height: 6px;
+  border-radius: 0;
+}
+
+[data-theme="telemetry"] .p-motion {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) 3fr;
+  grid-template-rows: auto 1fr;
+  align-content: start;
+}
+
+[data-theme="telemetry"] .p-motion .panel-head {
+  grid-column: 1 / -1;
+}
+
+[data-theme="telemetry"] .p-motion .sticks {
+  grid-template-columns: 1fr;
+  align-content: start;
+}
+
+[data-theme="telemetry"] .chart-svg {
+  height: 190px;
+}
+
+[data-theme="telemetry"] .procon {
+  --pc-line: #3b4652;
+  --pc-ink: #8795a3;
+  --pc-label: #56626f;
+  --pc-press: #f5a524;
+  --pc-press-ink: #0b0e11;
+  --pc-halo: rgba(245, 165, 36, 0.25);
+  filter: none;
+}
+
+[data-theme="telemetry"] .pc-body {
+  fill: rgba(135, 149, 163, 0.035);
+  stroke: var(--pc-line);
+  stroke-width: 2;
+}
+
+[data-theme="telemetry"] .pc-grip-l,
+[data-theme="telemetry"] .pc-grip-r {
+  fill: rgba(135, 149, 163, 0.03);
+}
+
+[data-theme="telemetry"] .pc-grip-dots,
+[data-theme="telemetry"] .pc-gloss,
+[data-theme="telemetry"] .pc-rim {
+  display: none;
+}
+
+[data-theme="telemetry"] .pc-seam {
+  stroke: var(--pc-line);
+  stroke-width: 1.5;
+}
+
+[data-theme="telemetry"] .pc-trigger {
+  stroke: var(--pc-line);
+  stroke-opacity: 0.35;
+}
+
+[data-theme="telemetry"] .pc-bumper {
+  stroke: var(--pc-line);
+  stroke-opacity: 0.6;
+  stroke-width: 12;
+}
+
+[data-theme="telemetry"] .pc-trigger.on,
+[data-theme="telemetry"] .pc-bumper.on {
+  stroke: var(--pc-press);
+  stroke-opacity: 1;
+}
+
+[data-theme="telemetry"] .pc-well {
+  fill: none;
+  stroke: var(--pc-line);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 5;
+}
+
+[data-theme="telemetry"] .pc-well-soft {
+  opacity: 1;
+}
+
+[data-theme="telemetry"] .pc-stick-base,
+[data-theme="telemetry"] .pc-dpad,
+[data-theme="telemetry"] .pc-btn circle,
+[data-theme="telemetry"] .pc-btn rect {
+  fill: var(--panel);
+  stroke: var(--pc-line);
+  stroke-width: 2;
+}
+
+[data-theme="telemetry"] .pc-stick-ridge {
+  stroke: var(--pc-line);
+  opacity: 1;
+}
+
+[data-theme="telemetry"] .pc-stick-top {
+  fill: none;
+  stroke: var(--pc-line);
+  stroke-width: 1.5;
+}
+
+[data-theme="telemetry"] .pc-btn text {
+  font-weight: 500;
+}
+
+[data-theme="telemetry"] .pc-btn.on circle,
+[data-theme="telemetry"] .pc-btn.on rect,
+[data-theme="telemetry"] .pc-stick.on .pc-stick-base {
+  fill: var(--pc-press);
+  stroke: var(--pc-halo);
+  stroke-width: 10;
+}
+
+/* ------------------------------------------------------------ narrow */
+
+@media (max-width: 1100px) {
+  :root[data-theme] .layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "controller controller"
+      "recorder stats"
+      "motion motion"
+      "video video";
+  }
+}
+
+@media (max-width: 720px) {
+  :root[data-theme] .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "recorder" "controller" "stats" "motion" "video";
+  }
+
+  :root[data-theme] .p-motion {
+    display: flex;
+  }
+
+  .theme-picker {
+    margin-left: 0;
+  }
+
+  .rec-clock {
+    font-size: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip-rec[data-state="recording"] .chip-dot {
+    animation: none;
+  }
+
+  .procon {
+    transition: none;
+  }
+}

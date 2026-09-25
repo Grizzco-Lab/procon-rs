@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en" data-theme="studio">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ProCon Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=M+PLUS+Rounded+1c:wght@500;700;800&display=swap"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <script>
+      // Style proposal picker: ?theme=<name> or the last choice (temporary)
+      (() => {
+        const themes = ["studio", "joy", "telemetry"];
+        const asked = new URLSearchParams(location.search).get("theme");
+        const theme = themes.includes(asked)
+          ? asked
+          : localStorage.getItem("procon-theme");
+        if (themes.includes(theme))
+          document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M7 6h10a5 5 0 0 1 4.9 6l-1.3 6.1a2.6 2.6 0 0 1-4.6 1.1L14 17h-4l-2 2.2a2.6 2.6 0 0 1-4.6-1.1L2.1 12A5 5 0 0 1 7 6z"
+          />
+          <circle class="brand-eye" cx="8" cy="11" r="1.6" />
+          <circle class="brand-eye" cx="16" cy="11" r="1.6" />
+        </svg>
+        <span class="brand-name">ProCon <b>Studio</b></span>
+      </div>
+      <div class="status-strip">
+        <span class="chip" id="chip-controller" data-level="off">
+          <span class="chip-dot"></span
+          ><span class="chip-text">Connecting…</span>
+        </span>
+        <span class="chip chip-rec" id="chip-rec" data-state="idle">
+          <span class="chip-dot"></span
+          ><span class="chip-text">Not recording</span>
+        </span>
+      </div>
+      <nav class="theme-picker" aria-label="Style proposal">
+        <span class="theme-picker-label">Style</span>
+        <button type="button" data-pick="studio">A · Studio</button>
+        <button type="button" data-pick="joy">B · Joy</button>
+        <button type="button" data-pick="telemetry">C · Telemetry</button>
+      </nav>
+    </header>
+
+    <main class="layout">
+      <section class="panel p-video" aria-labelledby="h-video">
+        <header class="panel-head">
+          <h2 id="h-video">Video</h2>
+          <span class="panel-note">Capture card</span>
+        </header>
+        <div class="screen">
+          <div class="no-signal">
+            <svg viewBox="0 0 48 48" aria-hidden="true">
+              <rect x="5" y="9" width="38" height="25" rx="3" />
+              <path d="M17 41h14M24 34v7M9 13l30 17" />
+            </svg>
+            <p>No video source</p>
+            <small>Capture card preview will show here</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel p-controller" aria-labelledby="h-controller">
+        <header class="panel-head">
+          <h2 id="h-controller">Controller</h2>
+          <span class="battery" id="battery" data-level="0">
+            <span class="battery-icon"><i></i><i></i><i></i><i></i></span>
+            <span class="battery-text">Battery unknown</span>
+          </span>
+        </header>
+        <div class="stage">
+          <svg
+            class="procon"
+            id="procon"
+            viewBox="-40 -60 980 740"
+            role="img"
+            aria-label="Pro Controller live view"
+          >
+            <defs>
+              <path
+                id="pc-shape"
+                d="M450 4C486.7 4 524.2 4.3 560 5C594.1 5.7 629.6 6.5 660 8C685.4 9.3 709.4 9.3 730 13C746.8 16 761.9 19.7 775 26C786.8 31.7 797.1 39.3 806 48C814.8 56.6 821.8 67.5 828 78C834.1 88.2 838.8 99.2 843 110C847.1 120.5 850 131.2 853 142C856 152.9 858.5 163.8 861 175C863.5 186.5 865.5 197.6 868 210C870.8 224.1 874.1 239.6 877 255C880.1 271.2 883.3 288.3 886 305C888.7 321.6 891.2 338.3 893 355C894.8 371.6 896.2 388.6 897 405C897.8 420.9 898.3 436.3 898 452C897.7 467.9 896.7 484.3 895 500C893.3 515.3 891.3 530.5 888 545C884.9 558.8 881.4 572.8 876 585C870.9 596.4 864.9 607.6 857 616C849.4 624 839.8 630.8 830 635C820.4 639.1 809 641.6 799 641C789.4 640.4 779.1 636.9 771 632C763.1 627.2 756.6 619.7 751 612C745.1 603.9 741.4 593.8 737 584C732.3 573.5 728 562.1 724 551C720 540.1 716.4 528.8 713 518C709.8 507.8 707.3 496.9 704 488C701.2 480.6 699.1 473 695 468C691.5 463.8 687.6 461 682 459C674 456.2 663.4 457.4 650 457C627.6 456.3 591.5 457 560 457C525.2 457 486.7 457 450 457C413.3 457 374.8 457 340 457C308.5 457 272.4 456.3 250 457C236.6 457.4 226 456.2 218 459C212.4 461 208.5 463.8 205 468C200.9 473 198.8 480.6 196 488C192.7 496.9 190.2 507.8 187 518C183.6 528.8 180 540.1 176 551C172 562.1 167.7 573.5 163 584C158.6 593.8 154.9 603.9 149 612C143.4 619.7 136.9 627.2 129 632C120.9 636.9 110.6 640.4 101 641C91 641.6 79.6 639.1 70 635C60.2 630.8 50.6 624 43 616C35.1 607.6 29.1 596.4 24 585C18.6 572.8 15.1 558.8 12 545C8.7 530.5 6.7 515.3 5 500C3.3 484.3 2.3 467.9 2 452C1.7 436.3 2.2 420.9 3 405C3.8 388.6 5.2 371.6 7 355C8.8 338.3 11.3 321.6 14 305C16.7 288.3 19.9 271.2 23 255C25.9 239.6 29.2 224.1 32 210C34.5 197.6 36.5 186.5 39 175C41.5 163.8 44 152.9 47 142C50 131.2 52.9 120.5 57 110C61.2 99.2 65.9 88.2 72 78C78.2 67.5 85.2 56.6 94 48C102.9 39.3 113.2 31.7 125 26C138.1 19.7 153.2 16 170 13C190.6 9.3 214.6 9.3 240 8C270.4 6.5 305.9 5.7 340 5C375.8 4.3 413.3 4 450 4Z"
+              />
+              <path
+                id="pc-grip-l-shape"
+                d="M32 206C32 206 37.9 226.9 42 237C46.2 247.2 51.3 257.1 57 267C62.9 277.4 70.1 287.4 77 298C84.4 309.3 92.2 321.5 100 333C107.8 344.5 115.6 355.9 124 367C132.5 378.2 141.5 389.3 151 400C160.8 411 171.5 422.1 182 432C191.9 441.3 212 458 212 458L212 520L210 700L-100 700L-100 150L0 150Z"
+              />
+              <path
+                id="pc-grip-r-shape"
+                d="M868 206C868 206 862.1 226.9 858 237C853.8 247.2 848.7 257.1 843 267C837.1 277.4 829.9 287.4 823 298C815.6 309.3 807.8 321.5 800 333C792.2 344.5 784.4 355.9 776 367C767.5 378.2 758.5 389.3 749 400C739.2 411 728.5 422.1 718 432C708.1 441.3 688 458 688 458L688 520L690 700L1000 700L1000 150L900 150Z"
+              />
+              <clipPath id="pc-clip"><use href="#pc-shape" /></clipPath>
+              <linearGradient id="pc-face-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" class="pc-face-hi" />
+                <stop offset="1" class="pc-face-lo" />
+              </linearGradient>
+              <linearGradient id="pc-grip-l-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" class="pc-grip-l-hi" />
+                <stop offset="1" class="pc-grip-l-lo" />
+              </linearGradient>
+              <linearGradient id="pc-grip-r-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" class="pc-grip-r-hi" />
+                <stop offset="1" class="pc-grip-r-lo" />
+              </linearGradient>
+              <radialGradient id="pc-well-fill">
+                <stop offset="0.55" class="pc-well-lo" />
+                <stop offset="1" class="pc-well-hi" />
+              </radialGradient>
+              <radialGradient id="pc-btn-fill" cx="0.4" cy="0.3" r="0.8">
+                <stop offset="0" class="pc-btn-hi" />
+                <stop offset="1" class="pc-btn-lo" />
+              </radialGradient>
+              <radialGradient id="pc-cap-fill" cx="0.5" cy="0.42" r="0.6">
+                <stop offset="0" class="pc-cap-hi" />
+                <stop offset="1" class="pc-cap-lo" />
+              </radialGradient>
+              <linearGradient id="pc-gloss-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" class="pc-gloss-hi" />
+                <stop offset="1" class="pc-gloss-lo" />
+              </linearGradient>
+              <pattern
+                id="pc-dots"
+                width="11"
+                height="11"
+                patternUnits="userSpaceOnUse"
+                patternTransform="rotate(30)"
+              >
+                <circle cx="5.5" cy="5.5" r="1.3" class="pc-dot" />
+              </pattern>
+            </defs>
+
+            <!-- Triggers sit behind the body and peek out above the shoulders -->
+            <path
+              class="pc-trigger"
+              data-btn="zl"
+              d="M289.3 -11C289.3 -11 241.6 -9.6 218.8 -8C197.4 -6.4 175.7 -5.9 156.6 -1.7C139.4 2.2 122.8 7.2 108.9 15.1C96 22.3 84.8 32.2 75.4 42.6C66.4 52.5 59.4 64.4 53.1 75.8C47 87 42 98.9 38 110.3C34.3 120.9 29.6 141.6 29.6 141.6"
+            />
+            <path
+              class="pc-trigger"
+              data-btn="zr"
+              d="M610.7 -11C610.7 -11 658.4 -9.6 681.2 -8C702.6 -6.4 724.3 -5.9 743.4 -1.7C760.6 2.2 777.2 7.2 791.1 15.1C804 22.3 815.2 32.2 824.6 42.6C833.6 52.5 840.6 64.4 846.9 75.8C853 87 858 98.9 862 110.3C865.7 120.9 870.4 141.6 870.4 141.6"
+            />
+
+            <!-- Shell: face plate, grips, gloss, seams -->
+            <use class="pc-body" href="#pc-shape" />
+            <g clip-path="url(#pc-clip)">
+              <use class="pc-grip pc-grip-l" href="#pc-grip-l-shape" />
+              <use class="pc-grip pc-grip-r" href="#pc-grip-r-shape" />
+              <use class="pc-grip-dots" href="#pc-grip-l-shape" />
+              <use class="pc-grip-dots" href="#pc-grip-r-shape" />
+              <ellipse class="pc-gloss" cx="450" cy="40" rx="440" ry="200" />
+              <use class="pc-rim" href="#pc-shape" />
+            </g>
+            <path
+              class="pc-seam"
+              d="M32 206C32 206 37.9 226.9 42 237C46.2 247.2 51.3 257.1 57 267C62.9 277.4 70.1 287.4 77 298C84.4 309.3 92.2 321.5 100 333C107.8 344.5 115.6 355.9 124 367C132.5 378.2 141.5 389.3 151 400C160.8 411 171.5 422.1 182 432C191.9 441.3 212 458 212 458M868 206C868 206 862.1 226.9 858 237C853.8 247.2 848.7 257.1 843 267C837.1 277.4 829.9 287.4 823 298C815.6 309.3 807.8 321.5 800 333C792.2 344.5 784.4 355.9 776 367C767.5 378.2 758.5 389.3 749 400C739.2 411 728.5 422.1 718 432C708.1 441.3 688 458 688 458"
+            />
+
+            <!-- Bumpers hug the top corners -->
+            <path
+              class="pc-bumper"
+              data-btn="l"
+              d="M260.7 18C260.7 18 219.3 20.1 201 22C185.4 23.5 171.3 24.4 157.5 27.7C144.5 30.8 130.9 34.5 120.3 40.6C110.8 46.1 103.3 53.3 96.2 61.3C89 69.5 83 79.5 77.6 89.3C72.4 99 68 109.4 64.4 119.7C60.7 129.8 58.1 140.4 55.7 150.6C53.3 160.5 49.8 180.2 49.8 180.2"
+            />
+            <path
+              class="pc-bumper"
+              data-btn="r"
+              d="M639.3 18C639.3 18 680.7 20.1 699 22C714.6 23.5 728.7 24.4 742.5 27.7C755.5 30.8 769.1 34.5 779.7 40.6C789.2 46.1 796.7 53.3 803.8 61.3C811 69.5 817 79.5 822.4 89.3C827.6 99 832 109.4 835.6 119.7C839.3 129.8 841.9 140.4 844.3 150.6C846.7 160.5 850.2 180.2 850.2 180.2"
+            />
+            <text class="pc-label" x="118" y="-22">ZL</text>
+            <text class="pc-label" x="782" y="-22">ZR</text>
+            <text class="pc-label" x="136" y="76">L</text>
+            <text class="pc-label" x="764" y="76">R</text>
+
+            <!-- Sticks -->
+            <g transform="translate(182 180)">
+              <circle class="pc-well" r="80" />
+              <g class="pc-stick" id="pc-stick-l" data-btn="l_stick">
+                <circle class="pc-stick-base" r="58" />
+                <circle class="pc-stick-ridge" r="52" />
+                <circle class="pc-stick-top" r="40" />
+              </g>
+            </g>
+            <g transform="translate(598 309)">
+              <circle class="pc-well" r="80" />
+              <g class="pc-stick" id="pc-stick-r" data-btn="r_stick">
+                <circle class="pc-stick-base" r="58" />
+                <circle class="pc-stick-ridge" r="52" />
+                <circle class="pc-stick-top" r="40" />
+              </g>
+            </g>
+
+            <!-- D-pad -->
+            <g transform="translate(302 309)">
+              <circle class="pc-well pc-well-soft" r="94" />
+              <path
+                class="pc-dpad"
+                d="M-24 -64Q-24 -72-16 -72H16Q24 -72 24 -64V-24H64Q72 -24 72 -16V16Q72 24 64 24H24V64Q24 72 16 72H-16Q-24 72-24 64V24H-64Q-72 24-72 16V-16Q-72 -24-64 -24H-24Z"
+              />
+              <path
+                class="pc-arm"
+                data-btn="up"
+                d="M-24 -22V-64Q-24 -72-16 -72H16Q24 -72 24 -64V-22Z"
+              />
+              <path
+                class="pc-arm"
+                data-btn="right"
+                d="M-24 -22V-64Q-24 -72-16 -72H16Q24 -72 24 -64V-22Z"
+                transform="rotate(90)"
+              />
+              <path
+                class="pc-arm"
+                data-btn="down"
+                d="M-24 -22V-64Q-24 -72-16 -72H16Q24 -72 24 -64V-22Z"
+                transform="rotate(180)"
+              />
+              <path
+                class="pc-arm"
+                data-btn="left"
+                d="M-24 -22V-64Q-24 -72-16 -72H16Q24 -72 24 -64V-22Z"
+                transform="rotate(270)"
+              />
+              <g class="pc-arrow">
+                <path d="M0 -61L7 -50H-7Z" />
+                <path d="M0 -61L7 -50H-7Z" transform="rotate(90)" />
+                <path d="M0 -61L7 -50H-7Z" transform="rotate(180)" />
+                <path d="M0 -61L7 -50H-7Z" transform="rotate(270)" />
+              </g>
+            </g>
+
+            <!-- A B X Y -->
+            <g class="pc-face">
+              <g class="pc-btn" data-btn="x" transform="translate(718 112)">
+                <circle r="34" />
+                <text y="11">X</text>
+              </g>
+              <g class="pc-btn" data-btn="y" transform="translate(642 180)">
+                <circle r="34" />
+                <text y="11">Y</text>
+              </g>
+              <g class="pc-btn" data-btn="a" transform="translate(794 180)">
+                <circle r="34" />
+                <text y="11">A</text>
+              </g>
+              <g class="pc-btn" data-btn="b" transform="translate(718 248)">
+                <circle r="34" />
+                <text y="11">B</text>
+              </g>
+            </g>
+
+            <!-- System buttons -->
+            <g
+              class="pc-btn pc-sys"
+              data-btn="minus"
+              transform="translate(334 108)"
+            >
+              <circle r="20" />
+              <path class="pc-glyph" d="M-8 0H8" />
+            </g>
+            <g
+              class="pc-btn pc-sys"
+              data-btn="plus"
+              transform="translate(566 108)"
+            >
+              <circle r="20" />
+              <path class="pc-glyph" d="M-8 0H8M0 -8V8" />
+            </g>
+            <g
+              class="pc-btn pc-sys"
+              data-btn="capture"
+              transform="translate(380 180)"
+            >
+              <rect x="-18" y="-18" width="36" height="36" rx="7" />
+              <circle class="pc-glyph" r="7.5" />
+            </g>
+            <g
+              class="pc-btn pc-sys"
+              data-btn="home"
+              transform="translate(520 180)"
+            >
+              <circle class="pc-home-ring" r="27" />
+              <circle r="21" />
+              <path class="pc-glyph-fill" d="M0 -10L11 0H7V9H-7V0H-11Z" />
+            </g>
+          </svg>
+        </div>
+      </section>
+
+      <section class="panel p-recorder" aria-labelledby="h-recorder">
+        <header class="panel-head">
+          <h2 id="h-recorder">Recording</h2>
+          <span class="rec-badge" id="rec-badge" data-state="idle">Idle</span>
+        </header>
+        <div class="rec-clock" id="rec-clock">00:00:00</div>
+        <div class="rec-actions">
+          <button type="button" class="btn btn-record" id="btn-record">
+            <span class="glyph glyph-dot"></span>Record
+          </button>
+          <button type="button" class="btn" id="btn-pause" disabled>
+            <span class="glyph glyph-pause"></span
+            ><span id="btn-pause-text">Pause</span>
+          </button>
+          <button type="button" class="btn" id="btn-stop" disabled>
+            <span class="glyph glyph-stop"></span>Stop
+          </button>
+        </div>
+        <form class="dir-form" id="dir-form">
+          <label for="dir-input">Output directory</label>
+          <div class="dir-row">
+            <input
+              id="dir-input"
+              name="dir"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+            />
+            <button type="submit" class="btn btn-small">Set</button>
+          </div>
+        </form>
+        <div class="rec-file">
+          <span class="rec-file-label" id="rec-file-label">Last file</span>
+          <span class="path" id="rec-file">None yet</span>
+        </div>
+        <p class="notice" id="rec-error" role="alert" hidden></p>
+      </section>
+
+      <section class="panel p-stats" aria-labelledby="h-stats">
+        <header class="panel-head">
+          <h2 id="h-stats">Data</h2>
+          <span class="panel-note" id="dropped-note"></span>
+        </header>
+        <div class="tiles">
+          <div class="tile">
+            <span class="tile-label">File size</span>
+            <span class="tile-value" id="stat-size">0 B</span>
+          </div>
+          <div class="tile">
+            <span class="tile-label">Write rate</span>
+            <span class="tile-value" id="stat-rate">0 B/s</span>
+          </div>
+          <div class="tile">
+            <span class="tile-label">Frames</span>
+            <span class="tile-value" id="stat-frames">0</span>
+          </div>
+          <div class="tile" id="tile-dropped">
+            <span class="tile-label">Dropped</span>
+            <span class="tile-value" id="stat-dropped">0</span>
+          </div>
+        </div>
+        <div class="meter" id="meter-disk" data-level="ok">
+          <div class="meter-head">
+            <span class="meter-label">Disk</span>
+            <span class="meter-value" id="disk-text">Unknown</span>
+          </div>
+          <div class="meter-track"><div class="meter-fill"></div></div>
+          <div class="meter-note" id="disk-note"></div>
+        </div>
+        <div class="meter" id="meter-mem" data-level="ok">
+          <div class="meter-head">
+            <span class="meter-label">Memory</span>
+            <span class="meter-value" id="mem-text">Unknown</span>
+          </div>
+          <div class="meter-track"><div class="meter-fill"></div></div>
+        </div>
+      </section>
+
+      <section class="panel p-motion" aria-labelledby="h-motion">
+        <header class="panel-head">
+          <h2 id="h-motion">Motion</h2>
+          <span class="panel-note" id="input-rate">No input</span>
+        </header>
+        <div class="sticks">
+          <div class="readout">
+            <span class="readout-label">Left stick</span>
+            <span class="readout-value" id="stick-l">x 0 · y 0</span>
+          </div>
+          <div class="readout">
+            <span class="readout-label">Right stick</span>
+            <span class="readout-value" id="stick-r">x 0 · y 0</span>
+          </div>
+        </div>
+        <figure class="chart">
+          <figcaption class="chart-head">
+            <span class="chart-title">Gyro, °/s, last 5 s</span>
+            <span class="legend">
+              <span class="key s1"><i></i>X <b id="gyro-x">0</b></span>
+              <span class="key s2"><i></i>Y <b id="gyro-y">0</b></span>
+              <span class="key s3"><i></i>Z <b id="gyro-z">0</b></span>
+            </span>
+          </figcaption>
+          <div class="chart-body">
+            <svg class="chart-svg" id="gyro-chart" aria-hidden="true"></svg>
+            <div class="chart-tip" id="gyro-tip" hidden></div>
+          </div>
+        </figure>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

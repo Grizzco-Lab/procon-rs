@@ -36,8 +36,10 @@ pub struct ProxyConfig {
 /// Dump-related configuration
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DumpConfig {
-    /// File path for binary dump output
-    pub file_path: String,
+    /// Directory for recording session files; the dashboard can change it at runtime
+    pub dir: String,
+    /// Start recording at launch instead of waiting for the dashboard
+    pub autostart: bool,
 }
 
 /// Console output configuration
@@ -101,11 +103,9 @@ impl Config {
             _ => anyhow::bail!("Invalid log level: {}", self.logging.level),
         }
 
-        // Validate paths exist (for directories)
-        if let Some(parent) = Path::new(&self.dump.file_path).parent() {
-            if !parent.exists() {
-                anyhow::bail!("Dump file directory does not exist: {}", parent.display());
-            }
+        // Validate the dump directory exists
+        if !Path::new(&self.dump.dir).is_dir() {
+            anyhow::bail!("Dump directory does not exist: {}", self.dump.dir);
         }
 
         Ok(())

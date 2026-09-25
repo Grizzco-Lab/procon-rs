@@ -7,8 +7,10 @@ frame_count_log_interval = 100
 hidg_retry_delay_ms = 1000
 
 [dump]
-# File path for binary dump output
-file_path = "/tmp/procon_hid_dump.bin"
+# Directory for recording sessions (procon-YYYYMMDD-HHMMSS.bin); the dashboard can change it
+dir = "/tmp"
+# Start recording at launch instead of waiting for the dashboard's Record button
+autostart = false
 
 [console]
 # Enable console output to terminal

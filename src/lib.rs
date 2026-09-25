@@ -1,3 +1,5 @@
+extern crate alloc;
+
 pub mod config;
 pub mod device;
 pub mod dump;
@@ -6,4 +8,5 @@ pub mod keystate;
 pub mod parser;
 pub mod priority;
 pub mod proxy;
-pub mod web_visualization;
+pub mod recorder;
+pub mod web;
