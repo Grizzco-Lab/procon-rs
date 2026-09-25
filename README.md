@@ -116,7 +116,7 @@ config, so they survive restarts.
 |---|---|
 | `controller.bin` | 80-byte frames: Unix ms (u64 LE), report size (u8), sequence number (u32 LE), µs from the proxy reading the report to the Switch taking it (u16 LE, 0 if unknown), 1 padding byte, 64 report bytes |
 | `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses: H.264 video, plus an Opus sound track (48 kHz stereo) when "Record sound" is on |
-| `session.json` | Start/stop times, each video file's first-frame Unix ms (and first sound sample's, `audio_start_unix_ms`), the proxy's clock offset and dropped frames |
+| `session.json` | Start/stop times, each video file's first-frame Unix ms (and first sound sample's, `audio_start_unix_ms`), the proxy's clock offset and dropped frames, and `game_settings` (Splatoon 3 motion/stick sensitivity, motion controls, invert), set in the Recording panel |
 
 To line up the data: frames in a video file come at a constant rate, so frame
 `n` was captured at its segment's `start_unix_ms` plus `n / video.fps` seconds; a controller frame's

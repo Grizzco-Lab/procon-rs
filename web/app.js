@@ -454,6 +454,10 @@ function setButtons() {
   $("video-fps").disabled = recorder.busy || active;
   // The preview restarts on its own; the recording is not touched
   $("preview-match").disabled = recorder.busy;
+  // Recorded once per session, so they change between sessions
+  for (const field of $("game-settings").elements) {
+    field.disabled = recorder.busy || active;
+  }
 }
 
 function showError(message, id = "rec-error") {
@@ -744,6 +748,34 @@ function onPreviewChunk(data) {
 $("video-input").addEventListener("change", (event) =>
   sendCommand({ action: "set_video_input", input: event.target.value }),
 );
+// Game settings: any change sends them all; they apply from the next session
+const gameForm = $("game-settings");
+gameForm.addEventListener("change", () => {
+  const field = gameForm.elements;
+  sendCommand({
+    action: "set_game_settings",
+    settings: {
+      motion_controls: field.motion_controls.checked,
+      motion_sensitivity: Number(field.motion_sensitivity.value),
+      stick_sensitivity: Number(field.stick_sensitivity.value),
+      invert_y: field.invert_y.checked,
+      invert_x: field.invert_x.checked,
+    },
+  });
+});
+gameForm.addEventListener("submit", (event) => event.preventDefault());
+
+function renderGameSettings(settings) {
+  const field = gameForm.elements;
+  // Leave a field alone while it is being typed in
+  if (gameForm.contains(document.activeElement)) return;
+  field.motion_controls.checked = settings.motion_controls;
+  field.motion_sensitivity.value = settings.motion_sensitivity;
+  field.stick_sensitivity.value = settings.stick_sensitivity;
+  field.invert_y.checked = settings.invert_y;
+  field.invert_x.checked = settings.invert_x;
+}
+
 // Applies from the next video file, like the quality
 $("record-audio").addEventListener("change", (event) =>
   sendCommand({ action: "set_record_audio", enabled: event.target.checked }),
@@ -859,6 +891,7 @@ function renderStatus(status) {
   $("procon-3d").classList.toggle("is-idle", !input);
 
   renderRecorder(status.recorder);
+  renderGameSettings(status.game_settings);
   renderReplay(status.replay);
   renderVideo(status.video);
   // Live rate per second; per hour uses the session's average, which is far

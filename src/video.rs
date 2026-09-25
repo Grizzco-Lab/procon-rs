@@ -968,6 +968,9 @@ fn recording_args(config: &VideoConfig, path: &Path, with_audio: bool) -> Vec<St
     args.push("-vf".to_string());
     args.push(format!("scale={width}:{height},fps={}", config.record_fps));
     args.extend(config.encoder.iter().cloned());
+    // A keyframe every second, so a training clip can start anywhere without
+    // decoding seconds of frames it does not use
+    args.extend(["-g".to_string(), config.record_fps.to_string()]);
     if matches!(config.extension.as_str(), "mkv" | "webm") {
         // Write a cluster every second: steady file growth, little lost on a crash
         args.extend(["-cluster_time_limit", "1000"].map(String::from));

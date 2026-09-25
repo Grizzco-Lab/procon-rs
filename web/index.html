@@ -411,6 +411,50 @@
             <span class="check-note" id="audio-note"></span>
           </label>
         </div>
+        <form class="quality" id="game-settings">
+          <label for="game-motion-sens"
+            >Game settings
+            <span class="check-note"
+              >(Splatoon 3, saved with each session)</span
+            ></label
+          >
+          <div class="quality-row">
+            <label class="field" for="game-motion-sens"
+              >Motion sensitivity
+              <input
+                id="game-motion-sens"
+                name="motion_sensitivity"
+                class="select"
+                type="number"
+                min="-5"
+                max="5"
+                step="0.5"
+            /></label>
+            <label class="field" for="game-stick-sens"
+              >Stick sensitivity
+              <input
+                id="game-stick-sens"
+                name="stick_sensitivity"
+                class="select"
+                type="number"
+                min="-5"
+                max="5"
+                step="0.5"
+            /></label>
+          </div>
+          <div class="quality-row">
+            <label class="check"
+              ><input type="checkbox" name="motion_controls" /> Motion
+              controls</label
+            >
+            <label class="check"
+              ><input type="checkbox" name="invert_y" /> Invert Y</label
+            >
+            <label class="check"
+              ><input type="checkbox" name="invert_x" /> Invert X</label
+            >
+          </div>
+        </form>
         <div class="rec-file">
           <span class="rec-file-label" id="rec-file-label">Next session</span>
           <span class="path" id="rec-file">None yet</span>

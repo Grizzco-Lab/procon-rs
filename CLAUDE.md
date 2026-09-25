@@ -92,7 +92,7 @@ cargo clippy
 
 **Audio (`src/audio.rs`)**: ffmpeg reads the `[video] audio_input` PulseAudio source continuously in 10 ms chunks; a recording's sound starts at the sample that arrived with its first frame and goes to the encoder on fd 3, as an Opus track in the same file
 
-**Studio (`src/studio.rs`)**: Host coordinator; starts/stops recorder and video together, writes `session.json`, saves dashboard settings to `config.state.json`
+**Studio (`src/studio.rs`)**: Host coordinator; starts/stops recorder and video together, writes `session.json`, saves dashboard settings to `config.state.json`; each session records the game's controller settings (`GameSettings`: sensitivities scale gyro/stick into camera turns)
 
 **Motion (`src/motion.rs`)**: Gyro + accelerometer orientation for the dashboard's Splatoon mode; Y recenters
 

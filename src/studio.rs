@@ -23,6 +23,47 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// The game's controller settings, as set in Splatoon 3's options (TV mode)
+///
+/// They sit between the controller and the camera: the same turn of the view
+/// takes a different gyro or stick input at another sensitivity, so every
+/// session records them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GameSettings {
+    /// Motion (gyro) aiming is on
+    pub motion_controls: bool,
+    /// Motion sensitivity, -5 to +5 in steps of 0.5
+    pub motion_sensitivity: f32,
+    /// Right stick sensitivity, -5 to +5 in steps of 0.5
+    pub stick_sensitivity: f32,
+    pub invert_y: bool,
+    pub invert_x: bool,
+}
+
+impl Default for GameSettings {
+    fn default() -> Self {
+        Self {
+            motion_controls: true,
+            motion_sensitivity: 0.0,
+            stick_sensitivity: 0.0,
+            invert_y: false,
+            invert_x: false,
+        }
+    }
+}
+
+impl GameSettings {
+    fn validate(&self) -> Result<()> {
+        for value in [self.motion_sensitivity, self.stick_sensitivity] {
+            ensure!(
+                (-5.0..=5.0).contains(&value) && (value * 2.0).fract() == 0.0,
+                "sensitivity goes from -5 to +5 in steps of 0.5, not {value}"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Dashboard settings kept across restarts
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SavedState {
@@ -41,6 +82,8 @@ pub struct SavedState {
     pub replay_path: Option<String>,
     /// Replay mixes with the controller
     pub replay_mix: Option<bool>,
+    /// The game's controller settings, for the next session
+    pub game_settings: Option<GameSettings>,
 }
 
 impl SavedState {
@@ -66,6 +109,7 @@ pub enum Command {
     SetVideoQuality { height: u32, fps: u32 },
     SetPreviewMatchesRecording { enabled: bool },
     SetRecordAudio { enabled: bool },
+    SetGameSettings { settings: GameSettings },
     LoadReplay { path: String },
     PlayReplay,
     PauseReplay,
@@ -92,6 +136,8 @@ struct Session {
     stopped_at_ms: Option<u64>,
     video_input: Option<String>,
     segments: Vec<Segment>,
+    /// The game's controller settings during the session
+    game_settings: GameSettings,
     /// Link drop counter when the session started
     dropped_before: u64,
 }
@@ -105,6 +151,7 @@ pub struct Studio {
     pub proxy_address: String,
     state_path: PathBuf,
     session: Mutex<Option<Session>>,
+    game_settings: Mutex<GameSettings>,
 }
 
 impl Studio {
@@ -115,6 +162,7 @@ impl Studio {
         link: Arc<LinkStats>,
         proxy_address: String,
         state_path: PathBuf,
+        game_settings: GameSettings,
     ) -> Self {
         Self {
             recorder,
@@ -124,6 +172,7 @@ impl Studio {
             proxy_address,
             state_path,
             session: Mutex::new(None),
+            game_settings: Mutex::new(game_settings),
         }
     }
 
@@ -139,6 +188,7 @@ impl Studio {
                     stopped_at_ms: None,
                     video_input: self.video.input(),
                     segments: Vec::new(),
+                    game_settings: self.game_settings(),
                     dropped_before: self.link.dropped.load(Ordering::Relaxed),
                 };
                 self.start_segment(&mut new);
@@ -190,6 +240,15 @@ impl Studio {
                 self.video.set_preview_matches_recording(enabled)?;
                 self.save_state()?;
             }
+            Command::SetGameSettings { settings } => {
+                ensure!(
+                    self.recorder.status().state == RecorderState::Idle,
+                    "stop recording before changing the game settings"
+                );
+                settings.validate()?;
+                *self.game_settings.lock().unwrap() = settings;
+                self.save_state()?;
+            }
             Command::SetRecordAudio { enabled } => {
                 self.video.set_record_audio(enabled);
                 self.save_state()?;
@@ -208,6 +267,11 @@ impl Studio {
             }
         }
         Ok(())
+    }
+
+    /// The game's controller settings for the next session
+    pub fn game_settings(&self) -> GameSettings {
+        self.game_settings.lock().unwrap().clone()
     }
 
     /// Bytes of video in the current or last session
@@ -286,6 +350,8 @@ impl Studio {
         let description = json!({
             "started_at_unix_ms": session.started_at_ms,
             "stopped_at_unix_ms": session.stopped_at_ms,
+            // Splatoon 3's controller settings: they scale gyro and stick into camera turns
+            "game_settings": session.game_settings,
             "proxy": {
                 "address": self.proxy_address,
                 // host clock = proxy clock + offset, estimated from the stream
@@ -321,6 +387,7 @@ impl Studio {
             video_fps: Some(fps),
             preview_matches_recording: Some(self.video.preview_matches_recording()),
             record_audio: Some(self.video.record_audio()),
+            game_settings: Some(self.game_settings()),
             replay_path: self.player.path(),
             replay_mix: Some(self.player.mix()),
         };

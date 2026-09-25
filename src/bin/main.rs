@@ -87,6 +87,7 @@ fn main() -> anyhow::Result<()> {
         link,
         config.proxy.address,
         state_path,
+        saved.game_settings.unwrap_or_default(),
     ));
 
     let rt = tokio::runtime::Runtime::new()?;

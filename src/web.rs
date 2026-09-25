@@ -289,6 +289,7 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
                         .map(|(mean, max)| json!({ "mean": mean, "max": max })),
                 },
                 "recorder": recorder,
+                "game_settings": studio.game_settings(),
                 "replay": studio.player.status(),
                 "video": video,
                 // Bytes per second, and bytes of the current or last session

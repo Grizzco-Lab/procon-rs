@@ -901,6 +901,13 @@ input:focus-visible {
   gap: 8px;
 }
 
+/* A label above its input, sharing a row with others */
+.field {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+}
+
 .quality-row .select {
   flex: 1;
   max-width: none;
