@@ -275,23 +275,22 @@ impl Dumper for AsyncDumper {
             return Ok(());
         }
 
-        // Try to send the message
-        match self.sender.send(DumpMessage::Data(*frame)) {
-            Ok(()) => {
-                // Update queue size estimate
-                self.queue_size.fetch_add(1, Ordering::Relaxed);
-                Ok(())
-            }
-            Err(_) => {
-                log::warn!("Dump thread has shut down");
-                Ok(())
-            }
+        // Count the frame before sending it: the dump thread may receive it
+        // and subtract before this thread gets to add, wrapping the count
+        self.queue_size.fetch_add(1, Ordering::Relaxed);
+        if self.sender.send(DumpMessage::Data(*frame)).is_err() {
+            self.queue_size.fetch_sub(1, Ordering::Relaxed);
+            log::warn!("Dump thread has shut down");
         }
+        Ok(())
     }
 
     fn flush(&mut self) -> Result<()> {
-        // Flush is always sent (it's important for data integrity)
-        if let Err(_) = self.sender.send(DumpMessage::Flush) {
+        // Flush is always sent (it's important for data integrity); the dump
+        // thread subtracts every message it takes, so count this one too
+        self.queue_size.fetch_add(1, Ordering::Relaxed);
+        if self.sender.send(DumpMessage::Flush).is_err() {
+            self.queue_size.fetch_sub(1, Ordering::Relaxed);
             log::warn!("Dump thread has shut down");
         }
         Ok(())
