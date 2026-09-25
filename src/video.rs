@@ -17,7 +17,12 @@
 //!
 //! Frames reach recordings at a constant rate: frame `n` of a file was captured
 //! `n / fps` seconds after its first frame, whose Unix time is kept.
+//!
+//! With sound on, a recording also gets the capture card's sound
+//! ([`Audio`]) through a second pipe, starting at the sample that arrived
+//! with its first frame, as a second track of the same file.
 
+use crate::audio::{self, Audio};
 use crate::config::VideoConfig;
 use crate::dump::unix_ms;
 use alloc::collections::VecDeque;
@@ -26,8 +31,9 @@ use anyhow::{Context, Result, ensure};
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 use serde::Serialize;
+use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
@@ -151,6 +157,11 @@ pub struct VideoStatus {
     pub preview_encode_ms: Option<f64>,
     /// The preview follows the recording size and rate
     pub preview_matches_recording: bool,
+    /// Recordings get the sound track, when there is a sound source
+    pub record_audio: bool,
+    /// Sound source configured, and whether its sound is arriving
+    pub audio_input: Option<String>,
+    pub audio_live: bool,
     /// Why ffmpeg is not running
     pub error: Option<String>,
 }
@@ -181,6 +192,12 @@ struct Recording {
     worker: Worker,
     /// Unix ms of the file's first frame, once it arrived
     first_frame_ms: Option<u64>,
+    /// Sound input of the encoder, until the first frame starts the sound
+    audio_input: Option<SyncSender<SharedFrame>>,
+    /// Writes the sound into the encoder's second pipe
+    audio_writer: Option<JoinHandle<()>>,
+    /// Unix ms of the first sample in the file
+    audio_start_ms: Option<u64>,
     /// Frames lost because the encoder fell behind
     dropped: u64,
 }
@@ -190,6 +207,7 @@ struct Inner {
     input: Option<String>,
     /// The preview uses the recording size and rate instead of its own
     preview_matches_recording: bool,
+    record_audio: bool,
     grabber: Option<Child>,
     preview: Option<Worker>,
     error: Option<String>,
@@ -219,6 +237,16 @@ pub struct Video {
     /// Unix ms of the latest grabbed frame and preview fragment
     last_frame_ms: Arc<AtomicU64>,
     last_preview_ms: Arc<AtomicU64>,
+    /// The sound source, when one is configured
+    audio: Option<Audio>,
+}
+
+/// When a finished video file starts
+pub struct FileTimes {
+    /// Unix ms of its first frame
+    pub first_frame_ms: Option<u64>,
+    /// Unix ms of its first sound sample, if it has sound
+    pub audio_start_ms: Option<u64>,
 }
 
 /// Lock a mutex even if a holder panicked; the data stays usable
@@ -227,17 +255,22 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Video {
-    /// Start capturing `input` (if any)
+    /// Start capturing `input` (if any), and the sound source (if configured)
     pub fn new(
         config: VideoConfig,
         input: Option<String>,
         preview_matches_recording: bool,
+        record_audio: bool,
     ) -> Self {
+        let audio = Some(config.audio_input.clone())
+            .filter(|source| !source.is_empty())
+            .map(Audio::start);
         let video = Self {
             inner: Arc::new(Mutex::new(Inner {
                 config,
                 input,
                 preview_matches_recording,
+                record_audio,
                 grabber: None,
                 preview: None,
                 error: None,
@@ -253,6 +286,7 @@ impl Video {
             preview_generation: Arc::default(),
             last_frame_ms: Arc::default(),
             last_preview_ms: Arc::default(),
+            audio,
         };
         let mut inner = video.lock();
         video.restart_grabber(&mut inner);
@@ -284,6 +318,15 @@ impl Video {
     /// Whether the preview follows the recording size and rate
     pub fn preview_matches_recording(&self) -> bool {
         self.lock().preview_matches_recording
+    }
+
+    /// Give recordings from the next file on the sound track, or not
+    pub fn set_record_audio(&self, enabled: bool) {
+        self.lock().record_audio = enabled;
+    }
+
+    pub fn record_audio(&self) -> bool {
+        self.lock().record_audio
     }
 
     /// Switch to another input, or none; not while recording
@@ -351,17 +394,42 @@ impl Video {
         if inner.input.is_none() {
             return false;
         }
-        let args = recording_args(&inner.config, path);
+        // Sound only when it is arriving: an input that never sends would stall the file
+        let with_audio = inner.record_audio && self.audio.as_ref().is_some_and(Audio::live);
+        let args = recording_args(&inner.config, path, with_audio);
         // Room for the encoder to start up without losing frames
         let queue = (inner.config.fps * RECORDING_QUEUE_SECS) as usize;
         drop(inner);
-        match spawn_worker(&args, queue, false) {
-            Ok((worker, _)) => {
-                log::info!("Recording video to {}", path.display());
+        let audio_pipe = if with_audio { audio_pipe() } else { Ok(None) };
+        let spawned = audio_pipe.and_then(|pipe| {
+            let (read_end, write_end) = pipe.unzip();
+            let (worker, _) = spawn_worker(&args, queue, false, read_end)?;
+            Ok((worker, write_end))
+        });
+        match spawned {
+            Ok((worker, write_end)) => {
+                log::info!(
+                    "Recording video{} to {}",
+                    if with_audio { " and sound" } else { "" },
+                    path.display()
+                );
+                // A second of sound queued, like the frames
+                let (audio_input, audio_writer) = match write_end {
+                    Some(pipe) => {
+                        let (input, queued) =
+                            sync_channel((1000 / 10 * RECORDING_QUEUE_SECS) as usize);
+                        let writer = thread::spawn(move || write_frames(pipe, queued));
+                        (Some(input), Some(writer))
+                    }
+                    None => (None, None),
+                };
                 *lock(&self.recording) = Some(Recording {
                     path: path.to_path_buf(),
                     worker,
                     first_frame_ms: None,
+                    audio_input,
+                    audio_writer,
+                    audio_start_ms: None,
                     dropped: 0,
                 });
                 true
@@ -374,11 +442,17 @@ impl Video {
         }
     }
 
-    /// Finish the file being recorded
-    ///
-    /// Returns the Unix ms of its first frame, when one arrived.
-    pub fn stop_recording(&self) -> Option<u64> {
-        let recording = lock(&self.recording).take()?;
+    /// Finish the file being recorded, and say when its video and sound start
+    pub fn stop_recording(&self) -> Option<FileTimes> {
+        let mut recording = lock(&self.recording).take()?;
+        // End the sound first: ffmpeg finishes only when both inputs have
+        if let Some(audio) = &self.audio {
+            audio.end();
+        }
+        drop(recording.audio_input.take());
+        if let Some(writer) = recording.audio_writer.take() {
+            let _ = writer.join();
+        }
         finish_worker(recording.worker, Duration::from_secs(10));
         if recording.dropped > 0 {
             log::warn!(
@@ -387,7 +461,10 @@ impl Video {
                 recording.path.display()
             );
         }
-        recording.first_frame_ms
+        Some(FileTimes {
+            first_frame_ms: recording.first_frame_ms,
+            audio_start_ms: recording.audio_start_ms,
+        })
     }
 
     /// Take a snapshot for the dashboard
@@ -410,6 +487,9 @@ impl Video {
             preview_fps,
             preview_encode_ms: (live && encode_us > 0).then(|| encode_us as f64 / 1000.0),
             preview_matches_recording: inner.preview_matches_recording,
+            record_audio: inner.record_audio,
+            audio_input: Some(inner.config.audio_input.clone()).filter(|s| !s.is_empty()),
+            audio_live: self.audio.as_ref().is_some_and(Audio::live),
             error: inner.error.clone(),
         }
     }
@@ -485,7 +565,7 @@ impl Video {
         }
 
         let args = preview_args(inner);
-        match spawn_worker(&args, PREVIEW_QUEUE, true) {
+        match spawn_worker(&args, PREVIEW_QUEUE, true, None) {
             Ok((worker, Some(stdout))) => {
                 *lock(&self.preview_feed) = Some(PreviewFeed {
                     frames: worker.frames.clone(),
@@ -571,7 +651,17 @@ impl Video {
                 }
             }
             if let Some(recording) = recording.as_mut() {
-                recording.first_frame_ms.get_or_insert_with(unix_ms);
+                if recording.first_frame_ms.is_none() {
+                    let now = unix_ms();
+                    recording.first_frame_ms = Some(now);
+                    // The sound starts with the sample that arrived with this frame
+                    if let (Some(audio), Some(input)) = (&self.audio, recording.audio_input.take())
+                    {
+                        let offset = lock(&self.inner).config.audio_offset_ms;
+                        let start = now.saturating_add_signed(offset);
+                        recording.audio_start_ms = audio.begin(input, start);
+                    }
+                }
                 match recording.worker.frames.try_send(shared) {
                     Ok(()) => {}
                     Err(TrySendError::Full(_)) => recording.dropped += 1,
@@ -666,9 +756,24 @@ fn spawn_worker(
     args: &[String],
     queue: usize,
     piped_stdout: bool,
+    fd3: Option<OwnedFd>,
 ) -> Result<(Worker, Option<ChildStdout>)> {
     log::info!("Starting ffmpeg {}", args.join(" "));
-    let mut child = Command::new("ffmpeg")
+    let mut command = Command::new("ffmpeg");
+    if let Some(fd) = &fd3 {
+        let raw = fd.as_raw_fd();
+        // SAFETY: dup2 is async-signal-safe; the copy at 3 is inherited, as
+        // copies do not keep the close-on-exec flag
+        unsafe {
+            command.pre_exec(move || {
+                if libc::dup2(raw, 3) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    let mut child = command
         .args(args)
         .stdin(Stdio::piped())
         .stdout(if piped_stdout {
@@ -680,6 +785,8 @@ fn spawn_worker(
         .process_group(0)
         .spawn()
         .context("cannot run ffmpeg; is it installed?")?;
+    // The child has its copy; ours would keep the pipe open
+    drop(fd3);
     let stdin = child.stdin.take().context("no ffmpeg stdin")?;
     // SAFETY: fcntl on a descriptor we own; bigger pipes suit megabyte frames
     unsafe { libc::fcntl(stdin.as_raw_fd(), libc::F_SETPIPE_SZ, 1 << 22) };
@@ -701,6 +808,19 @@ fn spawn_worker(
         },
         stdout,
     ))
+}
+
+/// A pipe for sound into an encoder: the end ffmpeg reads (as fd 3), and ours
+fn audio_pipe() -> Result<Option<(OwnedFd, File)>> {
+    let mut fds = [0; 2];
+    // SAFETY: pipe2 fills both descriptors, which we then own
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error()).context("cannot make a pipe for sound");
+    }
+    // SAFETY: fresh descriptors from pipe2, owned by nothing else
+    let (read_end, write_end) =
+        unsafe { (OwnedFd::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) };
+    Ok(Some((read_end, write_end)))
 }
 
 /// Feed queued frames to an ffmpeg until the queue closes
@@ -830,12 +950,21 @@ fn preview_args(inner: &Inner) -> Vec<String> {
 }
 
 /// Command line for recording raw frames into `path` at the recording size and rate
-fn recording_args(config: &VideoConfig, path: &Path) -> Vec<String> {
+fn recording_args(config: &VideoConfig, path: &Path, with_audio: bool) -> Vec<String> {
     let (width, height) = size_16_9(config.record_height);
     let mut args: Vec<String> = ["-hide_banner", "-nostats", "-loglevel", "warning"]
         .map(String::from)
         .to_vec();
     args.extend(raw_input(config.fps));
+    if with_audio {
+        // Raw sound on fd 3, starting with the first frame
+        args.extend(["-thread_queue_size", "256", "-f", "s16le", "-ar"].map(String::from));
+        args.push(audio::SAMPLE_RATE.to_string());
+        args.push("-ac".to_string());
+        args.push(audio::CHANNELS.to_string());
+        args.extend(["-i", "pipe:3", "-map", "0:v", "-map", "1:a"].map(String::from));
+        args.extend(["-c:a", "libopus", "-b:a", "128k"].map(String::from));
+    }
     args.push("-vf".to_string());
     args.push(format!("scale={width}:{height},fps={}", config.record_fps));
     args.extend(config.encoder.iter().cloned());

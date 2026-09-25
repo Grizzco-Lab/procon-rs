@@ -26,10 +26,6 @@ pub struct Config {
 /// Proxy-related configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
-    /// Poll the controller every this many ms (Linux's `usbhid.jspoll`), 0 for
-    /// the 8 ms it asks; input arrives on its own 8 ms beat either way, but
-    /// rumble writes take ~2 ms instead of ~9 at 1
-    pub controller_poll_ms: u32,
     /// Retry delay when HID gadget device fails to open (milliseconds)
     pub hidg_retry_delay_ms: u64,
 }
@@ -163,4 +159,9 @@ pub struct VideoConfig {
     pub preview_fps: u32,
     /// ffmpeg encoder options for the live preview; keep them low latency
     pub preview_encoder: Vec<String>,
+    /// PulseAudio source recorded as the videos' sound track, such as the
+    /// capture card's (`pactl list short sources`); "" for none
+    pub audio_input: String,
+    /// How much later the source's sound arrives than its picture, in ms
+    pub audio_offset_ms: i64,
 }

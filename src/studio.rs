@@ -9,6 +9,7 @@
 //! Settings changed from the dashboard (path prefix, video input, replay file)
 //! are saved to a small JSON state file so they survive restarts.
 
+use crate::audio;
 use crate::dump::unix_ms;
 use crate::player::Player;
 use crate::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
@@ -34,6 +35,8 @@ pub struct SavedState {
     pub video_fps: Option<u32>,
     /// The preview follows the recording size and rate
     pub preview_matches_recording: Option<bool>,
+    /// Recordings get the sound track
+    pub record_audio: Option<bool>,
     /// Last loaded replay file
     pub replay_path: Option<String>,
     /// Replay mixes with the controller
@@ -62,6 +65,7 @@ pub enum Command {
     SetVideoInput { input: String },
     SetVideoQuality { height: u32, fps: u32 },
     SetPreviewMatchesRecording { enabled: bool },
+    SetRecordAudio { enabled: bool },
     LoadReplay { path: String },
     PlayReplay,
     PauseReplay,
@@ -76,6 +80,9 @@ struct Segment {
     file: String,
     /// Unix ms of the first frame; frame `n` came `n / fps` seconds later
     start_unix_ms: Option<u64>,
+    /// Unix ms of the first sample of the file's sound track, if it has one
+    #[serde(skip_serializing_if = "Option::is_none")]
+    audio_start_unix_ms: Option<u64>,
 }
 
 /// The session being recorded, or the last one
@@ -183,6 +190,10 @@ impl Studio {
                 self.video.set_preview_matches_recording(enabled)?;
                 self.save_state()?;
             }
+            Command::SetRecordAudio { enabled } => {
+                self.video.set_record_audio(enabled);
+                self.save_state()?;
+            }
             Command::LoadReplay { path } => {
                 self.player.load(&path)?;
                 self.save_state()?;
@@ -252,16 +263,19 @@ impl Studio {
             session.segments.push(Segment {
                 file: name,
                 start_unix_ms: None,
+                audio_start_unix_ms: None,
             });
         }
     }
 
     fn finish_segment(&self, session: &mut Session) {
-        let started = self.video.stop_recording();
+        let times = self.video.stop_recording();
         if let Some(segment) = session.segments.last_mut()
             && segment.start_unix_ms.is_none()
+            && let Some(times) = times
         {
-            segment.start_unix_ms = started;
+            segment.start_unix_ms = times.first_frame_ms;
+            segment.audio_start_unix_ms = times.audio_start_ms;
         }
     }
 
@@ -287,6 +301,8 @@ impl Studio {
                 "input": session.video_input,
                 "height": height,
                 "fps": fps,
+                // Sound track in the video files, where a segment has audio_start_unix_ms
+                "audio": { "codec": "opus", "sample_rate": audio::SAMPLE_RATE, "channels": audio::CHANNELS },
                 "segments": session.segments,
             },
         });
@@ -304,6 +320,7 @@ impl Studio {
             video_height: Some(height),
             video_fps: Some(fps),
             preview_matches_recording: Some(self.video.preview_matches_recording()),
+            record_audio: Some(self.video.record_audio()),
             replay_path: self.player.path(),
             replay_mix: Some(self.player.mix()),
         };

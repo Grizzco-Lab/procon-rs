@@ -744,6 +744,10 @@ function onPreviewChunk(data) {
 $("video-input").addEventListener("change", (event) =>
   sendCommand({ action: "set_video_input", input: event.target.value }),
 );
+// Applies from the next video file, like the quality
+$("record-audio").addEventListener("change", (event) =>
+  sendCommand({ action: "set_record_audio", enabled: event.target.checked }),
+);
 $("preview-match").addEventListener("change", (event) =>
   sendCommand({
     action: "set_preview_matches_recording",
@@ -779,6 +783,14 @@ function renderVideo(status) {
   $("preview-match").checked = status.preview_matches_recording;
   $("preview-note").textContent =
     `Preview ${status.preview_height}p · ${status.preview_fps} fps`;
+  $("record-audio").checked = status.record_audio && !!status.audio_input;
+  $("record-audio").disabled = !status.audio_input;
+  $("audio-note").textContent = !status.audio_input
+    ? "No sound source in config.toml"
+    : status.audio_live
+      ? "Sound arriving"
+      : "No sound arriving";
+  $("audio-note").title = status.audio_input ?? "";
   $("no-signal").hidden = status.live;
   if (!status.input) {
     $("video-title").textContent = "No video source";

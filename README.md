@@ -115,12 +115,14 @@ config, so they survive restarts.
 | File | Contents |
 |---|---|
 | `controller.bin` | 80-byte frames: Unix ms (u64 LE), report size (u8), sequence number (u32 LE), µs from the proxy reading the report to the Switch taking it (u16 LE, 0 if unknown), 1 padding byte, 64 report bytes |
-| `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses |
-| `session.json` | Start/stop times, each video file's first-frame Unix ms, the proxy's clock offset and dropped frames |
+| `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses: H.264 video, plus an Opus sound track (48 kHz stereo) when "Record sound" is on |
+| `session.json` | Start/stop times, each video file's first-frame Unix ms (and first sound sample's, `audio_start_unix_ms`), the proxy's clock offset and dropped frames |
 
 To line up the data: frames in a video file come at a constant rate, so frame
 `n` was captured at its segment's `start_unix_ms` plus `n / video.fps` seconds; a controller frame's
-host time is its proxy timestamp plus `proxy.clock_offset_ms`.
+host time is its proxy timestamp plus `proxy.clock_offset_ms`. The sound track starts at
+the sample that arrived with the first frame (shifted by `[video] audio_offset_ms`), so in
+the file both tracks start at 0; `audio_start_unix_ms` says when that sample arrived.
 
 To work on the studio without a Pi, stream a synthetic controller and point
 `[proxy] address` at `localhost:7331`:
@@ -135,9 +137,6 @@ cargo run --example fake_proxy
 
 ```toml
 [proxy]
-# Poll the controller every this many ms (Linux usbhid.jspoll); 0 keeps the 8 ms it
-# asks. Input still arrives on its own 8 ms beat; at 1, rumble writes take ~2 ms, not ~9
-controller_poll_ms = 1
 # Retry delay when HID gadget device fails to open (milliseconds)
 hidg_retry_delay_ms = 1000
 
@@ -200,6 +199,7 @@ The codebase is organized into the following modules:
 - **`src/recorder.rs`** - Session folders and the controller file, with start/pause/resume/stop
 - **`src/video.rs`** - ffmpeg capture: input list, live preview and recorded segments
 - **`src/studio.rs`** - Host coordinator: sessions, `session.json`, saved dashboard settings
+- **`src/audio.rs`** - Capture card sound: always read from PulseAudio, the last 2 s kept, streamed into recordings from their first frame
 - **`src/web.rs`** - Dashboard server: static page, WebSocket live feed and preview, command API
 - **`web/`** - Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`), embedded into the binary
 - **`examples/fake_proxy.rs`** - Streams a synthetic controller like the proxy, no hardware needed

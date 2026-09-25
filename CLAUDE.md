@@ -67,7 +67,7 @@ cargo clippy
 - Runs at high priority for minimal latency
 - Auto-reconnection on device failures
 
-**ProController (`src/device.rs`)**: The physical controller through hidapi; reconnects as long as it takes. `set_poll_interval` sets `usbhid.jspoll` and rebinds the controller to hid-generic (Linux's hid-nintendo cannot set up a controller the Switch already set up)
+**ProController (`src/device.rs`)**: The physical controller through hidapi; reconnects as long as it takes. Do not change its polling interval (`usbhid.jspoll`): on the Pi 4 it breaks the output endpoint and the Switch's handshake
 
 **ProConGadget (`src/gadget.rs`)**: Handles automatic USB gadget setup and cleanup with Nintendo Pro Controller device IDs
 
@@ -89,6 +89,8 @@ cargo clippy
 **Recorder (`src/recorder.rs`)**: Session folders `<prefix>YYYY-MM-DD_HH-MM-SS/` with `controller.bin`; start/pause/resume/stop
 
 **Video (`src/video.rs`)**: One ffmpeg process per input: MJPEG preview on stdout, plus an encoded file while recording; stopped with SIGINT
+
+**Audio (`src/audio.rs`)**: ffmpeg reads the `[video] audio_input` PulseAudio source continuously in 10 ms chunks; a recording's sound starts at the sample that arrived with its first frame and goes to the encoder on fd 3, as an Opus track in the same file
 
 **Studio (`src/studio.rs`)**: Host coordinator; starts/stops recorder and video together, writes `session.json`, saves dashboard settings to `config.state.json`
 
@@ -113,7 +115,6 @@ cargo clippy
 
 ```toml
 [proxy]
-controller_poll_ms = 1               # usbhid.jspoll; rumble writes ~2 ms instead of ~9; 0 = 8 ms
 hidg_retry_delay_ms = 1000          # HID gadget retry delay
 
 [dump]

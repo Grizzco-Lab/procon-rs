@@ -1,7 +1,6 @@
 use anyhow::Context;
 use clap::Parser;
 use procon::config::Config;
-use procon::device::set_poll_interval;
 use procon::dump::{AsyncDumper, MultiDumper};
 use procon::gadget::ProConGadget;
 use procon::priority::set_high_priority;
@@ -58,10 +57,6 @@ fn main() -> anyhow::Result<()> {
 
     // Set high priority for main proxy thread
     set_high_priority(config.performance.enable_cpu_affinity);
-
-    if let Err(e) = set_poll_interval(config.proxy.controller_poll_ms) {
-        log::warn!("Cannot set the controller polling interval: {:#}", e);
-    }
 
     // Setup USB gadget programmatically
     let mut usb_gadget = ProConGadget::new();

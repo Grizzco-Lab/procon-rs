@@ -57,6 +57,7 @@ fn main() -> anyhow::Result<()> {
         video_config,
         Some(input).filter(|id| !id.is_empty()),
         saved.preview_matches_recording.unwrap_or(false),
+        saved.record_audio.unwrap_or(true),
     );
     let player = Player::new(
         config.proxy.replay_address,
