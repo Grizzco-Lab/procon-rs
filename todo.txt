@@ -14,13 +14,13 @@
 - [x] Options from yaml/toml file.
 - [ ] Add packet filtering capabilities (based on time range)
 - [ ] Implement file-based dumper seek functionality
-- [ ] Implement a 3d visualization of the controller's movement
+- [x] Implement a 3d visualization of the controller's movement
   - what is the best way to do this?
 
 
 
 Bigger items
-- [ ] video capture at the same time. Save procontroller keystrokes and video to dataset (have timestamp synced).
+- [x] video capture at the same time. Save procontroller keystrokes and video to dataset (have timestamp synced).
   - video capture will be done on another more powerful device (Steam Deck).
   - make sure to run ntp to sync the device timestamp each time before starting the capture.
   - implementation approach:
