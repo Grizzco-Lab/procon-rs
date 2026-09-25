@@ -3,11 +3,13 @@
 A Rust program that proxies Nintendo Switch Pro Controller HID data and records
 it together with the console's video, for building training datasets.
 
-![The studio dashboard](doc/demo.png)
+> [!TIP]
+> **[See the setup guide and dashboard tour →](https://htmlpreview.github.io/?https://github.com/Grizzco-Lab/procon-rs/blob/main/doc/index.html)**
+>
+> The hardware you need, how it is wired, and what the studio does, with
+> screenshots. Source: [doc/index.html](doc/index.html).
 
-For the hardware setup, wiring and a tour of the dashboard, see
-[grizzco-lab.github.io/procon-rs](https://grizzco-lab.github.io/procon-rs/)
-(source: [doc/index.html](doc/index.html)).
+![The studio dashboard](doc/demo.png)
 
 ## Features
 
