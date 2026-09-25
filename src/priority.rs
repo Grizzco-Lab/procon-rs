@@ -57,7 +57,9 @@ pub fn set_high_priority(enable_cpu_affinity: bool) {
             }
 
             // Attempt to set real-time scheduling (requires root)
-            let param = libc::sched_param { sched_priority: 50 };
+            // musl's sched_param has extra fields; start from zero on both libcs
+            let mut param: libc::sched_param = core::mem::zeroed();
+            param.sched_priority = 50;
             let result = libc::sched_setscheduler(0, SCHED_FIFO, &param);
             if result == 0 {
                 log::info!("Set real-time scheduling (SCHED_FIFO, priority 50)");

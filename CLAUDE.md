@@ -132,5 +132,5 @@ level = "info"                      # Log verbosity
 - Nintendo Switch Pro Controller (USB connection)
 
 ## Target Platform
-- Primary target: `aarch64-unknown-linux-gnu` (ARM64 Linux)
+- Primary target: `aarch64-unknown-linux-musl` (static ARM64 Linux binary, linked by rust-lld; see `scripts/deploy.sh`)
 - Rust stable toolchain

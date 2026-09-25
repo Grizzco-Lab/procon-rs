@@ -1,0 +1,4 @@
+# The Pi proxy is built as a static musl binary; rust-lld ships with rustup,
+# so no C cross toolchain or Pi sysroot is needed.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"
