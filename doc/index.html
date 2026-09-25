@@ -831,10 +831,11 @@
             <div>
               <strong>ffmpeg records the video.</strong>
               <p>
-                One ffmpeg process owns the capture card. It always sends a
-                small preview to the dashboard. While recording, it also encodes
-                1080p H.264 on the GPU, and its log gives the wall-clock time of
-                the first frame.
+                One ffmpeg process keeps the capture card open. It streams a
+                low-latency H.264 preview that the dashboard plays in a video
+                element, and raw frames at the recording size and rate. Record
+                starts a GPU encoder on those frames, so video begins with the
+                next frame and pausing never touches the card.
               </p>
             </div>
           </li>

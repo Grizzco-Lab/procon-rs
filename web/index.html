@@ -80,7 +80,7 @@
           ></select>
         </header>
         <div class="screen">
-          <img id="video-img" alt="Video preview" hidden />
+          <video id="video-player" muted autoplay playsinline hidden></video>
           <div class="no-signal" id="no-signal">
             <svg viewBox="0 0 48 48" aria-hidden="true">
               <rect x="5" y="9" width="38" height="25" rx="3" />
@@ -395,6 +395,11 @@
               <option value="10">10 fps</option>
             </select>
           </div>
+          <label class="check" for="preview-match">
+            <input type="checkbox" id="preview-match" />
+            Preview at recording quality
+            <span class="check-note" id="preview-note"></span>
+          </label>
         </div>
         <div class="rec-file">
           <span class="rec-file-label" id="rec-file-label">Next session</span>

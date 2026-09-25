@@ -452,6 +452,7 @@ function setButtons() {
   $("video-input").disabled = recorder.busy || active;
   $("video-height").disabled = recorder.busy || active;
   $("video-fps").disabled = recorder.busy || active;
+  $("preview-match").disabled = recorder.busy || active;
 }
 
 function showError(message) {
@@ -510,14 +511,113 @@ $("dir-form").addEventListener("submit", async (event) => {
 
 // --------------------------------------------------------------------- video
 
-const video = {
-  /** Object URL of the frame on screen, revoked when the next one arrives */
-  url: null,
-  live: false,
+/**
+ * Live preview player: the server sends H.264 as fragmented MP4, an init
+ * segment and then one small fragment per frame, which Media Source
+ * Extensions feed to a <video> element
+ */
+const player = {
+  el: $("video-player"),
+  source: null,
+  buffer: null,
+  /** Fragments waiting for the buffer to finish its last append */
+  queue: [],
 };
+
+/** Codec string from the init segment's avcC box, e.g. "avc1.64002a" */
+function avcCodec(init) {
+  for (let i = 0; i + 8 < init.length; i++) {
+    // "avcC", then version, profile, compatibility, level
+    if (
+      init[i] === 0x61 &&
+      init[i + 1] === 0x76 &&
+      init[i + 2] === 0x63 &&
+      init[i + 3] === 0x43
+    ) {
+      const hex = (byte) => byte.toString(16).padStart(2, "0");
+      return `avc1.${hex(init[i + 5])}${hex(init[i + 6])}${hex(init[i + 7])}`;
+    }
+  }
+  return "avc1.640028";
+}
+
+/** Start a fresh player for a new stream */
+function startPlayer(init) {
+  // iPhones only have the managed variant
+  const MediaSourceClass = window.ManagedMediaSource ?? window.MediaSource;
+  if (!MediaSourceClass) {
+    $("video-message").textContent =
+      "This browser cannot play the live preview";
+    return;
+  }
+  const source = new MediaSourceClass();
+  player.source = source;
+  player.buffer = null;
+  player.queue = [init];
+  player.el.disableRemotePlayback = true;
+  player.el.src = URL.createObjectURL(source);
+  source.addEventListener("sourceopen", () => {
+    if (player.source !== source) return;
+    URL.revokeObjectURL(player.el.src);
+    player.buffer = source.addSourceBuffer(
+      `video/mp4; codecs="${avcCodec(init)}"`,
+    );
+    player.buffer.addEventListener("updateend", pump);
+    pump();
+  });
+}
+
+/** Append the next fragment, keep playback at the live edge, drop old video */
+function pump() {
+  const buffer = player.buffer;
+  if (!buffer || buffer.updating) return;
+  const ranges = player.el.buffered;
+  if (ranges.length) {
+    const end = ranges.end(ranges.length - 1);
+    // Stay within a few frames of live; the stream never needs rewinding
+    if (
+      end - player.el.currentTime > 0.3 ||
+      player.el.currentTime < ranges.start(ranges.length - 1)
+    ) {
+      player.el.currentTime = end - 0.02;
+    }
+    if (player.el.paused) player.el.play().catch(() => {});
+    if (end - ranges.start(0) > 30) {
+      buffer.remove(0, end - 10);
+      return;
+    }
+  }
+  if (player.queue.length) buffer.appendBuffer(player.queue.shift());
+}
+
+function onPreviewChunk(data) {
+  const bytes = new Uint8Array(data);
+  // "ftyp" opens an init segment: a new stream
+  const init =
+    bytes[4] === 0x66 &&
+    bytes[5] === 0x74 &&
+    bytes[6] === 0x79 &&
+    bytes[7] === 0x70;
+  if (init) {
+    startPlayer(bytes);
+    return;
+  }
+  if (!player.source) return;
+  player.queue.push(bytes);
+  // Far behind (a hidden tab, say): the server resyncs at a keyframe anyway
+  if (player.queue.length > 120)
+    player.queue.splice(1, player.queue.length - 60);
+  pump();
+}
 
 $("video-input").addEventListener("change", (event) =>
   sendCommand({ action: "set_video_input", input: event.target.value }),
+);
+$("preview-match").addEventListener("change", (event) =>
+  sendCommand({
+    action: "set_preview_matches_recording",
+    enabled: event.target.checked,
+  }),
 );
 // Smaller or slower recordings save disk; they apply from the next recording
 for (const id of ["video-height", "video-fps"]) {
@@ -528,15 +628,6 @@ for (const id of ["video-height", "video-fps"]) {
       fps: Number($("video-fps").value),
     }),
   );
-}
-
-function showPreview(blob) {
-  if (!video.live) return;
-  const img = $("video-img");
-  const previous = video.url;
-  video.url = URL.createObjectURL(blob);
-  img.src = video.url;
-  if (previous) URL.revokeObjectURL(previous);
 }
 
 function renderVideo(status) {
@@ -552,8 +643,10 @@ function renderVideo(status) {
   }
   select.value = status.input ?? "";
 
-  video.live = status.live;
-  $("video-img").hidden = !status.live;
+  $("video-player").hidden = !status.live;
+  $("preview-match").checked = status.preview_matches_recording;
+  $("preview-note").textContent =
+    `Preview ${status.preview_height}p · ${status.preview_fps} fps`;
   $("no-signal").hidden = status.live;
   if (!status.input) {
     $("video-title").textContent = "No video source";
@@ -696,11 +789,11 @@ function markOffline() {
 function connect() {
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${scheme}://${location.host}/ws`);
-  socket.binaryType = "blob";
+  socket.binaryType = "arraybuffer";
   socket.onmessage = (event) => {
-    // Binary messages are video preview JPEGs
-    if (event.data instanceof Blob) {
-      showPreview(event.data.slice(0, event.data.size, "image/jpeg"));
+    // Binary messages are the video preview stream
+    if (event.data instanceof ArrayBuffer) {
+      onPreviewChunk(event.data);
       return;
     }
     const message = JSON.parse(event.data);

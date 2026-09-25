@@ -52,7 +52,11 @@ fn main() -> anyhow::Result<()> {
     }
 
     let recorder = Recorder::new(&prefix);
-    let video = Video::new(video_config, Some(input).filter(|id| !id.is_empty()));
+    let video = Video::new(
+        video_config,
+        Some(input).filter(|id| !id.is_empty()),
+        saved.preview_matches_recording.unwrap_or(false),
+    );
     let link = Arc::new(LinkStats::default());
     let feed = LiveFeed::new();
 

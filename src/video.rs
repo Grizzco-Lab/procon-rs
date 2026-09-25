@@ -5,8 +5,8 @@
 //! only streams on every other start). It writes two streams:
 //!
 //! - raw frames, already scaled to the recording size and rate, on fd 3
-//! - the same frames as an MJPEG preview on stdout, so the dashboard shows
-//!   exactly what gets recorded
+//! - a low-latency H.264 preview on stdout, as fragmented MP4 with one frame
+//!   per fragment, which the dashboard plays with a `<video>` element
 //!
 //! Recording starts a separate encoder ffmpeg and feeds it those raw frames,
 //! so a file begins with the first frame after Record, and pausing never
@@ -30,7 +30,7 @@ use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
-use tokio::sync::watch;
+use tokio::sync::broadcast;
 
 /// How long a new ffmpeg may take to deliver its first frame
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -86,15 +86,38 @@ pub fn list_inputs() -> Vec<VideoInput> {
     inputs
 }
 
-/// Width and height of recorded frames: 16:9 at the configured height
-fn record_size(config: &VideoConfig) -> (u32, u32) {
-    let height = if RECORD_HEIGHTS.contains(&config.record_height) {
-        config.record_height
+/// Width and height of 16:9 frames at one of the offered heights
+fn size_16_9(height: u32) -> (u32, u32) {
+    let height = if RECORD_HEIGHTS.contains(&height) {
+        height
     } else {
         RECORD_HEIGHTS[0]
     };
     // Even sizes, as 4:2:0 frames need
     ((height * 16 / 9 + 1) & !1, height)
+}
+
+/// Width and height of recorded frames
+fn record_size(config: &VideoConfig) -> (u32, u32) {
+    size_16_9(config.record_height)
+}
+
+/// One piece of the preview stream for the browser's media player
+#[derive(Clone)]
+pub struct PreviewChunk {
+    /// MP4 bytes: `ftyp` + `moov` for an init segment, `moof` + `mdat` otherwise
+    pub data: Arc<Vec<u8>>,
+    pub kind: ChunkKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ChunkKind {
+    /// Codec setup; a player starts over with it
+    Init,
+    /// A frame that decodes on its own; a player can join here
+    Key,
+    /// A frame that needs the ones before it
+    Delta,
 }
 
 /// Snapshot of the video capture for the dashboard
@@ -111,6 +134,11 @@ pub struct VideoStatus {
     pub record_height: u32,
     /// Recorded frame rate
     pub record_fps: u32,
+    /// Preview height and frame rate in use
+    pub preview_height: u32,
+    pub preview_fps: u32,
+    /// The preview follows the recording size and rate
+    pub preview_matches_recording: bool,
     /// Why ffmpeg is not running
     pub error: Option<String>,
 }
@@ -131,6 +159,8 @@ struct Recording {
 struct Inner {
     config: VideoConfig,
     input: Option<String>,
+    /// The preview uses the recording size and rate instead of its own
+    preview_matches_recording: bool,
     /// The capture ffmpeg
     child: Option<Child>,
     error: Option<String>,
@@ -142,8 +172,10 @@ pub struct Video {
     inner: Arc<Mutex<Inner>>,
     /// The file being recorded; its own lock, as the frame reader takes it for every frame
     recording: Arc<Mutex<Option<Recording>>>,
-    /// Latest preview JPEG
-    preview: watch::Sender<Arc<Vec<u8>>>,
+    /// Preview stream for the browsers
+    preview: broadcast::Sender<PreviewChunk>,
+    /// The current init segment, for browsers that join later
+    preview_init: Arc<Mutex<Option<PreviewChunk>>>,
     /// Bumped before every restart so threads of an old ffmpeg know they are stale.
     /// Kept outside the lock: an old ffmpeg's pipes must be drained without it,
     /// or it blocks on a full pipe and never exits.
@@ -154,16 +186,23 @@ pub struct Video {
 
 impl Video {
     /// Start capturing `input` (if any)
-    pub fn new(config: VideoConfig, input: Option<String>) -> Self {
+    pub fn new(
+        config: VideoConfig,
+        input: Option<String>,
+        preview_matches_recording: bool,
+    ) -> Self {
         let video = Self {
             inner: Arc::new(Mutex::new(Inner {
                 config,
                 input,
+                preview_matches_recording,
                 child: None,
                 error: None,
             })),
             recording: Arc::default(),
-            preview: watch::Sender::default(),
+            // A few seconds of frames; a browser further behind catches up at a keyframe
+            preview: broadcast::channel(256).0,
+            preview_init: Arc::default(),
             generation: Arc::default(),
             last_preview_ms: Arc::default(),
         };
@@ -179,9 +218,29 @@ impl Video {
         self.recording.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Receive preview JPEGs
-    pub fn subscribe(&self) -> watch::Receiver<Arc<Vec<u8>>> {
-        self.preview.subscribe()
+    /// Receive the preview: the current init segment, then the live stream
+    pub fn subscribe(&self) -> (Option<PreviewChunk>, broadcast::Receiver<PreviewChunk>) {
+        let init = self.preview_init.lock().unwrap_or_else(|e| e.into_inner());
+        (init.clone(), self.preview.subscribe())
+    }
+
+    /// Make the preview follow the recording size and rate, or use its own; not while recording
+    pub fn set_preview_matches_recording(&self, matches: bool) -> Result<()> {
+        ensure!(
+            self.recording().is_none(),
+            "stop recording before changing the preview"
+        );
+        let mut inner = self.lock();
+        if inner.preview_matches_recording != matches {
+            inner.preview_matches_recording = matches;
+            self.restart(&mut inner);
+        }
+        Ok(())
+    }
+
+    /// Whether the preview follows the recording size and rate
+    pub fn preview_matches_recording(&self) -> bool {
+        self.lock().preview_matches_recording
     }
 
     /// Switch to another input, or none; not while recording
@@ -303,6 +362,9 @@ impl Video {
             live: unix_ms().saturating_sub(self.last_preview_ms.load(Ordering::Relaxed)) < 2000,
             record_height: record_size(&inner.config).1,
             record_fps: inner.config.record_fps,
+            preview_height: preview_size(&inner).1,
+            preview_fps: preview_fps(&inner),
+            preview_matches_recording: inner.preview_matches_recording,
             error: inner.error.clone(),
         }
     }
@@ -347,7 +409,7 @@ impl Video {
         // A bigger pipe means fewer wakeups for large frames; best effort
         unsafe { libc::fcntl(write_end.as_raw_fd(), libc::F_SETPIPE_SZ, 1 << 20) };
 
-        let args = capture_args(&inner.config, input);
+        let args = capture_args(inner, input);
         log::info!("Starting ffmpeg {}", args.join(" "));
         let mut command = Command::new("ffmpeg");
         command
@@ -436,15 +498,38 @@ impl Video {
         }
     }
 
-    /// Publish preview frames; when ffmpeg dies on its own, retry after a pause
+    /// Publish the preview stream; when ffmpeg dies on its own, retry after a pause
     fn read_preview(&self, stdout: ChildStdout, generation: u64) {
         let mut reader = BufReader::new(stdout);
+        // `ftyp` or `moof` waiting for the box that completes it
+        let mut pending = Vec::new();
         // Read to the end even when stale, so ffmpeg can exit
-        while let Some(jpeg) = next_part(&mut reader) {
-            if self.is_current(generation) {
-                self.preview.send_replace(Arc::new(jpeg));
+        while let Some((kind, bytes)) = next_box(&mut reader) {
+            let chunk = match &kind {
+                b"ftyp" | b"moof" => {
+                    pending = bytes;
+                    continue;
+                }
+                b"moov" => ChunkKind::Init,
+                b"mdat" if has_keyframe(&bytes[8..]) => ChunkKind::Key,
+                b"mdat" => ChunkKind::Delta,
+                _ => continue,
+            };
+            pending.extend_from_slice(&bytes);
+            let chunk = PreviewChunk {
+                data: Arc::new(core::mem::take(&mut pending)),
+                kind: chunk,
+            };
+            if !self.is_current(generation) {
+                continue;
+            }
+            if chunk.kind == ChunkKind::Init {
+                *self.preview_init.lock().unwrap_or_else(|e| e.into_inner()) = Some(chunk.clone());
+            } else {
                 self.last_preview_ms.store(unix_ms(), Ordering::Relaxed);
             }
+            // No browser watching is fine
+            let _ = self.preview.send(chunk);
         }
         if !self.is_current(generation) {
             return;
@@ -535,8 +620,27 @@ fn write_frames(mut stdin: impl Write, queue: Receiver<Vec<u8>>) {
     }
 }
 
+/// Width and height of the preview
+fn preview_size(inner: &Inner) -> (u32, u32) {
+    if inner.preview_matches_recording {
+        record_size(&inner.config)
+    } else {
+        size_16_9(inner.config.preview_height)
+    }
+}
+
+/// Frame rate of the preview
+fn preview_fps(inner: &Inner) -> u32 {
+    if inner.preview_matches_recording {
+        inner.config.record_fps
+    } else {
+        inner.config.preview_fps
+    }
+}
+
 /// Command line for capturing `input`: preview on stdout, raw recording frames on fd 3
-fn capture_args(config: &VideoConfig, input: &str) -> Vec<String> {
+fn capture_args(inner: &Inner, input: &str) -> Vec<String> {
+    let config = &inner.config;
     let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "info"]
         .map(String::from)
         .to_vec();
@@ -554,44 +658,71 @@ fn capture_args(config: &VideoConfig, input: &str) -> Vec<String> {
         args.extend(["-i".to_string(), input.to_string()]);
     }
 
-    // Recording frames: fit into 16:9 at the chosen size, padded if the source
-    // has another shape, at a constant rate. The preview is the same frames,
-    // in the full-range color JPEG expects.
-    let (width, height) = record_size(config);
+    // Both outputs fit the source into 16:9, padded if it has another shape,
+    // at a constant rate
+    let fit = |(width, height): (u32, u32), fps: u32| {
+        format!(
+            "scale={width}:{height}:force_original_aspect_ratio=decrease,\
+             pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p"
+        )
+    };
+    let preview_fps = preview_fps(inner);
     args.push("-filter_complex".to_string());
     args.push(format!(
-        "[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,\
-         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={},format=yuv420p,split=2[r][pv];\
-         [pv]scale=out_range=full,format=yuvj420p[p]",
-        config.record_fps
+        "[0:v]split=2[a][b];[a]{}[r];[b]{}[p]",
+        fit(record_size(config), config.record_fps),
+        fit(preview_size(inner), preview_fps),
     ));
     args.extend(["-map", "[r]", "-f", "rawvideo", "pipe:3"].map(String::from));
+
+    // Preview: H.264 with a keyframe every second, so a browser can join
+    // quickly, and one frame per MP4 fragment for low latency
+    args.extend(["-map", "[p]"].map(String::from));
+    args.extend(config.preview_encoder.iter().cloned());
+    args.extend([
+        "-bf".to_string(),
+        "0".to_string(),
+        "-g".to_string(),
+        preview_fps.to_string(),
+    ]);
     args.extend(
         [
-            "-map", "[p]", "-c:v", "mjpeg", "-q:v", "5", "-f", "mpjpeg", "pipe:1",
+            "-f",
+            "mp4",
+            "-movflags",
+            "empty_moov+default_base_moof+frag_every_frame",
+            "-flush_packets",
+            "1",
+            "pipe:1",
         ]
         .map(String::from),
     );
     args
 }
 
-/// Read one JPEG from an `mpjpeg` stream: header lines, a blank line, then the body
-fn next_part(reader: &mut impl BufRead) -> Option<Vec<u8>> {
-    let mut length = None;
-    let mut line = String::new();
-    loop {
-        line.clear();
-        if reader.read_line(&mut line).ok()? == 0 {
-            return None;
-        }
-        let trimmed = line.trim();
-        if let Some(value) = trimmed.to_ascii_lowercase().strip_prefix("content-length:") {
-            length = value.trim().parse::<usize>().ok();
-        } else if trimmed.is_empty() && length.is_some() {
-            break;
-        }
+/// Read one top-level MP4 box, header included: its type and bytes
+fn next_box(reader: &mut impl Read) -> Option<([u8; 4], Vec<u8>)> {
+    let mut header = [0u8; 8];
+    reader.read_exact(&mut header).ok()?;
+    let size = u32::from_be_bytes(header[..4].try_into().ok()?) as usize;
+    // Fragments never need 64-bit sizes; anything else means the stream is broken
+    if size < 8 {
+        return None;
     }
-    let mut jpeg = vec![0; length?];
-    reader.read_exact(&mut jpeg).ok()?;
-    Some(jpeg)
+    let mut bytes = vec![0; size];
+    bytes[..8].copy_from_slice(&header);
+    reader.read_exact(&mut bytes[8..]).ok()?;
+    Some((header[4..].try_into().ok()?, bytes))
+}
+
+/// Whether an `mdat` payload of length-prefixed H.264 units holds a keyframe (IDR)
+fn has_keyframe(mut payload: &[u8]) -> bool {
+    while payload.len() > 4 {
+        let length = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+        if payload[4] & 0x1f == 5 {
+            return true;
+        }
+        payload = payload.get(4 + length..).unwrap_or_default();
+    }
+    false
 }

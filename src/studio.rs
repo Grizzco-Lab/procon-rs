@@ -29,6 +29,8 @@ pub struct SavedState {
     pub video_height: Option<u32>,
     /// Recorded frame rate
     pub video_fps: Option<u32>,
+    /// The preview follows the recording size and rate
+    pub preview_matches_recording: Option<bool>,
 }
 
 impl SavedState {
@@ -52,6 +54,7 @@ pub enum Command {
     SetPrefix { prefix: String },
     SetVideoInput { input: String },
     SetVideoQuality { height: u32, fps: u32 },
+    SetPreviewMatchesRecording { enabled: bool },
 }
 
 /// One recorded video file of the session
@@ -158,6 +161,10 @@ impl Studio {
             }
             Command::SetVideoQuality { height, fps } => {
                 self.video.set_quality(height, fps)?;
+                self.save_state()?;
+            }
+            Command::SetPreviewMatchesRecording { enabled } => {
+                self.video.set_preview_matches_recording(enabled)?;
                 self.save_state()?;
             }
         }
@@ -268,6 +275,7 @@ impl Studio {
             video_input: Some(self.video.input().unwrap_or_default()),
             video_height: Some(height),
             video_fps: Some(fps),
+            preview_matches_recording: Some(self.video.preview_matches_recording()),
         };
         // Write then rename, so a crash never leaves a half-written file
         let temp = self.state_path.with_extension("tmp");

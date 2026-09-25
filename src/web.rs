@@ -2,8 +2,8 @@
 //!
 //! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`: the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
-//!   report, `{"type":"status"}` text once per second, and the video preview
-//!   as binary JPEG messages
+//!   report, `{"type":"status"}` text twice a second, and the video preview
+//!   as binary fragmented-MP4 messages (an init segment, then one per frame)
 //! - `POST /api/command`: a [`Command`] such as `{"action":"start"}`, answered
 //!   with `{"recorder": ...}` or `{"error": "..."}`
 
@@ -11,6 +11,7 @@ use crate::dump::{Dumper, Frame};
 use crate::motion::Orientation;
 use crate::parser::ProConParser;
 use crate::studio::{Command, Studio};
+use crate::video::{ChunkKind, PreviewChunk};
 use alloc::collections::VecDeque;
 use alloc::ffi::CString;
 use alloc::sync::Arc;
@@ -22,7 +23,7 @@ use serde_json::json;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::time::Instant;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use warp::Filter;
 use warp::http::StatusCode;
 use warp::ws::{Message, WebSocket};
@@ -139,15 +140,23 @@ async fn stream_to_client(
     socket: WebSocket,
     mut state: watch::Receiver<String>,
     mut status: watch::Receiver<String>,
-    mut preview: watch::Receiver<Arc<Vec<u8>>>,
+    (init, mut preview): (Option<PreviewChunk>, broadcast::Receiver<PreviewChunk>),
 ) {
     let (mut tx, mut rx) = socket.split();
     // Send the current status right away instead of waiting for the next tick
     status.mark_changed();
     let mut ping = tokio::time::interval(Duration::from_secs(30));
 
+    // The player needs the init segment first, then frames from a keyframe on
+    if let Some(init) = init
+        && tx.send(Message::binary(init.data.to_vec())).await.is_err()
+    {
+        return;
+    }
+    let mut synced = false;
+
     loop {
-        // A slow client simply skips intermediate states and frames
+        // A slow client simply skips intermediate states
         let message = tokio::select! {
             changed = state.changed() => match changed {
                 Ok(()) => Message::text(state.borrow_and_update().clone()),
@@ -157,9 +166,23 @@ async fn stream_to_client(
                 Ok(()) => Message::text(status.borrow_and_update().clone()),
                 Err(_) => break,
             },
-            changed = preview.changed() => match changed {
-                Ok(()) => Message::binary(preview.borrow_and_update().to_vec()),
-                Err(_) => break,
+            chunk = preview.recv() => match chunk {
+                Ok(chunk) => {
+                    match chunk.kind {
+                        // A new stream: start over from its next keyframe
+                        ChunkKind::Init => synced = false,
+                        ChunkKind::Key => synced = true,
+                        ChunkKind::Delta if !synced => continue,
+                        ChunkKind::Delta => {}
+                    }
+                    Message::binary(chunk.data.to_vec())
+                }
+                // Missed frames would not decode; wait for the next keyframe
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    synced = false;
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
             },
             _ = ping.tick() => Message::ping(Vec::new()),
             incoming = rx.next() => match incoming {

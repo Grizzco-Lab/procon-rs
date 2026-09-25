@@ -6,7 +6,7 @@ it together with the console's video, for building training datasets.
 ![The studio dashboard](doc/demo.png)
 
 For the hardware setup, wiring and a tour of the dashboard, see
-[crazyboycjr.github.io/procon-rs](https://crazyboycjr.github.io/procon-rs/)
+[grizzco-lab.github.io/procon-rs](https://grizzco-lab.github.io/procon-rs/)
 (source: [doc/index.html](doc/index.html)).
 
 ## Features
@@ -71,7 +71,9 @@ run `./scripts/run-proxy.sh` there.
 - **Video input**: the screen or any V4L2 device, such as the Elgato 4K X. A
   capture card can only be opened by one program, so close OBS first.
 - **Video quality**: recorded size (1080p, 720p, 540p, 360p) and frame rate (60
-  to 10 fps), to keep files small. The preview shows exactly what gets recorded.
+  to 10 fps), to keep files small. The live preview is H.264 at 1080p60 by
+  default (a few Mbit/s, played by a `<video>` element with about 0.2 s delay);
+  tick "Preview at recording quality" to see exactly what gets recorded.
 - **Data**: controller and video write rates per second and per hour, this
   session's size, all sessions in the save folder, dropped frames, free disk
   space (with the time left at the current rate) and free memory. Updates twice
