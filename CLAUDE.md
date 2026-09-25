@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Nintendo Switch Pro Controller HID proxy written in Rust. It forwards HID data bidirectionally between a physical Pro Controller and Nintendo Switch via USB gadget functionality on Raspberry Pi 4.
 
-It has two binaries: `procon` runs on the Pi (proxy + frame streaming over TCP), and `procon-studio` runs on a Linux host with the capture card (dashboard, ffmpeg video capture, session recording). `cargo run --example fake_pi` stands in for the Pi.
+It has two binaries: `procon` (the main one, `src/bin/main.rs`, config `config.toml`) runs on a Linux host with the capture card (dashboard, ffmpeg video capture, session recording); `procon-pi` (`src/bin/procon-pi.rs`, config `pi.toml`) runs on the Pi (proxy + frame streaming over TCP). `cargo run --example fake_pi` stands in for the Pi.
 
 ## Common Commands
 
@@ -24,11 +24,14 @@ It has two binaries: `procon` runs on the Pi (proxy + frame streaming over TCP),
 # Build release version
 cargo build --release
 
-# Run with proper permissions (recommended)
+# Run the studio on the host
 ./scripts/run.sh
 
-# Manual run with logging
-sudo RUST_LOG=info ./target/release/procon
+# Cross-compile procon-pi, copy it to the Pi and restart it there
+./scripts/deploy.sh [ssh-host]
+
+# Build and run procon-pi on the Pi itself
+./scripts/run-pi.sh
 ```
 
 ### Development
@@ -50,7 +53,7 @@ cargo clippy
 ```
 
 ### Configuration
-- Primary config file: `config.toml`
+- Config files: `config.toml` (studio), `pi.toml` (Pi proxy)
 - Command line args: `--config <path>` to specify alternative config file
 - Log levels: error, warn, info, debug, trace (set in config or RUST_LOG env var)
 
@@ -81,7 +84,9 @@ cargo clippy
 
 **Video (`src/video.rs`)**: One ffmpeg process per input: MJPEG preview on stdout, plus an encoded file while recording; stopped with SIGINT
 
-**Studio (`src/studio.rs`)**: Host coordinator; starts/stops recorder and video together, writes `session.json`, saves dashboard settings to `studio.state.json`
+**Studio (`src/studio.rs`)**: Host coordinator; starts/stops recorder and video together, writes `session.json`, saves dashboard settings to `config.state.json`
+
+**Motion (`src/motion.rs`)**: Gyro + accelerometer orientation for the dashboard's Splatoon mode; Y recenters
 
 **Web dashboard (`src/web.rs`, `web/`)**: warp server with the embedded page, a WebSocket (`state` per input report, `status` once per second, preview JPEGs as binary) and `POST /api/command`
 

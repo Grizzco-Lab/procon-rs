@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
+# Build and run the studio on the capture host
 
 set -euo pipefail
 
 WORKDIR=$(git rev-parse --show-toplevel)
-cd $WORKDIR
+cd "$WORKDIR"
 
-# build
-cargo build --release
-
-# run
-# sudo RUST_LOG=info taskset -c 0 chrt -f 50 ionice -c 1 -n 0 ./target/release/procon
-sudo RUST_LOG=info ./target/release/procon
+cargo run --release --bin procon -- --config config.toml

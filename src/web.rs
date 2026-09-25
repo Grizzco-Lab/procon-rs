@@ -8,6 +8,7 @@
 //!   with `{"recorder": ...}` or `{"error": "..."}`
 
 use crate::dump::{Dumper, Frame};
+use crate::motion::Orientation;
 use crate::parser::ProConParser;
 use crate::studio::{Command, Studio};
 use alloc::collections::VecDeque;
@@ -31,6 +32,8 @@ use warp::ws::{Message, WebSocket};
 pub struct LiveFeed {
     /// Latest controller state as JSON
     state: watch::Sender<String>,
+    /// Pose for Splatoon mode; tracked on every report, watched or not
+    orientation: Orientation,
 }
 
 impl LiveFeed {
@@ -42,13 +45,22 @@ impl LiveFeed {
 impl Dumper for LiveFeed {
     fn dump(&mut self, frame: &Frame) -> Result<()> {
         let data = frame.payload();
-        // Skip parsing while no browser is watching
-        if self.state.receiver_count() > 0
-            && data.first() == Some(&0x30)
-            && let Ok(state) = ProConParser::parse_input_report(data)
-        {
-            self.state
-                .send_replace(json!({ "type": "state", "state": state }).to_string());
+        if data.first() != Some(&0x30) {
+            return Ok(());
+        }
+        let Ok(state) = ProConParser::parse_input_report(data) else {
+            return Ok(());
+        };
+        self.orientation.update(&state, frame.timestamp_ms);
+
+        // Skip serializing while no browser is watching
+        if self.state.receiver_count() > 0 {
+            let message = json!({
+                "type": "state",
+                "state": state,
+                "orientation": self.orientation.quaternion(),
+            });
+            self.state.send_replace(message.to_string());
         }
         Ok(())
     }

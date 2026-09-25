@@ -94,7 +94,37 @@ const STICK_TRAVEL = 24;
 
 const BATTERY = ["Empty", "Critical", "Low", "Medium", "Full"];
 
-function renderState(state) {
+/** Splatoon mode shows the tracked pose; otherwise the view tilts with rotation speed */
+let splatoon = false;
+try {
+  splatoon = localStorage.getItem("procon-splatoon") === "true";
+} catch {
+  // Storage may be unavailable; default to the tilt view
+}
+function markSplatoon() {
+  $("splatoon-toggle").setAttribute("aria-pressed", String(splatoon));
+  $("splatoon-hint").hidden = !splatoon;
+}
+$("splatoon-toggle").addEventListener("click", () => {
+  splatoon = !splatoon;
+  try {
+    localStorage.setItem("procon-splatoon", String(splatoon));
+  } catch {
+    // Keep the choice for this page only
+  }
+  markSplatoon();
+});
+markSplatoon();
+
+/** CSS rotation for a (w, x, y, z) quaternion */
+function rotation([w, x, y, z]) {
+  const s = Math.sqrt(Math.max(0, 1 - w * w));
+  if (s < 1e-6) return "none";
+  const angle = 2 * Math.acos(Math.min(1, Math.max(-1, w)));
+  return `rotate3d(${x / s}, ${y / s}, ${z / s}, ${angle}rad)`;
+}
+
+function renderState(state, orientation) {
   for (const [name, els] of buttonEls) {
     const on = Boolean(state.buttons[name]);
     for (const el of els) el.classList.toggle("on", on);
@@ -115,12 +145,16 @@ function renderState(state) {
     $(`stick-${side}`).textContent = `x ${signed(x)} · y ${signed(y)}`;
   }
 
-  // Tilt follows angular velocity; axes were tuned on real hardware
   const gyro = state.gyro[0] ?? { gyro_x: 0, gyro_y: 0, gyro_z: 0 };
-  const scale = 0.05;
-  procon.style.transform =
-    `rotateX(${gyro.gyro_y * scale}deg) rotateY(${gyro.gyro_x * scale}deg) ` +
-    `rotateZ(${-gyro.gyro_z * scale}deg)`;
+  if (splatoon && orientation) {
+    procon.style.transform = rotation(orientation);
+  } else {
+    // Tilt follows angular velocity; axes were tuned on real hardware
+    const scale = 0.05;
+    procon.style.transform =
+      `rotateX(${gyro.gyro_y * scale}deg) rotateY(${gyro.gyro_x * scale}deg) ` +
+      `rotateZ(${-gyro.gyro_z * scale}deg)`;
+  }
   $("gyro-x").textContent = signed(Math.round(gyro.gyro_x * GYRO_DPS));
   $("gyro-y").textContent = signed(Math.round(gyro.gyro_y * GYRO_DPS));
   $("gyro-z").textContent = signed(Math.round(gyro.gyro_z * GYRO_DPS));
@@ -534,6 +568,7 @@ function renderStatus(status) {
 // ----------------------------------------------------------------- websocket
 
 let latestState = null;
+let latestOrientation = null;
 
 function markOffline() {
   setChip("chip-link", "off", "Dashboard offline, reconnecting…");
@@ -554,6 +589,7 @@ function connect() {
     const message = JSON.parse(event.data);
     if (message.type === "state") {
       latestState = message.state;
+      latestOrientation = message.orientation;
       if (latestState.gyro.length)
         pushGyro(performance.now(), latestState.gyro[0]);
     } else if (message.type === "status") {
@@ -569,7 +605,7 @@ function connect() {
 // Render at display rate no matter how fast reports arrive
 function frame(now) {
   if (latestState) {
-    renderState(latestState);
+    renderState(latestState, latestOrientation);
     latestState = null;
   }
   drawChart(now);

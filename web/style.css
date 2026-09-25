@@ -333,6 +333,25 @@ body[data-rec="recording"] .topbar {
 
 /* -------------------------------------------------------- controller */
 
+.mode-toggle {
+  height: 26px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mode-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
 .battery {
   display: inline-flex;
   align-items: center;

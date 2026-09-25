@@ -16,17 +16,17 @@ it together with the console's video, for building training datasets.
 ## Architecture
 
 ```
-Pro Controller ──USB──> Raspberry Pi (procon) ──USB gadget──> Nintendo Switch
+Pro Controller ──USB──> Raspberry Pi (procon-pi) ──USB gadget──> Nintendo Switch
                               │ TCP :7331, 80-byte timestamped frames
                               v
-Switch HDMI ──capture card──> Linux host (procon-studio) ──> dashboard :8090
+Switch HDMI ──capture card──> Linux host (procon) ──> dashboard :8090
                                          └──> <prefix>YYYY-MM-DD_HH-MM-SS/
 ```
 
-- **Pi (`procon`)**: proxies the controller, stamps every report with the time
+- **Pi (`procon-pi`)**: proxies the controller, stamps every report with the time
   and a sequence number, and streams it to whoever connects on `[stream] port`.
   It sends a heartbeat each second when the controller is quiet.
-- **Host (`procon-studio`)**: connects to the Pi, shows the dashboard, captures
+- **Host (`procon`, the main binary)**: connects to the Pi, shows the dashboard, captures
   video with ffmpeg and records sessions.
 
 ## Requirements
@@ -39,19 +39,21 @@ Switch HDMI ──capture card──> Linux host (procon-studio) ──> dashboa
 
 ## Usage
 
-On the Pi:
+Everything runs from the host. Deploy the proxy to the Pi (cross-compiles
+`procon-pi`, copies it with `pi.toml` to `~/procon` on the Pi, and restarts it):
+
+```bash
+./scripts/deploy.sh [ssh-host]   # default host: pi4
+```
+
+Then start the studio, with the Pi's address in `config.toml`:
 
 ```bash
 ./scripts/run.sh
 ```
 
-On the host, with the Pi's address in `studio.toml`:
-
-```bash
-cargo run --release --bin procon-studio
-```
-
-Then open `http://<host>:8090`.
+and open `http://<host>:8090`. To build on the Pi itself instead of deploying,
+run `./scripts/run-pi.sh` there.
 
 ## Dashboard
 
@@ -65,7 +67,7 @@ Then open `http://<host>:8090`.
 - **Data**: controller and video sizes, write rate, dropped frames, free disk
   space (with the time left at the current rate) and free memory.
 
-The path prefix and video input are saved in `studio.state.json` next to the
+The path prefix and video input are saved in `config.state.json` next to the
 config, so they survive restarts.
 
 ### Session folder
@@ -89,7 +91,7 @@ cargo run --example fake_pi
 
 ## Configuration
 
-`config.toml` on the Pi:
+`pi.toml` on the Pi:
 
 ```toml
 [proxy]
@@ -123,7 +125,7 @@ enable_cpu_affinity = false
 level = "info"
 ```
 
-`studio.toml` on the host sets the Pi address, dashboard port, default path
+`config.toml` on the host sets the Pi address, dashboard port, default path
 prefix and the ffmpeg capture and encoder options; see the comments in the file.
 
 ## How It Works
@@ -144,8 +146,9 @@ The result is a transparent proxy where the Nintendo Switch sees the Pi as a gen
 
 The codebase is organized into the following modules:
 
-- **`src/bin/main.rs`** - Pi executable (`procon`): proxy and frame streaming
-- **`src/bin/procon-studio.rs`** - Host executable: dashboard, video and recording
+- **`src/bin/main.rs`** - Main executable (`procon`): studio with dashboard, video and recording
+- **`src/bin/procon-pi.rs`** - Pi executable (`procon-pi`): proxy and frame streaming
+- **`src/motion.rs`** - Controller orientation from the IMU for Splatoon mode
 - **`src/config.rs`** - Configuration management using TOML format
 - **`src/gadget.rs`** - USB gadget management for automatic device setup
 - **`src/proxy.rs`** - Core proxy functionality for bidirectional HID forwarding

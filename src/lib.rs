@@ -5,6 +5,7 @@ pub mod device;
 pub mod dump;
 pub mod gadget;
 pub mod keystate;
+pub mod motion;
 pub mod parser;
 pub mod priority;
 pub mod proxy;

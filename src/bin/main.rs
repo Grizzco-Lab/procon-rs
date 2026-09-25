@@ -1,107 +1,85 @@
-use anyhow::Context;
-use clap::Parser;
-use procon::config::Config;
-use procon::dump::{AsyncDumper, ConsoleDumper, MultiDumper};
-use procon::gadget::ProConGadget;
-use procon::priority::set_high_priority;
-use procon::proxy::Proxy;
-use procon::recorder::Recorder;
-use procon::stream::FrameStreamer;
+//! Studio host: dashboard, video capture and session recording
+//!
+//! Runs on the machine with the capture card. It receives controller frames
+//! from the Pi running `procon`, captures video with ffmpeg and records both
+//! into session folders.
 
-/// Nintendo Switch Pro Controller HID Proxy
+use alloc::sync::Arc;
+use clap::Parser;
+use procon::config::{self, StudioConfig};
+use procon::dump::MultiDumper;
+use procon::recorder::{Recorder, RecorderState};
+use procon::stream::{self, LinkStats};
+use procon::studio::{Command, SavedState, Studio};
+use procon::video::Video;
+use procon::web::{self, LiveFeed};
+use std::path::Path;
+
+extern crate alloc;
+
+/// Nintendo Switch Pro Controller recording studio
 #[derive(Parser)]
-#[command(name = "proconproxy")]
-#[command(about = "A HID proxy for Nintendo Switch Pro Controller")]
+#[command(name = "procon")]
+#[command(about = "Dashboard, video capture and recording for the Pro Controller proxy")]
 struct Args {
-    /// Path to configuration file
+    /// Path to configuration file; dashboard settings are saved next to it
     #[arg(short, long, default_value = "config.toml")]
     config: String,
 }
 
-/// Initialize logging system with configured level
-fn init_log(level: &str) -> anyhow::Result<()> {
-    let log_level = match level.to_lowercase().as_str() {
-        "error" => log::LevelFilter::Error,
-        "warn" => log::LevelFilter::Warn,
-        "info" => log::LevelFilter::Info,
-        "debug" => log::LevelFilter::Debug,
-        "trace" => log::LevelFilter::Trace,
-        _ => {
-            eprintln!("Warning: Invalid log level '{}', using 'info'", level);
-            log::LevelFilter::Info
-        }
-    };
-
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    let config: StudioConfig = config::load(&args.config)?;
+    config.logging.validate()?;
     env_logger::builder()
-        .filter_level(log_level)
-        .format_source_path(true)
+        .filter_level(config.logging.level.parse()?)
         .init();
 
-    Ok(())
-}
+    // Settings chosen on the dashboard win over the config file
+    let state_path = Path::new(&args.config).with_extension("state.json");
+    let saved = SavedState::load(&state_path);
+    let prefix = saved.prefix.unwrap_or(config.recording.prefix);
+    let input = saved
+        .video_input
+        .unwrap_or_else(|| config.video.input.clone());
 
-fn main() -> anyhow::Result<()> {
-    // Parse command line arguments
-    let args = Args::parse();
+    let recorder = Recorder::new(prefix);
+    let video = Video::new(config.video, Some(input).filter(|id| !id.is_empty()));
+    let link = Arc::new(LinkStats::default());
+    let feed = LiveFeed::new();
 
-    // Load configuration from specified file
-    let config = Config::load_from_file(&args.config)?;
-    config.validate()?;
+    // Frames from the Pi go to the recorder and the live view
+    let mut pipeline = MultiDumper::new();
+    pipeline.add_dumper(Box::new(recorder.clone()));
+    pipeline.add_dumper(Box::new(feed.clone()));
+    let address = config.pi.address.clone();
+    let receiver_link = Arc::clone(&link);
+    std::thread::spawn(move || stream::receive_frames(&address, &mut pipeline, &receiver_link));
 
-    // Initialize logging with configured level
-    init_log(&config.logging.level)?;
+    let studio = Arc::new(Studio::new(
+        recorder,
+        video,
+        link,
+        config.pi.address,
+        state_path,
+    ));
 
-    log::info!("ProCon Proxy starting...");
-    log::debug!("Configuration loaded: {:#?}", config);
-
-    // Set high priority for main proxy thread
-    set_high_priority(config.performance.enable_cpu_affinity);
-
-    // Setup USB gadget programmatically
-    let mut usb_gadget = ProConGadget::new();
-    let hid_device_path = usb_gadget
-        .setup()
-        .context("Failed to setup USB gadget - ensure you have root privileges")?;
-    log::info!("USB gadget configured at: {}", hid_device_path);
-
-    // Create multi-dumper for async processing
-    let mut multi_dumper = MultiDumper::new();
-
-    // Stream frames to the studio host, which records them with the video
-    multi_dumper.add_dumper(Box::new(FrameStreamer::listen(config.stream.port)?));
-
-    // Optional local backup: one session from launch until exit
-    if config.dump.autostart {
-        let recorder = Recorder::new(config.dump.prefix.as_str());
-        recorder.start()?;
-        multi_dumper.add_dumper(Box::new(recorder));
-    }
-
-    // Add console dumper only if enabled
-    if config.console.enable {
-        let console_dumper = Box::new(ConsoleDumper::new());
-        multi_dumper.add_dumper(console_dumper);
-    }
-
-    // Wrap in async dumper - this will run dumping in a separate thread
-    let async_dumper = AsyncDumper::new(Box::new(multi_dumper));
-
-    // Create and initialize proxy
-    let mut proxy = Proxy::new(Box::new(async_dumper), &hid_device_path, config.proxy)?;
-
-    log::info!("Starting proxy with async dumping (dump thread runs at normal priority)");
-    if config.console.enable {
-        log::info!("Console output enabled");
-    } else {
-        log::info!("Console output disabled");
-    }
-
-    // Start proxy main loop (runs at high priority)
-    let result = proxy.start();
-
-    // Cleanup USB gadget before exit
-    usb_gadget.cleanup();
-
-    result?;
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async {
+        tokio::select! {
+            _ = web::serve(feed, Arc::clone(&studio), config.web.port) => {}
+            _ = tokio::signal::ctrl_c() => {
+                // Let ffmpeg finish the video file and session.json get its end time
+                if studio.recorder.status().state != RecorderState::Idle {
+                    log::info!("Stopping the recording before exit");
+                    if let Err(e) = tokio::task::block_in_place(|| studio.run(Command::Stop)) {
+                        log::error!("Failed to stop recording: {:#}", e);
+                    }
+                }
+            }
+        }
+    });
+    // Stops ffmpeg even when idle
+    studio.video.set_input(None)?;
     Ok(())
 }

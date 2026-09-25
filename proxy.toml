@@ -1,0 +1,29 @@
+[proxy]
+# Timeout for reading from Pro Controller (milliseconds)
+controller_read_timeout_ms = 20
+# Interval for logging frame count progress
+frame_count_log_interval = 100
+# Retry delay when HID gadget device fails to open (milliseconds)
+hidg_retry_delay_ms = 1000
+
+[dump]
+# Local backup: record one session from launch until exit, besides what the studio records
+autostart = false
+# Path prefix of that session folder (<prefix>YYYY-MM-DD_HH-MM-SS/controller.bin)
+prefix = "/tmp/procon-"
+
+[console]
+# Enable console output to terminal
+enable = false
+
+[stream]
+# TCP port the studio host connects to for live frames
+port = 7331
+
+[performance]
+# Enable CPU affinity pinning to random core
+enable_cpu_affinity = false
+
+[logging]
+# Log level: error, warn, info, debug, trace
+level = "info"

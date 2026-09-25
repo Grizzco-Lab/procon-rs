@@ -25,6 +25,9 @@ use std::thread;
 use std::time::Instant;
 use tokio::sync::watch;
 
+/// How long a new ffmpeg may take to deliver its first frame
+const FIRST_FRAME_TIMEOUT: Duration = Duration::from_millis(1500);
+
 /// Input id for capturing the X11 screen
 pub const SCREEN: &str = "screen";
 
@@ -205,7 +208,9 @@ impl Video {
     fn restart(&self, inner: &mut Inner) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         if let Some(child) = inner.child.take() {
-            stop_child(child);
+            // An ffmpeg that never produced a frame has nothing to save
+            let graceful = self.last_preview_ms.load(Ordering::Relaxed) != 0;
+            stop_child(child, graceful);
         }
         inner.started_at_ms = None;
         inner.error = None;
@@ -215,7 +220,12 @@ impl Video {
             return;
         };
         match self.spawn(inner, &input) {
-            Ok(child) => inner.child = Some(child),
+            Ok(child) => {
+                inner.child = Some(child);
+                let video = self.clone();
+                let generation = self.generation.load(Ordering::SeqCst);
+                thread::spawn(move || video.watch_first_frame(generation, input));
+            }
             Err(e) => {
                 log::error!("Cannot start video capture: {:#}", e);
                 inner.error = Some(format!("{e:#}"));
@@ -244,6 +254,25 @@ impl Video {
         let video = self.clone();
         thread::spawn(move || video.read_log(stderr, generation));
         Ok(child)
+    }
+
+    /// Reopen the input when ffmpeg starts but no frame arrives
+    ///
+    /// The Elgato 4K X only delivers frames on every other stream start, and a
+    /// capture card without HDMI signal delivers none; either way ffmpeg waits forever.
+    fn watch_first_frame(&self, generation: u64, input: String) {
+        thread::sleep(FIRST_FRAME_TIMEOUT);
+        if !self.is_current(generation) || self.last_preview_ms.load(Ordering::Relaxed) != 0 {
+            return;
+        }
+        let mut inner = self.lock();
+        if self.is_current(generation) {
+            log::warn!("No frames from {}, reopening it", input);
+            self.restart(&mut inner);
+            inner.error = Some(format!(
+                "No frames from {input} yet; retrying. Is the console on?"
+            ));
+        }
     }
 
     fn is_current(&self, generation: u64) -> bool {
@@ -304,18 +333,22 @@ impl Video {
 }
 
 /// Ask ffmpeg to finish its files, then make sure it is gone
-fn stop_child(mut child: Child) {
-    // SIGINT makes ffmpeg flush and close its outputs, like Ctrl+C in a terminal
-    // SAFETY: plain signal to a child we own
-    unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        if let Ok(Some(_)) = child.try_wait() {
-            return;
+///
+/// Without `graceful` it is killed right away.
+fn stop_child(mut child: Child, graceful: bool) {
+    if graceful {
+        // SIGINT makes ffmpeg flush and close its outputs, like Ctrl+C in a terminal
+        // SAFETY: plain signal to a child we own
+        unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if let Ok(Some(_)) = child.try_wait() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
         }
-        thread::sleep(Duration::from_millis(50));
+        log::warn!("ffmpeg did not quit, killing it");
     }
-    log::warn!("ffmpeg did not quit, killing it");
     let _ = child.kill();
     let _ = child.wait();
 }

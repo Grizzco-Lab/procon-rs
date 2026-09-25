@@ -1,4 +1,4 @@
-//! Configuration for the Pi proxy (`config.toml`) and the studio host (`studio.toml`)
+//! Configuration for the studio (`config.toml`) and the Pi proxy (`pi.toml`)
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-/// Main configuration structure
+/// Pi proxy configuration (`pi.toml`)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     /// Proxy configuration
@@ -113,7 +113,7 @@ pub fn load<T: DeserializeOwned, P: AsRef<Path>>(path: P) -> Result<T> {
         .with_context(|| format!("Failed to parse config file: {}", path.as_ref().display()))
 }
 
-/// Studio host configuration (`studio.toml`)
+/// Studio host configuration (`config.toml`)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StudioConfig {
     /// Where the Pi streams frames from

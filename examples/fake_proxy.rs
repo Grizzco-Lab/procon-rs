@@ -4,8 +4,8 @@
 //! cargo run --example fake_pi [port]
 //! ```
 //!
-//! Then point `studio.toml`'s `[pi] address` at `localhost:7331` (or the given
-//! port) and run `procon-studio`. No Pro Controller or USB gadget needed.
+//! Then point `config.toml`'s `[pi] address` at `localhost:7331` (or the given
+//! port) and run `procon`. No Pro Controller or USB gadget needed.
 
 use core::f64::consts::TAU;
 use core::time::Duration;
