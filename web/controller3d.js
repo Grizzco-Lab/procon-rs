@@ -6,13 +6,17 @@
 // itself and the dashboard keeps the flat SVG view.
 
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.186.1/+esm";
+import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/environments/RoomEnvironment.js/+esm";
+import { mergeVertices } from "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/utils/BufferGeometryUtils.js/+esm";
 
 const svg = document.getElementById("procon");
 const canvas = document.getElementById("procon-3d");
 const stage = canvas.parentElement;
 
-/** Body thickness in SVG units (the real controller is about 60 mm deep) */
-const DEPTH = 150;
+/** Straight part of the body's thickness, in SVG units */
+const DEPTH = 70;
+/** How far the rounded edge reaches in from the outline and back from the face */
+const ROUND = { inset: 30, depth: 55 };
 /** The SVG view box, which the face texture covers */
 const VIEW = { x: -40, y: -60, width: 980, height: 740 };
 /** SVG point to model coordinates: centered, y up */
@@ -24,11 +28,18 @@ const renderer = new THREE.WebGLRenderer({
   alpha: true,
 });
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+// Neutral keeps theme colors true, unlike filmic curves
+renderer.toneMapping = THREE.NeutralToneMapping;
 const scene = new THREE.Scene();
+// A soft studio room to reflect, so plastic reads as plastic
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(
+  new RoomEnvironment(),
+  0.04,
+).texture;
+scene.environmentIntensity = 0.6;
 const camera = new THREE.PerspectiveCamera(28, 16 / 9, 10, 10000);
 camera.position.set(0, 0, 2300);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x303038, 2.2));
-const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
 sun.position.set(-600, 900, 1400);
 scene.add(sun);
 
@@ -73,46 +84,108 @@ function sample(path, count, transform = (x, y) => [x, y]) {
   return points;
 }
 
-/** The front face artwork: plate, grips and seams from the SVG paths */
-function paintFace(colors) {
+/**
+ * Maps painted from the SVG paths and projected from the front: color, how
+ * glossy each part is (smooth face plate, matte grips), and the grips' dots
+ */
+function faceMaps(colors) {
   const scale = 2;
-  const face = document.createElement("canvas");
-  face.width = VIEW.width * scale;
-  face.height = VIEW.height * scale;
-  const ctx = face.getContext("2d");
-  ctx.scale(scale, scale);
-  ctx.translate(-VIEW.x, -VIEW.y);
+  const paths = {
+    body: new Path2D(svg.querySelector("#pc-shape").getAttribute("d")),
+    gripL: new Path2D(svg.querySelector("#pc-grip-l-shape").getAttribute("d")),
+    gripR: new Path2D(svg.querySelector("#pc-grip-r-shape").getAttribute("d")),
+    seam: new Path2D(svg.querySelector(".pc-seam").getAttribute("d")),
+  };
+  const paint = (draw) => {
+    const layer = document.createElement("canvas");
+    layer.width = VIEW.width * scale;
+    layer.height = VIEW.height * scale;
+    const ctx = layer.getContext("2d");
+    ctx.scale(scale, scale);
+    ctx.translate(-VIEW.x, -VIEW.y);
+    draw(ctx);
+    const texture = new THREE.CanvasTexture(layer);
+    // UVs are model coordinates; map them onto the view box
+    texture.repeat.set(1 / VIEW.width, 1 / VIEW.height);
+    texture.offset.set(
+      (450 - VIEW.x) / VIEW.width,
+      (VIEW.y + VIEW.height - 320) / VIEW.height,
+    );
+    return texture;
+  };
+  const grips = (ctx, left, right) => {
+    ctx.save();
+    ctx.clip(paths.body);
+    ctx.fillStyle = left;
+    ctx.fill(paths.gripL);
+    ctx.fillStyle = right;
+    ctx.fill(paths.gripR);
+    ctx.restore();
+  };
 
-  const shape = new Path2D(svg.querySelector("#pc-shape").getAttribute("d"));
-  const gradient = ctx.createLinearGradient(0, 0, 0, 640);
-  gradient.addColorStop(0, colors.face);
-  gradient.addColorStop(1, colors.faceLow);
-  ctx.fillStyle = gradient;
-  ctx.fill(shape);
-  ctx.save();
-  ctx.clip(shape);
-  for (const [id, color] of [
-    ["#pc-grip-l-shape", colors.gripL],
-    ["#pc-grip-r-shape", colors.gripR],
-  ]) {
-    ctx.fillStyle = color;
-    ctx.fill(new Path2D(svg.querySelector(id).getAttribute("d")));
-  }
-  ctx.restore();
-  ctx.strokeStyle = colors.seam;
-  ctx.lineWidth = 2;
-  ctx.stroke(new Path2D(svg.querySelector(".pc-seam").getAttribute("d")));
+  const map = paint((ctx) => {
+    const gradient = ctx.createLinearGradient(0, 0, 0, 640);
+    gradient.addColorStop(0, colors.face);
+    gradient.addColorStop(1, colors.faceLow);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(VIEW.x, VIEW.y, VIEW.width, VIEW.height);
+    grips(ctx, colors.gripL, colors.gripR);
+    ctx.strokeStyle = colors.seam;
+    ctx.lineWidth = 2;
+    ctx.stroke(paths.seam);
+  });
+  map.colorSpace = THREE.SRGBColorSpace;
 
-  const texture = new THREE.CanvasTexture(face);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  // Extruded caps use model coordinates as UVs; map them onto the view box
-  texture.repeat.set(1 / VIEW.width, 1 / VIEW.height);
-  texture.offset.set(
-    (450 - VIEW.x) / VIEW.width,
-    (VIEW.y + VIEW.height - 320) / VIEW.height,
-  );
+  // Roughness is read from green: glossy face plate, matte grips
+  const roughnessMap = paint((ctx) => {
+    ctx.fillStyle = "#5a5a5a";
+    ctx.fillRect(VIEW.x, VIEW.y, VIEW.width, VIEW.height);
+    grips(ctx, "#d2d2d2", "#d2d2d2");
+  });
+
+  // The grips' molded dots, as tiny bumps
+  const bumpMap = paint((ctx) => {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(VIEW.x, VIEW.y, VIEW.width, VIEW.height);
+    const dots = document.createElement("canvas");
+    dots.width = dots.height = 11;
+    const d = dots.getContext("2d");
+    d.fillStyle = "#fff";
+    d.beginPath();
+    d.arc(5.5, 5.5, 1.4, 0, Math.PI * 2);
+    d.fill();
+    const pattern = ctx.createPattern(dots, "repeat");
+    grips(ctx, pattern, pattern);
+  });
+
+  return { map, roughnessMap, bumpMap };
+}
+
+/** Vertical ridges around a stick's rubber rim */
+function ridges() {
+  const strip = document.createElement("canvas");
+  strip.width = 8;
+  strip.height = 2;
+  const ctx = strip.getContext("2d");
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, 8, 2);
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, 4, 2);
+  const texture = new THREE.CanvasTexture(strip);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.repeat.set(48, 1);
   return texture;
 }
+
+/** Project the body's UVs from the front, so rounded edges take the face art too */
+const frontProjection = {
+  generateTopUV(geometry, v, a, b, c) {
+    return [a, b, c].map((i) => new THREE.Vector2(v[i * 3], v[i * 3 + 1]));
+  },
+  generateSideWallUV(geometry, v, a, b, c, d) {
+    return [a, b, c, d].map((i) => new THREE.Vector2(v[i * 3], v[i * 3 + 1]));
+  },
+};
 
 /** A round button top with its label, drawn on a canvas */
 function capTexture(background, ink, draw) {
@@ -183,9 +256,11 @@ function addButton(name, x, y, { radius = 0, size = 0, height, draw }, colors) {
         Math.PI / 2,
       )
     : new THREE.BoxGeometry(size, size, height);
-  const side = material(colors.buttonLow);
+  // Buttons are glossy hard plastic
+  const side = material(colors.buttonLow, { roughness: 0.3 });
   const top = material("#ffffff", {
     map: capTexture(colors.button, colors.ink, draw),
+    roughness: 0.3,
   });
   const pressedTop = capTexture(colors.press, colors.pressInk, draw);
   // Cylinder groups: side, top, bottom; box groups: +x, -x, +y, -y, +z, -z
@@ -225,27 +300,30 @@ function build() {
   for (const child of [...model.children]) model.remove(child);
   buttons.clear();
 
-  // Body: the outline extruded, front face at z = 0
+  // Body: the outline extruded with a deep rounded edge that stays inside
+  // the outline, front face at z = 0
   const outline = new THREE.Shape(sample(svg.querySelector("#pc-shape"), 400));
-  const body = new THREE.ExtrudeGeometry(outline, {
+  let body = new THREE.ExtrudeGeometry(outline, {
     depth: DEPTH,
     bevelEnabled: true,
-    bevelThickness: 18,
-    bevelSize: 16,
-    bevelSegments: 6,
+    bevelThickness: ROUND.depth,
+    bevelSize: ROUND.inset,
+    bevelOffset: -ROUND.inset,
+    bevelSegments: 12,
     curveSegments: 1,
+    UVGenerator: frontProjection,
   });
-  // Put the front face, bevel included, at z = 0
-  body.translate(0, 0, -DEPTH - 18);
-  const faceMaterial = material("#ffffff", {
-    map: paintFace(colors),
-    roughness: 0.45,
-  });
+  body.translate(0, 0, -DEPTH - ROUND.depth);
+  // Share vertices so the rounded edge shades smoothly instead of in facets
+  body.deleteAttribute("normal");
+  body = mergeVertices(body);
+  body.computeVertexNormals();
+  const maps = faceMaps(colors);
   model.add(
-    new THREE.Mesh(body, [
-      faceMaterial,
-      material(colors.faceLow, { roughness: 0.7 }),
-    ]),
+    new THREE.Mesh(
+      body,
+      material("#ffffff", { ...maps, roughness: 1, bumpScale: 0.6 }),
+    ),
   );
 
   // Shoulders follow the path just outside the outline: bumpers toward the
@@ -337,9 +415,14 @@ function build() {
       material(colors.buttonLow),
     );
     post.position.z = 20;
+    const rim = material(colors.buttonLow, {
+      roughness: 0.85,
+      bumpMap: ridges(),
+      bumpScale: 1.5,
+    });
     const cap = new THREE.Mesh(
       new THREE.CylinderGeometry(56, 58, 16, 64).rotateX(Math.PI / 2),
-      material(colors.buttonLow, { roughness: 0.8 }),
+      [rim, material(colors.buttonLow, { roughness: 0.85 }), rim],
     );
     cap.position.z = 44;
     const top = new THREE.Mesh(
@@ -352,7 +435,7 @@ function build() {
     sticks[side] = pivot;
     buttons.set(`${side}_stick`, {
       meshes: [cap],
-      band: cap.material,
+      band: rim,
       color: colors.buttonLow,
     });
   }

@@ -129,10 +129,12 @@ impl Studio {
                 }
             }
             Command::Stop => {
+                let stopped_at = unix_ms();
                 self.recorder.stop()?;
                 if let Some(current) = session.as_mut() {
+                    // Stamped before ffmpeg spends a moment finishing the file
+                    current.stopped_at_ms = Some(stopped_at);
                     self.finish_segment(current);
-                    current.stopped_at_ms = Some(unix_ms());
                     self.write_session(current)?;
                 }
             }

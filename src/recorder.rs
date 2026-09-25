@@ -131,20 +131,27 @@ impl Recorder {
 
     /// Create a session folder and start writing frames; returns the folder
     pub fn start(&self) -> Result<PathBuf> {
-        let mut inner = self.lock();
-        ensure!(inner.writer.is_none(), "already recording");
+        let prefix = {
+            let inner = self.lock();
+            ensure!(inner.writer.is_none(), "already recording");
+            inner.prefix.clone()
+        };
 
-        let parent = prefix_parent(&inner.prefix);
+        // Creating files on a network mount can take a second; do it without
+        // the lock so incoming frames and the live view keep flowing
+        let parent = prefix_parent(&prefix);
         ensure!(
             parent.is_dir(),
             "folder does not exist: {}",
             parent.display()
         );
-        let dir = session_dir(&inner.prefix);
+        let dir = session_dir(&prefix);
         std::fs::create_dir(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
         let writer = FileDumper::new(dir.join(CONTROLLER_FILE))?;
         log::info!("Recording to {}", dir.display());
 
+        let mut inner = self.lock();
+        ensure!(inner.writer.is_none(), "already recording");
         inner.writer = Some(writer);
         inner.session = Some(dir.clone());
         inner.frames = 0;
@@ -180,13 +187,17 @@ impl Recorder {
 
     /// Close the session, making sure the controller data reached the disk
     pub fn stop(&self) -> Result<()> {
-        let mut inner = self.lock();
-        let Some(mut writer) = inner.writer.take() else {
-            bail!("not recording");
+        let (mut writer, frames) = {
+            let mut inner = self.lock();
+            let Some(writer) = inner.writer.take() else {
+                bail!("not recording");
+            };
+            inner.stop_clock();
+            (writer, inner.frames)
         };
-        inner.stop_clock();
+        // Syncing to disk can be slow; frames arriving meanwhile are simply not recorded
         writer.sync()?;
-        log::info!("Recording stopped after {} frames", inner.frames);
+        log::info!("Recording stopped after {} frames", frames);
         Ok(())
     }
 
