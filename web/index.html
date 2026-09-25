@@ -78,6 +78,9 @@
         <header class="panel-head">
           <h2 id="h-video">Video</h2>
           <span class="panel-note preview-delay" id="preview-delay"></span>
+          <button type="button" class="mode-toggle" id="hud-toggle">
+            Inputs
+          </button>
           <select
             id="video-input"
             class="select"
@@ -86,6 +89,46 @@
         </header>
         <div class="screen">
           <video id="video-player" muted autoplay playsinline hidden></video>
+          <!-- Controller inputs over the picture, held back by the preview delay -->
+          <svg
+            class="input-hud"
+            id="input-hud"
+            viewBox="0 0 640 360"
+            aria-hidden="true"
+            hidden
+          >
+            <g class="hud-stick" transform="translate(48 306)">
+              <circle r="26" />
+              <circle class="hud-dot" id="hud-stick-l" r="7" />
+            </g>
+            <g class="hud-stick" transform="translate(592 306)">
+              <circle r="26" />
+              <circle class="hud-dot" id="hud-stick-r" r="7" />
+            </g>
+            <g id="hud-buttons" transform="translate(320 330)"></g>
+            <g class="hud-gyro" transform="translate(14 18)">
+              <text y="4">yaw</text>
+              <rect class="hud-track" x="34" y="-4" width="120" height="8" />
+              <rect
+                class="hud-bar"
+                id="hud-yaw"
+                x="94"
+                y="-4"
+                width="0"
+                height="8"
+              />
+              <text y="22">pitch</text>
+              <rect class="hud-track" x="34" y="14" width="120" height="8" />
+              <rect
+                class="hud-bar"
+                id="hud-pitch"
+                x="94"
+                y="14"
+                width="0"
+                height="8"
+              />
+            </g>
+          </svg>
           <div class="no-signal" id="no-signal">
             <svg viewBox="0 0 48 48" aria-hidden="true">
               <rect x="5" y="9" width="38" height="25" rx="3" />

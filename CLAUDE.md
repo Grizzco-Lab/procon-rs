@@ -92,11 +92,15 @@ cargo clippy
 
 **Audio (`src/audio.rs`)**: ffmpeg reads the `[video] audio_input` PulseAudio source continuously in 10 ms chunks; a recording's sound starts at the sample that arrived with its first frame and goes to the encoder on fd 3, as an Opus track in the same file
 
+**Capture times (`src/video.rs`)**: the grabber logs each frame's kernel capture time (`-ts mono2abs -copyts` + `showinfo`); frames are paired with them in order, recordings start at the first frame's capture time, and a queue of late frames (>120 ms for 3 s while idle) restarts the grabber
+
 **Studio (`src/studio.rs`)**: Host coordinator; starts/stops recorder and video together, writes `session.json`, saves dashboard settings to `config.state.json`; each session records the game's controller settings (`GameSettings`: sensitivities scale gyro/stick into camera turns)
 
 **Motion (`src/motion.rs`)**: Gyro + accelerometer orientation for the dashboard's Splatoon mode; Y recenters
 
 **3D view (`web/controller3d.js`)**: three.js from jsdelivr; extrudes the SVG view's outline and reuses its theme colors. The SVG is the fallback without WebGL or the CDN
+
+**Input overlay (`web/app.js`)**: the Video panel's "Inputs" toggle draws sticks, pressed buttons and turn rates over the preview, using the state from as long ago as the preview is behind (encoding + player buffer)
 
 **Web dashboard (`src/web.rs`, `web/`)**: warp server with the embedded page, a WebSocket (`state` per input report, `status` once per second, preview JPEGs as binary) and `POST /api/command`
 

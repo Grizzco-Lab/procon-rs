@@ -95,11 +95,12 @@ const STICK_TRAVEL = 24;
 const BATTERY = ["Empty", "Critical", "Low", "Medium", "Full"];
 
 // Controller view options, remembered per browser
-const view = { splatoon: false, gain: 0, threeD: true };
+const view = { splatoon: false, gain: 0, threeD: true, hud: false };
 try {
   view.splatoon = localStorage.getItem("procon-splatoon") === "true";
   view.gain = Number(localStorage.getItem("procon-gain") ?? 0) || 0;
   view.threeD = localStorage.getItem("procon-3d") !== "false";
+  view.hud = localStorage.getItem("procon-hud") === "true";
 } catch {
   // Storage may be unavailable; use the defaults
 }
@@ -109,6 +110,7 @@ function saveView() {
     localStorage.setItem("procon-splatoon", String(view.splatoon));
     localStorage.setItem("procon-gain", String(view.gain));
     localStorage.setItem("procon-3d", String(view.threeD));
+    localStorage.setItem("procon-hud", String(view.hud));
   } catch {
     // Keep the choice for this page only
   }
@@ -126,6 +128,7 @@ function markControllerView() {
   $("view-3d").disabled = !window.procon3d;
   $("procon-3d").hidden = !threeD;
   procon.classList.toggle("is-behind", threeD);
+  $("hud-toggle").setAttribute("aria-pressed", String(view.hud));
 }
 
 $("splatoon-toggle").addEventListener("click", () => {
@@ -135,6 +138,11 @@ $("splatoon-toggle").addEventListener("click", () => {
 });
 $("splatoon-gain").addEventListener("input", (event) => {
   view.gain = Number(event.target.value);
+  saveView();
+  markControllerView();
+});
+$("hud-toggle").addEventListener("click", () => {
+  view.hud = !view.hud;
   saveView();
   markControllerView();
 });
@@ -625,6 +633,8 @@ const player = {
   lag: null,
   /** Server's time to encode a frame, ms */
   encodeMs: null,
+  /** Time from the capture card delivering a frame to the server reading it, ms */
+  captureMs: null,
   shownAt: 0,
 };
 
@@ -652,11 +662,12 @@ function keepLive(now) {
     return;
   }
   const lagMs = player.lag * 1000;
-  note.textContent = `Preview +${Math.round(player.encodeMs + lagMs)} ms`;
+  const captureMs = player.captureMs ?? 0;
+  note.textContent = `Preview +${Math.round(captureMs + player.encodeMs + lagMs)} ms`;
   note.title =
-    `Encoding ${player.encodeMs.toFixed(0)} ms + player buffer ${lagMs.toFixed(0)} ms. ` +
-    `Not counted: the capture card and HDMI before it, and the network (well under ` +
-    `a millisecond on a LAN).`;
+    `Capture ${captureMs.toFixed(0)} ms + encoding ${player.encodeMs.toFixed(0)} ms + ` +
+    `player buffer ${lagMs.toFixed(0)} ms. Not counted: the capture card itself and ` +
+    `HDMI before it, and the network (well under a millisecond on a LAN).`;
 }
 
 /** Codec string from the init segment's avcC box, e.g. "avc1.64002a" */
@@ -799,6 +810,7 @@ for (const id of ["video-height", "video-fps"]) {
 
 function renderVideo(status) {
   player.encodeMs = status.preview_encode_ms;
+  player.captureMs = status.capture_ms;
   // Rebuild the input list only when it changes, so an open menu stays open
   const select = $("video-input");
   const options = [{ id: "", name: "No video" }, ...status.inputs];
@@ -971,6 +983,119 @@ function renderLatency(forward) {
   );
 }
 
+// ------------------------------------------------------------- input overlay
+
+/** Button labels drawn on the video, in this order */
+const HUD_KEYS = [
+  ["zl", "ZL"],
+  ["l", "L"],
+  ["minus", "−"],
+  ["l_stick", "LS"],
+  ["up", "↑"],
+  ["down", "↓"],
+  ["left", "←"],
+  ["right", "→"],
+  ["y", "Y"],
+  ["x", "X"],
+  ["b", "B"],
+  ["a", "A"],
+  ["r_stick", "RS"],
+  ["plus", "+"],
+  ["r", "R"],
+  ["zr", "ZR"],
+  ["home", "HOME"],
+  ["capture", "CAP"],
+];
+
+/** Recent states with their arrival time, to match the delayed picture */
+const hud = { history: [], keys: "" };
+
+function pushHud(now, state) {
+  hud.history.push({ t: now, state });
+  while (hud.history.length && hud.history[0].t < now - 2000)
+    hud.history.shift();
+}
+
+/**
+ * Draw the inputs the Switch had when the frame on screen was sent: the
+ * preview runs behind by its encoding plus player buffer, so pick the state
+ * from that long ago
+ */
+function renderHud(now) {
+  const svg = $("input-hud");
+  const show = view.hud && !$("video-player").hidden && hud.history.length > 0;
+  // An SVG element has no hidden property, only the attribute
+  svg.toggleAttribute("hidden", !show);
+  if (!show) return;
+  const delay =
+    (player.captureMs ?? 0) + (player.encodeMs ?? 0) + (player.lag ?? 0) * 1000;
+  let entry = hud.history[0];
+  for (const item of hud.history) {
+    if (item.t > now - delay) break;
+    entry = item;
+  }
+  const state = entry.state;
+
+  for (const [side, stick] of [
+    ["l", state.left_stick],
+    ["r", state.right_stick],
+  ]) {
+    const dx = (stickPercent(stick.x) / 100) * 20;
+    const dy = (-stickPercent(stick.y) / 100) * 20;
+    const dot = $(`hud-stick-${side}`);
+    dot.setAttribute("cx", dx.toFixed(1));
+    dot.setAttribute("cy", dy.toFixed(1));
+  }
+
+  // Pressed buttons as a centred row of keys; rebuilt only when they change
+  const pressed = HUD_KEYS.filter(([name]) => state.buttons[name]);
+  const keys = pressed.map(([name]) => name).join();
+  if (keys !== hud.keys) {
+    hud.keys = keys;
+    const width = (label) => 12 + label.length * 7;
+    const total = pressed.reduce(
+      (sum, [, label]) => sum + width(label) + 4,
+      -4,
+    );
+    let x = -total / 2;
+    $("hud-buttons").replaceChildren(
+      ...pressed.map(([, label]) => {
+        const key = svgEl("g", {
+          class: "hud-key",
+          transform: `translate(${x} -10)`,
+        });
+        key.append(
+          svgEl("rect", { width: width(label), height: 20, rx: 4 }),
+          Object.assign(
+            svgEl("text", {
+              x: width(label) / 2,
+              y: 14,
+              "text-anchor": "middle",
+            }),
+            {
+              textContent: label,
+            },
+          ),
+        );
+        x += width(label) + 4;
+        return key;
+      }),
+    );
+  }
+
+  // Turn rate: full bar at 360 °/s either way
+  const gyro = state.gyro[0] ?? { gyro_y: 0, gyro_z: 0 };
+  for (const [id, raw] of [
+    ["hud-yaw", gyro.gyro_z],
+    ["hud-pitch", gyro.gyro_y],
+  ]) {
+    const share = Math.max(-1, Math.min(1, (raw * GYRO_DPS) / 360));
+    const bar = $(id);
+    bar.setAttribute("x", String(94 + Math.min(0, share) * 60));
+    bar.setAttribute("width", String(Math.abs(share) * 60));
+  }
+}
+
 // ----------------------------------------------------------------- websocket
 
 let latestState = null;
@@ -998,6 +1123,7 @@ function connect() {
     if (message.type === "state") {
       latestState = message.state;
       latestOrientation = message.orientation;
+      pushHud(performance.now(), message.state);
       if (latestState.gyro.length)
         pushGyro(performance.now(), latestState.gyro[0]);
     } else if (message.type === "status") {
@@ -1020,6 +1146,7 @@ function frame(now) {
   updateClock(now);
   updateReplayClock(now);
   keepLive(now);
+  renderHud(now);
   requestAnimationFrame(frame);
 }
 

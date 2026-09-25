@@ -16,7 +16,13 @@
 //!   so a file begins with the next frame and pausing never touches the input.
 //!
 //! Frames reach recordings at a constant rate: frame `n` of a file was captured
-//! `n / fps` seconds after its first frame, whose Unix time is kept.
+//! `n / fps` seconds after its first frame, whose Unix time is kept. That time
+//! is when the capture card delivered the frame to the kernel, which ffmpeg
+//! reports for every frame, not when it reached the studio: if the grabber
+//! ever falls behind, frames queue in the driver and arrive late for good, so
+//! arrival times would shift a whole recording by however long that queue is.
+//! A queue that builds up while nothing records is cleared by restarting the
+//! grabber.
 //!
 //! With sound on, a recording also gets the capture card's sound
 //! ([`Audio`]) through a second pipe, starting at the sample that arrived
@@ -51,6 +57,12 @@ const RECORDING_QUEUE_SECS: u32 = 1;
 
 /// Frames queued for the preview encoder; a busy preview skips frames instead
 const PREVIEW_QUEUE: usize = 4;
+
+/// Frames arriving this late after capture mean a queue has built up
+const BACKLOG_MS: f64 = 120.0;
+
+/// How long a queue may last before the grabber restarts to clear it
+const BACKLOG_PATIENCE: Duration = Duration::from_secs(3);
 
 /// Recording and preview heights the dashboard offers; widths follow 16:9
 pub const RECORD_HEIGHTS: [u32; 4] = [1080, 720, 540, 360];
@@ -155,6 +167,9 @@ pub struct VideoStatus {
     /// Time from a frame reaching the preview encoder to its fragment coming
     /// out, smoothed; `None` while the preview is not live
     pub preview_encode_ms: Option<f64>,
+    /// Time from the capture card delivering a frame to the studio reading
+    /// it, smoothed; `None` while no frames arrive
+    pub capture_ms: Option<f64>,
     /// The preview follows the recording size and rate
     pub preview_matches_recording: bool,
     /// Recordings get the sound track, when there is a sound source
@@ -237,6 +252,10 @@ pub struct Video {
     /// Unix ms of the latest grabbed frame and preview fragment
     last_frame_ms: Arc<AtomicU64>,
     last_preview_ms: Arc<AtomicU64>,
+    /// Capture times (Unix µs) the grabber logged for frames not read yet
+    capture_times: Arc<Mutex<VecDeque<u64>>>,
+    /// Smoothed time from capture to reading a frame, in µs
+    capture_us: Arc<AtomicU64>,
     /// The sound source, when one is configured
     audio: Option<Audio>,
 }
@@ -286,6 +305,8 @@ impl Video {
             preview_generation: Arc::default(),
             last_frame_ms: Arc::default(),
             last_preview_ms: Arc::default(),
+            capture_times: Arc::default(),
+            capture_us: Arc::default(),
             audio,
         };
         let mut inner = video.lock();
@@ -486,6 +507,12 @@ impl Video {
             preview_height,
             preview_fps,
             preview_encode_ms: (live && encode_us > 0).then(|| encode_us as f64 / 1000.0),
+            capture_ms: {
+                let fresh =
+                    unix_ms().saturating_sub(self.last_frame_ms.load(Ordering::Relaxed)) < 2000;
+                let us = self.capture_us.load(Ordering::Relaxed);
+                (fresh && us > 0).then(|| us as f64 / 1000.0)
+            },
             preview_matches_recording: inner.preview_matches_recording,
             record_audio: inner.record_audio,
             audio_input: Some(inner.config.audio_input.clone()).filter(|s| !s.is_empty()),
@@ -504,6 +531,8 @@ impl Video {
         }
         inner.error = None;
         self.last_frame_ms.store(0, Ordering::Relaxed);
+        lock(&self.capture_times).clear();
+        self.capture_us.store(0, Ordering::Relaxed);
 
         let Some(input) = inner.input.clone() else {
             return;
@@ -618,12 +647,35 @@ impl Video {
         let mut frame = vec![0u8; FRAME_BYTES];
         // Counts toward the next frame kept for the preview
         let mut preview_phase = 0;
+        // Since when frames have been arriving too long after capture
+        let mut backlog_since: Option<Instant> = None;
         // Read to the end even when stale, so ffmpeg can exit
         while stdout.read_exact(&mut frame).is_ok() {
             if !self.grabber_is_current(generation) {
                 continue;
             }
-            self.last_frame_ms.store(unix_ms(), Ordering::Relaxed);
+            let now = unix_ms();
+            self.last_frame_ms.store(now, Ordering::Relaxed);
+            let captured_ms = self.capture_time(now);
+            let behind_ms = now.saturating_sub(captured_ms);
+            let smoothed = match self.capture_us.load(Ordering::Relaxed) {
+                0 => behind_ms * 1000,
+                before => (before * 15 + behind_ms * 1000) / 16,
+            };
+            self.capture_us.store(smoothed, Ordering::Relaxed);
+            if smoothed as f64 / 1000.0 < BACKLOG_MS || lock(&self.recording).is_some() {
+                backlog_since = None;
+            } else if backlog_since.get_or_insert_with(Instant::now).elapsed() > BACKLOG_PATIENCE {
+                log::warn!(
+                    "Frames arrive {:.0} ms after capture; restarting the grabber to clear the queue",
+                    smoothed as f64 / 1000.0
+                );
+                let mut inner = self.lock();
+                if self.grabber_is_current(generation) {
+                    self.restart_grabber(&mut inner);
+                }
+                continue;
+            }
             // Thin the capture rate to the preview rate
             let preview = lock(&self.preview_feed).clone().filter(|feed| {
                 preview_phase += feed.fps;
@@ -652,7 +704,8 @@ impl Video {
             }
             if let Some(recording) = recording.as_mut() {
                 if recording.first_frame_ms.is_none() {
-                    let now = unix_ms();
+                    // When the card delivered it, not when it got here
+                    let now = captured_ms;
                     recording.first_frame_ms = Some(now);
                     // The sound starts with the sample that arrived with this frame
                     if let (Some(audio), Some(input)) = (&self.audio, recording.audio_input.take())
@@ -736,10 +789,42 @@ impl Video {
         }
     }
 
-    /// Keep the grabber's errors for the dashboard
+    /// Capture time (Unix ms) of the frame just read, `now` if unknown
+    ///
+    /// The grabber logs each frame's time just before writing the frame, so it
+    /// is normally waiting; give the log reader a moment if not.
+    fn capture_time(&self, now: u64) -> u64 {
+        for _ in 0..20 {
+            if let Some(us) = lock(&self.capture_times).pop_front() {
+                return us / 1000;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        now
+    }
+
+    /// Collect each frame's capture time, and keep the grabber's errors for the dashboard
     fn read_log(&self, stderr: impl Read, generation: u64) {
         // Read to the end even when stale, so ffmpeg can exit
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            // showinfo: "... pts_time:1790371234.516667 ..." in Unix seconds
+            if let Some(time) = line.split("pts_time:").nth(1) {
+                let seconds = time
+                    .split_whitespace()
+                    .next()
+                    .and_then(|t| t.parse::<f64>().ok());
+                if let Some(seconds) = seconds
+                    && self.grabber_is_current(generation)
+                {
+                    let mut times = lock(&self.capture_times);
+                    // Out of step with the frames somehow: start afresh
+                    if times.len() > 120 {
+                        times.clear();
+                    }
+                    times.push_back((seconds * 1e6) as u64);
+                }
+                continue;
+            }
             if self.grabber_is_current(generation)
                 && (line.contains("rror") || line.contains("busy"))
             {
@@ -885,26 +970,28 @@ fn grabber_args(config: &VideoConfig, input: &str) -> Vec<String> {
     let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "info"]
         .map(String::from)
         .to_vec();
-    args.extend(["-use_wallclock_as_timestamps", "1"].map(String::from));
-
+    // Frame times: X11 stamps frames with the wall clock itself; for V4L2,
+    // the kernel's capture time, converted to Unix time
     if input == SCREEN {
         let display = std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string());
         args.extend(["-f", "x11grab", "-framerate"].map(String::from));
         args.push(config.fps.to_string());
         args.extend(["-i".to_string(), display]);
     } else {
-        args.extend(["-f", "v4l2"].map(String::from));
+        args.extend(["-f", "v4l2", "-ts", "mono2abs"].map(String::from));
         args.extend(config.v4l2_args.iter().cloned());
         args.extend(["-framerate".to_string(), config.fps.to_string()]);
         args.extend(["-i".to_string(), input.to_string()]);
     }
 
-    // Fit the source into 16:9, padded if it has another shape, at a constant rate
+    // Fit the source into 16:9, padded if it has another shape, at a constant
+    // rate; showinfo logs each frame's capture time (kept absolute by -copyts)
     let (width, height) = WORK_SIZE;
+    args.push("-copyts".to_string());
     args.push("-vf".to_string());
     args.push(format!(
         "scale={width}:{height}:force_original_aspect_ratio=decrease,\
-         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={},format=yuv420p",
+         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={},format=yuv420p,showinfo=checksum=0",
         config.fps
     ));
     args.extend(["-f", "rawvideo", "pipe:1"].map(String::from));
@@ -960,8 +1047,7 @@ fn recording_args(config: &VideoConfig, path: &Path, with_audio: bool) -> Vec<St
         // Raw sound on fd 3, starting with the first frame
         args.extend(["-thread_queue_size", "256", "-f", "s16le", "-ar"].map(String::from));
         args.push(audio::SAMPLE_RATE.to_string());
-        args.push("-ac".to_string());
-        args.push(audio::CHANNELS.to_string());
+        args.extend(["-ch_layout", "stereo"].map(String::from));
         args.extend(["-i", "pipe:3", "-map", "0:v", "-map", "1:a"].map(String::from));
         args.extend(["-c:a", "libopus", "-b:a", "128k"].map(String::from));
     }

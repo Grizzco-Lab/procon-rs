@@ -119,7 +119,10 @@ config, so they survive restarts.
 | `session.json` | Start/stop times, each video file's first-frame Unix ms (and first sound sample's, `audio_start_unix_ms`), the proxy's clock offset and dropped frames, and `game_settings` (Splatoon 3 motion/stick sensitivity, motion controls, invert), set in the Recording panel |
 
 To line up the data: frames in a video file come at a constant rate, so frame
-`n` was captured at its segment's `start_unix_ms` plus `n / video.fps` seconds; a controller frame's
+`n` was captured at its segment's `start_unix_ms` plus `n / video.fps` seconds.
+`start_unix_ms` is when the capture card delivered that first frame to the kernel
+(sessions before this change used its arrival at the studio, which could be a few
+hundred ms later); the game's own delay from input to picture still comes on top; a controller frame's
 host time is its proxy timestamp plus `proxy.clock_offset_ms`. The sound track starts at
 the sample that arrived with the first frame (shifted by `[video] audio_offset_ms`), so in
 the file both tracks start at 0; `audio_start_unix_ms` says when that sample arrived.

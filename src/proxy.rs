@@ -195,6 +195,21 @@ fn wait_for_pickup(gadget: &File, read_at: Instant) -> Option<Duration> {
     (ready == 1 && poll.revents & libc::POLLOUT != 0).then(|| read_at.elapsed())
 }
 
+/// Log what the Switch tells the controller, apart from rumble (0x10), which
+/// never stops during a game: USB commands (0x80) and subcommands (0x01, id at
+/// byte 10). Shows, for one, what it sends before going to sleep.
+fn log_command(report: &[u8]) {
+    match report {
+        [0x80, command, ..] => log::info!("Switch -> controller: USB command 0x80 {command:02x}"),
+        [0x01, rest @ ..] if rest.len() > 10 => log::info!(
+            "Switch -> controller: subcommand {:02x} {:02x?}",
+            rest[9],
+            &rest[10..rest.len().min(16)]
+        ),
+        _ => {}
+    }
+}
+
 /// Forward output reports from the Switch to the controller, with a gadget
 /// handle and a controller handle of its own; never returns
 fn forward_output(hidg_path: &str, retry: Duration) {
@@ -218,6 +233,7 @@ fn forward_output(hidg_path: &str, retry: Duration) {
                     break;
                 }
             };
+            log_command(&buffer[..size]);
             if let Err(e) = controller.write(&buffer[..size]) {
                 log::warn!("Failed to write output to controller: {}", e);
                 break;
