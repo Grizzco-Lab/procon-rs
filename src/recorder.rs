@@ -78,6 +78,22 @@ fn session_dir(prefix: &str) -> PathBuf {
     PathBuf::from(format!("{prefix}{stamp}"))
 }
 
+/// Clean up a typed prefix: expand `~` to the home folder, and treat an
+/// existing folder as a folder even without a trailing `/`
+fn normalize_prefix(prefix: &str) -> String {
+    let prefix = prefix.trim();
+    let mut prefix = match (prefix.strip_prefix('~'), std::env::var("HOME")) {
+        (Some(rest), Ok(home)) if rest.is_empty() || rest.starts_with('/') => {
+            format!("{home}{rest}")
+        }
+        _ => prefix.to_string(),
+    };
+    if !prefix.ends_with('/') && Path::new(&prefix).is_dir() {
+        prefix.push('/');
+    }
+    prefix
+}
+
 /// Directory that must exist for `prefix` to be usable
 fn prefix_parent(prefix: &str) -> PathBuf {
     // "a/b-" lives in "a", "a/b/" lives in "a/b"
@@ -96,9 +112,9 @@ pub struct Recorder(Arc<Mutex<Inner>>);
 
 impl Recorder {
     /// Create an idle recorder that names sessions with `prefix`
-    pub fn new(prefix: impl Into<String>) -> Self {
+    pub fn new(prefix: &str) -> Self {
         Self(Arc::new(Mutex::new(Inner {
-            prefix: prefix.into(),
+            prefix: normalize_prefix(prefix),
             writer: None,
             session: None,
             frames: 0,
@@ -175,10 +191,12 @@ impl Recorder {
     }
 
     /// Change the path prefix for the next session; its folder must already exist
+    ///
+    /// `~` means the home folder, and an existing folder gets sessions inside it.
     pub fn set_prefix(&self, prefix: &str) -> Result<()> {
-        let prefix = prefix.trim();
+        let prefix = normalize_prefix(prefix);
         ensure!(!prefix.is_empty(), "the path prefix is empty");
-        let parent = prefix_parent(prefix);
+        let parent = prefix_parent(&prefix);
         ensure!(
             parent.is_dir(),
             "folder does not exist: {}",
@@ -191,7 +209,7 @@ impl Recorder {
             "stop recording before changing the path"
         );
         log::info!("Recording prefix set to {}", prefix);
-        inner.prefix = prefix.to_string();
+        inner.prefix = prefix;
         Ok(())
     }
 
@@ -256,5 +274,27 @@ impl Dumper for Recorder {
             writer.flush()?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_prefixes() {
+        let home = std::env::var("HOME").unwrap();
+        let temp = std::env::temp_dir().display().to_string();
+        // An existing folder gets sessions inside it
+        assert_eq!(normalize_prefix(&temp), format!("{temp}/"));
+        // A name prefix is kept as typed
+        assert_eq!(
+            normalize_prefix(&format!("{temp}/mk8-")),
+            format!("{temp}/mk8-")
+        );
+        assert_eq!(normalize_prefix("~/procon-"), format!("{home}/procon-"));
+        assert_eq!(normalize_prefix(" ~ "), format!("{home}/"));
+        // Only a leading ~ that means home is expanded
+        assert_eq!(normalize_prefix("~other/x-"), "~other/x-");
     }
 }

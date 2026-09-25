@@ -1,10 +1,10 @@
-//! Stand-in for the Pi: streams a synthetic controller like `procon` does
+//! Stand-in for `procon-proxy`: streams a synthetic controller like it does
 //!
 //! ```sh
-//! cargo run --example fake_pi [port]
+//! cargo run --example fake_proxy [port]
 //! ```
 //!
-//! Then point `config.toml`'s `[pi] address` at `localhost:7331` (or the given
+//! Then point `config.toml`'s `[proxy] address` at `localhost:7331` (or the given
 //! port) and run `procon`. No Pro Controller or USB gadget needed.
 
 use core::f64::consts::TAU;

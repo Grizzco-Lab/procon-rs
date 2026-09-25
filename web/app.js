@@ -94,27 +94,82 @@ const STICK_TRAVEL = 24;
 
 const BATTERY = ["Empty", "Critical", "Low", "Medium", "Full"];
 
-/** Splatoon mode shows the tracked pose; otherwise the view tilts with rotation speed */
-let splatoon = false;
+// Controller view options, remembered per browser
+const view = { splatoon: false, gain: 0, threeD: true };
 try {
-  splatoon = localStorage.getItem("procon-splatoon") === "true";
+  view.splatoon = localStorage.getItem("procon-splatoon") === "true";
+  view.gain = Number(localStorage.getItem("procon-gain") ?? 0) || 0;
+  view.threeD = localStorage.getItem("procon-3d") !== "false";
 } catch {
-  // Storage may be unavailable; default to the tilt view
+  // Storage may be unavailable; use the defaults
 }
-function markSplatoon() {
-  $("splatoon-toggle").setAttribute("aria-pressed", String(splatoon));
-  $("splatoon-hint").hidden = !splatoon;
-}
-$("splatoon-toggle").addEventListener("click", () => {
-  splatoon = !splatoon;
+
+function saveView() {
   try {
-    localStorage.setItem("procon-splatoon", String(splatoon));
+    localStorage.setItem("procon-splatoon", String(view.splatoon));
+    localStorage.setItem("procon-gain", String(view.gain));
+    localStorage.setItem("procon-3d", String(view.threeD));
   } catch {
     // Keep the choice for this page only
   }
-  markSplatoon();
+}
+
+function markControllerView() {
+  $("splatoon-toggle").setAttribute("aria-pressed", String(view.splatoon));
+  $("splatoon-hint").hidden = !view.splatoon;
+  $("gain-control").hidden = !view.splatoon;
+  $("splatoon-gain").value = String(view.gain);
+  $("gain-value").textContent = signed(view.gain);
+  // 3D needs three.js from the CDN; the SVG stays as the fallback
+  const threeD = view.threeD && Boolean(window.procon3d);
+  $("view-3d").setAttribute("aria-pressed", String(threeD));
+  $("view-3d").disabled = !window.procon3d;
+  $("procon-3d").hidden = !threeD;
+  procon.classList.toggle("is-behind", threeD);
+}
+
+$("splatoon-toggle").addEventListener("click", () => {
+  view.splatoon = !view.splatoon;
+  saveView();
+  markControllerView();
 });
-markSplatoon();
+$("splatoon-gain").addEventListener("input", (event) => {
+  view.gain = Number(event.target.value);
+  saveView();
+  markControllerView();
+});
+$("view-3d").addEventListener("click", () => {
+  view.threeD = !view.threeD;
+  saveView();
+  markControllerView();
+});
+window.addEventListener("procon3d-ready", markControllerView);
+markControllerView();
+
+/** Hamilton product of (w, x, y, z) quaternions */
+function qmul([aw, ax, ay, az], [bw, bx, by, bz]) {
+  return [
+    aw * bw - ax * bx - ay * by - az * bz,
+    aw * bx + ax * bw + ay * bz - az * by,
+    aw * by - ax * bz + ay * bw + az * bx,
+    aw * bz + ax * by - ay * bx + az * bw,
+  ];
+}
+
+/** Rotation of `degrees` about a unit axis */
+function qaxis(axis, degrees) {
+  const half = (degrees * Math.PI) / 360;
+  const s = Math.sin(half);
+  return [Math.cos(half), axis[0] * s, axis[1] * s, axis[2] * s];
+}
+
+/** Same axis, angle multiplied by `factor` */
+function qscale([w, x, y, z], factor) {
+  const s = Math.sqrt(Math.max(0, 1 - w * w));
+  if (s < 1e-6) return [1, 0, 0, 0];
+  const angle = 2 * Math.acos(Math.min(1, Math.max(-1, w))) * factor;
+  return qaxis([x / s, y / s, z / s], (angle * 180) / Math.PI);
+}
 
 /** CSS rotation for a (w, x, y, z) quaternion */
 function rotation([w, x, y, z]) {
@@ -122,6 +177,27 @@ function rotation([w, x, y, z]) {
   if (s < 1e-6) return "none";
   const angle = 2 * Math.acos(Math.min(1, Math.max(-1, w)));
   return `rotate3d(${x / s}, ${y / s}, ${z / s}, ${angle}rad)`;
+}
+
+/**
+ * How the controller view is turned, in the CSS frame
+ *
+ * Splatoon mode shows the tracked pose, scaled by the sensitivity setting
+ * (each step is 2^(1/2.5), so -5..+5 is 1/4x..4x). Otherwise the view tilts
+ * with angular velocity, as tuned on real hardware.
+ */
+function viewRotation(gyro, orientation) {
+  if (view.splatoon && orientation) {
+    return qscale(orientation, 2 ** (view.gain / 2.5));
+  }
+  const scale = 0.05;
+  return qmul(
+    qmul(
+      qaxis([1, 0, 0], gyro.gyro_y * scale),
+      qaxis([0, 1, 0], gyro.gyro_x * scale),
+    ),
+    qaxis([0, 0, 1], -gyro.gyro_z * scale),
+  );
 }
 
 function renderState(state, orientation) {
@@ -146,15 +222,9 @@ function renderState(state, orientation) {
   }
 
   const gyro = state.gyro[0] ?? { gyro_x: 0, gyro_y: 0, gyro_z: 0 };
-  if (splatoon && orientation) {
-    procon.style.transform = rotation(orientation);
-  } else {
-    // Tilt follows angular velocity; axes were tuned on real hardware
-    const scale = 0.05;
-    procon.style.transform =
-      `rotateX(${gyro.gyro_y * scale}deg) rotateY(${gyro.gyro_x * scale}deg) ` +
-      `rotateZ(${-gyro.gyro_z * scale}deg)`;
-  }
+  const turn = viewRotation(gyro, orientation);
+  procon.style.transform = rotation(turn);
+  if (!$("procon-3d").hidden) window.procon3d.update(state, turn);
   $("gyro-x").textContent = signed(Math.round(gyro.gyro_x * GYRO_DPS));
   $("gyro-y").textContent = signed(Math.round(gyro.gyro_y * GYRO_DPS));
   $("gyro-z").textContent = signed(Math.round(gyro.gyro_z * GYRO_DPS));
@@ -517,8 +587,8 @@ function renderStatus(status) {
   setChip(
     "chip-link",
     link.connected ? "good" : "critical",
-    link.connected ? "Pi connected" : "Pi not connected",
-    `${link.address}${link.connected ? `, host clock ${offset} vs Pi` : ""}`,
+    link.connected ? "Proxy connected" : "Proxy not connected",
+    `${link.address}${link.connected ? `, host clock ${offset} vs proxy` : ""}`,
   );
   const input = link.connected && link.input_rate > 0;
   setChip(
@@ -530,6 +600,7 @@ function renderStatus(status) {
     ? `${link.input_rate.toFixed(1)} Hz · clock ${offset}`
     : "No input";
   procon.classList.toggle("is-idle", !input);
+  $("procon-3d").classList.toggle("is-idle", !input);
 
   renderRecorder(status.recorder);
   renderVideo(status.video);
@@ -574,6 +645,7 @@ function markOffline() {
   setChip("chip-link", "off", "Dashboard offline, reconnecting…");
   setChip("chip-controller", "off", "No controller input");
   procon.classList.add("is-idle");
+  $("procon-3d").classList.add("is-idle");
 }
 
 function connect() {

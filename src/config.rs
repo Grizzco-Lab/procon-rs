@@ -1,4 +1,4 @@
-//! Configuration for the studio (`config.toml`) and the Pi proxy (`pi.toml`)
+//! Configuration for the studio (`config.toml`) and the USB proxy (`proxy.toml`)
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-/// Pi proxy configuration (`pi.toml`)
+/// USB proxy configuration (`proxy.toml`)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     /// Proxy configuration
@@ -34,7 +34,7 @@ pub struct ProxyConfig {
     pub hidg_retry_delay_ms: u64,
 }
 
-/// Local backup recording on the Pi
+/// Local backup recording on the proxy
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DumpConfig {
     /// Record a session from launch until exit, next to what the studio records
@@ -116,8 +116,8 @@ pub fn load<T: DeserializeOwned, P: AsRef<Path>>(path: P) -> Result<T> {
 /// Studio host configuration (`config.toml`)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StudioConfig {
-    /// Where the Pi streams frames from
-    pub pi: PiConfig,
+    /// Where the proxy streams frames from
+    pub proxy: RemoteProxyConfig,
     /// Dashboard server
     pub web: WebConfig,
     /// Session recording defaults
@@ -128,10 +128,10 @@ pub struct StudioConfig {
     pub logging: LoggingConfig,
 }
 
-/// The Pi running `procon`
+/// The machine running `procon-proxy`
 #[derive(Debug, Serialize, Deserialize)]
-pub struct PiConfig {
-    /// `host:port` of the Pi's `[stream]` port
+pub struct RemoteProxyConfig {
+    /// `host:port` of the proxy's `[stream]` port
     pub address: String,
 }
 

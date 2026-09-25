@@ -1,6 +1,6 @@
 //! Studio host: ties controller recording and video capture into sessions
 //!
-//! A session folder holds `controller.bin` (frames streamed from the Pi),
+//! A session folder holds `controller.bin` (frames streamed from the proxy),
 //! `video-01.mkv`, `video-02.mkv`, … (one per stretch between pauses) and
 //! `session.json` describing how to line them up.
 //!
@@ -73,7 +73,7 @@ pub struct Studio {
     pub recorder: Recorder,
     pub video: Video,
     pub link: Arc<LinkStats>,
-    pub pi_address: String,
+    pub proxy_address: String,
     state_path: PathBuf,
     session: Mutex<Option<Session>>,
 }
@@ -83,14 +83,14 @@ impl Studio {
         recorder: Recorder,
         video: Video,
         link: Arc<LinkStats>,
-        pi_address: String,
+        proxy_address: String,
         state_path: PathBuf,
     ) -> Self {
         Self {
             recorder,
             video,
             link,
-            pi_address,
+            proxy_address,
             state_path,
             session: Mutex::new(None),
         }
@@ -183,9 +183,9 @@ impl Studio {
         let description = json!({
             "started_at_unix_ms": session.started_at_ms,
             "stopped_at_unix_ms": session.stopped_at_ms,
-            "pi": {
-                "address": self.pi_address,
-                // host clock = Pi clock + offset, estimated from the stream
+            "proxy": {
+                "address": self.proxy_address,
+                // host clock = proxy clock + offset, estimated from the stream
                 "clock_offset_ms": self.link.clock_offset_ms.load(Ordering::Relaxed),
             },
             "controller": {

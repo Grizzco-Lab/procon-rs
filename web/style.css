@@ -333,9 +333,35 @@ body[data-rec="recording"] .topbar {
 
 /* -------------------------------------------------------- controller */
 
+.pc-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.gain {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.gain input {
+  width: 120px;
+  accent-color: var(--accent);
+}
+
+.gain output {
+  min-width: 2.5ch;
+  color: var(--text);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
 .mode-toggle {
   height: 26px;
-  margin-left: auto;
   padding: 0 10px;
   border: 1px solid var(--panel-border);
   border-radius: 999px;
@@ -343,6 +369,11 @@ body[data-rec="recording"] .topbar {
   color: var(--text-2);
   font-size: 12px;
   cursor: pointer;
+}
+
+.mode-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .mode-toggle[aria-pressed="true"] {
@@ -387,6 +418,7 @@ body[data-rec="recording"] .topbar {
 }
 
 .stage {
+  position: relative;
   display: grid;
   flex: 1;
   place-items: center;
@@ -406,8 +438,22 @@ body[data-rec="recording"] .topbar {
     opacity 0.3s;
 }
 
-.procon.is-idle {
+.procon.is-idle,
+#procon-3d.is-idle {
   opacity: 0.45;
+}
+
+/* The 3D view draws over the SVG, which keeps sizing the stage */
+#procon-3d {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transition: opacity 0.3s;
+}
+
+.procon.is-behind {
+  visibility: hidden;
 }
 
 /* ----------------------------------------------------- controller svg */

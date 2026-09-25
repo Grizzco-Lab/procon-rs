@@ -1,0 +1,1050 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ProCon Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    />
+    <style>
+      :root {
+        --paper: #f2f3f5;
+        --surface: #ffffff;
+        --ink: #15171c;
+        --ink-2: #4d525c;
+        --ink-3: #7c828d;
+        --line: #d9dce2;
+        --red: #e8323f;
+        --blue: #0aa5c2;
+        --usb: #c98a12;
+        --hdmi: #6b5bd6;
+        --net: #2f9e5a;
+        --device: #e4e6ea;
+        --device-ink: #15171c;
+        --pcb: #2f7d4f;
+        --code-bg: #e8eaee;
+        --display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
+        --body:
+          "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+        --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          color-scheme: dark;
+          --paper: #101217;
+          --surface: #181b22;
+          --ink: #e9ebf0;
+          --ink-2: #b3b8c2;
+          --ink-3: #858b96;
+          --line: #2a2e37;
+          --red: #ff5a66;
+          --blue: #2cc4e0;
+          --usb: #e6a93a;
+          --hdmi: #9588ff;
+          --net: #4cc27a;
+          --device: #262a33;
+          --device-ink: #e9ebf0;
+          --pcb: #3b9463;
+          --code-bg: #1f232b;
+        }
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --paper: #101217;
+        --surface: #181b22;
+        --ink: #e9ebf0;
+        --ink-2: #b3b8c2;
+        --ink-3: #858b96;
+        --line: #2a2e37;
+        --red: #ff5a66;
+        --blue: #2cc4e0;
+        --usb: #e6a93a;
+        --hdmi: #9588ff;
+        --net: #4cc27a;
+        --device: #262a33;
+        --device-ink: #e9ebf0;
+        --pcb: #3b9463;
+        --code-bg: #1f232b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--paper);
+        color: var(--ink);
+        font: 16px/1.6 var(--body);
+        padding-inline: 20px;
+        padding-block: 40px 72px;
+      }
+      main {
+        max-width: 1080px;
+        margin: 0 auto;
+        display: grid;
+        gap: 72px;
+      }
+      h1,
+      h2,
+      h3 {
+        font-family: var(--display);
+        text-wrap: balance;
+        margin: 0;
+        line-height: 1.1;
+      }
+      h1 {
+        font-size: clamp(40px, 7vw, 76px);
+        font-weight: 700;
+        letter-spacing: -0.03em;
+      }
+      h1 .l {
+        color: var(--blue);
+      }
+      h1 .r {
+        color: var(--red);
+      }
+      h2 {
+        font-size: clamp(28px, 4vw, 38px);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      h3 {
+        font-size: 19px;
+        font-weight: 700;
+      }
+      p {
+        margin: 0;
+        max-width: 66ch;
+      }
+      .eyebrow {
+        font: 500 12px/1 var(--mono);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+      }
+      .lede {
+        font-size: 19px;
+        color: var(--ink-2);
+      }
+      section {
+        display: grid;
+        gap: 24px;
+      }
+      .head {
+        display: grid;
+        gap: 12px;
+      }
+      code,
+      .mono {
+        font-family: var(--mono);
+        font-size: 0.9em;
+      }
+      code {
+        background: var(--code-bg);
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+
+      /* Hero */
+      .hero {
+        display: grid;
+        gap: 20px;
+      }
+      .scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .wiring {
+        display: block;
+        width: 100%;
+        min-width: 760px;
+        height: auto;
+      }
+      .wiring text {
+        font-family: var(--body);
+        fill: var(--ink);
+      }
+      .wiring .name {
+        font: 700 15px var(--display);
+        fill: var(--ink);
+      }
+      .wiring .role {
+        font-size: 12.5px;
+        fill: var(--ink-3);
+      }
+      .wiring .port {
+        font: 500 11px var(--mono);
+        fill: var(--ink-2);
+      }
+      .wiring .dev {
+        fill: var(--device);
+        stroke: var(--line);
+        stroke-width: 1.5;
+      }
+      .wiring .dark {
+        fill: var(--device-ink);
+      }
+      .wiring .cable {
+        fill: none;
+        stroke-width: 4;
+        stroke-linecap: round;
+      }
+      .usb {
+        stroke: var(--usb);
+      }
+      .hdmi {
+        stroke: var(--hdmi);
+      }
+      .net {
+        stroke: var(--net);
+        stroke-dasharray: 2 9;
+      }
+      .flow {
+        stroke-dasharray: 10 14;
+        animation: flow 1.6s linear infinite;
+      }
+      .net.flow {
+        stroke-dasharray: 2 9;
+        animation-duration: 2.4s;
+      }
+      @keyframes flow {
+        to {
+          stroke-dashoffset: -48;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .flow {
+          animation: none;
+        }
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 24px;
+        font-size: 14px;
+        color: var(--ink-2);
+      }
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .legend i {
+        width: 24px;
+        height: 4px;
+        border-radius: 2px;
+      }
+
+      /* Hardware list */
+      .kit {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .kit div {
+        background: var(--surface);
+        padding: 20px;
+        display: grid;
+        gap: 6px;
+        align-content: start;
+      }
+      .kit .what {
+        font: 500 12px var(--mono);
+        color: var(--ink-3);
+      }
+      .kit p {
+        font-size: 15px;
+        color: var(--ink-2);
+      }
+
+      /* Signal path */
+      .path {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0;
+        counter-reset: step;
+      }
+      .path li {
+        counter-increment: step;
+        display: grid;
+        grid-template-columns: 44px 1fr;
+        gap: 16px;
+        padding-block: 16px;
+        border-top: 1px solid var(--line);
+      }
+      .path li::before {
+        content: counter(step);
+        font: 700 22px var(--display);
+        color: var(--ink-3);
+      }
+      .path strong {
+        font-weight: 600;
+      }
+      .path p {
+        color: var(--ink-2);
+        font-size: 15.5px;
+      }
+
+      /* Screenshots */
+      .shot {
+        margin: 0;
+        display: grid;
+        gap: 10px;
+      }
+      .shot img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        box-shadow: 0 18px 40px rgba(10, 12, 16, 0.18);
+      }
+      .shot figcaption {
+        font-size: 14px;
+        color: var(--ink-3);
+      }
+      .views {
+        display: grid;
+        grid-template-columns: 1fr 1fr 0.42fr;
+        gap: 20px;
+        align-items: start;
+      }
+      @media (max-width: 760px) {
+        .views {
+          grid-template-columns: 1fr;
+        }
+        .views .phone img {
+          max-width: 260px;
+        }
+      }
+
+      /* Features */
+      .features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 28px 40px;
+      }
+      .features div {
+        display: grid;
+        gap: 6px;
+        align-content: start;
+      }
+      .features p {
+        font-size: 15.5px;
+        color: var(--ink-2);
+      }
+      .splat {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+        gap: 32px;
+        align-items: center;
+      }
+      @media (max-width: 760px) {
+        .splat {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* Session files */
+      .tree {
+        font: 14px/1.9 var(--mono);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 20px 24px;
+        overflow-x: auto;
+        white-space: pre;
+        color: var(--ink-2);
+      }
+      .tree b {
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .frame {
+        display: grid;
+        grid-template-columns: 8fr 1fr 4fr 3fr 64fr;
+        gap: 2px;
+        min-width: 640px;
+      }
+      .frame div {
+        padding: 10px 6px 8px;
+        font: 12px/1.3 var(--mono);
+        color: #fff;
+        border-radius: 3px;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+      .frame small {
+        display: block;
+        opacity: 0.8;
+      }
+      .f-ts {
+        background: #2a78d6;
+      }
+      .f-sz {
+        background: #7a52c7;
+      }
+      .f-seq {
+        background: #1b8f66;
+      }
+      .f-pad {
+        background: #8a8f99;
+      }
+      .f-data {
+        background: #3a3f4a;
+      }
+      .bytes {
+        display: grid;
+        grid-template-columns: 8fr 1fr 4fr 3fr 64fr;
+        min-width: 640px;
+        font: 11px var(--mono);
+        color: var(--ink-3);
+        padding-top: 4px;
+      }
+      .bytes span:last-child {
+        text-align: right;
+      }
+      .note {
+        font-size: 15px;
+        color: var(--ink-2);
+      }
+
+      /* Commands */
+      pre.cmd {
+        margin: 0;
+        background: var(--code-bg);
+        border-radius: 10px;
+        padding: 18px 20px;
+        overflow-x: auto;
+        font: 14px/1.7 var(--mono);
+        color: var(--ink);
+      }
+      pre.cmd .c {
+        color: var(--ink-3);
+      }
+      footer {
+        font-size: 14px;
+        color: var(--ink-3);
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="hero">
+        <span class="eyebrow">procon-rs · data collection rig</span>
+        <h1>Pro<span class="l">Con</span> <span class="r">Studio</span></h1>
+        <p class="lede">
+          Play Switch games as usual while every button press, stick and gyro
+          sample is timestamped and recorded next to the console's video, ready
+          to train a model that predicts the next move from what is on screen.
+        </p>
+      </header>
+
+      <section aria-labelledby="h-setup">
+        <div class="head">
+          <span class="eyebrow">The setup</span>
+          <h2 id="h-setup">Five pieces of hardware, three kinds of cable</h2>
+          <p>
+            The Raspberry Pi sits between the controller and the console. The
+            Switch sees an ordinary wired Pro Controller. The PC watches the
+            video through a capture card and runs the studio.
+          </p>
+        </div>
+
+        <div class="scroll">
+          <svg
+            class="wiring"
+            viewBox="0 0 1080 560"
+            role="img"
+            aria-labelledby="wiring-title"
+          >
+            <title id="wiring-title">
+              Pro Controller to Raspberry Pi over USB, Pi to Switch dock over
+              USB, dock HDMI to Elgato 4K X, Elgato USB to Linux PC, Pi to PC
+              over the network.
+            </title>
+
+            <!-- Cables first so devices sit on top -->
+            <!-- Controller -> Pi USB-A -->
+            <path class="cable usb" d="M205 182 C 260 182, 270 250, 318 250" />
+            <path
+              class="cable usb flow"
+              d="M205 182 C 260 182, 270 250, 318 250"
+            />
+            <!-- Pi USB-C -> Switch dock USB -->
+            <path class="cable usb" d="M520 250 C 600 250, 610 170, 690 170" />
+            <path
+              class="cable usb flow"
+              d="M520 250 C 600 250, 610 170, 690 170"
+            />
+            <!-- Dock HDMI -> Elgato -->
+            <path class="cable hdmi" d="M860 210 C 930 210, 950 330, 900 372" />
+            <path
+              class="cable hdmi flow"
+              d="M860 210 C 930 210, 950 330, 900 372"
+            />
+            <!-- Elgato USB -> PC -->
+            <path class="cable usb" d="M780 420 C 700 420, 690 440, 612 440" />
+            <path
+              class="cable usb flow"
+              d="M780 420 C 700 420, 690 440, 612 440"
+            />
+            <!-- Pi network -> PC -->
+            <path class="cable net" d="M420 318 C 420 360, 470 370, 470 392" />
+            <path
+              class="cable net flow"
+              d="M420 318 C 420 360, 470 370, 470 392"
+            />
+
+            <!-- Pro Controller -->
+            <g transform="translate(40 110)">
+              <path
+                class="dark"
+                d="M22 18 C 40 6, 128 6, 146 18 C 160 28, 168 56, 168 80 C 168 118, 160 148, 146 150 C 132 152, 124 128, 112 112 L 56 112 C 44 128, 36 152, 22 150 C 8 148, 0 118, 0 80 C 0 56, 8 28, 22 18 Z"
+              />
+              <path
+                d="M8 76 C 10 40, 18 24, 30 18"
+                stroke="var(--blue)"
+                stroke-width="7"
+                fill="none"
+                stroke-linecap="round"
+              />
+              <path
+                d="M160 76 C 158 40, 150 24, 138 18"
+                stroke="var(--red)"
+                stroke-width="7"
+                fill="none"
+                stroke-linecap="round"
+              />
+              <circle
+                cx="44"
+                cy="54"
+                r="15"
+                fill="var(--paper)"
+                opacity="0.9"
+              />
+              <circle
+                cx="104"
+                cy="82"
+                r="15"
+                fill="var(--paper)"
+                opacity="0.9"
+              />
+              <g fill="var(--paper)" opacity="0.9">
+                <rect x="60" y="74" width="8" height="24" rx="2" />
+                <rect x="52" y="82" width="24" height="8" rx="2" />
+                <circle cx="126" cy="44" r="6" />
+                <circle cx="138" cy="56" r="6" />
+                <circle cx="114" cy="56" r="6" />
+                <circle cx="126" cy="68" r="6" />
+              </g>
+              <text class="name" x="0" y="-40">Pro Controller</text>
+              <text class="role" x="0" y="-22">Nintendo, wired</text>
+              <text class="port" x="120" y="92" transform="translate(52 -36)">
+                USB-C
+              </text>
+            </g>
+
+            <!-- Raspberry Pi 4B -->
+            <g transform="translate(318 190)">
+              <rect
+                x="0"
+                y="0"
+                width="202"
+                height="128"
+                rx="10"
+                fill="var(--pcb)"
+              />
+              <rect
+                x="70"
+                y="36"
+                width="54"
+                height="54"
+                rx="4"
+                fill="#1b1d22"
+              />
+              <text
+                x="97"
+                y="68"
+                text-anchor="middle"
+                style="fill: #c9ced6; font: 500 10px var(--mono)"
+              >
+                BCM2711
+              </text>
+              <g fill="#d6d9de">
+                <rect x="-8" y="48" width="22" height="30" rx="2" />
+                <rect x="188" y="48" width="22" height="30" rx="2" />
+              </g>
+              <g fill="#f3c969" opacity="0.9">
+                <rect x="14" y="8" width="170" height="10" rx="2" />
+              </g>
+              <text class="name" x="0" y="-40">Raspberry Pi 4B</text>
+              <text class="role" x="0" y="-22">
+                procon-proxy · USB proxy + frame stream
+              </text>
+              <text class="port" x="-14" y="92" text-anchor="end">
+                USB-A (host)
+              </text>
+              <text class="port" x="216" y="92">USB-C (gadget)</text>
+            </g>
+
+            <!-- Switch 2 in dock -->
+            <g transform="translate(690 108)">
+              <rect class="dev" x="0" y="0" width="170" height="124" rx="12" />
+              <rect
+                x="18"
+                y="-24"
+                width="134"
+                height="80"
+                rx="8"
+                class="dark"
+              />
+              <rect
+                x="4"
+                y="-24"
+                width="16"
+                height="80"
+                rx="6"
+                fill="var(--blue)"
+              />
+              <rect
+                x="150"
+                y="-24"
+                width="16"
+                height="80"
+                rx="6"
+                fill="var(--red)"
+              />
+              <rect
+                x="30"
+                y="-14"
+                width="110"
+                height="60"
+                rx="3"
+                fill="var(--paper)"
+                opacity="0.25"
+              />
+              <text class="name" x="0" y="-52">Nintendo Switch 2</text>
+              <text class="role" x="0" y="150">in its dock</text>
+              <text class="port" x="10" y="84">USB-A</text>
+              <text class="port" x="112" y="112">HDMI out</text>
+            </g>
+
+            <!-- Elgato 4K X -->
+            <g transform="translate(780 372)">
+              <rect x="0" y="0" width="150" height="70" rx="14" class="dark" />
+              <rect
+                x="18"
+                y="26"
+                width="30"
+                height="4"
+                rx="2"
+                fill="var(--paper)"
+                opacity="0.6"
+              />
+              <text
+                x="18"
+                y="52"
+                style="fill: var(--paper); font: 700 13px var(--display)"
+              >
+                4K X
+              </text>
+              <text class="name" x="0" y="100">Elgato 4K X</text>
+              <text class="role" x="0" y="118">HDMI capture · /dev/video0</text>
+              <text class="port" x="130" y="-10">HDMI in</text>
+            </g>
+
+            <!-- Linux PC -->
+            <g transform="translate(400 392)">
+              <rect class="dev" x="0" y="0" width="212" height="112" rx="10" />
+              <rect x="14" y="14" width="184" height="72" rx="4" class="dark" />
+              <g transform="translate(26 26)">
+                <rect
+                  x="0"
+                  y="0"
+                  width="76"
+                  height="46"
+                  rx="2"
+                  fill="var(--paper)"
+                  opacity="0.85"
+                />
+                <rect
+                  x="84"
+                  y="0"
+                  width="76"
+                  height="46"
+                  rx="2"
+                  fill="#1d2029"
+                />
+                <path
+                  d="M106 16 h32 a8 8 0 0 1 8 8 v2 a8 8 0 0 1 -8 8 h-32 a8 8 0 0 1 -8 -8 v-2 a8 8 0 0 1 8 -8z"
+                  fill="#3b3e45"
+                />
+              </g>
+              <rect x="92" y="112" width="28" height="14" fill="var(--line)" />
+              <rect
+                x="66"
+                y="126"
+                width="80"
+                height="8"
+                rx="3"
+                fill="var(--line)"
+              />
+              <text class="name" x="0" y="160">Linux PC</text>
+              <text class="role" x="0" y="178">
+                procon · studio: dashboard, video, recording
+              </text>
+            </g>
+
+            <!-- Cable labels -->
+
+            <text class="port" x="934" y="300">1080p60</text>
+            <text class="port" x="650" y="416">USB 3</text>
+            <text class="port" x="482" y="352">Wi-Fi · TCP :7331</text>
+            <text class="port" x="482" y="368">timestamped frames</text>
+
+            <!-- Browser / phone -->
+            <g transform="translate(96 430)">
+              <rect x="0" y="0" width="48" height="84" rx="9" class="dark" />
+              <rect
+                x="5"
+                y="10"
+                width="38"
+                height="62"
+                rx="3"
+                fill="var(--paper)"
+                opacity="0.9"
+              />
+              <circle cx="24" cy="40" r="8" fill="var(--red)" />
+              <text class="name" x="64" y="30">Any browser</text>
+              <text class="role" x="64" y="48">dashboard on :8090</text>
+              <text class="role" x="64" y="66">phone layout included</text>
+            </g>
+            <path class="cable net" d="M308 462 C 350 462, 360 450, 400 450" />
+            <path
+              class="cable net flow"
+              d="M308 462 C 350 462, 360 450, 400 450"
+            />
+          </svg>
+        </div>
+
+        <div class="legend" aria-hidden="true">
+          <span><i style="background: var(--usb)"></i>USB</span>
+          <span><i style="background: var(--hdmi)"></i>HDMI</span>
+          <span><i style="background: var(--net)"></i>Network</span>
+        </div>
+
+        <div class="kit">
+          <div>
+            <span class="what">input</span>
+            <h3>Pro Controller</h3>
+            <p>
+              Plugged into the Pi by USB instead of pairing with the console.
+            </p>
+          </div>
+          <div>
+            <span class="what">proxy</span>
+            <h3>Raspberry Pi 4B</h3>
+            <p>
+              Runs <code>procon-proxy</code>. Its USB-C port runs in gadget mode
+              and presents itself to the Switch as a Pro Controller, forwarding
+              reports both ways, rumble included. Any board with a USB device
+              port works.
+            </p>
+          </div>
+          <div>
+            <span class="what">console</span>
+            <h3>Nintendo Switch 2</h3>
+            <p>Docked, with its HDMI output going into the capture card.</p>
+          </div>
+          <div>
+            <span class="what">capture</span>
+            <h3>Elgato 4K X</h3>
+            <p>
+              A standard V4L2 device on Linux. Captured as YUYV 1920×1080 at 60
+              fps, the same mode OBS used.
+            </p>
+          </div>
+          <div>
+            <span class="what">control</span>
+            <h3>Linux PC</h3>
+            <p>
+              Runs <code>procon</code>, the studio: dashboard, ffmpeg capture
+              with NVENC, and the recorded sessions. It also cross-compiles and
+              deploys the proxy.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="h-path">
+        <div class="head">
+          <span class="eyebrow">Signal path</span>
+          <h2 id="h-path">From a button press to a training sample</h2>
+        </div>
+        <ol class="path">
+          <li>
+            <div>
+              <strong>The Pi reads a report from the controller.</strong>
+              <p>
+                A high-priority loop reads each 64-byte input report, stamps it
+                with the Pi's clock and a sequence number, and forwards the same
+                bytes to the Switch without waiting on anything else.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>The frame streams to the PC.</strong>
+              <p>
+                A background thread sends the 80-byte frame over TCP port 7331.
+                When the controller is quiet it sends a heartbeat every second,
+                so the studio can tell an idle controller from a dead link. Gaps
+                in the sequence numbers count as dropped frames.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>The studio lines up both clocks.</strong>
+              <p>
+                For each frame the PC compares its own clock with the Pi's
+                timestamp and keeps the lowest difference over 10 seconds. That
+                estimate of the clock offset, which includes the shortest
+                network delay seen (a few milliseconds over Wi-Fi), is shown
+                live and saved with every session.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>ffmpeg records the video.</strong>
+              <p>
+                One ffmpeg process owns the capture card. It always sends a
+                small preview to the dashboard. While recording, it also encodes
+                1080p H.264 on the GPU, and its log gives the wall-clock time of
+                the first frame.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>A session folder holds everything.</strong>
+              <p>
+                Controller frames, one video file per stretch between pauses,
+                and a
+                <code>session.json</code> with the numbers needed to align them.
+              </p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section aria-labelledby="h-studio">
+        <div class="head">
+          <span class="eyebrow">The studio</span>
+          <h2 id="h-studio">One page to watch and record</h2>
+          <p>
+            The dashboard runs on the PC and opens in any browser on the
+            network. The screenshots below are the real rig: the Elgato showing
+            the Switch home screen, and the controller view fed by the Pi.
+          </p>
+        </div>
+
+        <figure class="shot">
+          <img
+            src="images/studio.webp"
+            alt="Studio view: live Switch video, Pro Controller view, recording controls, data tiles and gyro chart"
+            width="1600"
+            height="1000"
+          />
+          <figcaption>
+            Studio view. Video and controller sit side by side like OBS's studio
+            mode, with recording, data and motion docks underneath.
+          </figcaption>
+        </figure>
+
+        <div class="views">
+          <figure class="shot">
+            <img
+              src="images/joy.webp"
+              alt="Joy view with a white Joy-Con colored controller"
+              width="1600"
+              height="1000"
+              loading="lazy"
+            />
+            <figcaption>Joy: light, rounded, Joy-Con colors.</figcaption>
+          </figure>
+          <figure class="shot">
+            <img
+              src="images/telemetry.webp"
+              alt="Telemetry view with a wireframe controller"
+              width="1600"
+              height="1000"
+              loading="lazy"
+            />
+            <figcaption>Telemetry: dense, monospace, wireframe.</figcaption>
+          </figure>
+          <figure class="shot phone">
+            <img
+              src="images/phone.webp"
+              alt="Phone layout with recording controls first"
+              width="780"
+              height="1688"
+              loading="lazy"
+            />
+            <figcaption>Phone: recording controls first.</figcaption>
+          </figure>
+        </div>
+
+        <div class="features">
+          <div>
+            <h3>Record, pause, stop</h3>
+            <p>
+              Type a path prefix such as <code>/data/procon/mk8-</code> and each
+              recording gets its own folder named with the date and time. The
+              page shows the next folder name before you start.
+            </p>
+          </div>
+          <div>
+            <h3>Pick the video input</h3>
+            <p>
+              The capture card, the PC's screen, or no video. The choice and the
+              path prefix are saved, so a restart comes back the way you left
+              it.
+            </p>
+          </div>
+          <div>
+            <h3>Know the disk is fine</h3>
+            <p>
+              Controller and video sizes, write rate, free disk space with the
+              hours left at the current rate, free memory, and dropped frames.
+            </p>
+          </div>
+          <div>
+            <h3>See the link health</h3>
+            <p>
+              Chips for the Pi connection and controller input, the input rate,
+              and the Pi clock offset, which should stay within a few
+              milliseconds.
+            </p>
+          </div>
+          <div>
+            <h3>Watch the motion</h3>
+            <p>
+              A 3D Pro Controller that lights up every button and tilts its
+              sticks, stick positions, and a live five-second gyro chart with a
+              hover readout.
+            </p>
+          </div>
+          <div>
+            <h3>Switch the view</h3>
+            <p>
+              Studio, Joy and Telemetry styles plus a phone layout, remembered
+              per browser, so the phone and the desktop can each keep their own.
+            </p>
+          </div>
+        </div>
+
+        <div class="splat">
+          <div class="head">
+            <h3>Splatoon mode</h3>
+            <p>
+              The default view tilts with how fast the controller turns and
+              springs back when it stops. Splatoon mode tracks the real pose
+              instead: the PC integrates the gyro on every report and uses
+              gravity from the accelerometer to keep the tilt honest. Stand the
+              controller on its side and the model stays there. Press
+              <strong>Y</strong> to flatten it again, as in the game. The
+              sensitivity slider scales the motion from a quarter to four times
+              the real angle.
+            </p>
+          </div>
+          <figure class="shot">
+            <img
+              src="images/splatoon.webp"
+              alt="3D controller turned by Splatoon mode, with the sensitivity slider"
+              width="800"
+              height="500"
+              loading="lazy"
+            />
+            <figcaption>
+              The 3D view in Splatoon mode, sensitivity +2.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section aria-labelledby="h-session">
+        <div class="head">
+          <span class="eyebrow">On disk</span>
+          <h2 id="h-session">What one session looks like</h2>
+        </div>
+        <div class="tree">
+          <b>mk8-2026-09-24_21-48-23/</b> ├── <b>controller.bin</b> 80-byte
+          frames, one per controller report ├── <b>video-01.mkv</b> H.264, until
+          the first pause ├── <b>video-02.mkv</b> after resuming └──
+          <b>session.json</b> start/stop times, clock offset, dropped frames,
+          each video's first-frame time
+        </div>
+
+        <div class="scroll">
+          <div
+            class="frame"
+            role="img"
+            aria-label="Frame layout: 8-byte timestamp, 1-byte size, 4-byte sequence, 3 padding bytes, 64-byte report"
+          >
+            <div class="f-ts">timestamp<small>u64 · Unix ms</small></div>
+            <div class="f-sz">n</div>
+            <div class="f-seq">seq<small>u32</small></div>
+            <div class="f-pad">pad</div>
+            <div class="f-data">
+              HID report<small
+                >64 bytes · 0x30 = buttons, sticks, 3 IMU samples</small
+              >
+            </div>
+          </div>
+          <div class="bytes">
+            <span>0</span><span>8</span><span>9</span><span>13</span
+            ><span>16 → 80</span>
+          </div>
+        </div>
+        <p class="note">
+          To line things up: a video frame's time is its file's
+          <code>start_unix_ms</code> plus its timestamp inside the file. A
+          controller frame's time on the PC is its Pi timestamp plus
+          <code>pi.clock_offset_ms</code>.
+        </p>
+      </section>
+
+      <section aria-labelledby="h-run">
+        <div class="head">
+          <span class="eyebrow">Running it</span>
+          <h2 id="h-run">Two commands, both on the PC</h2>
+        </div>
+        <pre
+          class="cmd"
+        ><span class="c"># Cross-compile procon-proxy, copy it with proxy.toml to the Pi, restart it</span>
+./scripts/deploy.sh pi4
+
+<span class="c"># Start the studio, then open http://&lt;pc&gt;:8090</span>
+./scripts/run.sh</pre>
+      </section>
+
+      <footer>
+        procon-rs · Rust, warp, ffmpeg · Raspberry Pi 4B + Linux PC
+      </footer>
+    </main>
+  </body>
+</html>

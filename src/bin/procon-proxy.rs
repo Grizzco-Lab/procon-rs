@@ -10,11 +10,11 @@ use procon::stream::FrameStreamer;
 
 /// Nintendo Switch Pro Controller HID Proxy
 #[derive(Parser)]
-#[command(name = "procon-pi")]
+#[command(name = "procon-proxy")]
 #[command(about = "A HID proxy for Nintendo Switch Pro Controller")]
 struct Args {
     /// Path to configuration file
-    #[arg(short, long, default_value = "pi.toml")]
+    #[arg(short, long, default_value = "proxy.toml")]
     config: String,
 }
 

@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a Nintendo Switch Pro Controller HID proxy written in Rust. It forwards HID data bidirectionally between a physical Pro Controller and Nintendo Switch via USB gadget functionality on Raspberry Pi 4.
 
-It has two binaries: `procon` (the main one, `src/bin/main.rs`, config `config.toml`) runs on a Linux host with the capture card (dashboard, ffmpeg video capture, session recording); `procon-pi` (`src/bin/procon-pi.rs`, config `pi.toml`) runs on the Pi (proxy + frame streaming over TCP). `cargo run --example fake_pi` stands in for the Pi.
+It has two binaries: `procon` (the main one, `src/bin/main.rs`, config `config.toml`) runs on a Linux host with the capture card (dashboard, ffmpeg video capture, session recording); `procon-proxy` (`src/bin/procon-proxy.rs`, config `proxy.toml`) is the USB proxy, run on the Pi (proxy + frame streaming over TCP). `cargo run --example fake_proxy` stands in for it.
 
 ## Common Commands
 
@@ -27,11 +27,11 @@ cargo build --release
 # Run the studio on the host
 ./scripts/run.sh
 
-# Cross-compile procon-pi, copy it to the Pi and restart it there
+# Cross-compile procon-proxy, copy it to the Pi and restart it there
 ./scripts/deploy.sh [ssh-host]
 
-# Build and run procon-pi on the Pi itself
-./scripts/run-pi.sh
+# Build and run procon-proxy on the Pi itself
+./scripts/run-proxy.sh
 ```
 
 ### Development
@@ -53,7 +53,7 @@ cargo clippy
 ```
 
 ### Configuration
-- Config files: `config.toml` (studio), `pi.toml` (Pi proxy)
+- Config files: `config.toml` (studio), `proxy.toml` (USB proxy)
 - Command line args: `--config <path>` to specify alternative config file
 - Log levels: error, warn, info, debug, trace (set in config or RUST_LOG env var)
 
@@ -78,7 +78,7 @@ cargo clippy
 
 **Parser/KeyState (`src/parser.rs`, `src/keystate.rs`)**: HID input report parsing into structured controller state
 
-**Frame link (`src/stream.rs`)**: Pi-side `FrameStreamer` (TCP, header then 80-byte frames, heartbeats) and host-side `receive_frames` (sequence gaps, clock offset)
+**Frame link (`src/stream.rs`)**: proxy-side `FrameStreamer` (TCP, header then 80-byte frames, heartbeats) and host-side `receive_frames` (sequence gaps, clock offset)
 
 **Recorder (`src/recorder.rs`)**: Session folders `<prefix>YYYY-MM-DD_HH-MM-SS/` with `controller.bin`; start/pause/resume/stop
 
@@ -87,6 +87,8 @@ cargo clippy
 **Studio (`src/studio.rs`)**: Host coordinator; starts/stops recorder and video together, writes `session.json`, saves dashboard settings to `config.state.json`
 
 **Motion (`src/motion.rs`)**: Gyro + accelerometer orientation for the dashboard's Splatoon mode; Y recenters
+
+**3D view (`web/controller3d.js`)**: three.js from jsdelivr; extrudes the SVG view's outline and reuses its theme colors. The SVG is the fallback without WebGL or the CDN
 
 **Web dashboard (`src/web.rs`, `web/`)**: warp server with the embedded page, a WebSocket (`state` per input report, `status` once per second, preview JPEGs as binary) and `POST /api/command`
 
@@ -110,7 +112,7 @@ frame_count_log_interval = 100       # Frame counting log frequency
 hidg_retry_delay_ms = 1000          # HID gadget retry delay
 
 [dump]
-autostart = false                   # Local backup session on the Pi
+autostart = false                   # Local backup session on the proxy
 prefix = "/tmp/procon-"
 
 [stream]

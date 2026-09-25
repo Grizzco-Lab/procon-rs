@@ -3,6 +3,11 @@
 A Rust program that proxies Nintendo Switch Pro Controller HID data and records
 it together with the console's video, for building training datasets.
 
+![The studio dashboard](doc/demo.png)
+
+For the hardware setup, wiring and a tour of the dashboard, open
+[doc/procon-studio.html](doc/procon-studio.html) in a browser.
+
 ## Features
 
 - Forwards HID data between Pro Controller and Nintendo Switch
@@ -16,17 +21,17 @@ it together with the console's video, for building training datasets.
 ## Architecture
 
 ```
-Pro Controller ──USB──> Raspberry Pi (procon-pi) ──USB gadget──> Nintendo Switch
+Pro Controller ──USB──> Raspberry Pi (procon-proxy) ──USB gadget──> Nintendo Switch
                               │ TCP :7331, 80-byte timestamped frames
                               v
 Switch HDMI ──capture card──> Linux host (procon) ──> dashboard :8090
                                          └──> <prefix>YYYY-MM-DD_HH-MM-SS/
 ```
 
-- **Pi (`procon-pi`)**: proxies the controller, stamps every report with the time
+- **USB proxy (`procon-proxy`, on the Pi)**: proxies the controller, stamps every report with the time
   and a sequence number, and streams it to whoever connects on `[stream] port`.
   It sends a heartbeat each second when the controller is quiet.
-- **Host (`procon`, the main binary)**: connects to the Pi, shows the dashboard, captures
+- **Studio (`procon`, the main binary, on the host)**: connects to the proxy, shows the dashboard, captures
   video with ffmpeg and records sessions.
 
 ## Requirements
@@ -40,20 +45,20 @@ Switch HDMI ──capture card──> Linux host (procon) ──> dashboard :809
 ## Usage
 
 Everything runs from the host. Deploy the proxy to the Pi (cross-compiles
-`procon-pi`, copies it with `pi.toml` to `~/procon` on the Pi, and restarts it):
+`procon-proxy`, copies it with `proxy.toml` to `~/procon` on the Pi, and restarts it):
 
 ```bash
 ./scripts/deploy.sh [ssh-host]   # default host: pi4
 ```
 
-Then start the studio, with the Pi's address in `config.toml`:
+Then start the studio, with the proxy's address in `config.toml`:
 
 ```bash
 ./scripts/run.sh
 ```
 
 and open `http://<host>:8090`. To build on the Pi itself instead of deploying,
-run `./scripts/run-pi.sh` there.
+run `./scripts/run-proxy.sh` there.
 
 ## Dashboard
 
@@ -66,6 +71,10 @@ run `./scripts/run-pi.sh` there.
   capture card can only be opened by one program, so close OBS first.
 - **Data**: controller and video sizes, write rate, dropped frames, free disk
   space (with the time left at the current rate) and free memory.
+- **Controller**: a 3D model (three.js, loaded from a CDN; the flat drawing is
+  the fallback). **Splatoon mode** tracks the controller's real pose from the
+  gyro and accelerometer, Y recenters it, and a sensitivity slider (-5 to +5)
+  scales the motion from 1/4x to 4x.
 
 The path prefix and video input are saved in `config.state.json` next to the
 config, so they survive restarts.
@@ -76,22 +85,22 @@ config, so they survive restarts.
 |---|---|
 | `controller.bin` | 80-byte frames: Unix ms (u64 LE), report size (u8), sequence number (u32 LE), 3 padding bytes, 64 report bytes |
 | `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses |
-| `session.json` | Start/stop times, each video file's first-frame Unix ms, the Pi clock offset and dropped frames |
+| `session.json` | Start/stop times, each video file's first-frame Unix ms, the proxy's clock offset and dropped frames |
 
 To line up the data: a video frame's wall-clock time is its segment's
 `start_unix_ms` plus the frame's timestamp in the file; a controller frame's
-host time is its Pi timestamp plus `pi.clock_offset_ms`.
+host time is its proxy timestamp plus `proxy.clock_offset_ms`.
 
 To work on the studio without a Pi, stream a synthetic controller and point
-`[pi] address` at `localhost:7331`:
+`[proxy] address` at `localhost:7331`:
 
 ```bash
-cargo run --example fake_pi
+cargo run --example fake_proxy
 ```
 
 ## Configuration
 
-`pi.toml` on the Pi:
+`proxy.toml` on the Pi:
 
 ```toml
 [proxy]
@@ -125,7 +134,7 @@ enable_cpu_affinity = false
 level = "info"
 ```
 
-`config.toml` on the host sets the Pi address, dashboard port, default path
+`config.toml` on the host sets the proxy's address, dashboard port, default path
 prefix and the ffmpeg capture and encoder options; see the comments in the file.
 
 ## How It Works
@@ -147,20 +156,21 @@ The result is a transparent proxy where the Nintendo Switch sees the Pi as a gen
 The codebase is organized into the following modules:
 
 - **`src/bin/main.rs`** - Main executable (`procon`): studio with dashboard, video and recording
-- **`src/bin/procon-pi.rs`** - Pi executable (`procon-pi`): proxy and frame streaming
+- **`src/bin/procon-proxy.rs`** - USB proxy executable (`procon-proxy`): proxy and frame streaming
 - **`src/motion.rs`** - Controller orientation from the IMU for Splatoon mode
 - **`src/config.rs`** - Configuration management using TOML format
 - **`src/gadget.rs`** - USB gadget management for automatic device setup
 - **`src/proxy.rs`** - Core proxy functionality for bidirectional HID forwarding
 - **`src/device.rs`** - Nintendo Switch Pro Controller device connection and communication
 - **`src/dump.rs`** - Data dumping functionality (console output, file logging, async processing)
-- **`src/stream.rs`** - Frame link: Pi-side TCP streamer and host-side receiver
+- **`src/stream.rs`** - Frame link: proxy-side TCP streamer and studio-side receiver
 - **`src/recorder.rs`** - Session folders and the controller file, with start/pause/resume/stop
 - **`src/video.rs`** - ffmpeg capture: input list, live preview and recorded segments
 - **`src/studio.rs`** - Host coordinator: sessions, `session.json`, saved dashboard settings
 - **`src/web.rs`** - Dashboard server: static page, WebSocket live feed and preview, command API
-- **`web/`** - Dashboard page (`index.html`, `style.css`, `app.js`), embedded into the binary
-- **`examples/fake_pi.rs`** - Streams a synthetic controller like the Pi, no hardware needed
+- **`web/`** - Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`), embedded into the binary
+- **`examples/fake_proxy.rs`** - Streams a synthetic controller like the proxy, no hardware needed
+- **`doc/`** - Setup and dashboard write-up with screenshots
 - **`src/parser.rs`** - HID input report parsing into structured controller state
 - **`src/keystate.rs`** - Data structures for controller state representation
 - **`src/priority.rs`** - Process priority and CPU affinity management for real-time performance
@@ -171,7 +181,7 @@ The codebase is organized into the following modules:
 - **`ProConGadget`** - Handles automatic USB gadget configuration and cleanup
 - **`Proxy`** - Orchestrates bidirectional data forwarding between controller and Nintendo Switch
 - **`AsyncDumper`** - Provides high-performance, non-blocking data logging to prevent proxy latency
-- **`FrameStreamer`** - Pi side of the frame link; a dumper that sends frames to studio hosts
+- **`FrameStreamer`** - Proxy side of the frame link; a dumper that sends frames to studio hosts
 - **`Recorder`** - Controller file of a session, controlled from the dashboard
 - **`Video`** - ffmpeg process owning the video input
 - **`Studio`** - Starts and stops controller and video recording together

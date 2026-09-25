@@ -95,21 +95,41 @@
       <section class="panel p-controller" aria-labelledby="h-controller">
         <header class="panel-head">
           <h2 id="h-controller">Controller</h2>
-          <button
-            type="button"
-            class="mode-toggle"
-            id="splatoon-toggle"
-            title="Track the controller's real 3D pose; press Y to recenter"
-          >
-            Splatoon mode
-          </button>
-          <span class="panel-note" id="splatoon-hint" hidden>Y recenters</span>
           <span class="battery" id="battery" data-level="0">
             <span class="battery-icon"><i></i><i></i><i></i><i></i></span>
             <span class="battery-text">Battery unknown</span>
           </span>
         </header>
+        <div class="pc-tools">
+          <button type="button" class="mode-toggle" id="view-3d">3D</button>
+          <button
+            type="button"
+            class="mode-toggle"
+            id="splatoon-toggle"
+            title="Track the controller's real pose; press Y to recenter"
+          >
+            Splatoon mode
+          </button>
+          <label class="gain" id="gain-control" hidden>
+            Sensitivity
+            <input
+              type="range"
+              id="splatoon-gain"
+              min="-5"
+              max="5"
+              step="1"
+              value="0"
+            />
+            <output id="gain-value" for="splatoon-gain">0</output>
+          </label>
+          <span class="panel-note" id="splatoon-hint" hidden>Y recenters</span>
+        </div>
         <div class="stage">
+          <canvas
+            id="procon-3d"
+            aria-label="3D Pro Controller live view"
+            hidden
+          ></canvas>
           <svg
             class="procon"
             id="procon"
@@ -438,5 +458,6 @@
     </main>
 
     <script src="app.js"></script>
+    <script type="module" src="controller3d.js"></script>
   </body>
 </html>

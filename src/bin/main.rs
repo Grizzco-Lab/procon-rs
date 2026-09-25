@@ -1,7 +1,7 @@
 //! Studio host: dashboard, video capture and session recording
 //!
 //! Runs on the machine with the capture card. It receives controller frames
-//! from the Pi running `procon`, captures video with ffmpeg and records both
+//! from `procon-proxy` (on the Raspberry Pi), captures video with ffmpeg and records both
 //! into session folders.
 
 use alloc::sync::Arc;
@@ -43,16 +43,16 @@ fn main() -> anyhow::Result<()> {
         .video_input
         .unwrap_or_else(|| config.video.input.clone());
 
-    let recorder = Recorder::new(prefix);
+    let recorder = Recorder::new(&prefix);
     let video = Video::new(config.video, Some(input).filter(|id| !id.is_empty()));
     let link = Arc::new(LinkStats::default());
     let feed = LiveFeed::new();
 
-    // Frames from the Pi go to the recorder and the live view
+    // Frames from the proxy go to the recorder and the live view
     let mut pipeline = MultiDumper::new();
     pipeline.add_dumper(Box::new(recorder.clone()));
     pipeline.add_dumper(Box::new(feed.clone()));
-    let address = config.pi.address.clone();
+    let address = config.proxy.address.clone();
     let receiver_link = Arc::clone(&link);
     std::thread::spawn(move || stream::receive_frames(&address, &mut pipeline, &receiver_link));
 
@@ -60,7 +60,7 @@ fn main() -> anyhow::Result<()> {
         recorder,
         video,
         link,
-        config.pi.address,
+        config.proxy.address,
         state_path,
     ));
 

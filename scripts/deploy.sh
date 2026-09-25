@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-compile procon-pi on this host, copy it with pi.toml to the Pi, and restart it there
+# Cross-compile procon-proxy on this host, copy it with proxy.toml to the Pi, and restart it there
 #
 # Usage: scripts/deploy.sh [ssh-host]   (default: pi4)
 #
@@ -49,15 +49,15 @@ export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Clink-arg=--target=aar
 export PKG_CONFIG_ALLOW_CROSS=1
 export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
 export PKG_CONFIG_LIBDIR="$SYSROOT/usr/lib/aarch64-linux-gnu/pkgconfig"
-cargo build --release --target "$TARGET" --bin procon-pi
+cargo build --release --target "$TARGET" --bin procon-proxy
 
 echo "Copying to $HOST:$DEST..."
 ssh "$HOST" "mkdir -p $DEST"
-rsync -avP "target/$TARGET/release/procon-pi" pi.toml "$HOST:$DEST/"
+rsync -avP "target/$TARGET/release/procon-proxy" proxy.toml "$HOST:$DEST/"
 
-echo "Restarting procon-pi on $HOST..."
-# procon was the binary's old name; setsid and nohup keep it alive after ssh leaves
-ssh -t "$HOST" "cd $DEST && sudo sh -c 'pkill -x procon-pi; pkill -x procon; sleep 1; \
-    RUST_LOG=info setsid nohup ./procon-pi --config pi.toml > procon-pi.log 2>&1 < /dev/null &'"
+echo "Restarting procon-proxy on $HOST..."
+# procon was its old name; setsid and nohup keep it alive after ssh leaves
+ssh -t "$HOST" "cd $DEST && sudo sh -c 'pkill -x procon-proxy; pkill -x procon; sleep 1; \
+    RUST_LOG=info setsid nohup ./procon-proxy --config proxy.toml > procon-proxy.log 2>&1 < /dev/null &'"
 sleep 3
-ssh "$HOST" "tail -n 5 $DEST/procon-pi.log"
+ssh "$HOST" "tail -n 5 $DEST/procon-proxy.log"

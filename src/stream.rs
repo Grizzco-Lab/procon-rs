@@ -1,6 +1,6 @@
-//! Frame link between the Pi and the studio host
+//! Frame link between the USB proxy and the studio host
 //!
-//! The Pi listens on TCP. For each connection it sends [`HEADER`] and then raw
+//! The proxy listens on TCP. For each connection it sends [`HEADER`] and then raw
 //! [`FRAME_SIZE`]-byte [`Frame`]s, the same bytes a dump file holds. When no
 //! report arrives for [`HEARTBEAT`] it sends an empty frame (`packet_size == 0`),
 //! so the host can tell an idle controller from a dead link.
@@ -20,7 +20,7 @@ use std::time::Instant;
 /// Sent once per connection: magic and protocol version
 pub const HEADER: [u8; 8] = *b"PROCON\0\x01";
 
-/// Longest silence before the Pi sends an empty frame
+/// Longest silence before the proxy sends an empty frame
 pub const HEARTBEAT: Duration = Duration::from_secs(1);
 
 /// Frames buffered per connection before a slow host starts losing them
@@ -29,7 +29,7 @@ const CLIENT_QUEUE: usize = 512;
 /// Window for the clock offset estimate
 const OFFSET_WINDOW: Duration = Duration::from_secs(10);
 
-/// Pi side: dumper that streams every frame to connected studio hosts
+/// Proxy side: dumper that streams every frame to connected studio hosts
 pub struct FrameStreamer {
     clients: Arc<Mutex<Vec<SyncSender<Frame>>>>,
 }
@@ -101,25 +101,25 @@ fn send_frames(mut stream: TcpStream, frames: Receiver<Frame>) {
     log::info!("Studio {} disconnected: {:?}", peer, result);
 }
 
-/// Host side: health of the link to the Pi
+/// Host side: health of the link to the proxy
 #[derive(Default)]
 pub struct LinkStats {
-    /// A Pi stream is currently open
+    /// A proxy stream is currently open
     pub connected: AtomicBool,
     /// Reports received, excluding heartbeats
     pub frames: AtomicU64,
     /// Reports missing from the sequence
     pub dropped: AtomicU64,
-    /// Host clock minus Pi clock in ms, as the lowest difference seen over the
+    /// Host clock minus proxy clock in ms, as the lowest difference seen over the
     /// last window; it includes the one-way network delay (well under 1 ms on a LAN)
     pub clock_offset_ms: AtomicI64,
 }
 
-/// Host side: keep a connection to the Pi at `address` and feed its reports into `dumper`
+/// Host side: keep a connection to the proxy at `address` and feed its reports into `dumper`
 pub fn receive_frames(address: &str, dumper: &mut dyn Dumper, stats: &LinkStats) -> ! {
     loop {
         if let Err(e) = receive_once(address, dumper, stats) {
-            log::warn!("Pi link {}: {:#}", address, e);
+            log::warn!("Proxy link {}: {:#}", address, e);
         }
         stats.connected.store(false, Ordering::Relaxed);
         thread::sleep(Duration::from_secs(2));
@@ -132,14 +132,14 @@ fn receive_once(address: &str, dumper: &mut dyn Dumper, stats: &LinkStats) -> Re
         .next()
         .context("address did not resolve")?;
     let stream = TcpStream::connect_timeout(&socket, Duration::from_secs(3))?;
-    // Missing a few heartbeats means the Pi is gone
+    // Missing a few heartbeats means the proxy is gone
     stream.set_read_timeout(Some(HEARTBEAT * 3))?;
     let mut stream = BufReader::new(stream);
 
     let mut header = [0u8; HEADER.len()];
     stream.read_exact(&mut header)?;
     ensure!(header == HEADER, "not a procon frame stream");
-    log::info!("Connected to Pi at {}", address);
+    log::info!("Connected to proxy at {}", address);
     stats.connected.store(true, Ordering::Relaxed);
 
     let mut next_seq: Option<u32> = None;
@@ -169,7 +169,7 @@ fn receive_once(address: &str, dumper: &mut dyn Dumper, stats: &LinkStats) -> Re
         let seq = frame.seq;
         if let Some(expected) = next_seq {
             let missing = seq.wrapping_sub(expected);
-            // A huge jump means the Pi restarted, not that frames were lost
+            // A huge jump means the proxy restarted, not that frames were lost
             if missing > 0 && missing < 1_000_000 {
                 stats.dropped.fetch_add(missing as u64, Ordering::Relaxed);
             }

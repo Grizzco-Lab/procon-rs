@@ -1,5 +1,5 @@
-[pi]
-# The Pi running `procon`: its address and [stream] port
+[proxy]
+# The machine running `procon-proxy`: its address and [stream] port
 address = "192.168.4.94:7331"
 
 [web]

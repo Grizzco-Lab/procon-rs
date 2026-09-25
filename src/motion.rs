@@ -92,7 +92,7 @@ impl Default for Orientation {
 }
 
 impl Orientation {
-    /// Advance by one input report taken at `timestamp_ms` (Pi clock)
+    /// Advance by one input report taken at `timestamp_ms` (proxy clock)
     pub fn update(&mut self, state: &ControllerState, timestamp_ms: u64) {
         let Some((gyro_raw, accel_raw)) = imu_average(&state.gyro) else {
             return;
@@ -191,6 +191,41 @@ mod tests {
         assert!((angle_deg(q) - 90.0).abs() < 1.0, "angle {}", angle_deg(q));
         // IMU y is CSS x
         assert!(q[1] > 0.7 && q[2].abs() < 0.01 && q[3].abs() < 0.01);
+    }
+
+    /// Raw accelerometer reading when the controller has turned by `angle` (rad)
+    /// about the CSS x axis, having been recentered while flat
+    fn tilted_accel(angle: f64) -> [i16; 3] {
+        // Flat reads +1 g on IMU z, which is -z in the CSS frame
+        let flat = [0.0, 0.0, -4096.0];
+        let (sin, cos) = angle.sin_cos();
+        // Body sees gravity rotated the other way: R(angle)^-1 * flat
+        let css = [
+            flat[0],
+            cos * flat[1] + sin * flat[2],
+            -sin * flat[1] + cos * flat[2],
+        ];
+        // CSS (x, y, z) = IMU (y, x, -z)
+        [css[1] as i16, css[0] as i16, -css[2] as i16]
+    }
+
+    #[test]
+    fn gravity_agrees_with_gyro() {
+        let mut orientation = Orientation::default();
+        orientation.update(&report([0, 0, 0], tilted_accel(0.0), false), 0);
+        // Turn 90 degrees at 90 °/s with matching accelerometer readings
+        for step in 1..=125 {
+            let angle = (step as f64 * 0.008).min(1.0) * core::f64::consts::FRAC_PI_2;
+            orientation.update(&report([0, 1286, 0], tilted_accel(angle), false), step * 8);
+        }
+        // Then hold still for two seconds
+        for step in 126..=375 {
+            let accel = tilted_accel(core::f64::consts::FRAC_PI_2);
+            orientation.update(&report([0, 0, 0], accel, false), step * 8);
+        }
+        let q = orientation.quaternion();
+        assert!((angle_deg(q) - 90.0).abs() < 3.0, "angle {}", angle_deg(q));
+        assert!(q[1] > 0.6, "axis {:?}", q);
     }
 
     #[test]

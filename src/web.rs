@@ -1,6 +1,6 @@
 //! Studio dashboard server: live controller view, video preview, recording controls
 //!
-//! - `GET /`, `/style.css`, `/app.js`: the page, embedded from `web/`
+//! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`: the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
 //!   report, `{"type":"status"}` text once per second, and the video preview
 //!   as binary JPEG messages
@@ -84,6 +84,12 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, port: u16) {
             "text/javascript; charset=utf-8",
         )
     });
+    let model = warp::path!("controller3d.js").map(|| {
+        asset(
+            include_str!("../web/controller3d.js"),
+            "text/javascript; charset=utf-8",
+        )
+    });
 
     let video = studio.video.clone();
     let websocket = warp::path!("ws")
@@ -115,7 +121,7 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, port: u16) {
         });
 
     let routes = warp::get()
-        .and(index.or(style).or(script))
+        .and(index.or(style).or(script).or(model))
         .or(websocket)
         .or(api);
 
@@ -223,7 +229,7 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
             json!({
                 "type": "status",
                 "link": {
-                    "address": studio.pi_address,
+                    "address": studio.proxy_address,
                     "connected": link.connected.load(Ordering::Relaxed),
                     "input_rate": input_rate,
                     "dropped": link.dropped.load(Ordering::Relaxed),
