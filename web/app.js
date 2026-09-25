@@ -452,7 +452,8 @@ function setButtons() {
   $("video-input").disabled = recorder.busy || active;
   $("video-height").disabled = recorder.busy || active;
   $("video-fps").disabled = recorder.busy || active;
-  $("preview-match").disabled = recorder.busy || active;
+  // The preview restarts on its own; the recording is not touched
+  $("preview-match").disabled = recorder.busy;
 }
 
 function showError(message) {

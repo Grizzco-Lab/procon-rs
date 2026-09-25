@@ -831,11 +831,12 @@
             <div>
               <strong>ffmpeg records the video.</strong>
               <p>
-                One ffmpeg process keeps the capture card open. It streams a
-                low-latency H.264 preview that the dashboard plays in a video
-                element, and raw frames at the recording size and rate. Record
-                starts a GPU encoder on those frames, so video begins with the
-                next frame and pausing never touches the card.
+                One ffmpeg process holds the capture card and hands raw 1080p
+                frames to the studio. A second encodes them into a low-latency
+                H.264 preview that the dashboard plays in a video element, and
+                Record starts a third that encodes the recording. Settings
+                changes restart only the encoders, and video begins with the
+                next frame after Record.
               </p>
             </div>
           </li>
