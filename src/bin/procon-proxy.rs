@@ -101,7 +101,7 @@ fn main() -> anyhow::Result<()> {
         config.proxy,
     )?;
 
-    log::info!("Starting proxy with async dumping (dump thread runs at normal priority)");
+    log::info!("Starting proxy with async dumping (threads inherit the real-time priority)");
 
     // Start proxy main loop (runs at high priority)
     let result = proxy.start();

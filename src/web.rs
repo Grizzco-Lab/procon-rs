@@ -1,12 +1,12 @@
 //! Studio dashboard server: live controller view, video preview, recording controls
 //!
-//! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`: the page, embedded from `web/`
+//! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`, `/inspect.js`: the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
 //!   report, `{"type":"status"}` text twice a second, and the video preview
 //!   as binary fragmented-MP4 messages (an init segment, then one per frame)
 //! - `POST /api/command`: a [`Command`] such as `{"action":"start"}`, answered
 //!   with `{"recorder": ..., "replay": ...}` or `{"error": "..."}`
-//! - `GET /api/inspect/...`: the Inspector app's data, see [`crate::inspect`];
+//! - `GET /api/inspect/...`: the Inkspector app's data, see [`crate::inspect`];
 //!   errors are `400` with `{"error": "..."}`
 
 use crate::dump::{Dumper, Frame};
@@ -103,7 +103,7 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, inspector: Arc<Inspector
     });
 
     let delay_inspector = Arc::clone(&inspector);
-    // Inspector data reads files and runs ffmpeg; keep that off the async workers
+    // Inkspector data reads files and runs ffmpeg; keep that off the async workers
     let inspect = warp::path!("api" / "inspect" / String)
         .and(warp::query::<HashMap<String, String>>())
         .and(warp::header::optional::<String>("range"))

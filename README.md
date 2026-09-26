@@ -1,7 +1,13 @@
-# ProCon Proxy
+# ProCon Studio
 
-A Rust program that proxies Nintendo Switch Pro Controller HID data and records
-it together with the console's video, for building training datasets.
+Records Nintendo Switch gameplay for training datasets: every Pro Controller
+report, timestamped, next to the console's video and sound.
+
+A Raspberry Pi 4 sits between the Pro Controller and the Switch as a USB proxy
+and streams the controller's reports over the network. A Linux PC with a
+capture card records them with the video, and its web dashboard has two apps:
+**Studio**, to watch and record, and **Inkspector**, to check recorded
+sessions frame by frame.
 
 > [!TIP]
 > **[See the setup guide and dashboard tour →](https://htmlpreview.github.io/?https://github.com/Grizzco-Lab/procon-rs/blob/main/doc/index.html)**
@@ -9,70 +15,169 @@ it together with the console's video, for building training datasets.
 > The hardware you need, how it is wired, and what the studio does, with
 > screenshots. Source: [doc/index.html](doc/index.html).
 
-![The studio dashboard](doc/demo.png)
+![The Studio app: live video with the input overlay, the 3D controller, recording, replay, data and motion panels](doc/demo.png)
 
-## Features
-
-- Forwards HID data between Pro Controller and Nintendo Switch
-- Automatic USB gadget setup
-- Bidirectional communication (input/output reports)
-- Streams timestamped controller frames to a studio host over the network
-- Studio host: web dashboard, video capture (capture card or screen) and
-  recording sessions that keep controller data and video in sync
-- Configurable via TOML files
-
-## Architecture
+## How it fits together
 
 ```
-Pro Controller ──USB──> Raspberry Pi (procon-proxy) ──USB gadget──> Nintendo Switch
-                              │ TCP :7331, 80-byte timestamped frames
+Pro Controller ──USB──> Raspberry Pi 4 (procon-proxy) ──USB gadget──> Nintendo Switch
+                              │ TCP :7331 frames, :7332 replay
                               v
-Switch HDMI ──capture card──> Linux host (procon) ──> dashboard :8090
+Switch HDMI ──capture card──> Linux PC (procon) ──> dashboard :8090
                                          └──> <prefix>YYYY-MM-DD_HH-MM-SS/
 ```
 
-- **USB proxy (`procon-proxy`, on the Pi)**: proxies the controller, stamps every report with the time
-  and a sequence number, and streams it to whoever connects on `[stream] port`.
-  It sends a heartbeat each second when the controller is quiet.
-- **Studio (`procon`, the main binary, on the host)**: connects to the proxy, shows the dashboard, captures
-  video with ffmpeg and records sessions.
+- **`procon-proxy`** (on the Pi): presents itself to the Switch as a wired Pro
+  Controller and forwards reports both ways (input to the Switch; rumble, LEDs
+  and subcommands to the controller). Each input report is stamped with the
+  Pi's clock and a sequence number and streamed to the studio on
+  `[stream] port`, with a heartbeat each second while the controller is quiet.
+  Actions sent to its `[replay] port` replace (or mix with) the controller's.
+- **`procon`** (on the PC): the studio. Connects to the proxy, captures video
+  and sound with ffmpeg, serves the dashboard and records sessions.
+- **`crates/gameplay-data`**: the recording format and the per-frame alignment
+  of controller input to video, shared with the training code through Python
+  bindings.
 
 ## Requirements
 
-- Raspberry Pi 4 (or compatible device with USB device controller)
-- Linux with USB gadget support
-- Nintendo Switch Pro Controller (USB connection)
-- A Linux host with `ffmpeg` for the studio (NVENC is used by default)
-- Rust
+- Raspberry Pi 4 (or another Linux board with a USB device controller), with
+  USB gadget support
+- Nintendo Switch or Switch 2, docked, and a wired Pro Controller
+- A Linux PC with `ffmpeg` and a capture card (tested with the Elgato 4K X); an
+  NVIDIA GPU for the default NVENC encoders, or libx264 (see `config.toml`).
+  PulseAudio for recording sound
+- Rust (stable; `rust-toolchain.toml` adds the `aarch64-unknown-linux-musl`
+  target)
 
-## Usage
+## Quick start
 
-Everything runs from the host. Deploy the proxy to the Pi (cross-compiles
-`procon-proxy`, copies it with `proxy.toml` to `~/procon` on the Pi, and restarts it):
+Everything runs from the PC.
 
-```bash
-./scripts/deploy.sh [ssh-host]   # default host: pi4
-```
+1. Deploy the proxy. This cross-compiles `procon-proxy` as a static binary,
+   copies it with `proxy.toml` to `~/procon` on the Pi and restarts it there
+   (it needs `sudo` on the Pi for the USB gadget):
 
-Then start the studio, with the proxy's address in `config.toml`:
+   ```bash
+   ./scripts/deploy.sh [ssh-host]   # default host: pi4
+   ```
 
-```bash
-./scripts/run.sh
-```
+   To build on the Pi instead, run `./scripts/run-proxy.sh` there.
 
-and open `http://<host>:8090`. To build on the Pi itself instead of deploying,
-run `./scripts/run-proxy.sh` there.
+2. Set the proxy's address in `config.toml` (`[proxy] address` and
+   `replay_address`), then start the studio:
+
+   ```bash
+   ./scripts/run.sh
+   ```
+
+3. Open `http://<pc>:8090`.
+
+Without a Pi, `cargo run --example fake_proxy [port]` streams a synthetic
+controller; point `[proxy] address` at `localhost:7331`.
+
+## The dashboard
+
+One page with two apps, switched without reloading: **Studio** (`#studio`) and
+**Inkspector** (`#inspect`). The app links sit in a left rail or in the top
+bar; the connection, controller, proxy latency and recording chips stay in the
+top bar in both apps. The **View** menu picks the theme (Studio, Joy or
+Telemetry), the Phone layout (also used automatically on narrow screens) and
+where the app links go (Side rail or Top bar); the choices are remembered per
+browser. Capture and recording carry on while the Inkspector is shown; only the
+Studio's preview pauses.
+
+### Studio
+
+- **Video**: the capture card, the screen or no video. The live preview is
+  low-latency H.264 played by the browser, with its delay shown next to the
+  title; **Inputs** draws the sticks, pressed buttons and turn rates over it,
+  delayed to match the picture. A capture card can only be opened by one
+  program, so close OBS first.
+- **Controller**: a 3D Pro Controller (three.js from a CDN; a flat drawing
+  without WebGL) with the battery level. **Splatoon mode** tracks the
+  controller's real pose from the gyro and accelerometer, Y recenters it, and
+  the sensitivity slider (-5 to +5) scales the motion from 1/4x to 4x.
+- **Recording**: Record, Pause and Stop; the path prefix; the recorded size
+  (1080p to 360p) and frame rate (60 to 10 fps); "Preview at recording
+  quality"; "Record sound"; and the game's settings (Splatoon 3 motion and
+  stick sensitivity, motion controls, invert Y/X), saved with each session.
+- **Replay**: plays a session folder, a `controller.bin` or a `.jsonl` of
+  actions to the Switch (see below).
+- **Data**: controller and video write rates, this session's size, all
+  sessions in the save folder, dropped frames, free disk space (with the time
+  left at the current rate) and free memory.
+- **Motion**: stick readouts and a five-second gyro chart.
+
+The path prefix, video input, quality, sound, game settings and replay file
+are saved in `config.state.json` next to the config, so they survive restarts.
+
+### Inkspector
+
+Checks recorded sessions frame by frame: whether the controller labels line up
+with the picture, and a model's predictions against them.
+
+- **Sessions**: every session under `[inspect] root` (by default the recording
+  prefix's folder) with its start, duration, segments, video size and rate,
+  sound, reports, game settings and video delay.
+- **A segment**: the frame at 360p with its labels drawn over it (Overlay:
+  Full, Minimal or None), a scrubber, play/pause at 0.25x to 1x with the
+  segment's sound, the three frames on each side, and a table of their labels
+  (buttons, sticks, gyro degrees over the frame). Keys: Space play/pause, ←/→
+  one frame (Shift: ten), R a random frame where a button changes or the gyro
+  turns (Shift+R: any), G go to a frame number or time.
+- **Delay**: the `video_delay_ms` box starts at the session's delay from the
+  calibration file (`[inspect] calibration`, AgentZero's `calibration.json`),
+  shown with its source: set by hand, measured from the session (high or
+  medium confidence), or, failing both, the delay of its setup. Change the box
+  to check the alignment by eye; **Save as this session's delay** writes it to
+  the calibration file as set by hand, and **Remove** goes back to the
+  computed one.
+- **Predictions**: a labels `.jsonl` path on the PC shows a model's labels
+  under the truth, differences in red.
+- The URL keeps the view (`#inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>`).
+
+Labels come from `crates/gameplay-data`, the same code the training side uses.
+
+## Recordings
+
+A session is a folder named from the path prefix and the start time: prefix
+`/data/procon/mk8-` records into `/data/procon/mk8-2026-09-24_21-40-05/`. The
+prefix's folder must exist.
+
+| File | Contents |
+|---|---|
+| `controller.bin` | 80-byte frames, little endian: Unix ms on the Pi (u64), report size (u8, 0 for a heartbeat), sequence number (u32), µs from the proxy reading the report to the Switch taking it (u16, 0 if unknown), 1 padding byte, the 64-byte HID report |
+| `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses: constant-rate H.264 with a keyframe every second, plus an Opus sound track (48 kHz stereo) when "Record sound" is on |
+| `session.json` | Start/stop times, the proxy's address and clock offset, frame and dropped-frame counts, the video input, size and frame rate, each file's first-frame time (`start_unix_ms`, and `audio_start_unix_ms` with sound) and `game_settings` |
+
+To line them up on the PC's clock:
+
+- Frame `n` of a video file was captured at its `start_unix_ms` plus
+  `n / video.fps` seconds. `start_unix_ms` is when the capture card delivered
+  the first frame to the kernel, not when it reached the studio.
+- A controller frame's time is its timestamp plus `proxy.clock_offset_ms`
+  (the smallest PC-minus-Pi difference seen over 10 s, so it includes the
+  shortest network delay).
+- The game itself takes time from input to picture: the frame at video time
+  `t` shows the input from `t - video_delay_ms`. That delay differs per setup
+  and session; AgentZero measures it into `calibration.json`, and the
+  Inkspector shows and edits it.
+- The sound track starts with the first frame (shifted by
+  `[video] audio_offset_ms`), so both tracks start at 0 in the file.
+
+`gameplay-data` implements all of this (`align::constant_rate_times`,
+`align::align`), in Rust and Python.
 
 ### Replaying actions
 
-To check what a model predicts, play its actions to the Switch from the
-dashboard's Replay panel: load a session folder, a `controller.bin` or a
-`.jsonl` of actions, then Play. The studio sends them to the proxy's
-`[replay]` port (7332, `replay_address` in `config.toml`); while it plays, the
-Switch gets the replayed input instead of the controller's (and that is what
-gets recorded), and the controller takes over again on Stop or at the end.
-"Mix with the controller" combines the two instead: buttons pressed on either
-count, and each stick and the gyro take whichever moves more.
+To see what a model does, play actions to the Switch from the Replay panel:
+load a session folder, a `controller.bin` or a `.jsonl`, then Play. The studio
+sends them to the proxy's replay port; while it plays, the Switch gets the
+replayed input instead of the controller's (and that is what gets recorded),
+and the controller takes over again on Stop or at the end. "Mix with the
+controller" combines the two instead: buttons pressed on either count, and each
+stick and the gyro take whichever moves more.
 
 A `.jsonl` file has one action per line:
 
@@ -85,201 +190,51 @@ Fields left out keep the controller's own values. Sticks are raw 12-bit
 can also connect to the replay port itself and stream lines (without `t_ms`)
 as it predicts them.
 
-## Dashboard
-
-One page with two apps, switched without reloading (the preview, capture and
-recording keep running): **Studio** (`#studio`, below) and **Inkspector**
-(`#inspect`). The app links sit in a left rail that widens on hover, or in the
-top bar (**View → Nav: Side / Top**; phones always use the top bar). The
-status chips stay in the top bar in both apps.
-
-- **View**: Studio, Joy or Telemetry style, plus a Phone layout (single column,
-  also used automatically on narrow screens), and the Nav placement. Remembered
-  per browser.
-- **Record / Pause / Stop**: a session is a folder named from the path prefix
-  and the start time, e.g. prefix `/data/procon/mk8-` records into
-  `/data/procon/mk8-2026-09-24_21-40-05/`. The prefix's folder must exist.
-- **Video input**: the screen or any V4L2 device, such as the Elgato 4K X. A
-  capture card can only be opened by one program, so close OBS first.
-- **Video quality**: recorded size (1080p, 720p, 540p, 360p) and frame rate (60
-  to 10 fps), to keep files small. The live preview is H.264 at 1080p60 by
-  default (a few Mbit/s, played by a `<video>` element with about 0.2 s delay);
-  tick "Preview at recording quality" to see exactly what gets recorded.
-- **Data**: controller and video write rates per second and per hour, this
-  session's size, all sessions in the save folder, dropped frames, free disk
-  space (with the time left at the current rate) and free memory. Updates twice
-  a second.
-- **Controller**: a 3D model (three.js, loaded from a CDN; the flat drawing is
-  the fallback). **Splatoon mode** tracks the controller's real pose from the
-  gyro and accelerometer, Y recenters it, and a sensitivity slider (-5 to +5)
-  scales the motion from 1/4x to 4x.
-
-The path prefix and video input are saved in `config.state.json` next to the
-config, so they survive restarts.
-
-### Inkspector
-
-Checks recorded sessions frame by frame: whether the controller labels line up
-with the picture, and later a model's predictions against them.
-
-- **Sessions**: every session under `[inspect] root` (by default the recording
-  prefix's folder) with its start, duration, segments, video size and rate,
-  sound, game settings and calibrated delay.
-- **A segment**: the frame at 360p with its labels drawn by the same input
-  overlay as the live video, a scrubber, play/pause at 0.25x to 1x, the three
-  frames on each side, and a table of their labels (buttons, sticks, gyro
-  degrees over the frame). Keys: Space play/pause, ←/→ one frame (Shift: ten),
-  R a random frame where a button changes or the gyro turns (Shift+R: any), G go
-  to a frame number or time.
-- **Delay**: the `video_delay_ms` box starts at the session's calibrated delay
-  from AgentZero's `calibration.json` (`[inspect] calibration`), when its
-  confidence is high or medium; change it to check the alignment by eye.
-- **Predictions**: a labels `.jsonl` path on the host shows a model's labels
-  under the truth, differences in red.
-- The URL keeps the view (`#inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>`).
-
-Labels come from `crates/gameplay-data`, the same code AgentZero trains with.
-Frames are decoded by ffmpeg on request (a seek, then a short window), so only
-the part of a video being looked at is read.
-
-### Session folder
-
-| File | Contents |
-|---|---|
-| `controller.bin` | 80-byte frames: Unix ms (u64 LE), report size (u8), sequence number (u32 LE), µs from the proxy reading the report to the Switch taking it (u16 LE, 0 if unknown), 1 padding byte, 64 report bytes |
-| `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses: H.264 video, plus an Opus sound track (48 kHz stereo) when "Record sound" is on |
-| `session.json` | Start/stop times, each video file's first-frame Unix ms (and first sound sample's, `audio_start_unix_ms`), the proxy's clock offset and dropped frames, and `game_settings` (Splatoon 3 motion/stick sensitivity, motion controls, invert), set in the Recording panel |
-
-To line up the data: frames in a video file come at a constant rate, so frame
-`n` was captured at its segment's `start_unix_ms` plus `n / video.fps` seconds.
-`start_unix_ms` is when the capture card delivered that first frame to the kernel
-(sessions before this change used its arrival at the studio, which could be a few
-hundred ms later); the game's own delay from input to picture still comes on top; a controller frame's
-host time is its proxy timestamp plus `proxy.clock_offset_ms`. The sound track starts at
-the sample that arrived with the first frame (shifted by `[video] audio_offset_ms`), so in
-the file both tracks start at 0; `audio_start_unix_ms` says when that sample arrived.
-
-To work on the studio without a Pi, stream a synthetic controller and point
-`[proxy] address` at `localhost:7331`:
-
-```bash
-cargo run --example fake_proxy
-```
-
 ## Configuration
 
-`proxy.toml` on the Pi:
+Both programs take `--config <path>`.
 
-```toml
-[proxy]
-# Retry delay when HID gadget device fails to open (milliseconds)
-hidg_retry_delay_ms = 1000
+`config.toml` (studio, on the PC):
 
-[dump]
-# Local backup: record one session from launch until exit, besides what the studio records
-autostart = false
-# Path prefix of that session folder (<prefix>YYYY-MM-DD_HH-MM-SS/controller.bin)
-prefix = "/tmp/procon-"
+| Section | Sets |
+|---|---|
+| `[proxy]` | `address` (the Pi's stream port) and `replay_address` (its replay port) |
+| `[web]` | Dashboard `port` |
+| `[recording]` | Default path `prefix` until one is set on the dashboard |
+| `[video]` | First `input` (`"screen"`, `/dev/video0` or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
+| `[inspect]` | Optional: the Inkspector's `root` (folder of session folders) and `calibration` (default `../AgentZero/calibration.json`); relative paths start at the config's folder |
+| `[logging]` | `level`: error, warn, info, debug or trace |
 
-[stream]
-# TCP port the studio host connects to for live frames
-port = 7331
+`proxy.toml` (USB proxy, on the Pi):
 
-[replay]
-# TCP port for JSON-line actions that replace the controller's while a client is connected
-port = 7332
-
-[performance]
-# Enable CPU affinity pinning to random core
-enable_cpu_affinity = false
-
-[logging]
-# Log level: error, warn, info, debug, trace
-level = "info"
-```
-
-`config.toml` on the host sets the proxy's address, dashboard port, default path
-prefix and the ffmpeg capture and encoder options; see the comments in the file.
-An optional `[inspect]` section sets the Inkspector's `root` (the folder of
-session folders) and `calibration` (AgentZero's `calibration.json`, by default
-`../AgentZero/calibration.json` next to the config).
-
-## How It Works
-
-The proxy program:
-
-1. **Automatic Setup**: Creates and configures USB gadget with Nintendo Pro Controller device IDs
-2. **Controller Connection**: Connects to the physical Pro Controller via USB HID
-3. **Bidirectional Forwarding**: 
-   - **Input Reports**: Controller → Pi → Nintendo Switch (button presses, stick positions, gyro data)
-   - **Output Reports**: Nintendo Switch → Pi → Controller (rumble commands, LED control)
-4. **Streaming**: Every input report goes to the studio host with its timestamp, and optionally to the console
-5. **Error Recovery**: Automatic reconnection if controller or gadget device disconnects
-
-The result is a transparent proxy where the Nintendo Switch sees the Pi as a genuine Pro Controller while the Pi forwards all communication from the real controller.
-
-## Project Structure
-
-The codebase is organized into the following modules:
-
-- **`src/bin/main.rs`** - Main executable (`procon`): studio with dashboard, video and recording
-- **`src/bin/procon-proxy.rs`** - USB proxy executable (`procon-proxy`): proxy and frame streaming
-- **`src/replay.rs`** - Action format, loading replay files, and the proxy's replay port
-- **`src/player.rs`** - Replay panel: plays loaded actions to the proxy
-- **`src/motion.rs`** - Controller orientation from the IMU for Splatoon mode
-- **`src/config.rs`** - Configuration management using TOML format
-- **`src/gadget.rs`** - USB gadget management for automatic device setup
-- **`src/proxy.rs`** - Core proxy functionality for bidirectional HID forwarding
-- **`src/wake.rs`** - USB remote wakeup on Home (for the original Switch; the Switch 2 ignores it)
-- **`src/device.rs`** - Nintendo Switch Pro Controller device connection and communication
-- **`src/dump.rs`** - Dumpers (file, async, fan-out to several); the frame format comes from `gameplay-data`
-- **`src/stream.rs`** - Frame link: proxy-side TCP streamer and studio-side receiver
-- **`src/recorder.rs`** - Session folders and the controller file, with start/pause/resume/stop
-- **`src/video.rs`** - ffmpeg capture: input list, live preview and recorded segments
-- **`src/studio.rs`** - Host coordinator: sessions, `session.json`, saved dashboard settings
-- **`src/audio.rs`** - Capture card sound: always read from PulseAudio, the last 2 s kept, streamed into recordings from their first frame
-- **`src/web.rs`** - Dashboard server: static page, WebSocket live feed and preview, command API
-- **`src/inspect.rs`** - Inkspector app backend: session list, frames decoded by ffmpeg, labels via `gameplay-data`
-- **`crates/gameplay-data`** - Recording format (80-byte frames, `session.json`), per-frame alignment of controller input to video, labels and calibration; shared with AgentZero's Python training code
-- **`web/`** - Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`), embedded into the binary
-- **`examples/fake_proxy.rs`** - Streams a synthetic controller like the proxy, no hardware needed
-- **`doc/`** - Setup and dashboard write-up with screenshots
-- **`src/parser.rs`** - HID input report parsing into structured controller state
-- **`src/keystate.rs`** - Data structures for controller state representation
-- **`src/priority.rs`** - Process priority and CPU affinity management for real-time performance
-
-### Core Components
-
-- **`ProController`** - Manages connection and communication with the physical controller
-- **`ProConGadget`** - Handles automatic USB gadget configuration and cleanup
-- **`Proxy`** - Orchestrates bidirectional data forwarding between controller and Nintendo Switch
-- **`AsyncDumper`** - Provides high-performance, non-blocking data logging to prevent proxy latency
-- **`FrameStreamer`** - Proxy side of the frame link; a dumper that sends frames to studio hosts
-- **`Recorder`** - Controller file of a session, controlled from the dashboard
-- **`Video`** - ffmpeg process owning the video input
-- **`Studio`** - Starts and stops controller and video recording together
-
-## Performance Features
-
-- **Real-time Priority**: Optional high process priority for minimal latency
-- **CPU Affinity**: Optional CPU core pinning for consistent performance  
-- **Asynchronous Dumping**: Data logging runs in separate thread to avoid blocking proxy
-- **Non-blocking I/O**: All device operations use timeouts to prevent hanging
-- **Backpressure Handling**: Intelligent packet dropping when logging falls behind
+| Section | Sets |
+|---|---|
+| `[proxy]` | `hidg_retry_delay_ms`: wait before reopening the HID gadget |
+| `[dump]` | `autostart` a local backup session from launch until exit, at `prefix` |
+| `[stream]` | `port` the studio connects to for frames (7331) |
+| `[replay]` | `port` for JSON-line actions (7332) |
+| `[performance]` | `enable_cpu_affinity`: pin the proxy to one CPU core |
+| `[logging]` | `level` |
 
 ## Troubleshooting
 
-- **"Failed to setup USB gadget"**: Ensure you're running with root privileges (`sudo`)
-- **"No USB device controller found"**: Verify your device supports USB gadget mode
-- **"Pro Controller not found"**: Check USB connection and device permissions
+- **"Failed to setup USB gadget"**: run the proxy as root (`sudo`).
+- **"No USB device controller found"**: the board's USB port is not in device
+  (gadget) mode; check that the kernel supports USB gadgets.
+- **"Pro Controller not found"**: check the USB cable and permissions. The proxy
+  waits for the controller as long as it takes.
 - **"No controller input" although the console responds to the controller**:
   the controller is talking to the console over Bluetooth (it does this once it
   has been plugged into the console itself). The proxy resets it at start to
-  force USB; if it happens while running, replug it and restart the proxy
-- **High CPU usage**: Try enabling CPU affinity in the configuration
-- **Switch asleep**: the proxy logs "Switch stopped taking input" once and drops
-  reports until it wakes. Home then signals USB remote wakeup (`src/wake.rs`
-  drives the Pi 4's DWC2 controller directly, since its Linux driver cannot).
-  The Switch 2 ignores it, as it does a Pro Controller plugged in directly: wake
-  it with its power button or a wireless controller. The original Switch may
-  accept it (untested) 
+  force USB; if it happens while running, replug it and restart the proxy.
+- **No video**: a capture card can only be opened by one program; close OBS.
+- **Switch asleep**: the proxy logs "Switch stopped taking input" once and
+  drops reports until it wakes. Home then signals USB remote wakeup
+  (`src/wake.rs`). The Switch 2 ignores it, as it does a Pro Controller plugged
+  in directly: wake it with its power button or a wireless controller. The
+  original Switch may accept it (untested).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the code layout, how the pieces fit,
+development commands and conventions.

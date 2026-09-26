@@ -356,6 +356,7 @@
 
       /* Session files */
       .tree {
+        margin: 0;
         font: 14px/1.9 var(--mono);
         background: var(--surface);
         border: 1px solid var(--line);
@@ -371,7 +372,7 @@
       }
       .frame {
         display: grid;
-        grid-template-columns: 8fr 1fr 4fr 3fr 64fr;
+        grid-template-columns: 8fr 1fr 4fr 2fr 1fr 64fr;
         gap: 2px;
         min-width: 640px;
       }
@@ -396,6 +397,9 @@
       .f-seq {
         background: #1b8f66;
       }
+      .f-fwd {
+        background: #b7791f;
+      }
       .f-pad {
         background: #8a8f99;
       }
@@ -404,7 +408,7 @@
       }
       .bytes {
         display: grid;
-        grid-template-columns: 8fr 1fr 4fr 3fr 64fr;
+        grid-template-columns: 8fr 1fr 4fr 2fr 1fr 64fr;
         min-width: 640px;
         font: 11px var(--mono);
         color: var(--ink-3);
@@ -446,8 +450,9 @@
         <h1>Pro<span class="l">Con</span> <span class="r">Studio</span></h1>
         <p class="lede">
           Play Switch games as usual while every button press, stick and gyro
-          sample is timestamped and recorded next to the console's video, ready
-          to train a model that predicts the next move from what is on screen.
+          sample is timestamped and recorded next to the console's video and
+          sound, ready to train a model that predicts the next move from what is
+          on screen.
         </p>
       </header>
 
@@ -661,7 +666,9 @@
                 4K X
               </text>
               <text class="name" x="0" y="100">Elgato 4K X</text>
-              <text class="role" x="0" y="118">HDMI capture · /dev/video0</text>
+              <text class="role" x="0" y="118">
+                HDMI capture · video and sound
+              </text>
               <text class="port" x="130" y="-10">HDMI in</text>
             </g>
 
@@ -711,8 +718,8 @@
 
             <text class="port" x="934" y="300">1080p60</text>
             <text class="port" x="650" y="416">USB 3</text>
-            <text class="port" x="482" y="352">Wi-Fi · TCP :7331</text>
-            <text class="port" x="482" y="368">timestamped frames</text>
+            <text class="port" x="482" y="352">Wi-Fi · TCP :7331, :7332</text>
+            <text class="port" x="482" y="368">frames out, replay in</text>
 
             <!-- Browser / phone -->
             <g transform="translate(96 430)">
@@ -759,8 +766,9 @@
             <p>
               Runs <code>procon-proxy</code>. Its USB-C port runs in gadget mode
               and presents itself to the Switch as a Pro Controller, forwarding
-              reports both ways, rumble included. Any board with a USB device
-              port works.
+              reports both ways, rumble included. It resets the controller at
+              start so it talks over USB, not Bluetooth. Any board with a USB
+              device port works.
             </p>
           </div>
           <div>
@@ -773,16 +781,16 @@
             <h3>Elgato 4K X</h3>
             <p>
               A standard V4L2 device on Linux. Captured as YUYV 1920×1080 at 60
-              fps, the same mode OBS used.
+              fps, the same mode OBS used; its sound comes through PulseAudio.
             </p>
           </div>
           <div>
             <span class="what">control</span>
             <h3>Linux PC</h3>
             <p>
-              Runs <code>procon</code>, the studio: dashboard, ffmpeg capture
-              with NVENC, and the recorded sessions. It also cross-compiles and
-              deploys the proxy.
+              Runs <code>procon</code>, the studio: the dashboard, ffmpeg
+              capture with NVENC, and the recorded sessions. It also
+              cross-compiles and deploys the proxy.
             </p>
           </div>
         </div>
@@ -798,9 +806,11 @@
             <div>
               <strong>The Pi reads a report from the controller.</strong>
               <p>
-                A high-priority loop reads each 64-byte input report, stamps it
-                with the Pi's clock and a sequence number, and forwards the same
-                bytes to the Switch without waiting on anything else.
+                A high-priority thread reads each 64-byte input report, stamps
+                it with the Pi's clock and a sequence number, and forwards it to
+                the Switch, noting how long the Switch took to accept it. Rumble
+                and other commands from the Switch go the other way on a thread
+                of their own, so they never hold input up.
               </p>
             </div>
           </li>
@@ -832,11 +842,13 @@
               <strong>ffmpeg records the video.</strong>
               <p>
                 One ffmpeg process holds the capture card and hands raw 1080p
-                frames to the studio. A second encodes them into a low-latency
-                H.264 preview that the dashboard plays in a video element, and
-                Record starts a third that encodes the recording. Settings
+                frames to the studio, each with the time the card delivered it.
+                A second encodes them into a low-latency H.264 preview that the
+                dashboard plays in a video element, and Record starts a third
+                that encodes the recording at a constant frame rate. Settings
                 changes restart only the encoders, and video begins with the
-                next frame after Record.
+                next frame after Record. The card's sound is read all the time,
+                so a recording's sound track starts with its first frame.
               </p>
             </div>
           </li>
@@ -844,9 +856,21 @@
             <div>
               <strong>A session folder holds everything.</strong>
               <p>
-                Controller frames, one video file per stretch between pauses,
-                and a
-                <code>session.json</code> with the numbers needed to align them.
+                Controller frames, one video file with sound per stretch between
+                pauses, and a <code>session.json</code> with the numbers needed
+                to align them and the game's control settings.
+              </p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <strong>Frames and inputs become training samples.</strong>
+              <p>
+                <code>crates/gameplay-data</code> puts both on one clock and
+                sums the controller over each video frame, allowing for the
+                game's own delay from input to picture. The training code uses
+                it from Python, and the Inkspector shows the same labels over
+                the recorded frames.
               </p>
             </div>
           </li>
@@ -856,24 +880,46 @@
       <section aria-labelledby="h-studio">
         <div class="head">
           <span class="eyebrow">The studio</span>
-          <h2 id="h-studio">One page to watch and record</h2>
+          <h2 id="h-studio">One page to watch, record and check</h2>
           <p>
             The dashboard runs on the PC and opens in any browser on the
-            network. The screenshots below are the real rig: the Elgato showing
-            the Switch home screen, and the controller view fed by the Pi.
+            network. It holds two apps, switched without reloading:
+            <strong>Studio</strong> to watch and record, and
+            <strong>Inkspector</strong> to check what was recorded. The app
+            links sit in a rail on the left or in the top bar, and the status
+            chips stay in view in both. The screenshots come from a test studio
+            whose video input is a screen playing a recorded Salmon Run match,
+            with the synthetic controller from <code>fake_proxy</code>.
           </p>
         </div>
 
         <figure class="shot">
           <img
+            src="images/view-menu.webp"
+            alt="Top bar with the app rail, status chips and the open View menu"
+            width="1600"
+            height="200"
+            loading="lazy"
+          />
+          <figcaption>
+            The app rail on the left, the status chips, and the View menu:
+            theme, phone layout, and where the app links go. Choices are
+            remembered per browser.
+          </figcaption>
+        </figure>
+
+        <figure class="shot">
+          <img
             src="images/studio.webp"
-            alt="Studio view: live Switch video, Pro Controller view, recording controls, data tiles and gyro chart"
+            alt="Studio app: live Switch video with the input overlay, 3D Pro Controller, recording, replay, data and motion panels"
             width="1600"
             height="1000"
           />
           <figcaption>
-            Studio view. Video and controller sit side by side like OBS's studio
-            mode, with recording, data and motion docks underneath.
+            The Studio app. Video and controller sit side by side like OBS's
+            studio mode, with recording, replay, data and motion panels
+            underneath. <strong>Inputs</strong> draws the sticks and pressed
+            buttons over the video, held back by the preview's delay.
           </figcaption>
         </figure>
 
@@ -881,7 +927,7 @@
           <figure class="shot">
             <img
               src="images/joy.webp"
-              alt="Joy view with a white Joy-Con colored controller"
+              alt="Joy theme with a white, Joy-Con colored controller"
               width="1600"
               height="1000"
               loading="lazy"
@@ -891,7 +937,7 @@
           <figure class="shot">
             <img
               src="images/telemetry.webp"
-              alt="Telemetry view with a wireframe controller"
+              alt="Telemetry theme with a wireframe controller"
               width="1600"
               height="1000"
               loading="lazy"
@@ -920,11 +966,19 @@
             </p>
           </div>
           <div>
-            <h3>Pick the video input</h3>
+            <h3>Pick the video</h3>
             <p>
-              The capture card, the PC's screen, or no video. The choice and the
-              path prefix are saved, so a restart comes back the way you left
-              it.
+              The capture card, the PC's screen, or no video, and the recorded
+              size and frame rate (1080p60 down to 360p10) to keep files small.
+              Settings are saved, so a restart comes back the way you left it.
+            </p>
+          </div>
+          <div>
+            <h3>Sound and game settings</h3>
+            <p>
+              The capture card's sound goes into each video file as a second
+              track. The game's control settings (Splatoon 3 sensitivities,
+              motion controls, inverted axes) are saved with every session.
             </p>
           </div>
           <div>
@@ -937,9 +991,9 @@
           <div>
             <h3>See the link health</h3>
             <p>
-              Chips for the Pi connection and controller input, the input rate,
-              and the Pi clock offset, which should stay within a few
-              milliseconds.
+              Chips for the Pi connection, controller input and the time a
+              report spends in the proxy; the input rate and the Pi clock
+              offset, which should stay within a few milliseconds.
             </p>
           </div>
           <div>
@@ -951,10 +1005,12 @@
             </p>
           </div>
           <div>
-            <h3>Switch the view</h3>
+            <h3>Replay actions</h3>
             <p>
-              Studio, Joy and Telemetry styles plus a phone layout, remembered
-              per browser, so the phone and the desktop can each keep their own.
+              Play a session, a <code>controller.bin</code> or a model's
+              <code>.jsonl</code> of actions to the Switch through the Pi,
+              instead of the controller or mixed with it, to see what a model
+              would do.
             </p>
           </div>
         </div>
@@ -977,8 +1033,8 @@
             <img
               src="images/splatoon.webp"
               alt="3D controller turned by Splatoon mode, with the sensitivity slider"
-              width="800"
-              height="500"
+              width="752"
+              height="510"
               loading="lazy"
             />
             <figcaption>
@@ -988,29 +1044,99 @@
         </div>
       </section>
 
+      <section aria-labelledby="h-inkspector">
+        <div class="head">
+          <span class="eyebrow">The Inkspector</span>
+          <h2 id="h-inkspector">Check every frame's labels</h2>
+          <p>
+            The Inkspector lists the recorded sessions and steps through one
+            frame by frame, with the controller labels a model would learn from
+            drawn over the picture. It reads sessions with the same code as the
+            training side, so what it shows is what the model gets.
+          </p>
+        </div>
+
+        <figure class="shot">
+          <img
+            src="images/sessions.webp"
+            alt="Session list: start time, duration, segments, video, reports, game settings and delay of each session"
+            width="1600"
+            height="480"
+            loading="lazy"
+          />
+          <figcaption>
+            Every session with its video, sound, reports, game settings and the
+            video delay in use, with where it comes from.
+          </figcaption>
+        </figure>
+
+        <figure class="shot">
+          <img
+            src="images/inkspector.webp"
+            alt="Inkspector: a frame with the full input overlay, scrubber, labels table, neighbouring frames and session tiles"
+            width="1600"
+            height="1000"
+            loading="lazy"
+          />
+          <figcaption>
+            One segment: the frame with its labels, the labels of the frames
+            around it, the neighbouring frames, and the session's details.
+          </figcaption>
+        </figure>
+
+        <div class="features">
+          <div>
+            <h3>Step, play and jump</h3>
+            <p>
+              Space plays at 0.25× to 1× with the segment's sound, the arrows
+              step one frame (ten with Shift), R jumps to a random frame where a
+              button changes or the gyro turns, and G goes to a frame or time.
+              The URL keeps the place.
+            </p>
+          </div>
+          <div>
+            <h3>Line up the delay</h3>
+            <p>
+              The game shows an input some 200 to 400 ms later. Each session's
+              delay comes from the calibration file: set by hand, measured from
+              the session, or the delay of its setup. Change it to check by eye,
+              and save it as the session's delay.
+            </p>
+          </div>
+          <div>
+            <h3>Compare predictions</h3>
+            <p>
+              Point it at a model's labels file and each cell shows the truth
+              over the prediction, with differences in red.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section aria-labelledby="h-session">
         <div class="head">
           <span class="eyebrow">On disk</span>
           <h2 id="h-session">What one session looks like</h2>
         </div>
-        <div class="tree">
-          <b>mk8-2026-09-24_21-48-23/</b> ├── <b>controller.bin</b> 80-byte
-          frames, one per controller report ├── <b>video-01.mkv</b> H.264, until
-          the first pause ├── <b>video-02.mkv</b> after resuming └──
-          <b>session.json</b> start/stop times, clock offset, dropped frames,
-          each video's first-frame time
-        </div>
+        <pre class="tree"><b>mk8-2026-09-24_21-48-23/</b>
+├── <b>controller.bin</b>   80-byte frames, one per controller report
+├── <b>video-01.mkv</b>     H.264 + Opus sound, until the first pause
+├── <b>video-02.mkv</b>     after resuming
+└── <b>session.json</b>     start/stop times, clock offset, dropped frames,
+                     video size and rate, each file's first-frame time,
+                     game settings</pre>
 
         <div class="scroll">
           <div
             class="frame"
             role="img"
-            aria-label="Frame layout: 8-byte timestamp, 1-byte size, 4-byte sequence, 3 padding bytes, 64-byte report"
+            aria-label="Frame layout: 8-byte timestamp, 1-byte size, 4-byte sequence, 2-byte forwarding time, 1 padding byte, 64-byte report"
           >
             <div class="f-ts">timestamp<small>u64 · Unix ms</small></div>
             <div class="f-sz">n</div>
             <div class="f-seq">seq<small>u32</small></div>
-            <div class="f-pad">pad</div>
+            <div class="f-fwd">fwd<small>µs</small></div>
+            <div class="f-pad"></div>
             <div class="f-data">
               HID report<small
                 >64 bytes · 0x30 = buttons, sticks, 3 IMU samples</small
@@ -1019,7 +1145,7 @@
           </div>
           <div class="bytes">
             <span>0</span><span>8</span><span>9</span><span>13</span
-            ><span>16 → 80</span>
+            ><span>15</span><span>16 → 80</span>
           </div>
         </div>
         <p class="note">
@@ -1027,7 +1153,11 @@
           <em>n</em> of a file was captured at its
           <code>start_unix_ms</code> plus <em>n</em> /
           <code>video.fps</code> seconds. A controller frame's time on the PC is
-          its proxy timestamp plus <code>proxy.clock_offset_ms</code>.
+          its proxy timestamp plus <code>proxy.clock_offset_ms</code>. The game
+          adds its own delay from input to picture on top, so the frame at video
+          time <em>t</em> shows the input from <em>t</em> −
+          <code>video_delay_ms</code>. <code>fwd</code> is how long the report
+          took from the controller to the Switch.
         </p>
       </section>
 
@@ -1041,7 +1171,7 @@
         ><span class="c"># Cross-compile procon-proxy, copy it with proxy.toml to the Pi, restart it</span>
 ./scripts/deploy.sh pi4
 
-<span class="c"># Start the studio, then open http://&lt;pc&gt;:8090</span>
+<span class="c"># Start the studio, then open http://&lt;pc&gt;:8090 for the Studio and Inkspector</span>
 ./scripts/run.sh</pre>
       </section>
 

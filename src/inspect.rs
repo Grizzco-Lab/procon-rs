@@ -1,8 +1,8 @@
-//! Inspector app backend: browse recorded sessions and check the controller
+//! Inkspector app backend: browse recorded sessions and check the controller
 //! labels of every video frame against the picture
 //!
 //! Sessions are read with `gameplay-data`, the same code the training side
-//! uses, so what the Inspector shows is what a model learns from. Frames are
+//! uses, so what the Inkspector shows is what a model learns from. Frames are
 //! decoded with ffmpeg on request: a seek to just before the frame, then a
 //! short window of frames at 360p (recordings have a keyframe every second),
 //! kept in a small cache for stepping and playback.
@@ -64,7 +64,7 @@ const CACHED_ALIGNMENTS: usize = 8;
 /// Angular rate above which a frame counts as active for random picks
 const ACTIVE_GYRO_DPS: f64 = 60.0;
 
-/// Sessions the Inspector reads, and what it keeps open
+/// Sessions the Inkspector reads, and what it keeps open
 pub struct Inspector {
     /// Folder holding the session folders; None follows the recording prefix
     root: Option<PathBuf>,
@@ -78,7 +78,7 @@ pub struct Inspector {
     predictions: Mutex<Option<(PathBuf, Arc<Predictions>)>>,
 }
 
-/// Body of an Inspector reply
+/// Body of an Inkspector reply
 pub struct Reply {
     pub body: Vec<u8>,
     pub content_type: &'static str,

@@ -109,14 +109,14 @@ pub struct StudioConfig {
     pub recording: RecordingConfig,
     /// Video capture
     pub video: VideoConfig,
-    /// The Inspector app
+    /// The Inkspector app
     #[serde(default)]
     pub inspect: InspectConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
 }
 
-/// The Inspector app's data
+/// The Inkspector app's data
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct InspectConfig {
     /// Folder holding the session folders; by default the recording
