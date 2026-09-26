@@ -131,7 +131,23 @@ fn main() -> anyhow::Result<()> {
         },
         |dir| config_dir.join(dir),
     );
-    let cuttlefish = Arc::new(Cuttlefish::new(Arc::clone(&inspector), reviews, cache));
+    let knowledge = config
+        .cuttlefish
+        .knowledge
+        .map_or_else(cuttlefish::store::Store::default_root, |dir| {
+            config_dir.join(dir)
+        });
+    let mut settings = cuttlefish::llm::Settings::default();
+    if let Some(model) = config.cuttlefish.model {
+        settings.model = model;
+    }
+    let cuttlefish = Arc::new(Cuttlefish::new(
+        Arc::clone(&inspector),
+        reviews,
+        cache,
+        knowledge,
+        settings,
+    ));
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {

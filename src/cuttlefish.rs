@@ -30,10 +30,13 @@
 //!   ranges; `GET meta?…`: its frame rate, duration and size
 //! - `POST download` with `{"url", "start_s", "end_s"}` starts downloading a
 //!   YouTube range (or finds it in the cache); `GET downloads` lists them
-//! - `POST ai` with `{"video", "t_s", "t_end_s", "question"}` asks the AI
-//!   for a comment; not connected yet, so it answers `501`. Once connected,
-//!   the page takes `{"comments": [{"t_s", "t_end_s"?, "text", "shapes"?}]}`
-//!   (or one `{"text"}`) and adds them as Cuttlefish's
+//! - `POST ai` with `{"video", "t_s", "t_end_s"?, "question", "review"?}`
+//!   asks the `cuttlefish` crate's [`Reviewer`] about the range (or a few
+//!   seconds around `t_s`): frames from ffmpeg, the review's comments near
+//!   it, knowledge from `[cuttlefish] knowledge`. Answers `{"comments":
+//!   [{"t_s", "t_end_s"?, "text", "shapes"}]}`, which the page adds as
+//!   Cuttlefish's; `501` while the reviewer cannot start (no
+//!   `ANTHROPIC_API_KEY`, the only place the key is read from)
 //!
 //! Errors are `{"error": "..."}` with status 400 (404 for a missing review).
 
@@ -42,6 +45,8 @@ use crate::objects::write_atomic;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
+use cuttlefish::llm::Settings;
+use cuttlefish::review::{self as ai, ReviewRequest, Reviewer};
 use gameplay_data::session::SessionInfo;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -63,8 +68,14 @@ const REVIEW_LIMIT: u64 = 16 << 20;
 /// Video file extensions served from paths on this machine
 const VIDEO_EXTENSIONS: [&str; 6] = ["mp4", "mkv", "webm", "mov", "m4v", "ogv"];
 
-/// Message of the AI endpoint until the `cuttlefish` crate is wired in
-const AI_NOT_CONNECTED: &str = "AI backend not connected yet";
+/// Seconds before and after `t_s` a question about a moment covers
+const MOMENT_S: (f64, f64) = (4.0, 2.0);
+
+/// Frames per second of video sent to the reviewer, before its own limit
+const AI_FPS: f64 = 2.0;
+
+/// Comments this far outside the range still go to the reviewer, seconds
+const NEAR_S: f64 = 10.0;
 
 /// The video a review is about
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -212,6 +223,12 @@ pub struct Cuttlefish {
     cache: PathBuf,
     downloads: Arc<Mutex<BTreeMap<String, Download>>>,
     writing: Mutex<()>,
+    /// The `cuttlefish` crate's data folder (knowledge store, models)
+    knowledge: PathBuf,
+    /// Model settings of the reviewer
+    settings: Settings,
+    /// The reviewer, opened on the first question
+    reviewer: Mutex<Option<Arc<Reviewer>>>,
 }
 
 /// A reply before it becomes an HTTP response
@@ -241,13 +258,22 @@ impl Reply {
 struct Status(StatusCode, anyhow::Error);
 
 impl Cuttlefish {
-    pub fn new(inspector: Arc<Inspector>, reviews: PathBuf, cache: PathBuf) -> Self {
+    pub fn new(
+        inspector: Arc<Inspector>,
+        reviews: PathBuf,
+        cache: PathBuf,
+        knowledge: PathBuf,
+        settings: Settings,
+    ) -> Self {
         Self {
             inspector,
             reviews,
             cache,
             downloads: Arc::default(),
             writing: Mutex::default(),
+            knowledge,
+            settings,
+            reviewer: Mutex::default(),
         }
     }
 
@@ -519,6 +545,77 @@ impl Cuttlefish {
         Ok(download)
     }
 
+    // ----------------------------------------------------------------- AI
+
+    /// The reviewer, opened once; an error (no key, no model) is tried again
+    /// on the next question
+    fn reviewer(&self) -> Result<Arc<Reviewer>> {
+        let mut reviewer = self.reviewer.lock().unwrap();
+        if let Some(reviewer) = &*reviewer {
+            return Ok(Arc::clone(reviewer));
+        }
+        let opened = Arc::new(
+            Reviewer::open(&self.knowledge, self.settings.clone())
+                .context("Cuttlefish cannot start")?,
+        );
+        *reviewer = Some(Arc::clone(&opened));
+        Ok(opened)
+    }
+
+    /// Ask the reviewer about `t_s`..`t_end_s` (or the moment around `t_s`)
+    /// of a video; comments as the page stores them
+    fn ask(
+        &self,
+        reviewer: &Reviewer,
+        video: &VideoRef,
+        t_s: f64,
+        t_end_s: Option<f64>,
+        question: Option<&str>,
+        review: Option<&str>,
+    ) -> Result<Vec<Value>> {
+        let (start_s, end_s) = match t_end_s {
+            Some(end) => (t_s, end),
+            None => ((t_s - MOMENT_S.0).max(0.0), t_s + MOMENT_S.1),
+        };
+        ensure!(end_s > start_s, "the range must end after it starts");
+        let path = self.video_path(video)?;
+        let comments = match review {
+            Some(id) if !id.is_empty() => self.review(id)?.comments,
+            _ => Vec::new(),
+        };
+        let request = ReviewRequest {
+            video: match video.kind {
+                VideoKind::Youtube => format!(
+                    "{} (from {} s)",
+                    video.reference,
+                    video.start_s.unwrap_or(0.0)
+                ),
+                _ => video.reference.clone(),
+            },
+            start_s,
+            end_s,
+            frames: jpeg_frames(&path, start_s, end_s)?,
+            question: question
+                .map(str::trim)
+                .filter(|q| !q.is_empty())
+                .map(String::from),
+            comments: comments
+                .iter()
+                .filter(|c| c.t_s >= start_s - NEAR_S && c.t_s <= end_s + NEAR_S)
+                .map(|c| ai::ExistingComment {
+                    t_s: c.t_s,
+                    text: c.text.clone(),
+                    author: Some(c.author.clone()),
+                })
+                .collect(),
+        };
+        Ok(reviewer
+            .review(&request)?
+            .into_iter()
+            .map(page_comment)
+            .collect())
+    }
+
     // --------------------------------------------------------------- HTTP
 
     /// Answer a `GET` under `/api/cuttlefish/`
@@ -583,14 +680,25 @@ impl Cuttlefish {
             }
             (&Method::POST, None) if path == "ai" => {
                 let body = json_body()?;
-                let _video: VideoRef = serde_json::from_value(body["video"].clone())
+                let video: VideoRef = serde_json::from_value(body["video"].clone())
                     .map_err(|e| bad(anyhow::anyhow!("no video: {e}")))?;
-                // The main agent wires this to the `cuttlefish` crate; the
-                // key will come from ANTHROPIC_API_KEY, never from a file
-                Err(Status(
-                    StatusCode::NOT_IMPLEMENTED,
-                    anyhow::anyhow!(AI_NOT_CONNECTED),
-                ))
+                let t_s = body["t_s"]
+                    .as_f64()
+                    .ok_or_else(|| bad(anyhow::anyhow!("no t_s")))?;
+                let reviewer = self
+                    .reviewer()
+                    .map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))?;
+                let comments = self
+                    .ask(
+                        &reviewer,
+                        &video,
+                        t_s,
+                        body["t_end_s"].as_f64(),
+                        body["question"].as_str(),
+                        body["review"].as_str(),
+                    )
+                    .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))?;
+                Ok(Reply::json(json!({ "comments": comments })))
             }
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
@@ -652,6 +760,94 @@ async fn blocking(
         None => builder,
     };
     Ok(builder.body(reply.body).unwrap())
+}
+
+/// JPEG frames of `start_s`..`end_s` of a video at [`AI_FPS`], 720 lines
+/// high
+fn jpeg_frames(path: &Path, start_s: f64, end_s: f64) -> Result<Vec<ai::Frame>> {
+    let span = end_s - start_s;
+    let count = ((span * AI_FPS).ceil() as usize).max(1);
+    let output = Command::new("ffmpeg")
+        .args(["-v", "error", "-ss", &format!("{start_s:.3}"), "-t"])
+        .arg(format!("{span:.3}"))
+        .arg("-i")
+        .arg(path)
+        .args(["-vf", &format!("fps={AI_FPS},scale=-2:720"), "-frames:v"])
+        .arg(count.to_string())
+        .args(["-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "4", "-"])
+        .stdin(Stdio::null())
+        .output()
+        .context("cannot run ffmpeg")?;
+    ensure!(
+        output.status.success(),
+        "ffmpeg: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    let frames: Vec<ai::Frame> = split_jpegs(&output.stdout)
+        .into_iter()
+        .enumerate()
+        .map(|(i, jpeg)| ai::Frame {
+            t_s: start_s + i as f64 / AI_FPS,
+            jpeg: jpeg.to_vec(),
+        })
+        .collect();
+    ensure!(!frames.is_empty(), "no frames in that range");
+    Ok(frames)
+}
+
+/// The JPEG images in a stream of them, split at each start of image marker
+fn split_jpegs(data: &[u8]) -> Vec<&[u8]> {
+    const START: [u8; 3] = [0xff, 0xd8, 0xff];
+    let starts: Vec<usize> = (0..data.len().saturating_sub(2))
+        .filter(|&i| data[i..i + 3] == START)
+        .collect();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(n, &start)| &data[start..starts.get(n + 1).copied().unwrap_or(data.len())])
+        .collect()
+}
+
+/// A reviewer comment as the page stores comments: boxes become `rect`s,
+/// sources a line at the end of the text
+fn page_comment(comment: ai::AiComment) -> Value {
+    let shapes: Vec<Shape> = comment
+        .shapes
+        .iter()
+        .map(|s| Shape {
+            kind: match s.kind {
+                ai::ShapeKind::Box => ShapeKind::Rect,
+                ai::ShapeKind::Arrow => ShapeKind::Arrow,
+            },
+            points: vec![[s.x0.into(), s.y0.into()], [s.x1.into(), s.y1.into()]],
+            color: None,
+        })
+        .collect();
+    let mut text = comment.text;
+    if !comment.sources.is_empty() {
+        let sources: Vec<String> = comment
+            .sources
+            .iter()
+            .map(|s| {
+                let title = if s.heading.is_empty() {
+                    s.title.clone()
+                } else {
+                    format!("{} › {}", s.title, s.heading)
+                };
+                match &s.url {
+                    Some(url) => format!("{title} ({url})"),
+                    None => title,
+                }
+            })
+            .collect();
+        text = format!("{text}\n\nSources: {}", sources.join("; "));
+    }
+    json!({
+        "t_s": comment.t_s,
+        "t_end_s": comment.t_end_s,
+        "text": text,
+        "shapes": shapes,
+    })
 }
 
 /// A review file
@@ -874,7 +1070,13 @@ mod tests {
             dir.join("calibration.json"),
             dir.join("annotations"),
         ));
-        let cuttlefish = Cuttlefish::new(inspector, dir.join("reviews"), dir.join("cache"));
+        let cuttlefish = Cuttlefish::new(
+            inspector,
+            dir.join("reviews"),
+            dir.join("cache"),
+            dir.join("knowledge"),
+            Settings::default(),
+        );
         assert_eq!(cuttlefish.reviews().unwrap()["reviews"], json!([]));
         let review: Review = serde_json::from_str(REVIEW).unwrap();
         cuttlefish.save_review("r-1", &review).unwrap();
@@ -935,5 +1137,51 @@ mod tests {
         let mut lines = Vec::new();
         for_each_line(&b"a\rb\nc"[..], |line| lines.push(line.to_string()));
         assert_eq!(lines, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn jpegs_split_at_each_start() {
+        let stream = [
+            0xff, 0xd8, 0xff, 1, 2, 0xff, 0xd9, 0xff, 0xd8, 0xff, 3, 0xff, 0xd9,
+        ];
+        let parts = split_jpegs(&stream);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], &stream[..7]);
+        assert_eq!(parts[1], &stream[7..]);
+        assert!(split_jpegs(b"no images").is_empty());
+    }
+
+    #[test]
+    fn reviewer_comments_become_page_comments() {
+        let comment = ai::AiComment {
+            t_s: 3.0,
+            t_end_s: None,
+            text: String::from("Bank the eggs"),
+            shapes: vec![ai::Shape {
+                kind: ai::ShapeKind::Box,
+                x0: 0.25,
+                y0: 0.5,
+                x1: 0.75,
+                y1: 1.0,
+                label: None,
+            }],
+            sources: vec![ai::SourceRef {
+                id: String::from("S1"),
+                title: String::from("Guide"),
+                heading: String::from("Eggs"),
+                url: Some(String::from("https://example.com")),
+                source: cuttlefish::doc::SourceKind::Guide,
+                license: None,
+            }],
+        };
+        let page = page_comment(comment);
+        assert_eq!(page["t_s"], 3.0);
+        assert_eq!(
+            page["text"],
+            "Bank the eggs\n\nSources: Guide › Eggs (https://example.com)"
+        );
+        let shapes: Vec<Shape> = serde_json::from_value(page["shapes"].clone()).unwrap();
+        assert_eq!(shapes[0].kind, ShapeKind::Rect);
+        assert_eq!(shapes[0].points, vec![[0.25, 0.5], [0.75, 1.0]]);
     }
 }

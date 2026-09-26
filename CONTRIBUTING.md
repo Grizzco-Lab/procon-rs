@@ -72,7 +72,7 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/web.rs` | Dashboard server (warp): page, WebSocket, command API, Inkspector API |
 | `src/inspect.rs` | Inkspector backend: sessions, frames, labels, delays |
 | `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes |
-| `src/cuttlefish.rs` | Cuttlefish app backend: review files, video bytes with ranges, yt-dlp downloads, AI endpoint (501 until connected) |
+| `src/cuttlefish.rs` | Cuttlefish app backend: review files, video bytes with ranges, yt-dlp downloads, "Ask Cuttlefish" through the `cuttlefish` crate's `Reviewer` |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
 | `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |

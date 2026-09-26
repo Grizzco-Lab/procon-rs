@@ -49,6 +49,11 @@ preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerol
 # reviews = "/data/Reviews"
 # YouTube ranges downloaded with yt-dlp; by default ~/.cache/procon-cuttlefish
 # cache = "/data/cuttlefish-cache"
+# Knowledge store and embedding model of the cuttlefish crate; by default
+# $CUTTLEFISH_DATA or ~/.local/share/cuttlefish. "Ask Cuttlefish" needs
+# ANTHROPIC_API_KEY in the studio's environment (never put it in a file here)
+# knowledge = "/data/cuttlefish"
+# model = "claude-opus-5-5"
 
 [logging]
 # Log level: error, warn, info, debug, trace

@@ -2488,6 +2488,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "cuttlefish",
  "env_logger",
  "futures-util",
  "gameplay-data",

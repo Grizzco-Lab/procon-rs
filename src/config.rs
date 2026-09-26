@@ -145,6 +145,13 @@ pub struct CuttlefishConfig {
     /// config file; by default `procon-cuttlefish` in the user's cache
     /// folder (`$XDG_CACHE_HOME` or `~/.cache`)
     pub cache: Option<String>,
+    /// The `cuttlefish` crate's data folder (knowledge store, embedding
+    /// model), relative to this config file; by default `$CUTTLEFISH_DATA`
+    /// or `~/.local/share/cuttlefish`. The API key is never read from the
+    /// config, only from `ANTHROPIC_API_KEY`.
+    pub knowledge: Option<String>,
+    /// Model answering "Ask Cuttlefish"; by default the crate's
+    pub model: Option<String>,
 }
 
 /// The machine running `procon-proxy`
