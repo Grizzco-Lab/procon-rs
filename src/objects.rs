@@ -30,8 +30,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Classes written to a new `classes.json`: (name, label, color)
-pub const STARTER_CLASSES: [(&str, &str, &str); 16] = [
+/// Classes written to a new `classes.json`: (name, label, color). The same
+/// list, in the same order, as `gameplay_vision::labels::STARTER_CLASSES`.
+pub const STARTER_CLASSES: [(&str, &str, &str); 21] = [
     ("smallfry", "Smallfry", "#8bd450"),
     ("chum", "Chum", "#4fb3ff"),
     ("cohock", "Cohock", "#2f6fdf"),
@@ -48,6 +49,11 @@ pub const STARTER_CLASSES: [(&str, &str, &str); 16] = [
     ("slammin_lid", "Slammin' Lid", "#7f8c3a"),
     ("golden_egg", "Golden Egg", "#ffd23f"),
     ("player", "Player", "#ff6fd8"),
+    ("dead_player", "Dead Player (rescue)", "#a0a0ff"),
+    ("basket", "Egg Basket", "#ffffff"),
+    ("cohozuna", "Cohozuna", "#ff3b3b"),
+    ("horrorboros", "Horrorboros", "#c0392b"),
+    ("megalodontia", "Megalodontia", "#8e44ad"),
 ];
 
 /// Name of the class list in the annotations folder

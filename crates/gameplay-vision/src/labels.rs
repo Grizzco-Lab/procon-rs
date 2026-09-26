@@ -30,25 +30,32 @@ pub const CLASSES_FILE: &str = "classes.json";
 pub const OBJECTS_EXT: &str = ".objects.jsonl";
 
 /// The class list written when `classes.json` is missing: Salmon Run's
-/// Salmonids (bosses, then lesser ones), golden eggs and players.
-/// `(name, label, color)`
-pub const STARTER_CLASSES: [(&str, &str, &str); 16] = [
-    ("smallfry", "Smallfry", "#9ccc65"),
-    ("chum", "Chum", "#66bb6a"),
-    ("cohock", "Cohock", "#2e7d32"),
-    ("steelhead", "Steelhead", "#ef5350"),
-    ("flyfish", "Flyfish", "#ab47bc"),
-    ("scrapper", "Scrapper", "#8d6e63"),
-    ("steel_eel", "Steel Eel", "#78909c"),
-    ("stinger", "Stinger", "#ffa726"),
-    ("maws", "Maws", "#26a69a"),
-    ("drizzler", "Drizzler", "#42a5f5"),
-    ("fish_stick", "Fish Stick", "#d4e157"),
-    ("flipper_flopper", "Flipper-Flopper", "#29b6f6"),
-    ("big_shot", "Big Shot", "#ec407a"),
-    ("slammin_lid", "Slammin' Lid", "#7e57c2"),
-    ("golden_egg", "Golden Egg", "#ffd600"),
-    ("player", "Player", "#ffffff"),
+/// lesser Salmonids, then the bosses, golden eggs, players (alive and
+/// waiting for rescue), the egg basket and the King Salmonids.
+/// `(name, label, color)`, in the order and colors of the labeling tool's
+/// list (`procon::objects::STARTER_CLASSES`).
+pub const STARTER_CLASSES: [(&str, &str, &str); 21] = [
+    ("smallfry", "Smallfry", "#8bd450"),
+    ("chum", "Chum", "#4fb3ff"),
+    ("cohock", "Cohock", "#2f6fdf"),
+    ("steelhead", "Steelhead", "#f5c518"),
+    ("flyfish", "Flyfish", "#ff8a3d"),
+    ("scrapper", "Scrapper", "#9aa3ad"),
+    ("steel_eel", "Steel Eel", "#b86bff"),
+    ("stinger", "Stinger", "#ff5c8a"),
+    ("maws", "Maws", "#20c7a8"),
+    ("drizzler", "Drizzler", "#6a8cff"),
+    ("fish_stick", "Fish Stick", "#c9a26b"),
+    ("flipper_flopper", "Flipper-Flopper", "#3dd6d0"),
+    ("big_shot", "Big Shot", "#e0564a"),
+    ("slammin_lid", "Slammin' Lid", "#7f8c3a"),
+    ("golden_egg", "Golden Egg", "#ffd23f"),
+    ("player", "Player", "#ff6fd8"),
+    ("dead_player", "Dead Player (rescue)", "#a0a0ff"),
+    ("basket", "Egg Basket", "#ffffff"),
+    ("cohozuna", "Cohozuna", "#ff3b3b"),
+    ("horrorboros", "Horrorboros", "#c0392b"),
+    ("megalodontia", "Megalodontia", "#8e44ad"),
 ];
 
 /// One class in `classes.json`
