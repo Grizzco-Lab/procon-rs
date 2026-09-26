@@ -7,6 +7,7 @@
 use alloc::sync::Arc;
 use clap::Parser;
 use procon::config::{self, StudioConfig};
+use procon::cuttlefish::Cuttlefish;
 use procon::dump::MultiDumper;
 use procon::inspect::Inspector;
 use procon::player::Player;
@@ -15,7 +16,7 @@ use procon::stream::{self, LinkStats};
 use procon::studio::{Command, SavedState, Studio};
 use procon::video::Video;
 use procon::web::{self, LiveFeed};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 extern crate alloc;
 
@@ -101,16 +102,41 @@ fn main() -> anyhow::Result<()> {
         .calibration
         .as_deref()
         .unwrap_or("../AgentZero/calibration.json");
+    let root = config.inspect.root.map(|root| config_dir.join(root));
+    // Annotations and reviews sit next to the sessions' folder by default
+    let sessions = root.clone().unwrap_or_else(|| studio.recorder.prefix_dir());
+    let beside = |name: &str| sessions.parent().unwrap_or(Path::new(".")).join(name);
+    let annotations = config
+        .inspect
+        .annotations
+        .map_or_else(|| beside("Annotations"), |dir| config_dir.join(dir));
     let inspector = Arc::new(Inspector::new(
-        config.inspect.root.map(|root| config_dir.join(root)),
+        root,
         studio.recorder.clone(),
         config_dir.join(calibration),
+        annotations,
     ));
+
+    let reviews = config
+        .cuttlefish
+        .reviews
+        .map_or_else(|| beside("Reviews"), |dir| config_dir.join(dir));
+    let cache = config.cuttlefish.cache.map_or_else(
+        || {
+            std::env::var_os("XDG_CACHE_HOME")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
+                .unwrap_or_else(std::env::temp_dir)
+                .join("procon-cuttlefish")
+        },
+        |dir| config_dir.join(dir),
+    );
+    let cuttlefish = Arc::new(Cuttlefish::new(Arc::clone(&inspector), reviews, cache));
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         tokio::select! {
-            _ = web::serve(feed, Arc::clone(&studio), inspector, config.web.port) => {}
+            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, config.web.port) => {}
             _ = tokio::signal::ctrl_c() => {
                 // Let ffmpeg finish the video file and session.json get its end time
                 if studio.recorder.status().state != RecorderState::Idle {

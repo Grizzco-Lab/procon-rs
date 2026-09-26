@@ -112,6 +112,9 @@ pub struct StudioConfig {
     /// The Inkspector app
     #[serde(default)]
     pub inspect: InspectConfig,
+    /// The Cuttlefish app
+    #[serde(default)]
+    pub cuttlefish: CuttlefishConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
 }
@@ -126,6 +129,22 @@ pub struct InspectConfig {
     /// relative to this config file; by default
     /// `../AgentZero/calibration.json`. A missing file means no calibration.
     pub calibration: Option<String>,
+    /// Folder of object labels (`classes.json`, `<session>/<segment
+    /// stem>.objects.jsonl`), relative to this config file; by default
+    /// `Annotations` next to the root
+    pub annotations: Option<String>,
+}
+
+/// The Cuttlefish app: video reviews with comments and drawings
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct CuttlefishConfig {
+    /// Folder of review JSON files, relative to this config file; by
+    /// default `Reviews` next to the Inkspector's root
+    pub reviews: Option<String>,
+    /// Folder for YouTube ranges downloaded with yt-dlp, relative to this
+    /// config file; by default `procon-cuttlefish` in the user's cache
+    /// folder (`$XDG_CACHE_HOME` or `~/.cache`)
+    pub cache: Option<String>,
 }
 
 /// The machine running `procon-proxy`

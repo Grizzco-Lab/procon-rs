@@ -41,6 +41,14 @@ preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerol
 # root = "/data/procon"
 # AgentZero's per-session video delays, relative to this file (a missing file means none)
 # calibration = "../AgentZero/calibration.json"
+# Object labels drawn in the Inkspector; by default "Annotations" next to the root
+# annotations = "/data/Annotations"
+
+[cuttlefish]
+# Review files (JSON); by default "Reviews" next to the Inkspector's root
+# reviews = "/data/Reviews"
+# YouTube ranges downloaded with yt-dlp; by default ~/.cache/procon-cuttlefish
+# cache = "/data/cuttlefish-cache"
 
 [logging]
 # Log level: error, warn, info, debug, trace

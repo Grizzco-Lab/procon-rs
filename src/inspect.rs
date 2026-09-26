@@ -24,7 +24,14 @@
 //! - `audio?s=&seg=`: the segment's sound track as WebM (Opus copied, not
 //!   re-encoded), with HTTP range support for seeking; it starts with the
 //!   first frame, so audio time `t` is frame `t * fps`
+//! - `classes`: the object classes of the labeling mode (see
+//!   [`crate::objects`]), with the annotations folder
+//! - `objects?s=&seg=`: every labeled frame of a segment
+//! - `POST objects` with `{"s", "seg", "frame", "boxes", "base"}` replaces a
+//!   frame's boxes (`base`: the model boxes the page loaded for it) and
+//!   answers with the frame as saved
 
+use crate::objects::{Annotations, ObjectBox};
 use crate::recorder::Recorder;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -76,6 +83,8 @@ pub struct Inspector {
     probes: Mutex<HashMap<PathBuf, Arc<Probe>>>,
     /// Last predictions file read, with its labels by frame
     predictions: Mutex<Option<(PathBuf, Arc<Predictions>)>>,
+    /// Object labels of the labeling mode
+    annotations: Annotations,
 }
 
 /// Body of an Inkspector reply
@@ -134,7 +143,12 @@ struct OpenSegment {
 
 impl Inspector {
     /// `root` of None reads the recording prefix's folder
-    pub fn new(root: Option<PathBuf>, recorder: Recorder, calibration: PathBuf) -> Self {
+    pub fn new(
+        root: Option<PathBuf>,
+        recorder: Recorder,
+        calibration: PathBuf,
+        annotations: PathBuf,
+    ) -> Self {
         Self {
             root,
             recorder,
@@ -142,10 +156,12 @@ impl Inspector {
             open: Mutex::default(),
             probes: Mutex::default(),
             predictions: Mutex::default(),
+            annotations: Annotations::new(annotations),
         }
     }
 
-    fn root(&self) -> PathBuf {
+    /// Folder holding the session folders
+    pub fn root(&self) -> PathBuf {
         self.root
             .clone()
             .unwrap_or_else(|| self.recorder.prefix_dir())
@@ -443,6 +459,31 @@ impl Inspector {
         Ok(calibration_json(self.calibrations().get(name)))
     }
 
+    /// Replace the boxes of a frame from `{"s", "seg", "frame", "boxes",
+    /// "base"}`; answers with the frame as saved
+    pub fn save_objects(&self, body: &Value) -> Result<Value> {
+        let session = body["s"].as_str().context("no session given")?;
+        let segment = self.segment(session, body["seg"].as_str().filter(|s| !s.is_empty()))?;
+        let frame = body["frame"].as_u64().context("no frame given")?;
+        ensure!((frame as usize) < segment.frames, "no frame {frame}");
+        let boxes = |key: &str| -> Result<Vec<ObjectBox>> {
+            match &body[key] {
+                Value::Null => Ok(Vec::new()),
+                value => {
+                    serde_json::from_value(value.clone()).with_context(|| format!("bad {key}"))
+                }
+            }
+        };
+        let saved = self.annotations.save_frame(
+            session,
+            &segment.file,
+            frame,
+            boxes("boxes")?,
+            &boxes("base")?,
+        )?;
+        Ok(json!(saved))
+    }
+
     /// Answer `GET /api/inspect/<endpoint>?<query>`: the body and its
     /// content type
     pub fn handle(
@@ -482,6 +523,15 @@ impl Inspector {
                 number("delay")?,
                 text("pred").filter(|p| !p.is_empty()),
             )?,
+            "classes" => json!({
+                "dir": self.annotations.dir(),
+                "classes": self.annotations.classes()?,
+            }),
+            "objects" => {
+                let segment = self.segment(session()?, seg)?;
+                let frames = self.annotations.read(&segment.session, &segment.file)?;
+                json!({ "frames": frames.into_values().collect::<Vec<_>>() })
+            }
             "random" => json!({
                 "frame": self.random(session()?, seg, number("delay")?, text("active") != Some("0"))?,
             }),
@@ -674,7 +724,7 @@ fn ranged(bytes: &[u8], range: Option<&str>, content_type: &'static str) -> Repl
 }
 
 /// Run ffprobe on the first video stream and return its JSON output
-fn ffprobe(video: &Path, entries: &str) -> Result<Value> {
+pub(crate) fn ffprobe(video: &Path, entries: &str) -> Result<Value> {
     let output = Command::new("ffprobe")
         .args([
             "-v",
