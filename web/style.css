@@ -5442,7 +5442,7 @@ body {
   stroke: var(--s1);
 }
 
-.p-controller {
+.p-p-controller {
   display: grid;
   grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
   gap: 12px;
@@ -5593,11 +5593,11 @@ body {
     grid-template-areas: "video" "timeline" "agree" "run" "runs";
   }
 
-  .p-controller {
+  .p-p-controller {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-:root[data-layout="phone"] .p-controller {
+:root[data-layout="phone"] .p-p-controller {
   grid-template-columns: minmax(0, 1fr);
 }
