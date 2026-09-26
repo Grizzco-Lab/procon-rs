@@ -1,0 +1,19 @@
+[package]
+name = "gameplay-vision"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+clap = { version = "4.6.7", features = ["derive"] }
+gameplay-data = { version = "0.1.0", path = "../gameplay-data" }
+hf-hub = { version = "0.5", default-features = false, features = ["ureq", "rustls-tls"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+[features]
+# Run the network on an NVIDIA GPU; needs the CUDA toolkit (nvcc) to build
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
