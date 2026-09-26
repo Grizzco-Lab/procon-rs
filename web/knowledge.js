@@ -2,7 +2,7 @@
 // holds, search, questions and translations, imports and the glossary,
 // through /api/cuttlefish/knowledge/... (see src/knowledge.rs). Runs after
 // cuttlefish.js, which hides its library and player for this view, and uses
-// the helpers of app.js and inspect.js ($, escapeHtml).
+// the helpers of i18n.js, app.js and inspect.js (t, $, escapeHtml).
 "use strict";
 
 (() => {
@@ -10,15 +10,15 @@
   const POLL_MS = 1000;
   /** Log lines shown per import */
   const LOG_SHOWN = 8;
-  /** Source kinds as shown */
+  /** Source kinds as shown, as i18n keys */
   const SOURCES = {
-    web: "Web",
-    wiki: "Wiki",
-    guide: "Guide",
-    video: "Video",
-    "discord-vod-review": "#vod-review",
-    discord: "Discord",
-    file: "File",
+    web: "k.source.web",
+    wiki: "k.source.wiki",
+    guide: "k.source.guide",
+    video: "k.source.video",
+    "discord-vod-review": "k.source.vodReview",
+    discord: "k.source.discord",
+    file: "k.source.file",
   };
 
   const k = {
@@ -76,7 +76,8 @@
     el.textContent = message ?? "";
   }
 
-  const sourceName = (source) => SOURCES[source] ?? source;
+  const sourceName = (source) =>
+    SOURCES[source] ? t(SOURCES[source]) : source;
 
   /** A title linked to its url when it has one */
   function titleLink(title, url) {
@@ -94,13 +95,17 @@
       stats = await api("stats");
     } catch (error) {
       $("k-loading").hidden = true;
-      note(
-        "k-stats-error",
-        `The knowledge store cannot open: ${error.message}`,
-      );
+      note("k-stats-error", t("k.stats.cannotOpen", { error: error.message }));
       return;
     }
     k.stats = stats;
+    drawStats();
+  }
+
+  /** The store's numbers and the keys' state */
+  function drawStats() {
+    const stats = k.stats;
+    if (!stats) return;
     note("k-stats-error", null);
     $("k-loading").hidden = true;
     $("k-tiles").hidden = false;
@@ -109,35 +114,27 @@
     $("k-sources-note").textContent =
       stats.sources
         .map((s) => `${sourceName(s.source)} ${s.documents}`)
-        .join(" · ") || "nothing imported yet";
+        .join(" · ") || t("k.stats.nothing");
     $("k-chunks").textContent = stats.chunks;
     $("k-embedder").textContent = stats.embedder;
     $("k-terms").textContent = stats.glossary_terms;
     $("k-glossary-note").textContent = stats.own_glossary
-      ? "glossary.toml in the data folder"
-      : "the crate's seed glossary";
-    $("k-digest").textContent = stats.digest ? "Yes" : "No";
+      ? t("k.stats.ownGlossary")
+      : t("k.stats.seedGlossary");
+    $("k-digest").textContent = stats.digest ? t("k.yes") : t("k.no");
     $("k-model").textContent = stats.model;
     const keyChip = (name, set, what) =>
-      `<span class="chip" data-level="${set ? "good" : "off"}" title="${escapeHtml(what)}"><span class="chip-dot"></span><span class="chip-text">${name} ${set ? "set" : "not set"}</span></span>`;
+      `<span class="chip" data-level="${set ? "good" : "off"}" title="${escapeHtml(what)}"><span class="chip-dot"></span><span class="chip-text">${name} ${set ? t("k.key.set") : t("k.key.notSet")}</span></span>`;
     $("k-keys").innerHTML =
-      keyChip(
-        "ANTHROPIC_API_KEY",
-        stats.anthropic_key,
-        "Needed to ask and translate",
-      ) +
-      keyChip(
-        "DISCORD_BOT_TOKEN",
-        stats.discord_token,
-        "Needed to import through a Discord bot",
-      );
+      keyChip("ANTHROPIC_API_KEY", stats.anthropic_key, t("k.key.anthropic")) +
+      keyChip("DISCORD_BOT_TOKEN", stats.discord_token, t("k.key.discord"));
     $("k-key-note").hidden = stats.anthropic_key;
     for (const id of ["k-ask", "k-translate"]) {
       $(id).disabled = !stats.anthropic_key;
     }
     $("k-token-note").textContent = stats.discord_token
       ? ""
-      : "(needs DISCORD_BOT_TOKEN where the studio runs)";
+      : t("k.key.discordNote");
   }
 
   // -------------------------------------------------------------- search
@@ -148,7 +145,7 @@
     if (!q) return;
     note("k-search-error", null);
     const list = $("k-hits");
-    list.innerHTML = `<li class="panel-note">Searching…</li>`;
+    list.innerHTML = `<li class="panel-note">${escapeHtml(t("k.search.running"))}</li>`;
     let data;
     try {
       data = await api(
@@ -160,7 +157,7 @@
     }
     list.replaceChildren();
     if (!data.hits.length) {
-      list.innerHTML = `<li class="panel-note">Nothing found: the store is empty. Import something first.</li>`;
+      list.innerHTML = `<li class="panel-note">${escapeHtml(t("k.search.none"))}</li>`;
     }
     for (const hit of data.hits) {
       const li = document.createElement("li");
@@ -171,7 +168,7 @@
       li.innerHTML = `
         <div class="k-hit-head"><span class="chip num">${hit.score.toFixed(3)}</span><span class="cf-kind">${escapeHtml(sourceName(hit.source))}</span><span class="k-hit-title">${place}</span></div>
         <p class="k-hit-text">${escapeHtml(hit.text)}</p>
-        <span class="panel-note">${escapeHtml(hit.license ?? "license unknown")}${hit.language ? ` · ${escapeHtml(hit.language)}` : ""}</span>`;
+        <span class="panel-note">${escapeHtml(hit.license ?? t("k.licenseUnknown"))}${hit.language ? ` · ${escapeHtml(hit.language)}` : ""}</span>`;
       list.append(li);
     }
   };
@@ -180,9 +177,7 @@
 
   /** The message for a failed model call */
   function modelError(error) {
-    return error.status === 501
-      ? "ANTHROPIC_API_KEY is not set where the studio runs."
-      : error.message;
+    return error.status === 501 ? t("k.noKey") : error.message;
   }
 
   $("k-ask-form").onsubmit = async (event) => {
@@ -192,13 +187,13 @@
     const status = $("k-ask-status");
     const out = $("k-answer");
     $("k-ask").disabled = true;
-    status.textContent = "Cuttlefish is thinking… (up to a minute)";
+    status.textContent = t("k.ask.thinking");
     try {
       const answer = await api("ask", { question });
       const sources = answer.sources
         .map(
           (s) =>
-            `<li><b>${escapeHtml(s.id)}</b> ${titleLink(s.title, s.url)}${s.heading ? ` › ${escapeHtml(s.heading)}` : ""} <span class="panel-note">${escapeHtml(sourceName(s.source))} · ${escapeHtml(s.license ?? "license unknown")}</span></li>`,
+            `<li><b>${escapeHtml(s.id)}</b> ${titleLink(s.title, s.url)}${s.heading ? ` › ${escapeHtml(s.heading)}` : ""} <span class="panel-note">${escapeHtml(sourceName(s.source))} · ${escapeHtml(s.license ?? t("k.licenseUnknown"))}</span></li>`,
         )
         .join("");
       out.innerHTML = `<p class="cf-text">${escapeHtml(answer.text)}</p>${sources ? `<ol class="k-sources">${sources}</ol>` : ""}`;
@@ -217,7 +212,7 @@
     if (!text) return;
     const status = $("k-translate-status");
     $("k-translate").disabled = true;
-    status.textContent = "Translating…";
+    status.textContent = t("k.translate.running");
     remember("to", $("k-to").value);
     try {
       const data = await api("translate", { text, to: $("k-to").value });
@@ -335,13 +330,17 @@
               ? (100 * job.done) / job.total
               : 0;
         const count = job.total ? `${job.done}/${job.total}` : "";
+        const state =
+          job.state === "running"
+            ? count || t("k.job.running")
+            : t(`k.job.${job.state}`);
         const log = job.lines.slice(-LOG_SHOWN).map(escapeHtml).join("\n");
         li.innerHTML = `
-          <div class="cf-download-head"><span class="cf-download-url">${escapeHtml(job.what)}</span><span class="num">${job.state === "running" ? count || "running" : job.state} · ${job.added} added</span></div>
+          <div class="cf-download-head"><span class="cf-download-url">${escapeHtml(job.what)}</span><span class="num">${escapeHtml(state)} · ${escapeHtml(t("k.job.added", { n: job.added }))}</span></div>
           <div class="meter-track"><div class="meter-fill" style="width:${percent}%"></div></div>
           ${job.error ? `<span class="panel-note level-critical">${escapeHtml(job.error)}</span>` : ""}
           <pre class="k-log">${log}</pre>
-          ${job.state === "running" ? `<button type="button" class="mode-toggle" data-cancel>Cancel</button>` : ""}`;
+          ${job.state === "running" ? `<button type="button" class="mode-toggle" data-cancel>${escapeHtml(t("k.cancel"))}</button>` : ""}`;
         return li;
       }),
     );
@@ -392,13 +391,13 @@
           <td><span class="cf-kind">${escapeHtml(sourceName(d.source))}</span></td>
           <td class="num">${d.chunks}</td>
           <td>${escapeHtml(d.license ?? "–")}</td>
-          <td>${escapeHtml(new Date(d.fetched_at).toLocaleDateString())}</td>`;
+          <td>${escapeHtml(new Date(d.fetched_at).toLocaleDateString(i18nLocale()))}</td>`;
         return tr;
       }),
     );
     $("k-docs-note").textContent = k.documents.length
-      ? `${shown.length} of ${k.documents.length}`
-      : "No documents yet: import some.";
+      ? t("k.docs.shown", { n: shown.length, total: k.documents.length })
+      : t("k.docs.none");
   }
 
   $("k-filter").oninput = drawDocuments;
@@ -417,10 +416,10 @@
       list.innerHTML = `<li class="notice">${escapeHtml(error.message)}</li>`;
       return;
     }
-    $("k-glossary-size").textContent = `${data.size} terms`;
+    $("k-glossary-size").textContent = t("k.glossary.size", { n: data.size });
     list.replaceChildren();
     if (!data.terms.length) {
-      list.innerHTML = `<li class="panel-note">No glossary term found.</li>`;
+      list.innerHTML = `<li class="panel-note">${escapeHtml(t("k.glossary.none"))}</li>`;
     }
     for (const term of data.terms) {
       const li = document.createElement("li");
@@ -463,6 +462,13 @@
 
   document.addEventListener("visibilitychange", () => {
     if (k.shown && !document.hidden) pollJobs();
+  });
+
+  // What is drawn from JavaScript follows the language
+  window.addEventListener("lang-change", () => {
+    drawStats();
+    if (k.documents.length) drawDocuments();
+    if (k.shown) pollJobs();
   });
 
   setKind(remembered("kind", "web"));

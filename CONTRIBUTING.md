@@ -80,7 +80,7 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
 | `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
-| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `vision.js`, `predictor.js`, `icons/` icon set and gallery), embedded into the binary |
+| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `vision.js`, `predictor.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
 | `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy |
 | `doc/` | Setup and dashboard write-up with screenshots, published to GitHub Pages |
 
@@ -166,7 +166,12 @@ The page holds five apps switched by the hash (`#studio`, `#inspect/...`,
 links are a left rail or a top-bar switch (`data-nav`), in the order the user
 dragged them into (or moved with Alt+arrows; `procon-app-order`, new apps go
 last, "Reset app order" in the View menu), and the View menu sets
-`data-theme`, `data-layout` and `data-nav`, remembered in `localStorage`. The Studio's preview pauses and its views stop
+`data-theme`, `data-layout` and `data-nav`, remembered in `localStorage`, and
+the language. `web/i18n.js` is the language layer: a dictionary per language
+(English in it, Simplified Chinese in `web/i18n-zh.js`), `t(key, values)`,
+and `data-i18n*` attributes on the page's elements; a change fires
+`lang-change` for what scripts draw. The Cuttlefish app and its Knowledge view
+use it; other apps can adopt it key by key. The Studio's preview pauses and its views stop
 drawing while another app is shown. `web/controller3d.js` loads three.js from
 jsdelivr and extrudes the SVG view's outline; the SVG stays as the fallback. The
 input overlay (`drawInputHud` in `app.js`) is shared by the Studio's video and
@@ -210,7 +215,12 @@ into a new review folder, a local file can be copied in, and a session review
 points at its recording. The file name is checked to be a plain name, so a
 path never leaves its folder. `Cuttlefish::migrate` moves reviews of the
 older flat layout into folders at startup, with their YouTube videos from the
-old download cache. It also serves videos; `src/knowledge.rs` holds
+old download cache. A review may hold `notes` on the whole video. A YouTube
+review without its title gets it (with channel and upload date) from
+`yt-dlp --skip-download` on a thread, once per run, when it is listed or
+opened; a save keeps those fields when the page's copy lacks them. It also
+serves videos, and single thumbnails (`GET thumb`, ffmpeg, cached in memory)
+for the player's neighbours strip; `src/knowledge.rs` holds
 the `cuttlefish` crate's `Store` and `E5Embedder`, loaded once on first use and
 shared by "Ask Cuttlefish" (`cuttlefish::review::review` over the borrowed
 store, embedder and a client made per request), the Knowledge tab's search,

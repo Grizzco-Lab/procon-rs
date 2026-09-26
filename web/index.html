@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=M+PLUS+Rounded+1c:wght@500;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=M+PLUS+Rounded+1c:wght@500;700;800&family=Nunito:wght@500;600;700&display=swap"
     />
     <link rel="stylesheet" href="style.css" />
     <script>
@@ -106,18 +106,6 @@
         </span>
         <!-- Cuttlefish only: the open review and whether it is saved -->
         <span class="chip-group" data-app-only="cuttlefish">
-          <!-- The library's two views; hidden in the player -->
-          <span class="cf-tabs" id="cf-tabs">
-            <a class="mode-toggle" href="#cuttlefish" data-tab="reviews"
-              >Reviews</a
-            >
-            <a
-              class="mode-toggle"
-              href="#cuttlefish/view=knowledge"
-              data-tab="knowledge"
-              >Knowledge</a
-            >
-          </span>
           <span class="chip" id="cf-chip" data-level="off" hidden>
             <span class="chip-dot"></span><span class="chip-text"></span>
           </span>
@@ -164,6 +152,13 @@
           >
             Phone
           </button>
+        </div>
+        <span class="theme-picker-label" data-i18n="view.language"
+          >Language</span
+        >
+        <div class="view-choices">
+          <button type="button" data-pick-lang="en" lang="en">English</button>
+          <button type="button" data-pick-lang="zh" lang="zh-CN"></button>
         </div>
         <span class="theme-picker-label">Apps</span>
         <div class="view-choices">
@@ -1020,33 +1015,70 @@
 
     <!-- Cuttlefish app: pick a video, then review it with comments and drawings -->
     <div data-app-section="cuttlefish" hidden>
+      <!-- The library's two views as tabs; hidden in the player -->
+      <nav class="cf-views" id="cf-tabs" aria-label="Cuttlefish">
+        <a class="cf-view" href="#cuttlefish" data-tab="reviews">
+          <svg class="cf-view-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <use href="icons/app-reviews.svg#i" />
+          </svg>
+          <span class="cf-view-text">
+            <b data-i18n="cf.tab.reviews">Reviews</b>
+            <span class="cf-view-note" data-i18n="cf.tab.reviewsNote"
+              >Your video reviews: comments and drawings on the frames</span
+            >
+          </span>
+        </a>
+        <a
+          class="cf-view"
+          href="#cuttlefish/view=knowledge"
+          data-tab="knowledge"
+        >
+          <svg class="cf-view-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <use href="icons/app-knowledge.svg#i" />
+          </svg>
+          <span class="cf-view-text">
+            <b data-i18n="cf.tab.knowledge">Knowledge</b>
+            <span class="cf-view-note" data-i18n="cf.tab.knowledgeNote"
+              >What Cuttlefish knows: guides, wiki pages and VODs to search and
+              ask</span
+            >
+          </span>
+        </a>
+      </nav>
+
       <main class="layout" id="cf-library" hidden>
         <section class="panel p-cf-open" aria-labelledby="h-cf-open">
           <header class="panel-head">
-            <h2 id="h-cf-open">Open a video</h2>
-            <span class="panel-note"
+            <h2 id="h-cf-open" data-i18n="cf.open.title">Open a video</h2>
+            <span class="panel-note" data-i18n="cf.open.note"
               >each review is a folder: notes, and the video when it lives
               there</span
             >
           </header>
           <form class="cf-source" id="cf-form-session">
-            <span class="readout-label">Recorded session</span>
+            <span class="readout-label" data-i18n="cf.open.session"
+              >Recorded session</span
+            >
             <div class="cf-row">
               <select
                 class="select"
                 id="cf-session"
                 aria-label="Session"
+                data-i18n-aria-label="cf.open.sessionLabel"
               ></select>
               <select
                 class="select"
                 id="cf-segment"
                 aria-label="Segment"
+                data-i18n-aria-label="cf.open.segmentLabel"
               ></select>
-              <button type="submit" class="btn">Open</button>
+              <button type="submit" class="btn" data-i18n="cf.open.open">
+                Open
+              </button>
             </div>
           </form>
           <form class="cf-source" id="cf-form-file">
-            <label class="readout-label" for="cf-file"
+            <label class="readout-label" for="cf-file" data-i18n="cf.open.file"
               >Video file on this machine</label
             >
             <div class="cf-row">
@@ -1055,9 +1087,12 @@
                 id="cf-file"
                 type="text"
                 placeholder="/path/to/video.mp4"
+                data-i18n-placeholder="cf.open.filePlaceholder"
                 required
               />
-              <button type="submit" class="btn">Open</button>
+              <button type="submit" class="btn" data-i18n="cf.open.open">
+                Open
+              </button>
             </div>
           </form>
           <form class="cf-source" id="cf-form-youtube">
@@ -1073,7 +1108,7 @@
             </div>
             <div class="cf-row">
               <label class="check" for="cf-from"
-                >From
+                ><span data-i18n="cf.open.from">From</span>
                 <input
                   class="select num cf-time-input"
                   id="cf-from"
@@ -1081,14 +1116,16 @@
                   placeholder="1:30"
               /></label>
               <label class="check" for="cf-to"
-                >to
+                ><span data-i18n="cf.open.to">to</span>
                 <input
                   class="select num cf-time-input"
                   id="cf-to"
                   type="text"
                   placeholder="2:45"
               /></label>
-              <button type="submit" class="btn">Download and open</button>
+              <button type="submit" class="btn" data-i18n="cf.open.download">
+                Download and open
+              </button>
             </div>
           </form>
           <p class="notice" id="cf-open-error" hidden></p>
@@ -1097,16 +1134,18 @@
 
         <section class="panel p-cf-reviews" aria-labelledby="h-cf-reviews">
           <header class="panel-head">
-            <h2 id="h-cf-reviews">Reviews</h2>
-            <span class="panel-note" id="cf-reviews-note">Loading…</span>
+            <h2 id="h-cf-reviews" data-i18n="cf.tab.reviews">Reviews</h2>
+            <span class="panel-note" id="cf-reviews-note" data-i18n="cf.loading"
+              >Loading…</span
+            >
           </header>
           <div class="table-wrap">
-            <table class="data-table">
+            <table class="data-table cf-reviews-table">
               <thead>
                 <tr>
-                  <th>Video</th>
-                  <th>Comments</th>
-                  <th>Changed</th>
+                  <th data-i18n="cf.reviews.video">Video</th>
+                  <th data-i18n="cf.reviews.comments">Comments</th>
+                  <th data-i18n="cf.reviews.changed">Changed</th>
                   <th></th>
                 </tr>
               </thead>
@@ -1125,10 +1164,12 @@
                 class="back-link"
                 id="cf-back"
                 title="Back to the reviews"
+                data-i18n-title="cf.backTitle"
+                data-i18n="cf.back"
               >
                 ← Reviews
               </button>
-              <h2 id="h-cf-video">Review</h2>
+              <h2 id="h-cf-video" data-i18n="cf.review">Review</h2>
             </div>
             <div class="controls">
               <button
@@ -1136,16 +1177,34 @@
                 class="btn btn-play"
                 id="cf-play"
                 title="Space"
+                data-i18n="cf.play"
               >
                 ▶ Play
               </button>
-              <button type="button" class="btn" id="cf-back-frame" title="←">
+              <button
+                type="button"
+                class="btn"
+                id="cf-back-frame"
+                title="←"
+                data-i18n="cf.frameBack"
+              >
                 ‹ Frame
               </button>
-              <button type="button" class="btn" id="cf-next-frame" title="→">
+              <button
+                type="button"
+                class="btn"
+                id="cf-next-frame"
+                title="→"
+                data-i18n="cf.frameNext"
+              >
                 Frame ›
               </button>
-              <select class="select" id="cf-speed" aria-label="Playback speed">
+              <select
+                class="select"
+                id="cf-speed"
+                aria-label="Playback speed"
+                data-i18n-aria-label="cf.speed"
+              >
                 <option value="0.25">0.25×</option>
                 <option value="0.5">0.5×</option>
                 <option value="1" selected>1×</option>
@@ -1158,15 +1217,20 @@
                 class="btn"
                 id="cf-copy"
                 title="Copy the video file into this review's folder, so the review keeps it"
+                data-i18n-title="cf.copyTitle"
+                data-i18n="cf.copy"
                 hidden
               >
                 Copy into review
               </button>
             </div>
           </header>
-          <!-- The video, with the comments' drawings over it -->
+          <!-- The video's title, channel and date, linked to YouTube -->
+          <p class="cf-info" id="cf-info"></p>
+          <!-- The video, with danmaku and the comments' drawings over it -->
           <div class="screen cf-screen" id="cf-screen">
             <video id="cf-video" preload="auto" playsinline></video>
+            <div class="cf-danmaku" id="cf-danmaku" aria-hidden="true"></div>
             <p class="cf-screen-note" id="cf-video-note" hidden></p>
           </div>
           <div class="scrubber" id="cf-scrubber">
@@ -1177,12 +1241,18 @@
             <div class="scrubber-thumb" id="cf-thumb"></div>
             <div class="scrubber-bubble" id="cf-bubble" hidden></div>
           </div>
-          <div class="cf-tools" role="toolbar" aria-label="Drawing">
+          <div
+            class="cf-tools"
+            role="toolbar"
+            aria-label="Drawing"
+            data-i18n-aria-label="cf.tools"
+          >
             <button
               type="button"
               class="mode-toggle"
               data-tool="select"
               title="V"
+              data-i18n="cf.tool.select"
             >
               Select
             </button>
@@ -1191,6 +1261,7 @@
               class="mode-toggle"
               data-tool="rect"
               title="R"
+              data-i18n="cf.tool.rect"
             >
               Rectangle
             </button>
@@ -1199,6 +1270,7 @@
               class="mode-toggle"
               data-tool="ellipse"
               title="E"
+              data-i18n="cf.tool.ellipse"
             >
               Ellipse
             </button>
@@ -1207,6 +1279,7 @@
               class="mode-toggle"
               data-tool="arrow"
               title="A"
+              data-i18n="cf.tool.arrow"
             >
               Arrow
             </button>
@@ -1215,6 +1288,7 @@
               class="mode-toggle"
               data-tool="freehand"
               title="F"
+              data-i18n="cf.tool.freehand"
             >
               Freehand
             </button>
@@ -1224,19 +1298,100 @@
               class="mode-toggle"
               id="cf-delete-shape"
               title="Delete the selected shape (Del)"
+              data-i18n-title="cf.deleteShapeTitle"
+              data-i18n="cf.deleteShape"
               disabled
             >
               Delete shape
             </button>
-            <button type="button" class="btn cf-add" id="cf-add" title="C">
+            <button
+              type="button"
+              class="btn cf-add"
+              id="cf-add"
+              title="C"
+              data-i18n="cf.addComment"
+            >
               + Comment
             </button>
           </div>
+          <!-- Danmaku: comments over the video while it plays -->
+          <div class="cf-row cf-danmaku-row">
+            <button
+              type="button"
+              class="mode-toggle"
+              id="cf-danmaku-toggle"
+              title="Show comments over the video while it plays (D)"
+              data-i18n-title="cf.danmakuTitle"
+              data-i18n="cf.danmaku"
+            >
+              Danmaku
+            </button>
+            <select
+              class="select"
+              id="cf-danmaku-style"
+              aria-label="Danmaku style"
+              data-i18n-aria-label="cf.danmakuStyle"
+            >
+              <option value="float" data-i18n="cf.danmakuFloat">
+                Float in the corner
+              </option>
+              <option value="slide" data-i18n="cf.danmakuSlide">
+                Slide across
+              </option>
+            </select>
+          </div>
+          <!-- Neighbours: thumbnails around the playhead, updated while paused -->
+          <div class="cf-strip-head">
+            <span class="readout-label" data-i18n="cf.strip">Neighbours</span>
+            <span class="panel-note" id="cf-strip-note"></span>
+            <label class="check"
+              ><span data-i18n="cf.strip.every">every</span>
+              <select class="select" id="cf-spacing">
+                <option value="0.25">0.25 s</option>
+                <option value="0.5">0.5 s</option>
+                <option value="1">1 s</option>
+                <option value="2">2 s</option>
+              </select></label
+            >
+          </div>
+          <div class="cf-strip" id="cf-strip"></div>
+        </section>
+
+        <!-- Notes on the whole video, tied to no time -->
+        <section class="panel p-cf-notes" aria-labelledby="h-cf-notes">
+          <header class="panel-head">
+            <h2 id="h-cf-notes" data-i18n="cf.notes">Notes</h2>
+            <span class="panel-note" id="cf-notes-count"></span>
+          </header>
+          <form class="cf-note-form" id="cf-note-form">
+            <textarea
+              class="select cf-question"
+              id="cf-note-text"
+              rows="3"
+              placeholder="About the whole video: what went well, what to change, or a rant"
+              aria-label="New note"
+              data-i18n-placeholder="cf.notes.placeholder"
+              data-i18n-aria-label="cf.notes.new"
+            ></textarea>
+            <div class="cf-row">
+              <span class="panel-note" data-i18n="cf.notes.hint"
+                >Notes belong to no time or drawing.</span
+              >
+              <button
+                type="submit"
+                class="btn btn-small cf-done"
+                data-i18n="cf.notes.add"
+              >
+                Add note
+              </button>
+            </div>
+          </form>
+          <ol class="cf-comments cf-notes" id="cf-notes"></ol>
         </section>
 
         <section class="panel p-cf-comments" aria-labelledby="h-cf-comments">
           <header class="panel-head">
-            <h2 id="h-cf-comments">Comments</h2>
+            <h2 id="h-cf-comments" data-i18n="cf.comments">Comments</h2>
             <span class="panel-note" id="cf-count"></span>
           </header>
           <form class="cf-ask" id="cf-ask">
@@ -1252,20 +1407,33 @@
                 <circle class="app-icon-dot" cx="10" cy="10.2" r="1.1" />
                 <circle class="app-icon-dot" cx="14" cy="10.2" r="1.1" />
               </svg>
-              <b>Ask Cuttlefish</b>
-              <span class="panel-note">a veteran's eye on your play</span>
+              <b data-i18n="cf.ask">Ask Cuttlefish</b>
+              <span class="panel-note" data-i18n="cf.ask.note"
+                >a veteran's eye on your play</span
+              >
             </div>
             <textarea
               class="select cf-question"
               id="cf-question"
               rows="2"
               placeholder="Optional question, e.g. why was I splatted here?"
+              data-i18n-placeholder="cf.ask.placeholder"
             ></textarea>
             <div class="cf-row">
-              <button type="submit" class="btn" value="moment">
+              <button
+                type="submit"
+                class="btn"
+                value="moment"
+                data-i18n="cf.ask.moment"
+              >
                 Comment on this moment
               </button>
-              <button type="submit" class="btn" value="range">
+              <button
+                type="submit"
+                class="btn"
+                value="range"
+                data-i18n="cf.ask.range"
+              >
                 Review range
               </button>
               <span class="cf-range"
@@ -1274,7 +1442,9 @@
                   id="cf-ask-from"
                   placeholder="from"
                   type="text"
-                  aria-label="Range start" />
+                  aria-label="Range start"
+                  data-i18n-placeholder="cf.ask.from"
+                  data-i18n-aria-label="cf.ask.fromLabel" />
                 –
                 <input
                   class="select num cf-time-input"
@@ -1282,17 +1452,20 @@
                   placeholder="to"
                   type="text"
                   aria-label="Range end"
+                  data-i18n-placeholder="cf.ask.to"
+                  data-i18n-aria-label="cf.ask.toLabel"
               /></span>
             </div>
             <p class="notice" id="cf-ai-note" hidden></p>
           </form>
           <ol class="cf-comments" id="cf-comments"></ol>
-          <p class="panel-note keys">
+          <p class="panel-note keys" data-i18n-html="cf.keys">
             <kbd>Space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> one frame
             (<kbd>Shift</kbd> one second) · <kbd>C</kbd> comment here ·
             <kbd>V</kbd> <kbd>R</kbd> <kbd>E</kbd> <kbd>A</kbd>
-            <kbd>F</kbd> tools · <kbd>Del</kbd> delete shape · drawing on a
-            paused frame without a comment open starts one.
+            <kbd>F</kbd> tools · <kbd>Del</kbd> delete shape · <kbd>D</kbd>
+            danmaku · drawing on a paused frame without a comment open starts
+            one.
           </p>
         </section>
       </main>
@@ -1301,33 +1474,35 @@
       <main class="layout" id="cf-knowledge" hidden>
         <section class="panel p-k-stats" aria-labelledby="h-k-stats">
           <header class="panel-head">
-            <h2 id="h-k-stats">Knowledge</h2>
+            <h2 id="h-k-stats" data-i18n="cf.tab.knowledge">Knowledge</h2>
             <span class="panel-note path" id="k-data"></span>
           </header>
-          <p class="panel-note" id="k-loading">
+          <p class="panel-note" id="k-loading" data-i18n="k.loading">
             Loading the knowledge store… The first time, the embedding model
             (about 470 MB) is downloaded into the data folder.
           </p>
           <div class="tiles" id="k-tiles" hidden>
             <div class="tile">
-              <span class="tile-label">Documents</span>
+              <span class="tile-label" data-i18n="k.documents">Documents</span>
               <span class="tile-value num" id="k-documents">0</span>
               <span class="tile-note" id="k-sources-note"></span>
             </div>
             <div class="tile">
-              <span class="tile-label">Chunks</span>
+              <span class="tile-label" data-i18n="k.chunks">Chunks</span>
               <span class="tile-value num" id="k-chunks">0</span>
               <span class="tile-note" id="k-embedder"></span>
             </div>
             <div class="tile">
-              <span class="tile-label">Glossary</span>
+              <span class="tile-label" data-i18n="k.glossary">Glossary</span>
               <span class="tile-value num" id="k-terms">0</span>
               <span class="tile-note" id="k-glossary-note"></span>
             </div>
             <div class="tile">
-              <span class="tile-label">Digest</span>
+              <span class="tile-label" data-i18n="k.digest">Digest</span>
               <span class="tile-value" id="k-digest">–</span>
-              <span class="tile-note">digest.md, sent with every question</span>
+              <span class="tile-note" data-i18n="k.digestNote"
+                >digest.md, sent with every question</span
+              >
             </div>
           </div>
           <div class="k-keys" id="k-keys"></div>
@@ -1336,8 +1511,10 @@
 
         <section class="panel p-k-search" aria-labelledby="h-k-search">
           <header class="panel-head">
-            <h2 id="h-k-search">Search</h2>
-            <span class="panel-note">nearest chunks, any language, no key</span>
+            <h2 id="h-k-search" data-i18n="k.search">Search</h2>
+            <span class="panel-note" data-i18n="k.searchNote"
+              >nearest chunks, any language, no key</span
+            >
           </header>
           <form class="cf-row" id="k-search-form">
             <input
@@ -1346,15 +1523,24 @@
               type="search"
               placeholder="Stinger at low tide, バクダンの処理…"
               aria-label="Search the knowledge"
+              data-i18n-placeholder="k.searchPlaceholder"
+              data-i18n-aria-label="k.searchLabel"
               required
             />
-            <select class="select" id="k-k" aria-label="Results">
+            <select
+              class="select"
+              id="k-k"
+              aria-label="Results"
+              data-i18n-aria-label="k.results"
+            >
               <option value="5">5</option>
               <option value="8" selected>8</option>
               <option value="15">15</option>
               <option value="30">30</option>
             </select>
-            <button type="submit" class="btn btn-small">Search</button>
+            <button type="submit" class="btn btn-small" data-i18n="k.search">
+              Search
+            </button>
           </form>
           <p class="notice" id="k-search-error" hidden></p>
           <ol class="k-hits" id="k-hits"></ol>
@@ -1362,10 +1548,15 @@
 
         <section class="panel p-k-ask" aria-labelledby="h-k-ask">
           <header class="panel-head">
-            <h2 id="h-k-ask">Ask and translate</h2>
+            <h2 id="h-k-ask" data-i18n="k.askTitle">Ask and translate</h2>
             <span class="panel-note" id="k-model"></span>
           </header>
-          <p class="notice is-info" id="k-key-note" hidden>
+          <p
+            class="notice is-info"
+            id="k-key-note"
+            data-i18n="k.keyNote"
+            hidden
+          >
             ANTHROPIC_API_KEY is not set where the studio runs, so asking and
             translating are off. Export it before starting the studio; search,
             imports and the glossary work without it.
@@ -1383,8 +1574,10 @@
                 <circle class="app-icon-dot" cx="10" cy="10.2" r="1.1" />
                 <circle class="app-icon-dot" cx="14" cy="10.2" r="1.1" />
               </svg>
-              <b>Ask Cuttlefish</b>
-              <span class="panel-note">answers cite the knowledge</span>
+              <b data-i18n="cf.ask">Ask Cuttlefish</b>
+              <span class="panel-note" data-i18n="k.askNote"
+                >answers cite the knowledge</span
+              >
             </div>
             <textarea
               class="select cf-question"
@@ -1392,10 +1585,17 @@
               rows="2"
               placeholder="When should I leave the basket to kill a Stinger?"
               aria-label="Question"
+              data-i18n-placeholder="k.questionPlaceholder"
+              data-i18n-aria-label="k.question"
               required
             ></textarea>
             <div class="cf-row">
-              <button type="submit" class="btn btn-small" id="k-ask">
+              <button
+                type="submit"
+                class="btn btn-small"
+                id="k-ask"
+                data-i18n="k.ask"
+              >
                 Ask
               </button>
               <span class="panel-note" id="k-ask-status"></span>
@@ -1403,28 +1603,45 @@
           </form>
           <div class="k-answer" id="k-answer" hidden></div>
           <form class="k-translate" id="k-translate-form">
-            <label class="readout-label" for="k-text">Translate</label>
+            <label class="readout-label" for="k-text" data-i18n="k.translate"
+              >Translate</label
+            >
             <textarea
               class="select cf-question"
               id="k-text"
               rows="2"
               placeholder="Kill the Steelhead before the Flyfish"
+              data-i18n-placeholder="k.translatePlaceholder"
               required
             ></textarea>
             <div class="cf-row">
-              <select class="select" id="k-to" aria-label="Into">
-                <option value="en">English</option>
-                <option value="ja">Japanese</option>
-                <option value="zh">Chinese (simplified)</option>
-                <option value="zh-Hant">Chinese (traditional)</option>
-                <option value="ko">Korean</option>
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
-                <option value="it">Italian</option>
-                <option value="ru">Russian</option>
+              <select
+                class="select"
+                id="k-to"
+                aria-label="Into"
+                data-i18n-aria-label="k.into"
+              >
+                <option value="en" data-i18n="k.lang.en">English</option>
+                <option value="ja" data-i18n="k.lang.ja">Japanese</option>
+                <option value="zh" data-i18n="k.lang.zh">
+                  Chinese (simplified)
+                </option>
+                <option value="zh-Hant" data-i18n="k.lang.zhHant">
+                  Chinese (traditional)
+                </option>
+                <option value="ko" data-i18n="k.lang.ko">Korean</option>
+                <option value="es" data-i18n="k.lang.es">Spanish</option>
+                <option value="fr" data-i18n="k.lang.fr">French</option>
+                <option value="de" data-i18n="k.lang.de">German</option>
+                <option value="it" data-i18n="k.lang.it">Italian</option>
+                <option value="ru" data-i18n="k.lang.ru">Russian</option>
               </select>
-              <button type="submit" class="btn btn-small" id="k-translate">
+              <button
+                type="submit"
+                class="btn btn-small"
+                id="k-translate"
+                data-i18n="k.translate"
+              >
                 Translate
               </button>
               <span class="panel-note" id="k-translate-status"></span>
@@ -1435,35 +1652,74 @@
 
         <section class="panel p-k-import" aria-labelledby="h-k-import">
           <header class="panel-head">
-            <h2 id="h-k-import">Import</h2>
-            <span class="panel-note">one at a time; web pages politely</span>
+            <h2 id="h-k-import" data-i18n="k.import">Import</h2>
+            <span class="panel-note" data-i18n="k.importNote"
+              >one at a time; web pages politely</span
+            >
           </header>
           <form class="k-import" id="k-import-form">
             <div class="k-kinds" id="k-kinds">
-              <button type="button" class="mode-toggle" data-kind="web">
+              <button
+                type="button"
+                class="mode-toggle"
+                data-kind="web"
+                data-i18n="k.kind.web"
+              >
                 Web pages
               </button>
-              <button type="button" class="mode-toggle" data-kind="sitemap">
+              <button
+                type="button"
+                class="mode-toggle"
+                data-kind="sitemap"
+                data-i18n="k.kind.sitemap"
+              >
                 Sitemap
               </button>
-              <button type="button" class="mode-toggle" data-kind="wiki">
+              <button
+                type="button"
+                class="mode-toggle"
+                data-kind="wiki"
+                data-i18n="k.kind.wiki"
+              >
                 Wiki category
               </button>
-              <button type="button" class="mode-toggle" data-kind="youtube">
+              <button
+                type="button"
+                class="mode-toggle"
+                data-kind="youtube"
+                data-i18n="k.kind.youtube"
+              >
                 YouTube
               </button>
-              <button type="button" class="mode-toggle" data-kind="file">
+              <button
+                type="button"
+                class="mode-toggle"
+                data-kind="file"
+                data-i18n="k.kind.file"
+              >
                 Files
               </button>
-              <button type="button" class="mode-toggle" data-kind="export">
+              <button
+                type="button"
+                class="mode-toggle"
+                data-kind="export"
+                data-i18n="k.kind.export"
+              >
                 Discord export
               </button>
-              <button type="button" class="mode-toggle" data-kind="bot">
+              <button
+                type="button"
+                class="mode-toggle"
+                data-kind="bot"
+                data-i18n="k.kind.bot"
+              >
                 Discord bot
               </button>
             </div>
             <label class="field" data-for="web">
-              <span class="readout-label">Page addresses, one per line</span>
+              <span class="readout-label" data-i18n="k.f.urls"
+                >Page addresses, one per line</span
+              >
               <textarea
                 class="select cf-question"
                 id="k-urls"
@@ -1472,7 +1728,9 @@
               ></textarea>
             </label>
             <label class="field" data-for="sitemap">
-              <span class="readout-label">Sitemap address</span>
+              <span class="readout-label" data-i18n="k.f.sitemap"
+                >Sitemap address</span
+              >
               <input
                 class="select"
                 id="k-sitemap"
@@ -1490,7 +1748,9 @@
               />
             </label>
             <label class="field" data-for="wiki">
-              <span class="readout-label">Categories, one per line</span>
+              <span class="readout-label" data-i18n="k.f.categories"
+                >Categories, one per line</span
+              >
               <textarea
                 class="select cf-question"
                 id="k-categories"
@@ -1500,7 +1760,7 @@
             </label>
             <div class="cf-row" data-for="web sitemap wiki">
               <label class="check"
-                >At most
+                ><span data-i18n="k.f.atMost">At most</span>
                 <input
                   class="select num k-number"
                   id="k-max-pages"
@@ -1508,10 +1768,10 @@
                   min="1"
                   value="50"
                 />
-                pages</label
+                <span data-i18n="k.f.pages">pages</span></label
               >
               <label class="check"
-                >one request per site every
+                ><span data-i18n="k.f.delay">one request per site every</span>
                 <input
                   class="select num k-number"
                   id="k-delay"
@@ -1524,7 +1784,7 @@
               >
             </div>
             <label class="field" data-for="youtube">
-              <span class="readout-label"
+              <span class="readout-label" data-i18n="k.f.youtube"
                 >Video, playlist or channel (subtitles only)</span
               >
               <input
@@ -1535,7 +1795,7 @@
               />
             </label>
             <label class="check" data-for="youtube"
-              >At most
+              ><span data-i18n="k.f.atMost">At most</span>
               <input
                 class="select num k-number"
                 id="k-max-videos"
@@ -1543,10 +1803,10 @@
                 min="1"
                 value="20"
               />
-              videos</label
+              <span data-i18n="k.f.videos">videos</span></label
             >
             <label class="field" data-for="file export">
-              <span class="readout-label"
+              <span class="readout-label" data-i18n="k.f.paths"
                 >Files on this machine, full paths, one per line</span
               >
               <textarea
@@ -1557,7 +1817,9 @@
               ></textarea>
             </label>
             <label class="field" data-for="file">
-              <span class="readout-label">Address to cite (optional)</span>
+              <span class="readout-label" data-i18n="k.f.cite"
+                >Address to cite (optional)</span
+              >
               <input
                 class="select"
                 id="k-cite"
@@ -1566,11 +1828,15 @@
               />
             </label>
             <label class="check" data-for="export"
-              ><input type="checkbox" id="k-whole" /> Each file is one
-              conversation (a thread or forum post)</label
+              ><input type="checkbox" id="k-whole" />
+              <span data-i18n="k.f.whole"
+                >Each file is one conversation (a thread or forum post)</span
+              ></label
             >
             <label class="field" data-for="bot">
-              <span class="readout-label">Channel ids, one per line</span>
+              <span class="readout-label" data-i18n="k.f.channels"
+                >Channel ids, one per line</span
+              >
               <textarea
                 class="select cf-question"
                 id="k-channels"
@@ -1579,19 +1845,26 @@
               ></textarea>
             </label>
             <label class="check" data-for="bot"
-              ><input type="checkbox" id="k-threads" checked /> With threads and
-              forum posts <span class="check-note" id="k-token-note"></span
+              ><input type="checkbox" id="k-threads" checked />
+              <span data-i18n="k.f.threads">With threads and forum posts</span>
+              <span class="check-note" id="k-token-note"></span
             ></label>
             <div class="cf-row">
               <select class="select" id="k-source" aria-label="Kind of source">
-                <option value="">Kind: automatic</option>
-                <option value="guide">Guide</option>
-                <option value="wiki">Wiki</option>
-                <option value="web">Web page</option>
-                <option value="video">Video</option>
+                <option value="" data-i18n="k.f.kindAuto">
+                  Kind: automatic
+                </option>
+                <option value="guide" data-i18n="k.source.guide">Guide</option>
+                <option value="wiki" data-i18n="k.source.wiki">Wiki</option>
+                <option value="web" data-i18n="k.source.webPage">
+                  Web page
+                </option>
+                <option value="video" data-i18n="k.source.video">Video</option>
                 <option value="discord-vod-review">#vod-review</option>
-                <option value="discord">Discord</option>
-                <option value="file">File</option>
+                <option value="discord" data-i18n="k.source.discord">
+                  Discord
+                </option>
+                <option value="file" data-i18n="k.source.file">File</option>
               </select>
               <input
                 class="select cf-grow"
@@ -1599,13 +1872,18 @@
                 type="text"
                 placeholder="License or terms (optional)"
                 aria-label="License"
+                data-i18n-placeholder="k.f.license"
+                data-i18n-aria-label="k.f.licenseLabel"
               />
               <label class="check"
-                ><input type="checkbox" id="k-refresh" /> Again if stored</label
+                ><input type="checkbox" id="k-refresh" />
+                <span data-i18n="k.f.refresh">Again if stored</span></label
               >
             </div>
             <div class="cf-row">
-              <button type="submit" class="btn btn-small">Import</button>
+              <button type="submit" class="btn btn-small" data-i18n="k.import">
+                Import
+              </button>
             </div>
           </form>
           <p class="notice" id="k-import-error" hidden></p>
@@ -1614,24 +1892,26 @@
 
         <section class="panel p-k-docs" aria-labelledby="h-k-docs">
           <header class="panel-head">
-            <h2 id="h-k-docs">Documents</h2>
+            <h2 id="h-k-docs" data-i18n="k.documents">Documents</h2>
             <input
               class="select"
               id="k-filter"
               type="search"
               placeholder="Filter"
               aria-label="Filter documents"
+              data-i18n-placeholder="k.filter"
+              data-i18n-aria-label="k.filterLabel"
             />
           </header>
           <div class="table-wrap k-docs-wrap">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Title</th>
-                  <th>Source</th>
-                  <th>Chunks</th>
-                  <th>License</th>
-                  <th>Fetched</th>
+                  <th data-i18n="k.th.title">Title</th>
+                  <th data-i18n="k.th.source">Source</th>
+                  <th data-i18n="k.chunks">Chunks</th>
+                  <th data-i18n="k.th.license">License</th>
+                  <th data-i18n="k.th.fetched">Fetched</th>
                 </tr>
               </thead>
               <tbody id="k-docs"></tbody>
@@ -1642,7 +1922,7 @@
 
         <section class="panel p-k-glossary" aria-labelledby="h-k-glossary">
           <header class="panel-head">
-            <h2 id="h-k-glossary">Glossary</h2>
+            <h2 id="h-k-glossary" data-i18n="k.glossary">Glossary</h2>
             <span class="panel-note" id="k-glossary-size"></span>
           </header>
           <form class="cf-row" id="k-glossary-form">
@@ -1652,9 +1932,13 @@
               type="search"
               placeholder="Steelhead, コジャケ, or a sentence"
               aria-label="Term or text"
+              data-i18n-placeholder="k.termPlaceholder"
+              data-i18n-aria-label="k.termLabel"
               required
             />
-            <button type="submit" class="btn btn-small">Look up</button>
+            <button type="submit" class="btn btn-small" data-i18n="k.lookUp">
+              Look up
+            </button>
           </form>
           <ul class="k-terms" id="k-glossary"></ul>
         </section>
@@ -2152,6 +2436,8 @@
     </div>
 
     <script src="icons/inline.js"></script>
+    <script src="i18n.js"></script>
+    <script src="i18n-zh.js"></script>
     <script src="app.js"></script>
     <script src="sketch.js"></script>
     <script src="inspect.js"></script>

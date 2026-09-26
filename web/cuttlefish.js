@@ -1,22 +1,40 @@
 // Cuttlefish app: review a video with comments at its times and drawings on
-// its paused frames, and ask Cuttlefish (the AI) for his. Runs after app.js,
-// sketch.js and inspect.js and uses their helpers ($, Sketch, clock,
-// escapeHtml). Its state lives in the hash: #cuttlefish (the library),
-// #cuttlefish/r=<review>&t=<s> (a saved review) or
-// #cuttlefish/kind=<kind>&ref=<ref>&start_s=&end_s= (a video not reviewed yet)
-// or #cuttlefish/view=knowledge (the knowledge view, see knowledge.js).
-// Reviews are saved as JSON through /api/cuttlefish/reviews/<id>, each in a
-// folder of its own with its YouTube (or copied) video; the format is in
-// src/cuttlefish.rs.
+// its paused frames, notes on the whole video, and ask Cuttlefish (the AI)
+// for his. Runs after i18n.js, app.js, sketch.js and inspect.js and uses
+// their helpers (t, $, Sketch, clock, escapeHtml). Its state lives in the
+// hash: #cuttlefish (the library), #cuttlefish/r=<review>&t=<s> (a saved
+// review) or #cuttlefish/kind=<kind>&ref=<ref>&start_s=&end_s= (a video not
+// reviewed yet) or #cuttlefish/view=knowledge (the knowledge view, see
+// knowledge.js). Reviews are saved as JSON through
+// /api/cuttlefish/reviews/<id>, each in a folder of its own with its YouTube
+// (or copied) video; the format is in src/cuttlefish.rs.
 "use strict";
 
 (() => {
   /** A comment without an end shows its drawings this long, in seconds */
   const HOLD_S = 2;
+  /** A danmaku comment, and its drawings, show this long, in seconds */
+  const DANMAKU_S = 5;
+  /** Danmaku comments floating in the corner at most */
+  const DANMAKU_STACK = 5;
+  /** Sliding danmaku keeps to this band of the picture (fractions of its
+   * height), below the game's top row of counters */
+  const SLIDE_TOP = 0.12;
+  const SLIDE_BOTTOM = 0.75;
+  /** Characters of a comment shown as danmaku */
+  const DANMAKU_CHARS = 120;
   /** Range reviewed by default: this long up to the current time */
   const RANGE_S = 15;
   /** Frame rate assumed until the video's is known */
   const DEFAULT_FPS = 30;
+  /** Thumbnails on each side of the playhead in the neighbours strip */
+  const STRIP_SIDE = 6;
+  /** Wait after the last seek before the strip updates, in ms */
+  const STRIP_DEBOUNCE_MS = 150;
+  /** How often a missing YouTube title is asked about, in ms, and how many
+   * times */
+  const META_POLL_MS = 2500;
+  const META_POLLS = 12;
   /** Drawing colors */
   const SWATCHES = ["#ff5c8a", "#ffd23f", "#4fb3ff", "#8bd450", "#ffffff"];
   const TOOLS = {
@@ -29,25 +47,54 @@
 
   const video = $("cf-video");
   const screen = $("cf-screen");
+  const danmakuLayer = $("cf-danmaku");
 
   const cf = {
     /** Whether the Cuttlefish app is shown */
     shown: false,
     /** Session summaries from the Inkspector's API */
     sessions: null,
-    /** The open review: {video, comments}, or null in the library */
+    /** The last reviews listing, drawn again when the language changes */
+    listing: null,
+    /** The open review: {video, comments, notes}, or null in the library */
     review: null,
     /** Its file name without .json once saved */
     id: null,
     fps: DEFAULT_FPS,
     /** Id of the comment being edited, whose drawings can change */
     active: null,
+    /** Id of the note being edited */
+    editingNote: null,
     saveTimer: null,
     /** Saves run one after another */
     saving: Promise.resolve(),
+    /** The chip's save state, [state, error] */
+    saved: ["new"],
     /** Download to open once it is done */
     waiting: null,
     pollTimer: null,
+    listTimer: null,
+    metaTimer: null,
+    /** Whole second the YouTube links point at */
+    linkSecond: null,
+  };
+
+  /** Danmaku: comments shown over the video as playback reaches them */
+  const danmaku = {
+    on: remembered("danmaku", "true") === "true",
+    /** "float" (stacked in a corner) or "slide" (across the screen) */
+    style: remembered("danmaku-style", "float"),
+    /** Video time of the last look, or null after a seek */
+    lastT: null,
+  };
+
+  /** The neighbours strip */
+  const strip = {
+    /** Seconds between thumbnails */
+    spacing: parseFloat(remembered("spacing", "0.5")) || 0.5,
+    timer: null,
+    /** What the strip shows now, so an unchanged one is not drawn again */
+    key: "",
   };
 
   const sketch = new Sketch(screen, {
@@ -119,35 +166,56 @@
     (a.start_s ?? null) === (b.start_s ?? null) &&
     (a.end_s ?? null) === (b.end_s ?? null);
 
-  /** What a video is called in lists: a YouTube video by its title */
+  /** A YouTube range as " · 4:56.0–5:56.0" */
+  function rangeText(v) {
+    if (v.start_s == null && v.end_s == null) return "";
+    const end = v.end_s != null ? shortTime(v.end_s) : t("cf.range.end");
+    return ` · ${shortTime(v.start_s ?? 0)}–${end}`;
+  }
+
+  /** What a video is called: a YouTube video by its title */
   function videoName(v) {
     if (v.kind === "file") return v.ref.split("/").pop();
-    if (v.kind === "youtube") {
-      const range =
-        v.start_s != null || v.end_s != null
-          ? ` · ${shortTime(v.start_s ?? 0)}–${v.end_s != null ? shortTime(v.end_s) : "end"}`
-          : "";
-      const name = v.title ?? v.ref.replace(/^https?:\/\/(www\.)?/, "");
-      return `${name}${range}`;
-    }
+    if (v.kind === "youtube")
+      return v.title ?? v.ref.replace(/^https?:\/\/(www\.)?/, "");
     return v.ref;
   }
 
-  /** Channel and upload date of a YouTube video, and where its file is */
-  function videoDetails(v) {
-    const parts = [v.channel, v.upload_date];
-    if (v.file) parts.push(`${v.file} in the review`);
-    return parts.filter(Boolean).join(" · ");
+  /** Channel and upload date of a YouTube video */
+  const channelText = (v) =>
+    [v.channel, v.upload_date].filter(Boolean).join(" · ");
+
+  /** The original YouTube video at `seconds` into the range, or null */
+  function youtubeAt(v, seconds = 0) {
+    if (v?.kind !== "youtube") return null;
+    try {
+      const url = new URL(v.ref);
+      const at = Math.max(0, Math.floor((v.start_s ?? 0) + seconds));
+      url.searchParams.set("t", `${at}s`);
+      return url.href;
+    } catch {
+      return null;
+    }
   }
 
-  const KINDS = { session: "Session", file: "File", youtube: "YouTube" };
+  const kindName = (kind) =>
+    ({
+      session: t("cf.kind.session"),
+      file: t("cf.kind.file"),
+      youtube: t("cf.kind.youtube"),
+    })[kind] ?? kind;
 
   /** Author as shown */
-  const authorName = (author) => (author === "user" ? "You" : author);
+  const authorName = (author) =>
+    author === "user"
+      ? t("cf.author.you")
+      : author === "Cuttlefish"
+        ? t("cf.name")
+        : author;
 
-  /** A new id: a comment's, or a review's file name from the local time */
-  const newCommentId = () =>
-    `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  /** A new id: a comment's or a note's, or a review's from the local time */
+  const newId = (prefix) =>
+    `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
   function newReviewId() {
     const d = new Date();
@@ -161,11 +229,34 @@
     remember("view", hash);
   }
 
+  /** The top bar's chip: the video (a link to YouTube when it is one) and
+   * `text` */
   function setChip(text, level = "off") {
     const chip = $("cf-chip");
     chip.hidden = !text;
     chip.dataset.level = level;
-    chip.querySelector(".chip-text").textContent = text;
+    const label = chip.querySelector(".chip-text");
+    const v = cf.review?.video;
+    const href = youtubeAt(v, video.currentTime || 0);
+    if (!text) return label.replaceChildren();
+    const name = v ? videoName(v) : "";
+    label.innerHTML = href
+      ? `<a class="cf-yt" href="${escapeHtml(href)}" target="_blank" rel="noopener" title="${escapeHtml(t("cf.youtube.open"))}">${escapeHtml(name)} ↗</a> · ${escapeHtml(text)}`
+      : escapeHtml(name ? `${name} · ${text}` : text);
+  }
+
+  /** Point the YouTube links of the open review at the playhead */
+  function followLinks(seconds) {
+    const second = Math.floor(seconds);
+    if (second === cf.linkSecond) return;
+    cf.linkSecond = second;
+    const href = youtubeAt(cf.review?.video, seconds);
+    if (!href) return;
+    for (const link of document.querySelectorAll(
+      "#cf-chip .cf-yt, #cf-info .cf-yt",
+    )) {
+      link.href = href;
+    }
   }
 
   // ------------------------------------------------------------- library
@@ -191,13 +282,19 @@
       cf.sessions = data.sessions;
     } catch (error) {
       cf.sessions = [];
-      select.replaceChildren(new Option(`No sessions: ${error.message}`, ""));
+      select.replaceChildren(
+        new Option(
+          t("cf.open.noSessionsBecause", { error: error.message }),
+          "",
+        ),
+      );
       return;
     }
     select.replaceChildren(
       ...cf.sessions.map((s) => new Option(s.name, s.name)),
     );
-    if (!cf.sessions.length) select.add(new Option("No sessions", ""));
+    if (!cf.sessions.length)
+      select.add(new Option(t("cf.open.noSessions"), ""));
     fillSegments();
   }
 
@@ -213,8 +310,8 @@
   }
 
   async function loadReviews() {
+    clearTimeout(cf.listTimer);
     const note = $("cf-reviews-note");
-    const body = $("cf-reviews");
     let data;
     try {
       const response = await fetch("/api/cuttlefish/reviews");
@@ -224,21 +321,59 @@
       note.textContent = error.message;
       return;
     }
-    note.textContent = `${data.reviews.length} in ${data.dir}`;
+    cf.listing = data;
+    drawReviews();
+    // Titles being looked up come in a moment
+    if (data.fetching?.length && cf.shown && !cf.review) {
+      cf.listTimer = setTimeout(loadReviews, 2000);
+    }
+  }
+
+  /** When a review changed: the date, then the time without seconds, on
+   * two lines where the table is narrow */
+  function changedText(ms) {
+    const date = new Date(ms);
+    const locale = i18nLocale();
+    return `${date.toLocaleDateString(locale)}\n${date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}`;
+  }
+
+  function drawReviews() {
+    const data = cf.listing;
+    if (!data) return;
+    const body = $("cf-reviews");
+    $("cf-reviews-note").textContent = t("cf.reviews.count", {
+      n: data.reviews.length,
+      dir: data.dir,
+    });
     body.replaceChildren();
     if (!data.reviews.length) {
-      body.innerHTML = `<tr><td colspan="4" class="panel-note">No reviews yet: open a video and comment on it.</td></tr>`;
+      body.innerHTML = `<tr><td colspan="4" class="panel-note">${escapeHtml(t("cf.reviews.none"))}</td></tr>`;
     }
+    const fetching = new Set(data.fetching ?? []);
     for (const review of data.reviews) {
+      const v = review.video;
       const tr = document.createElement("tr");
+      const details = [];
+      if (v.kind === "youtube") {
+        if (!v.title && fetching.has(review.id))
+          details.push(t("cf.youtube.lookingUp"));
+        if (channelText(v)) details.push(channelText(v));
+      }
+      if (v.file) details.push(t("cf.reviews.fileIn", { file: v.file }));
+      details.push(review.id);
+      const href = youtubeAt(v);
+      const link = href
+        ? ` <a class="cf-yt" href="${escapeHtml(href)}" target="_blank" rel="noopener" title="${escapeHtml(t("cf.youtube.openStart"))}">YouTube ↗</a>`
+        : "";
       tr.innerHTML = `
-        <td><span class="cf-kind">${KINDS[review.video.kind] ?? review.video.kind}</span> ${escapeHtml(videoName(review.video))}<br><span class="panel-note">${escapeHtml([videoDetails(review.video), review.id].filter(Boolean).join(" · "))}</span></td>
+        <td><span class="cf-kind">${escapeHtml(kindName(v.kind))}</span> <span class="cf-video-name">${escapeHtml(videoName(v))}</span>${escapeHtml(rangeText(v))}<br><span class="panel-note">${escapeHtml(details.join(" · "))}${link}</span></td>
         <td class="num">${review.comments}</td>
-        <td>${escapeHtml(new Date(review.modified_ms).toLocaleString())}</td>
-        <td><button type="button" class="mode-toggle" data-delete>Delete</button></td>`;
+        <td class="cf-changed">${escapeHtml(changedText(review.modified_ms))}</td>
+        <td><button type="button" class="mode-toggle" data-delete>${escapeHtml(t("cf.delete"))}</button></td>`;
       tr.onclick = (event) => {
+        if (event.target.closest("a")) return;
         if (event.target.closest("[data-delete]")) {
-          deleteReview(review.id, review.video.file);
+          deleteReview(review.id, v.file);
           return;
         }
         location.hash = `#cuttlefish/${new URLSearchParams({ r: review.id })}`;
@@ -248,9 +383,10 @@
   }
 
   async function deleteReview(id, file) {
-    const video = file ? `, including the video ${file}` : "";
-    if (!confirm(`Delete the review ${id}? Its folder is removed${video}.`))
-      return;
+    const question = file
+      ? t("cf.reviews.deleteWithVideo", { id, file })
+      : t("cf.reviews.deleteAsk", { id });
+    if (!confirm(question)) return;
     const response = await fetch(
       `/api/cuttlefish/reviews/${encodeURIComponent(id)}`,
       { method: "DELETE", body: "{}" },
@@ -300,9 +436,7 @@
       const text = $(id).value;
       const seconds = parseTime(text);
       if (text.trim() && seconds == null)
-        return openError(
-          `Cannot read the time "${text}"; write 90, 1:30 or 1:02.5`,
-        );
+        return openError(t("cf.open.badTime", { text }));
       if (seconds != null) body[key] = seconds;
     }
     const response = await fetch("/api/cuttlefish/download", {
@@ -327,19 +461,20 @@
     } catch {
       return;
     }
+    const states = {
+      done: t("cf.download.done"),
+      failed: t("cf.download.failed"),
+    };
     const list = $("cf-downloads");
     list.replaceChildren(
       ...data.downloads.map((d) => {
         const li = document.createElement("li");
         li.className = "cf-download meter";
         li.dataset.state = d.state;
-        const range =
-          d.start_s != null || d.end_s != null
-            ? ` · ${shortTime(d.start_s ?? 0)}–${d.end_s != null ? shortTime(d.end_s) : "end"}`
-            : "";
+        const range = rangeText(d);
         const percent = d.percent ?? 0;
         li.innerHTML = `
-          <div class="cf-download-head"><span class="cf-download-url">${escapeHtml(d.url)}${range}</span><span class="num">${d.state === "running" ? `${percent.toFixed(0)}%` : d.state}</span></div>
+          <div class="cf-download-head"><span class="cf-download-url">${escapeHtml(d.url)}${escapeHtml(range)}</span><span class="num">${d.state === "running" ? `${percent.toFixed(0)}%` : escapeHtml(states[d.state] ?? d.state)}</span></div>
           <div class="meter-track"><div class="meter-fill" style="width:${d.state === "done" ? 100 : percent}%"></div></div>
           <span class="panel-note ${d.state === "failed" ? "level-critical" : ""}">${escapeHtml(d.message)}</span>`;
         if (d.state === "done") li.onclick = () => openReviewHash(d.id);
@@ -362,28 +497,38 @@
   // -------------------------------------------------------------- player
 
   /** Show a review (or a new one of `v`) at time `t` */
-  async function openReview(review, id, t) {
+  async function openReview(review, id, at) {
     clearTimeout(cf.pollTimer);
+    clearTimeout(cf.listTimer);
+    review.notes ??= [];
     cf.review = review;
     cf.id = id;
     cf.active = null;
+    cf.editingNote = null;
+    cf.linkSecond = null;
+    strip.key = "";
     $("cf-library").hidden = true;
     $("cf-player").hidden = false;
     $("cf-ai-note").hidden = true;
     const note = $("cf-video-note");
     note.hidden = true;
+    note.textContent = "";
     screen.style.aspectRatio = "";
     cf.fps = DEFAULT_FPS;
+    clearDanmaku();
     video.src = `/api/cuttlefish/video?${videoQuery(review.video, id)}`;
     markCopy();
     video.playbackRate = parseFloat($("cf-speed").value);
     markSaved(id ? "saved" : "new");
+    drawInfo();
+    drawNotes();
     // A video opens paused, ready to draw on
     sketch.setEditable(true);
     drawComments();
     drawMarkers();
-    writeHash(t);
-    seek(t);
+    writeHash(at);
+    seek(at);
+    lookForMeta(review, id, META_POLLS);
     try {
       const response = await fetch(
         `/api/cuttlefish/meta?${videoQuery(review.video, id)}`,
@@ -401,6 +546,65 @@
     }
   }
 
+  /** Take the title, channel and date the server has for the video */
+  function takeMeta(v) {
+    if (!cf.review || !v || !sameVideo(cf.review.video, v)) return;
+    let changed = false;
+    for (const key of ["title", "channel", "upload_date"]) {
+      if (v[key] && cf.review.video[key] !== v[key]) {
+        cf.review.video[key] = v[key];
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    drawInfo();
+    markSaved(...cf.saved);
+  }
+
+  /** A saved YouTube review without its title gets it in the background:
+   * ask again for a while */
+  function lookForMeta(review, id, tries) {
+    clearTimeout(cf.metaTimer);
+    if (!id || review.video.kind !== "youtube" || review.video.title) return;
+    if (tries <= 0) return;
+    cf.metaTimer = setTimeout(async () => {
+      if (cf.review !== review) return;
+      try {
+        const response = await fetch(
+          `/api/cuttlefish/reviews/${encodeURIComponent(id)}`,
+        );
+        if (response.ok) takeMeta((await response.json()).video);
+      } catch {
+        // Asked again below
+      }
+      if (cf.review === review) lookForMeta(review, id, tries - 1);
+    }, META_POLL_MS);
+  }
+
+  /** The video's title, channel, date and range above the picture */
+  function drawInfo() {
+    const box = $("cf-info");
+    const v = cf.review?.video;
+    if (!v) return box.replaceChildren();
+    const href = youtubeAt(v, video.currentTime || 0);
+    const name = escapeHtml(videoName(v));
+    const title = href
+      ? `<a class="cf-yt cf-info-title" href="${escapeHtml(href)}" target="_blank" rel="noopener" title="${escapeHtml(t("cf.youtube.open"))}">${name} ↗</a>`
+      : `<span class="cf-info-title">${name}</span>`;
+    const details = [kindName(v.kind)];
+    if (v.kind === "youtube") {
+      if (channelText(v)) details.push(channelText(v));
+      else if (!v.title && cf.id) details.push(t("cf.youtube.lookingUp"));
+      if (v.start_s != null || v.end_s != null)
+        details.push(
+          t("cf.youtube.range", {
+            range: rangeText(v).slice(3),
+          }),
+        );
+    }
+    box.innerHTML = `${title}<span class="panel-note">${escapeHtml(details.join(" · "))}</span>`;
+  }
+
   /** "Copy into review": a saved review of a local file not copied yet */
   function markCopy() {
     const v = cf.review?.video;
@@ -411,7 +615,7 @@
     const id = cf.id;
     const button = $("cf-copy");
     button.disabled = true;
-    button.textContent = "Copying…";
+    button.textContent = t("cf.copy.running");
     try {
       const response = await fetch(
         `/api/cuttlefish/reviews/${encodeURIComponent(id)}/copy`,
@@ -422,14 +626,15 @@
       if (cf.id !== id) return;
       // Play the copy from the review folder, where it stays
       cf.review.video = review.video;
-      const t = video.currentTime;
+      const at = video.currentTime;
       video.src = `/api/cuttlefish/video?${videoQuery(review.video, id)}`;
-      seek(t);
+      seek(at);
+      strip.key = "";
     } catch (error) {
-      alert(`Not copied: ${error.message}`);
+      alert(t("cf.copy.failed", { error: error.message }));
     } finally {
       button.disabled = false;
-      button.textContent = "Copy into review";
+      button.textContent = t("cf.copy");
       markCopy();
     }
   };
@@ -438,6 +643,8 @@
   function leavePlayer() {
     flushSave();
     video.pause();
+    clearTimeout(cf.metaTimer);
+    clearTimeout(strip.timer);
     if (cf.review) {
       video.removeAttribute("src");
       video.load();
@@ -445,23 +652,25 @@
     cf.review = null;
     cf.id = null;
     cf.active = null;
+    cf.editingNote = null;
+    clearDanmaku();
     sketch.set([]);
   }
 
-  function writeHash(t = video.currentTime) {
+  function writeHash(at = video.currentTime) {
     if (!cf.review) return;
     const params = cf.id
       ? new URLSearchParams({ r: cf.id })
       : videoQuery(cf.review.video);
-    if (t > 0) params.set("t", t.toFixed(3));
+    if (at > 0) params.set("t", at.toFixed(3));
     const hash = `#cuttlefish/${params}`;
     history.replaceState(null, "", hash);
     rememberView(hash);
   }
 
-  function seek(t) {
+  function seek(at) {
     const duration = video.duration || Infinity;
-    video.currentTime = Math.max(0, Math.min(duration, t));
+    video.currentTime = Math.max(0, Math.min(duration, at));
     drawTime();
   }
 
@@ -483,47 +692,67 @@
 
   /** Time, scrubber and drawings of the current time */
   function drawTime() {
-    const t = video.currentTime;
+    const now = video.currentTime;
     const duration = video.duration || 0;
-    $("cf-time").textContent = `${clock(t)} / ${clock(duration)}`;
-    const percent = duration ? (100 * t) / duration : 0;
+    $("cf-time").textContent = `${clock(now)} / ${clock(duration)}`;
+    const percent = duration ? (100 * now) / duration : 0;
     $("cf-fill").style.width = `${percent}%`;
     $("cf-thumb").style.left = `${percent}%`;
     drawShapes();
-    markLive(t);
+    markLive(now);
+    followLinks(now);
   }
 
   // While playing, follow every painted frame
   function follow() {
     if (!playing()) return;
     drawTime();
+    danmakuTick(video.currentTime);
     requestAnimationFrame(follow);
   }
 
+  function markPlay() {
+    $("cf-play").textContent = playing() ? t("cf.pause") : t("cf.play");
+  }
+
   video.addEventListener("play", () => {
-    $("cf-play").textContent = "❚❚ Pause";
+    markPlay();
     sketch.setEditable(false);
+    // A comment right at the start of playback shows too
+    danmaku.lastT = video.currentTime - 0.05;
+    danmakuLayer.classList.remove("is-paused");
     requestAnimationFrame(follow);
   });
   video.addEventListener("pause", () => {
-    $("cf-play").textContent = "▶ Play";
+    markPlay();
     sketch.setEditable(true);
+    danmakuLayer.classList.add("is-paused");
     drawTime();
     writeHash();
+    drawStrip();
+  });
+  video.addEventListener("seeking", () => {
+    clearDanmaku();
+    danmaku.lastT = null;
   });
   video.addEventListener("seeked", () => {
     drawTime();
-    if (!playing()) writeHash();
+    if (playing()) danmaku.lastT = video.currentTime - 0.05;
+    else {
+      writeHash();
+      drawStrip();
+    }
   });
   video.addEventListener("loadedmetadata", () => {
     drawTime();
     drawMarkers();
+    drawStrip();
   });
   video.addEventListener("error", () => {
     if (!cf.review) return;
     const note = $("cf-video-note");
     note.hidden = false;
-    note.textContent ||= "This browser cannot play the video";
+    note.textContent ||= t("cf.video.cannotPlay");
   });
 
   // ----------------------------------------------------------- drawings
@@ -531,21 +760,25 @@
   const activeComment = () =>
     cf.review?.comments.find((c) => c.id === cf.active) ?? null;
 
-  /** Comments whose drawings show at time t */
-  function visibleAt(t, comment) {
-    const end = comment.t_end_s ?? comment.t_s + HOLD_S;
-    return t >= comment.t_s - 1e-3 && t <= end;
+  /** Comments whose drawings show at time `at`: while danmaku plays, as
+   * long as the comment floats */
+  function visibleAt(at, comment) {
+    const end =
+      danmaku.on && playing()
+        ? Math.max(comment.t_end_s ?? 0, comment.t_s + DANMAKU_S)
+        : (comment.t_end_s ?? comment.t_s + HOLD_S);
+    return at >= comment.t_s - 1e-3 && at <= end;
   }
 
   /** The drawings shown now: the open comment's (editable while paused) and
    * those of the comments playback is passing */
   function drawShapes() {
     if (!cf.review || sketch.drag) return;
-    const t = video.currentTime;
+    const now = video.currentTime;
     const active = activeComment();
     const shapes = [];
     for (const comment of cf.review.comments) {
-      if (comment === active || !visibleAt(t, comment)) continue;
+      if (comment === active || !visibleAt(now, comment)) continue;
       for (const shape of comment.shapes)
         shapes.push({ ...shape, locked: true, faded: !!active });
     }
@@ -609,6 +842,216 @@
     $("cf-delete-shape").disabled = !shape || shape.locked;
   }
 
+  // ------------------------------------------------------------- danmaku
+
+  /** Comments playback passed since the last look float up */
+  function danmakuTick(now) {
+    if (!danmaku.on || !cf.review) return;
+    const last = danmaku.lastT;
+    danmaku.lastT = now;
+    // A jump is a seek, not playback
+    if (last == null || now < last || now - last > 1) return;
+    for (const comment of cf.review.comments) {
+      if (comment.t_s > last && comment.t_s <= now) shoot(comment);
+    }
+  }
+
+  /** A comment as danmaku text: its first words, or its drawings */
+  function danmakuText(comment) {
+    const text = comment.text.trim().split("\n")[0];
+    if (!text)
+      return `✎ ${drawingsText(comment.shapes.length) || t("cf.noText")}`;
+    return text.length > DANMAKU_CHARS
+      ? `${text.slice(0, DANMAKU_CHARS)}…`
+      : text;
+  }
+
+  /** Show one comment over the video in the chosen style */
+  function shoot(comment) {
+    const item = document.createElement("div");
+    item.className = "cf-dm";
+    if (comment.author !== "user") item.classList.add("is-ai");
+    item.innerHTML = `<b>${escapeHtml(authorName(comment.author))}</b> ${escapeHtml(danmakuText(comment))}`;
+    item.style.setProperty("--dm-s", `${DANMAKU_S}s`);
+    item.addEventListener("animationend", () => item.remove());
+    if (danmaku.style === "slide") {
+      item.classList.add("is-slide");
+      danmakuLayer.append(item);
+      const layer = danmakuLayer.getBoundingClientRect();
+      const height = item.offsetHeight + 4;
+      const lanes = Math.max(
+        1,
+        Math.floor((layer.height * (SLIDE_BOTTOM - SLIDE_TOP)) / height),
+      );
+      // The first lane whose last comment has fully come in, else the one
+      // whose last comment is furthest along
+      let best = 0;
+      let bestRight = Infinity;
+      for (let lane = 0; lane < lanes; lane++) {
+        const last = [...danmakuLayer.querySelectorAll(".is-slide")]
+          .filter((el) => el !== item && Number(el.dataset.lane) === lane)
+          .pop();
+        const right = last ? last.getBoundingClientRect().right : -Infinity;
+        if (right < layer.right - 24) {
+          best = lane;
+          break;
+        }
+        if (right < bestRight) {
+          bestRight = right;
+          best = lane;
+        }
+      }
+      item.dataset.lane = best;
+      item.style.top = `${layer.height * SLIDE_TOP + best * height}px`;
+      item.style.setProperty(
+        "--dm-travel",
+        `${layer.width + item.offsetWidth}px`,
+      );
+    } else {
+      let stack = danmakuLayer.querySelector(".cf-dm-stack");
+      if (!stack) {
+        stack = document.createElement("div");
+        stack.className = "cf-dm-stack";
+        danmakuLayer.append(stack);
+      }
+      stack.append(item);
+      while (stack.children.length > DANMAKU_STACK)
+        stack.firstElementChild.remove();
+    }
+  }
+
+  function clearDanmaku() {
+    danmakuLayer.replaceChildren();
+  }
+
+  function markDanmaku() {
+    const button = $("cf-danmaku-toggle");
+    button.setAttribute("aria-pressed", String(danmaku.on));
+    $("cf-danmaku-style").value = danmaku.style;
+    $("cf-danmaku-style").disabled = !danmaku.on;
+  }
+
+  $("cf-danmaku-toggle").onclick = () => {
+    danmaku.on = !danmaku.on;
+    remember("danmaku", String(danmaku.on));
+    if (!danmaku.on) clearDanmaku();
+    markDanmaku();
+    drawShapes();
+  };
+  $("cf-danmaku-style").onchange = () => {
+    danmaku.style = $("cf-danmaku-style").value;
+    remember("danmaku-style", danmaku.style);
+    clearDanmaku();
+  };
+
+  // ----------------------------------------------------- neighbours strip
+
+  /** Update the strip soon, once seeking settles; never while playing */
+  function drawStrip() {
+    clearTimeout(strip.timer);
+    if (!cf.review || playing()) return;
+    strip.timer = setTimeout(renderStrip, STRIP_DEBOUNCE_MS);
+  }
+
+  /** Thumbnails every `strip.spacing` seconds around the playhead, on a
+   * grid so a nearby pause asks for the same (cached) pictures */
+  function renderStrip() {
+    const box = $("cf-strip");
+    const duration = video.duration;
+    if (!cf.review || !duration || playing()) return;
+    const spacing = strip.spacing;
+    const center = Math.round(video.currentTime / spacing) * spacing;
+    const query = videoQuery(cf.review.video, cf.id);
+    const comments = cf.review.comments;
+    const key = [
+      query,
+      center,
+      spacing,
+      ...comments.map((c) => `${c.id}@${c.t_s}`),
+      i18nLang(),
+    ].join("|");
+    $("cf-strip-note").textContent = t("cf.strip.span", {
+      span: shortSpan(STRIP_SIDE * spacing),
+    });
+    if (key === strip.key) return markStrip();
+    strip.key = key;
+    const figures = [];
+    for (let k = -STRIP_SIDE; k <= STRIP_SIDE; k++) {
+      const at = Math.round((center + k * spacing) * 1000) / 1000;
+      const figure = document.createElement("figure");
+      figure.dataset.t = at;
+      if (at < 0 || at > duration) {
+        figure.className = "is-empty";
+        figures.push(figure);
+        continue;
+      }
+      const near = comments
+        .filter((c) => c.t_s >= at - spacing / 2 && c.t_s < at + spacing / 2)
+        .sort((a, b) => a.t_s - b.t_s);
+      const marks = near
+        .slice(0, 3)
+        .map(
+          (c) =>
+            `<button type="button" class="cf-strip-mark${c.author !== "user" ? " is-ai" : ""}" data-comment="${escapeHtml(c.id)}" title="${escapeHtml(`${clock(c.t_s)} ${c.text || drawingsText(c.shapes.length)}`)}"></button>`,
+        )
+        .join("");
+      const more =
+        near.length > 3
+          ? `<span class="cf-strip-more">+${near.length - 3}</span>`
+          : "";
+      const q = new URLSearchParams(query);
+      q.set("t_ms", Math.round(at * 1000));
+      figure.innerHTML = `<img src="/api/cuttlefish/thumb?${q}" alt="" loading="lazy"><figcaption><span class="num">${shortTime(at)}</span><span class="cf-strip-marks">${marks}${more}</span></figcaption>`;
+      figure.querySelector("img").onerror = () =>
+        figure.classList.add("is-missing");
+      if (near.length) figure.classList.add("has-comments");
+      figures.push(figure);
+    }
+    box.replaceChildren(...figures);
+    markStrip();
+  }
+
+  /** Mark the thumbnail nearest the playhead and keep it in view */
+  function markStrip() {
+    const box = $("cf-strip");
+    const now = video.currentTime;
+    let current = null;
+    let best = Infinity;
+    for (const figure of box.children) {
+      const gap = Math.abs(parseFloat(figure.dataset.t) - now);
+      figure.classList.remove("current");
+      if (!figure.classList.contains("is-empty") && gap < best) {
+        best = gap;
+        current = figure;
+      }
+    }
+    if (!current) return;
+    current.classList.add("current");
+    if (box.scrollWidth > box.clientWidth) {
+      box.scrollLeft =
+        current.offsetLeft - (box.clientWidth - current.offsetWidth) / 2;
+    }
+  }
+
+  /** Seconds as "3 s" or "1.5 s" */
+  const shortSpan = (seconds) =>
+    `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)} s`;
+
+  $("cf-strip").addEventListener("click", (event) => {
+    const mark = event.target.closest("[data-comment]");
+    if (mark) return openComment(mark.dataset.comment);
+    const figure = event.target.closest("figure");
+    if (!figure || figure.classList.contains("is-empty")) return;
+    video.pause();
+    seek(parseFloat(figure.dataset.t));
+  });
+  $("cf-spacing").value = String(strip.spacing);
+  $("cf-spacing").onchange = () => {
+    strip.spacing = parseFloat($("cf-spacing").value) || 0.5;
+    remember("spacing", String(strip.spacing));
+    drawStrip();
+  };
+
   // ------------------------------------------------------------ comments
 
   /** A comment by the user at the current time, opened for editing */
@@ -616,7 +1059,7 @@
     if (!cf.review) return;
     video.pause();
     const comment = {
-      id: newCommentId(),
+      id: newId("c"),
       t_s: Math.round(video.currentTime * 1000) / 1000,
       author: "user",
       text: "",
@@ -625,11 +1068,17 @@
     };
     cf.review.comments.push(comment);
     cf.active = comment.id;
+    commentsChanged();
+    if (focus) $("cf-comments").querySelector("textarea")?.focus();
+  }
+
+  /** Comments were added, moved or removed: redraw what shows them */
+  function commentsChanged() {
     drawComments();
     drawMarkers();
     drawShapes();
+    drawStrip();
     scheduleSave();
-    if (focus) $("cf-comments").querySelector("textarea")?.focus();
   }
 
   /** Open a comment: pause at its time and make its drawings editable */
@@ -654,19 +1103,18 @@
     if (!comment) return;
     if (
       (comment.text || comment.shapes.length) &&
-      !confirm("Delete this comment and its drawings?")
+      !confirm(t("cf.comment.deleteAsk"))
     )
       return;
     cf.review.comments = cf.review.comments.filter((c) => c.id !== id);
     if (cf.active === id) cf.active = null;
-    drawComments();
-    drawMarkers();
-    drawShapes();
-    scheduleSave();
+    commentsChanged();
   }
 
   const timeText = (c) =>
     c.t_end_s != null ? `${clock(c.t_s)} – ${clock(c.t_end_s)}` : clock(c.t_s);
+
+  const drawingsText = (n) => (n ? t("cf.drawings", { n }) : "");
 
   /** The list of comments by time; the open one as an editor */
   function drawComments() {
@@ -674,12 +1122,14 @@
     if (!cf.review) return list.replaceChildren();
     const comments = [...cf.review.comments].sort((a, b) => a.t_s - b.t_s);
     $("cf-count").textContent = comments.length
-      ? `${comments.length} · click one to go to its time`
-      : "none yet";
+      ? t("cf.comments.count", { n: comments.length })
+      : t("cf.comments.none");
     // Keep the caret where it is when the open editor stays
     const editing = document.activeElement?.closest?.(".cf-comment.is-active");
     if (editing && editing.dataset.id === cf.active) {
-      editing.querySelector(".cf-meta").textContent = metaText(activeComment());
+      editing.querySelector(".cf-meta").textContent = drawingsText(
+        activeComment().shapes.length,
+      );
       editing.querySelector(".cf-time").textContent = timeText(activeComment());
       return;
     }
@@ -696,19 +1146,19 @@
           <div class="cf-comment-head">
             <button type="button" class="cf-time num" data-act="open">${timeText(comment)}</button>
             <span class="cf-author">${escapeHtml(authorName(comment.author))}</span>
-            <span class="cf-meta panel-note">${metaText(comment)}</span>
-            <button type="button" class="cf-x" data-act="delete" title="Delete comment" aria-label="Delete comment">✕</button>
+            <span class="cf-meta panel-note">${escapeHtml(drawingsText(comment.shapes.length))}</span>
+            <button type="button" class="cf-x" data-act="delete" title="${escapeHtml(t("cf.comment.delete"))}" aria-label="${escapeHtml(t("cf.comment.delete"))}">✕</button>
           </div>
           ${
             active
-              ? `<textarea class="select cf-edit" rows="3" placeholder="What happens here? Draw on the frame to point at it.">${escapeHtml(comment.text)}</textarea>
+              ? `<textarea class="select cf-edit" rows="3" placeholder="${escapeHtml(t("cf.comment.placeholder"))}">${escapeHtml(comment.text)}</textarea>
                  <div class="cf-row">
-                   <button type="button" class="mode-toggle" data-act="end" title="End the comment's range at the current time">Set end here</button>
-                   ${comment.t_end_s != null ? `<button type="button" class="mode-toggle" data-act="no-end">No end</button>` : ""}
-                   <button type="button" class="mode-toggle" data-act="start" title="Move the comment to the current time">Move here</button>
-                   <button type="button" class="btn cf-done" data-act="close">Done</button>
+                   <button type="button" class="mode-toggle" data-act="end" title="${escapeHtml(t("cf.comment.endHereTitle"))}">${escapeHtml(t("cf.comment.endHere"))}</button>
+                   ${comment.t_end_s != null ? `<button type="button" class="mode-toggle" data-act="no-end">${escapeHtml(t("cf.comment.noEnd"))}</button>` : ""}
+                   <button type="button" class="mode-toggle" data-act="start" title="${escapeHtml(t("cf.comment.moveHereTitle"))}">${escapeHtml(t("cf.comment.moveHere"))}</button>
+                   <button type="button" class="btn cf-done" data-act="close">${escapeHtml(t("cf.done"))}</button>
                  </div>`
-              : `<p class="cf-text">${comment.text ? escapeHtml(comment.text) : '<span class="panel-note">No text</span>'}</p>`
+              : `<p class="cf-text">${comment.text ? escapeHtml(comment.text) : `<span class="panel-note">${escapeHtml(t("cf.noText"))}</span>`}</p>`
           }`;
         return li;
       }),
@@ -716,16 +1166,11 @@
     markLive(video.currentTime);
   }
 
-  function metaText(comment) {
-    const n = comment.shapes.length;
-    return n ? `${n} drawing${n > 1 ? "s" : ""}` : "";
-  }
-
   /** Mark the comments playback is passing */
-  function markLive(t) {
+  function markLive(now) {
     for (const li of $("cf-comments").children) {
       const comment = cf.review?.comments.find((c) => c.id === li.dataset.id);
-      li.classList.toggle("is-live", !!comment && visibleAt(t, comment));
+      li.classList.toggle("is-live", !!comment && visibleAt(now, comment));
     }
   }
 
@@ -735,25 +1180,23 @@
     const id = li.dataset.id;
     const comment = cf.review.comments.find((c) => c.id === id);
     const act = event.target.closest("[data-act]")?.dataset.act;
-    const t = Math.round(video.currentTime * 1000) / 1000;
+    const now = Math.round(video.currentTime * 1000) / 1000;
     if (act === "delete") return deleteComment(id);
     if (act === "close") return closeComment();
     if (act === "end") {
-      if (t <= comment.t_s) return alert("Go past the comment's time first");
-      comment.t_end_s = t;
+      if (now <= comment.t_s) return alert(t("cf.comment.goPast"));
+      comment.t_end_s = now;
     } else if (act === "no-end") delete comment.t_end_s;
     else if (act === "start") {
-      comment.t_s = t;
-      if (comment.t_end_s != null && comment.t_end_s <= t)
+      comment.t_s = now;
+      if (comment.t_end_s != null && comment.t_end_s <= now)
         delete comment.t_end_s;
     } else {
       if (event.target.closest("textarea")) return;
       if (id !== cf.active) return openComment(id);
       return;
     }
-    drawComments();
-    drawMarkers();
-    scheduleSave();
+    commentsChanged();
   });
   $("cf-comments").addEventListener("input", (event) => {
     const comment = activeComment();
@@ -789,19 +1232,105 @@
     );
   }
 
+  // --------------------------------------------------------------- notes
+
+  /** Notes on the whole video, newest first; the one being edited as an
+   * editor */
+  function drawNotes() {
+    const list = $("cf-notes");
+    const notes = [...(cf.review?.notes ?? [])].sort(
+      (a, b) => b.created_ms - a.created_ms,
+    );
+    $("cf-notes-count").textContent = notes.length
+      ? t("cf.notes.count", { n: notes.length })
+      : t("cf.notes.none");
+    list.replaceChildren(
+      ...notes.map((note) => {
+        const li = document.createElement("li");
+        li.className = "cf-note";
+        li.dataset.id = note.id;
+        if (note.author !== "user") li.classList.add("is-ai");
+        const when = new Date(note.created_ms).toLocaleString(i18nLocale());
+        const edited = note.edited_ms ? ` · ${t("cf.notes.edited")}` : "";
+        const editing = note.id === cf.editingNote;
+        li.innerHTML = `
+          <div class="cf-comment-head">
+            <span class="cf-author">${escapeHtml(authorName(note.author))}</span>
+            <span class="cf-meta panel-note">${escapeHtml(when + edited)}</span>
+            ${editing ? "" : `<button type="button" class="mode-toggle" data-act="edit">${escapeHtml(t("cf.notes.edit"))}</button>`}
+            <button type="button" class="cf-x" data-act="delete" title="${escapeHtml(t("cf.notes.delete"))}" aria-label="${escapeHtml(t("cf.notes.delete"))}">✕</button>
+          </div>
+          ${
+            editing
+              ? `<textarea class="select cf-edit" rows="4">${escapeHtml(note.text)}</textarea>
+                 <div class="cf-row">
+                   <button type="button" class="mode-toggle" data-act="cancel">${escapeHtml(t("cf.cancel"))}</button>
+                   <button type="button" class="btn cf-done" data-act="save">${escapeHtml(t("cf.notes.save"))}</button>
+                 </div>`
+              : `<p class="cf-text">${escapeHtml(note.text)}</p>`
+          }`;
+        return li;
+      }),
+    );
+  }
+
+  $("cf-note-form").onsubmit = (event) => {
+    event.preventDefault();
+    const text = $("cf-note-text").value.trim();
+    if (!cf.review || !text) return;
+    cf.review.notes.push({
+      id: newId("n"),
+      author: "user",
+      text,
+      created_ms: Date.now(),
+    });
+    $("cf-note-text").value = "";
+    drawNotes();
+    scheduleSave();
+  };
+
+  $("cf-notes").addEventListener("click", (event) => {
+    const act = event.target.closest("[data-act]")?.dataset.act;
+    const li = event.target.closest(".cf-note");
+    if (!act || !li || !cf.review) return;
+    const note = cf.review.notes.find((n) => n.id === li.dataset.id);
+    if (!note) return;
+    if (act === "delete") {
+      if (!confirm(t("cf.notes.deleteAsk"))) return;
+      cf.review.notes = cf.review.notes.filter((n) => n !== note);
+      if (cf.editingNote === note.id) cf.editingNote = null;
+      scheduleSave();
+    } else if (act === "edit") {
+      cf.editingNote = note.id;
+    } else if (act === "cancel") {
+      cf.editingNote = null;
+    } else if (act === "save") {
+      const text = li.querySelector("textarea").value.trim();
+      if (!text) return;
+      if (text !== note.text) {
+        note.text = text;
+        note.edited_ms = Date.now();
+        scheduleSave();
+      }
+      cf.editingNote = null;
+    }
+    drawNotes();
+    if (act === "edit") $("cf-notes").querySelector("textarea")?.focus();
+  });
+
   // --------------------------------------------------------------- saving
 
   function markSaved(state, error) {
-    const name = cf.review ? videoName(cf.review.video) : "";
+    cf.saved = [state, error];
     const text = {
-      new: "not saved yet: comment to start the review",
-      dirty: "unsaved changes",
-      saving: "saving…",
-      saved: `saved as ${cf.id}`,
-      error: `not saved: ${error}`,
+      new: t("cf.save.new"),
+      dirty: t("cf.save.dirty"),
+      saving: t("cf.save.saving"),
+      saved: t("cf.save.saved", { id: cf.id }),
+      error: t("cf.save.error", { error }),
     }[state];
     const level = { saved: "good", error: "critical", dirty: "warning" }[state];
-    setChip(`${name} · ${text}`, level ?? "off");
+    setChip(text, level ?? "off");
   }
 
   function scheduleSave() {
@@ -839,9 +1368,12 @@
             body,
           },
         );
-        if (!response.ok) throw new Error((await response.json()).error);
-        if (cf.review === review && !cf.saveTimer) markSaved("saved");
-        if (cf.review === review) markCopy();
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error);
+        if (cf.review !== review) return;
+        if (!cf.saveTimer) markSaved("saved");
+        markCopy();
+        takeMeta(data.video);
       } catch (error) {
         if (cf.review === review) markSaved("error", error.message);
       }
@@ -854,17 +1386,17 @@
     event.preventDefault();
     if (!cf.review) return;
     const range = event.submitter?.value === "range";
-    const t = video.currentTime;
+    const now = video.currentTime;
     const active = activeComment();
-    let from = t;
+    let from = now;
     let to = null;
     if (range) {
       from =
         parseTime($("cf-ask-from").value) ??
         active?.t_s ??
-        Math.max(0, t - RANGE_S);
-      to = parseTime($("cf-ask-to").value) ?? active?.t_end_s ?? t;
-      if (to <= from) return aiNote("The range must end after it starts", true);
+        Math.max(0, now - RANGE_S);
+      to = parseTime($("cf-ask-to").value) ?? active?.t_end_s ?? now;
+      if (to <= from) return aiNote(t("cf.ask.badRange"), true);
       $("cf-ask-from").value = shortTime(from);
       $("cf-ask-to").value = shortTime(to);
     }
@@ -875,7 +1407,7 @@
       question: $("cf-question").value.trim(),
       review: cf.id,
     };
-    aiNote("Cuttlefish is watching…");
+    aiNote(t("cf.ask.watching"));
     let response;
     let data;
     try {
@@ -886,14 +1418,14 @@
       });
       data = await response.json();
     } catch (error) {
-      return aiNote(`Could not ask Cuttlefish: ${error.message}`, true);
+      return aiNote(t("cf.ask.failed", { error: error.message }), true);
     }
     if (!response.ok) {
       const pending = response.status === 501;
       return aiNote(
         pending
-          ? `Cuttlefish can't answer yet: ${data.error}. Your own comments and drawings are saved as usual.`
-          : `Cuttlefish could not answer: ${data.error}`,
+          ? t("cf.ask.pending", { error: data.error })
+          : t("cf.ask.error", { error: data.error }),
         !pending,
       );
     }
@@ -901,7 +1433,7 @@
     const comments = data.comments ?? (data.text ? [data] : []);
     for (const comment of comments) {
       cf.review.comments.push({
-        id: newCommentId(),
+        id: newId("c"),
         t_s: comment.t_s ?? from,
         ...((comment.t_end_s ?? to) != null && {
           t_end_s: comment.t_end_s ?? to,
@@ -914,12 +1446,13 @@
     }
     aiNote(
       comments.length
-        ? `Cuttlefish added ${comments.length} comment(s)`
-        : "Cuttlefish had nothing to add",
+        ? t("cf.ask.added", { n: comments.length })
+        : t("cf.ask.nothing"),
     );
     drawComments();
     drawMarkers();
     drawShapes();
+    drawStrip();
     if (comments.length) scheduleSave();
   });
 
@@ -946,22 +1479,26 @@
   for (const button of document.querySelectorAll(".cf-tools [data-tool]")) {
     button.onclick = () => setTool(button.dataset.tool);
   }
-  $("cf-swatches").replaceChildren(
-    ...SWATCHES.map((color) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "cf-swatch";
-      button.dataset.color = color;
-      button.style.background = color;
-      button.title = `Draw in ${color}`;
-      button.setAttribute("aria-label", `Color ${color}`);
-      button.onclick = () => setColor(color);
-      return button;
-    }),
-  );
+  function drawSwatches() {
+    $("cf-swatches").replaceChildren(
+      ...SWATCHES.map((color) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "cf-swatch";
+        button.dataset.color = color;
+        button.style.background = color;
+        button.title = t("cf.swatch", { color });
+        button.setAttribute("aria-label", t("cf.swatch", { color }));
+        button.onclick = () => setColor(color);
+        return button;
+      }),
+    );
+  }
+  drawSwatches();
   sketch.setTool(remembered("tool", "arrow"));
   sketch.color = remembered("color", SWATCHES[0]);
   markTools();
+  markDanmaku();
 
   // Scrubbing the timeline pauses and seeks
   (() => {
@@ -977,11 +1514,11 @@
       return x * (video.duration || 0);
     };
     const preview = (event) => {
-      const t = timeAt(event);
+      const at = timeAt(event);
       bubble.hidden = false;
-      bubble.style.left = `${(100 * t) / (video.duration || 1)}%`;
-      bubble.textContent = clock(t);
-      seek(t);
+      bubble.style.left = `${(100 * at) / (video.duration || 1)}%`;
+      bubble.textContent = clock(at);
+      seek(at);
     };
     scrubber.addEventListener("pointerdown", (event) => {
       if (!cf.review || !video.duration) return;
@@ -1013,6 +1550,7 @@
     else if (event.key === "ArrowLeft") step(event.shiftKey ? -1 : -1 / cf.fps);
     else if (event.key === "ArrowRight") step(event.shiftKey ? 1 : 1 / cf.fps);
     else if (key === "c") addComment();
+    else if (key === "d") $("cf-danmaku-toggle").click();
     else if (TOOLS[key]) setTool(TOOLS[key]);
     else if (key === "delete" || key === "backspace") sketch.removeSelected();
     else if (key === "escape") {
@@ -1020,6 +1558,21 @@
       else closeComment();
     } else return;
     event.preventDefault();
+  });
+
+  // Everything drawn from JavaScript follows the language
+  window.addEventListener("lang-change", () => {
+    drawReviews();
+    drawSwatches();
+    markTools();
+    markPlay();
+    if (!cf.review) return;
+    markSaved(...cf.saved);
+    drawInfo();
+    drawComments();
+    drawNotes();
+    strip.key = "";
+    renderStrip();
   });
 
   // ---------------------------------------------------------------- routing
@@ -1035,9 +1588,10 @@
       setChip("");
       rememberView("#cuttlefish/view=knowledge");
       clearTimeout(cf.pollTimer);
+      clearTimeout(cf.listTimer);
       return;
     }
-    const t = parseFloat(state.get("t")) || 0;
+    const at = parseFloat(state.get("t")) || 0;
     const id = state.get("r");
     if (id) {
       if (cf.review && cf.id === id) return;
@@ -1047,16 +1601,16 @@
       );
       const review = await response.json();
       if (!response.ok) {
-        openError(`Cannot open the review ${id}: ${review.error}`);
+        openError(t("cf.open.cannot", { id, error: review.error }));
         return showLibrary();
       }
-      return openReview(review, id, t);
+      return openReview(review, id, at);
     }
     if (state.get("kind")) {
       const v = videoOf(state);
       if (cf.review && !cf.id && sameVideo(cf.review.video, v)) return;
       leavePlayer();
-      return openReview({ video: v, comments: [] }, null, t);
+      return openReview({ video: v, comments: [], notes: [] }, null, at);
     }
     showLibrary();
   }
@@ -1067,6 +1621,8 @@
       video.pause();
       flushSave();
       clearTimeout(cf.pollTimer);
+      clearTimeout(cf.listTimer);
+      clearTimeout(cf.metaTimer);
     }
     cf.shown = app === "cuttlefish";
     if (cf.shown) route(state);

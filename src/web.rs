@@ -2,7 +2,7 @@
 //!
 //! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`, `/inspect.js`,
 //!   `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`, `/vision.js`,
-//!   `/predictor.js`:
+//!   `/predictor.js`, `/i18n.js`, `/i18n-zh.js`:
 //!   the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
 //!   report, `{"type":"status"}` text twice a second, and the video preview
@@ -129,7 +129,8 @@ pub async fn serve(
     });
 
     // The drawing layer, the Inkspector's labeling mode, the Cuttlefish app
-    // with its knowledge view, the Vision app and the Predictor
+    // with its knowledge view, the Vision app, the Predictor and the page's
+    // dictionaries
     let scripts = warp::path!(String).and_then(|name: String| async move {
         let body = match name.as_str() {
             "sketch.js" => include_str!("../web/sketch.js"),
@@ -138,6 +139,8 @@ pub async fn serve(
             "knowledge.js" => include_str!("../web/knowledge.js"),
             "vision.js" => include_str!("../web/vision.js"),
             "predictor.js" => include_str!("../web/predictor.js"),
+            "i18n.js" => include_str!("../web/i18n.js"),
+            "i18n-zh.js" => include_str!("../web/i18n-zh.js"),
             _ => return Err(warp::reject::not_found()),
         };
         Ok(asset(body, "text/javascript; charset=utf-8"))

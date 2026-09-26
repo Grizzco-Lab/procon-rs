@@ -91,8 +91,9 @@ One page with five apps, switched without reloading: **Studio** (`#studio`),
 connection, controller, proxy latency and recording chips stay in the top bar
 in every app. The **View** menu picks the theme (Studio, Joy or
 Telemetry), the Phone layout (also used automatically on narrow screens) and
-where the app links go (Side rail or Top bar); the choices are remembered per
-browser. Capture and recording carry on while another app is shown; only the
+where the app links go (Side rail or Top bar) and the language (English or
+Simplified Chinese, by default the browser's; so far Cuttlefish and its Knowledge view are
+translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
 Studio's preview pauses, and each app stops its own work while hidden.
 
 ### Studio
@@ -181,10 +182,27 @@ local file can be copied in with **Copy into review**. A recorded session is
 never copied; its review points at the recording. Deleting a review deletes its
 folder, video included, after a confirmation. Reviews saved before this layout
 (`<id>.json`) move into folders when the studio starts, and a YouTube video
-still in `~/.cache/procon-cuttlefish` moves into its review. **Ask Cuttlefish** sends the
-range's frames and nearby comments to Claude with knowledge from the store and
-adds its comments. The **Knowledge** tab (top bar) shows and fills that store
-(`crates/cuttlefish`, folder `[cuttlefish] knowledge`):
+still in `~/.cache/procon-cuttlefish` moves into its review. A YouTube review
+without its title (such as one moved from the old layout) gets the title,
+channel and upload date in the background the first time it is listed or
+opened; the title in the library, the review's header and the top bar links
+to the original video on YouTube, at the playhead in the review.
+
+While reviewing:
+
+- **Danmaku** (D) shows comments over the video as playback reaches them,
+  with their drawings, for a few seconds: floating in the bottom-right corner
+  or sliding across the picture;
+- **Neighbours**: thumbnails every 0.5 s (0.25–2 s) around the playhead,
+  updated while paused, with dots for the comments near each; a click seeks
+  there, a dot opens its comment;
+- **Notes**, under the video: comments on the whole video, at no time
+  (general notes, rants), which can be edited and deleted.
+
+**Ask Cuttlefish** sends the range's frames and nearby comments to Claude with
+knowledge from the store and adds its comments. The **Knowledge** tab (next to
+**Reviews** above the library) shows and fills that store (`crates/cuttlefish`,
+folder `[cuttlefish] knowledge`):
 
 - what it holds: documents per kind of source, chunks, glossary, digest, and
   whether `ANTHROPIC_API_KEY` and `DISCORD_BOT_TOKEN` are set (never their
