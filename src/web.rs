@@ -1,7 +1,8 @@
 //! Studio dashboard server: live controller view, video preview, recording controls
 //!
 //! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`, `/inspect.js`,
-//!   `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`, `/vision.js`:
+//!   `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`, `/vision.js`,
+//!   `/predictor.js`:
 //!   the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
 //!   report, `{"type":"status"}` text twice a second, and the video preview
@@ -14,12 +15,15 @@
 //!   knowledge, see [`crate::cuttlefish`] and [`crate::knowledge`]
 //! - `/api/vision/...`: the Vision app's runs and results, see
 //!   [`crate::vision`]
+//! - `/api/predictor/...`: the Predictor app's runs and predictions, see
+//!   [`crate::predictor`]
 
 use crate::cuttlefish::{self, Cuttlefish};
 use crate::dump::{Dumper, Frame};
 use crate::inspect::Inspector;
 use crate::motion::Orientation;
 use crate::parser::ProConParser;
+use crate::predictor::{self, Predictor};
 use crate::studio::{Command, Studio};
 use crate::video::{ChunkKind, PreviewChunk};
 use crate::vision::{self, Vision};
@@ -90,6 +94,7 @@ pub async fn serve(
     inspector: Arc<Inspector>,
     cuttlefish: Arc<Cuttlefish>,
     vision: Arc<Vision>,
+    predictor: Arc<Predictor>,
     port: u16,
 ) {
     let status = watch::Sender::new(String::new());
@@ -118,7 +123,7 @@ pub async fn serve(
     });
 
     // The drawing layer, the Inkspector's labeling mode, the Cuttlefish app
-    // with its knowledge view, and the Vision app
+    // with its knowledge view, the Vision app and the Predictor
     let scripts = warp::path!(String).and_then(|name: String| async move {
         let body = match name.as_str() {
             "sketch.js" => include_str!("../web/sketch.js"),
@@ -126,6 +131,7 @@ pub async fn serve(
             "cuttlefish.js" => include_str!("../web/cuttlefish.js"),
             "knowledge.js" => include_str!("../web/knowledge.js"),
             "vision.js" => include_str!("../web/vision.js"),
+            "predictor.js" => include_str!("../web/predictor.js"),
             _ => return Err(warp::reject::not_found()),
         };
         Ok(asset(body, "text/javascript; charset=utf-8"))
@@ -278,7 +284,8 @@ pub async fn serve(
         .or(delay)
         .or(objects)
         .or(cuttlefish::routes(cuttlefish))
-        .or(vision::routes(vision));
+        .or(vision::routes(vision))
+        .or(predictor::routes(predictor));
 
     log::info!("Dashboard on http://0.0.0.0:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;

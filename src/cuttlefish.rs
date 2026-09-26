@@ -1289,7 +1289,7 @@ fn move_file(from: &Path, to: &Path) -> Result<()> {
 
 /// Call `f` with every line of `reader`, split at `\n` or `\r` (progress
 /// lines end with `\r`)
-fn for_each_line(mut reader: impl Read, mut f: impl FnMut(&str)) {
+pub(crate) fn for_each_line(mut reader: impl Read, mut f: impl FnMut(&str)) {
     let mut buffer = [0; 4096];
     let mut line = Vec::new();
     while let Ok(n) = reader.read(&mut buffer) {

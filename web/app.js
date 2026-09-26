@@ -86,9 +86,9 @@ markView();
 // ------------------------------------------------------------------ apps
 
 // One page, several apps: #studio (the default), #inspect/<state>,
-// #cuttlefish/<state> and #vision/<state>. Switching only shows another
+// #cuttlefish/<state>, #vision/<state> and #predictor/<state>. Switching only shows another
 // section, so the socket, preview and capture keep running.
-const APPS = ["studio", "inspect", "cuttlefish", "vision"];
+const APPS = ["studio", "inspect", "cuttlefish", "vision", "predictor"];
 
 /** Show the app the hash names and tell it the rest of the hash */
 function routeApp() {
@@ -112,6 +112,100 @@ function routeApp() {
 
 /** The Studio app is on screen, so its live views are worth drawing */
 const studioShown = () => root.dataset.app === "studio" && !document.hidden;
+
+// ------------------------------------------------------------- app order
+
+// The app links can be put in any order, as in an editor's activity bar:
+// drag them, or move the focused one with Alt+arrows. The order is kept in
+// localStorage (procon-app-order); apps it does not name go last.
+const appNav = document.querySelector(".app-nav");
+const DEFAULT_ORDER = [...appNav.querySelectorAll("[data-app]")].map(
+  (link) => link.dataset.app,
+);
+
+function saveAppOrder() {
+  const order = [...appNav.querySelectorAll("[data-app]")].map(
+    (link) => link.dataset.app,
+  );
+  try {
+    if (order.join() === DEFAULT_ORDER.join())
+      localStorage.removeItem("procon-app-order");
+    else localStorage.setItem("procon-app-order", JSON.stringify(order));
+  } catch {
+    // Storage may be refused; the order holds until reload
+  }
+}
+
+/** Put the app links in `order`; the others keep their places after it */
+function orderApps(order) {
+  const links = [...appNav.querySelectorAll("[data-app]")];
+  const rank = (link) => {
+    const i = order.indexOf(link.dataset.app);
+    return i < 0 ? order.length + DEFAULT_ORDER.indexOf(link.dataset.app) : i;
+  };
+  links.sort((a, b) => rank(a) - rank(b));
+  appNav.append(...links);
+}
+
+try {
+  const stored = JSON.parse(localStorage.getItem("procon-app-order"));
+  if (Array.isArray(stored)) orderApps(stored);
+} catch {
+  // No order kept yet, or storage refused
+}
+
+$("reset-app-order").addEventListener("click", () => {
+  orderApps(DEFAULT_ORDER);
+  saveAppOrder();
+});
+
+/** Whether the links run top to bottom (the rail) rather than left to right */
+const navVertical = () =>
+  getComputedStyle(appNav).flexDirection.startsWith("column");
+
+let draggedApp = null;
+for (const link of appNav.querySelectorAll("[data-app]")) {
+  link.draggable = true;
+  link.addEventListener("dragstart", (event) => {
+    draggedApp = link;
+    link.classList.add("is-dragged");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", link.dataset.app);
+  });
+  link.addEventListener("dragend", () => {
+    link.classList.remove("is-dragged");
+    draggedApp = null;
+    saveAppOrder();
+  });
+  // Alt+arrow moves the focused app one place
+  link.addEventListener("keydown", (event) => {
+    if (!event.altKey) return;
+    const back = ["ArrowUp", "ArrowLeft"].includes(event.key);
+    const forward = ["ArrowDown", "ArrowRight"].includes(event.key);
+    if (!back && !forward) return;
+    event.preventDefault();
+    const other = back
+      ? link.previousElementSibling
+      : link.nextElementSibling?.nextElementSibling;
+    if (back && !other) return;
+    appNav.insertBefore(link, other ?? null);
+    link.focus();
+    saveAppOrder();
+  });
+}
+
+appNav.addEventListener("dragover", (event) => {
+  if (!draggedApp) return;
+  event.preventDefault();
+  const target = event.target.closest?.("[data-app]");
+  if (!target || target === draggedApp) return;
+  const box = target.getBoundingClientRect();
+  const after = navVertical()
+    ? event.clientY > box.top + box.height / 2
+    : event.clientX > box.left + box.width / 2;
+  appNav.insertBefore(draggedApp, after ? target.nextSibling : target);
+});
+appNav.addEventListener("drop", (event) => event.preventDefault());
 
 window.addEventListener("hashchange", routeApp);
 // Every app's script has run by then

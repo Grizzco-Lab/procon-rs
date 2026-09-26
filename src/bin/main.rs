@@ -11,6 +11,7 @@ use procon::cuttlefish::Cuttlefish;
 use procon::dump::MultiDumper;
 use procon::inspect::Inspector;
 use procon::player::Player;
+use procon::predictor::{self, Predictor};
 use procon::recorder::{Recorder, RecorderState};
 use procon::stream::{self, LinkStats};
 use procon::studio::{Command, SavedState, Studio};
@@ -31,13 +32,62 @@ struct Args {
     config: String,
 }
 
+/// Whether a log record is the web server reporting a client that went
+/// away mid-request: a browser aborting a video range request when seeking,
+/// a frame image it no longer needs, or a slow request cut off by a reload.
+/// Those are expected, so they are logged at debug level, not as errors.
+fn is_client_abort(target: &str, message: &str) -> bool {
+    target.starts_with("warp::server")
+        && message.starts_with("server connection error")
+        && ["IncompleteMessage", "ConnectionReset", "BrokenPipe"]
+            .iter()
+            .any(|kind| message.contains(kind))
+}
+
+/// env_logger, with [`is_client_abort`] records moved down to debug level
+struct Logger(env_logger::Logger);
+
+impl log::Log for Logger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        self.0.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record) {
+        if record.level() == log::Level::Error {
+            let message = record.args().to_string();
+            if is_client_abort(record.target(), &message) {
+                let debug = log::Metadata::builder()
+                    .level(log::Level::Debug)
+                    .target(record.target())
+                    .build();
+                if self.0.enabled(&debug) {
+                    self.0.log(
+                        &log::Record::builder()
+                            .args(format_args!("{message} (the client closed the connection)"))
+                            .metadata(debug)
+                            .build(),
+                    );
+                }
+                return;
+            }
+        }
+        self.0.log(record);
+    }
+
+    fn flush(&self) {
+        self.0.flush();
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config: StudioConfig = config::load(&args.config)?;
     config.logging.validate()?;
-    env_logger::builder()
+    let logger = env_logger::builder()
         .filter_level(config.logging.level.parse()?)
-        .init();
+        .build();
+    log::set_max_level(logger.filter());
+    log::set_boxed_logger(Box::new(Logger(logger)))?;
 
     // Settings chosen on the dashboard win over the config file
     let state_path = Path::new(&args.config).with_extension("state.json");
@@ -65,13 +115,8 @@ fn main() -> anyhow::Result<()> {
     let player = Player::new(
         config.proxy.replay_address,
         saved.replay_mix.unwrap_or(false),
+        saved.replay_path,
     );
-    // The file may be gone since; then the panel starts empty
-    if let Some(path) = saved.replay_path
-        && let Err(e) = player.load(&path)
-    {
-        log::warn!("Could not reload replay file: {:#}", e);
-    }
     let link = Arc::new(LinkStats::default());
     let feed = LiveFeed::new();
 
@@ -92,6 +137,10 @@ fn main() -> anyhow::Result<()> {
         state_path,
         saved.game_settings.unwrap_or_default(),
     ));
+    // The last replay file may sit on a slow network mount: the dashboard
+    // does not wait for it
+    let restoring = Arc::clone(&studio);
+    std::thread::spawn(move || restoring.player.restore());
 
     // Relative Inspector paths start at the config file's folder
     let config_dir = Path::new(&args.config)
@@ -104,7 +153,8 @@ fn main() -> anyhow::Result<()> {
         .as_deref()
         .unwrap_or("../AgentZero/calibration.json");
     let root = config.inspect.root.map(|root| config_dir.join(root));
-    // Annotations, reviews and vision results sit next to the sessions' folder by default
+    // Annotations, reviews, vision results and predictions sit next to the
+    // sessions' folder by default
     let sessions = root.clone().unwrap_or_else(|| studio.recorder.prefix_dir());
     let beside = |name: &str| sessions.parent().unwrap_or(Path::new(".")).join(name);
     let annotations = config
@@ -139,25 +189,35 @@ fn main() -> anyhow::Result<()> {
         settings,
     ));
     // Reviews of the older layout move into folders, with their YouTube
-    // videos from the download cache of before
+    // videos from the download cache of before; on a thread, since the
+    // reviews may sit on a network mount (and a video is moved across)
     let legacy_cache = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
         .unwrap_or_else(std::env::temp_dir)
         .join("procon-cuttlefish");
-    if let Err(e) = cuttlefish.migrate(&legacy_cache) {
-        log::warn!("Could not move reviews into folders: {:#}", e);
-    }
+    let migrating = Arc::clone(&cuttlefish);
+    std::thread::spawn(move || {
+        if let Err(e) = migrating.migrate(&legacy_cache) {
+            log::warn!("Could not move reviews into folders: {:#}", e);
+        }
+    });
 
     let vision = Arc::new(Vision::new(
         Arc::clone(&inspector),
         vision::Settings::from_config(config.vision, &config_dir, beside("Vision"))?,
     ));
 
+    let predictor = Arc::new(Predictor::new(
+        Arc::clone(&inspector),
+        Arc::clone(&cuttlefish),
+        predictor::Settings::from_config(config.predictor, &config_dir, beside("Predictions")),
+    ));
+
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         tokio::select! {
-            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, vision, config.web.port) => {}
+            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, vision, predictor, config.web.port) => {}
             _ = tokio::signal::ctrl_c() => {
                 // Let ffmpeg finish the video file and session.json get its end time
                 if studio.recorder.status().state != RecorderState::Idle {
@@ -173,4 +233,30 @@ fn main() -> anyhow::Result<()> {
     studio.video.set_input(None)?;
     studio.video.stop_audio();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_aborts_are_told_apart() {
+        let target = "warp::server::run";
+        for message in [
+            "server connection error: hyper::Error(IncompleteMessage)",
+            "server connection error: hyper::Error(Io, Os { code: 104, kind: ConnectionReset, message: \"Connection reset by peer\" })",
+            "server connection error: hyper::Error(Io, Os { code: 32, kind: BrokenPipe, message: \"Broken pipe\" })",
+        ] {
+            assert!(is_client_abort(target, message), "{message}");
+        }
+        // Other server errors, and other modules, stay errors
+        assert!(!is_client_abort(
+            target,
+            "server connection error: hyper::Error(HeaderTimeout)"
+        ));
+        assert!(!is_client_abort(
+            "procon::web",
+            "server connection error: hyper::Error(IncompleteMessage)"
+        ));
+    }
 }

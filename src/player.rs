@@ -63,16 +63,20 @@ pub struct Player {
     /// `host:port` of the proxy's `[replay]` port
     address: String,
     track: Mutex<Option<Track>>,
+    /// The file of the last run, until [`Player::restore`] has loaded it
+    restoring: Mutex<Option<String>>,
     shared: Arc<Shared>,
 }
 
 impl Player {
-    pub fn new(address: String, mix: bool) -> Self {
+    /// `restore` is the file of the last run, for [`Player::restore`]
+    pub fn new(address: String, mix: bool, restore: Option<String>) -> Self {
         let shared = Arc::new(Shared::default());
         shared.mix.store(mix, Ordering::Relaxed);
         Self {
             address,
             track: Mutex::new(None),
+            restoring: Mutex::new(restore),
             shared,
         }
     }
@@ -83,18 +87,52 @@ impl Player {
         let path = expand_home(path);
         let actions = replay::load(Path::new(&path))?;
         log::info!("Loaded {} actions from {}", actions.len(), path);
+        // A file loaded by hand wins over the one being restored
+        let mut restoring = self.restoring.lock().unwrap();
+        *restoring = None;
         *self.track.lock().unwrap() = Some(Track {
             path,
             actions: Arc::new(actions),
         });
+        drop(restoring);
         self.shared.position_ms.store(0, Ordering::Relaxed);
         *self.shared.error.lock().unwrap() = None;
         Ok(())
     }
 
-    /// Path of the loaded file
+    /// Load the file of the last run given to [`Player::new`]. Meant for a
+    /// thread of its own: a session on a network mount can take seconds to
+    /// read, and the dashboard need not wait for it. Until then
+    /// [`Player::path`] names it, so settings saved meanwhile keep it; a file
+    /// loaded by hand meanwhile wins. The file may be gone since; then the
+    /// panel starts empty.
+    pub fn restore(&self) {
+        let Some(path) = self.restoring.lock().unwrap().clone() else {
+            return;
+        };
+        let loaded = replay::load(Path::new(&expand_home(&path)));
+        let mut restoring = self.restoring.lock().unwrap();
+        if restoring.as_deref() != Some(path.as_str()) {
+            return;
+        }
+        *restoring = None;
+        match loaded {
+            Ok(actions) => {
+                log::info!("Reloaded {} actions from {}", actions.len(), path);
+                *self.track.lock().unwrap() = Some(Track {
+                    path: expand_home(&path),
+                    actions: Arc::new(actions),
+                });
+            }
+            Err(e) => log::warn!("Could not reload replay file: {:#}", e),
+        }
+    }
+
+    /// Path of the loaded file, or of the one still being restored
     pub fn path(&self) -> Option<String> {
-        self.track.lock().unwrap().as_ref().map(|t| t.path.clone())
+        let restoring = self.restoring.lock().unwrap();
+        let loaded = self.track.lock().unwrap().as_ref().map(|t| t.path.clone());
+        loaded.or_else(|| restoring.clone())
     }
 
     /// Start playing the loaded actions from the beginning
@@ -233,4 +271,41 @@ fn send_actions(
             .store(due.as_millis() as u64, Ordering::Relaxed);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restores_the_last_file_unless_another_was_loaded() {
+        let dir = std::env::temp_dir().join(format!("procon-player-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.jsonl");
+        let b = dir.join("b.jsonl");
+        std::fs::write(&a, "{\"t_ms\": 0}\n{\"t_ms\": 40}\n").unwrap();
+        std::fs::write(&b, "{\"t_ms\": 0}\n").unwrap();
+        let (a, b) = (a.display().to_string(), b.display().to_string());
+
+        // Named before it is loaded, so saved settings keep it
+        let player = Player::new(String::new(), false, Some(a.clone()));
+        assert_eq!(player.path(), Some(a.clone()));
+        assert_eq!(player.status().actions, 0);
+        player.restore();
+        assert_eq!(player.path(), Some(a.clone()));
+        assert_eq!(player.status().actions, 2);
+
+        // A file loaded by hand meanwhile wins
+        let player = Player::new(String::new(), false, Some(a.clone()));
+        player.load(&b).unwrap();
+        player.restore();
+        assert_eq!(player.path(), Some(b));
+        assert_eq!(player.status().actions, 1);
+
+        // A file gone since leaves the panel empty
+        let player = Player::new(String::new(), false, Some("/nonexistent.jsonl".into()));
+        player.restore();
+        assert_eq!(player.path(), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

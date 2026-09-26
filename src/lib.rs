@@ -13,6 +13,7 @@ pub mod motion;
 pub mod objects;
 pub mod parser;
 pub mod player;
+pub mod predictor;
 pub mod priority;
 pub mod proxy;
 pub mod recorder;

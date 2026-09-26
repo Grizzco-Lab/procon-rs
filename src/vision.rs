@@ -25,8 +25,14 @@
 //!
 //! - `GET info`: models on offer, whether this build has CUDA, folders
 //! - `GET job`: the current or last run (`null` before the first)
-//! - `GET results?s=&seg=`: a segment's last results: `{"run", "frames",
-//!   "classes", "tracks"}`
+//! - `GET results?s=&seg=&map=&all=`: a segment's last results: `{"run",
+//!   "frames", "classes", "tracks", "hidden"}`; only the boxes of our
+//!   classes (`classes.json`), after renaming by `map` (such as
+//!   `person=player`), with the others counted in `hidden`; `all=1` keeps
+//!   the detector's own classes (COCO)
+//! - `GET overview`: the labeled dataset: each class of `classes.json`
+//!   with its boxes by people and by models, each labeled segment, and the
+//!   frames labeled so far against [`TARGET_FRAMES`]
 //! - `POST run` with a [`RunRequest`] starts a run (409 while one runs)
 //! - `POST cancel` stops the current run after its frame
 //! - `POST send` with `{"s", "seg", "map"}` writes the results into the
@@ -64,6 +70,10 @@ pub const MAX_COUNT: u64 = 20_000;
 
 /// Largest request body
 const BODY_LIMIT: u64 = 64 << 10;
+
+/// Frames labeled by people before a Salmon Run detector is worth
+/// training, as decided for now
+pub const TARGET_FRAMES: u64 = 200;
 
 /// Our own network, offered as "custom"
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -612,21 +622,102 @@ impl Vision {
     }
 
     /// A segment's last results with their per-class and per-track
-    /// summaries; no frames if it has none
-    pub fn results(&self, session: &str, segment: &str) -> Result<Value> {
+    /// summaries; no frames if it has none. With `ours`, only boxes whose
+    /// class, renamed by `map` (`from=to` pairs), is in `classes.json` are
+    /// kept, under that name; the others are counted in `hidden`.
+    pub fn results(&self, session: &str, segment: &str, ours: Option<&str>) -> Result<Value> {
         check_name(session)?;
         check_name(segment)?;
         let stem = Self::stem(segment);
-        let frames = labels::read_objects(&self.results_path(session, stem, labels::OBJECTS_EXT))?;
+        let mut frames =
+            labels::read_objects(&self.results_path(session, stem, labels::OBJECTS_EXT))?;
         let run: Option<Job> = std::fs::read(self.results_path(session, stem, ".run.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        let hidden = match ours {
+            Some(map) => {
+                let maps = labels::parse_class_map(map)?;
+                let classes =
+                    labels::read_classes(self.inspector.annotations().dir())?.unwrap_or_default();
+                Some(labels::map_classes(&mut frames, &maps, |c| {
+                    classes.iter().any(|k| k.name == c)
+                }))
+            }
+            None => None,
+        };
         let (classes, tracks) = summarize(&frames);
         Ok(json!({
             "run": run,
             "frames": frames,
             "classes": classes,
             "tracks": tracks,
+            "hidden": hidden,
+        }))
+    }
+
+    /// The labeled dataset: every class of `classes.json` with its boxes
+    /// drawn by people and by models, and every labeled segment
+    pub fn overview(&self) -> Result<Value> {
+        let dir = self.inspector.annotations().dir();
+        let classes = labels::read_classes(dir)?.unwrap_or_default();
+        let mut segments = Vec::new();
+        if let Ok(sessions) = std::fs::read_dir(dir) {
+            for session in sessions.filter_map(|e| e.ok()) {
+                let Ok(files) = std::fs::read_dir(session.path()) else {
+                    continue;
+                };
+                let name = session.file_name().to_string_lossy().into_owned();
+                for file in files.filter_map(|e| e.ok()) {
+                    let file_name = file.file_name().to_string_lossy().into_owned();
+                    let Some(stem) = file_name.strip_suffix(labels::OBJECTS_EXT) else {
+                        continue;
+                    };
+                    let frames = labels::read_objects(&file.path())?;
+                    segments.push((name.clone(), stem.to_string(), frames));
+                }
+            }
+        }
+        segments.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+        let (counts, rows) = count_labels(&segments);
+        let mut listed: Vec<Value> = classes
+            .iter()
+            .map(|c| {
+                let [user, model] = counts.get(c.name.as_str()).copied().unwrap_or_default();
+                json!({"name": c.name, "label": c.label, "color": c.color, "user": user, "model": model})
+            })
+            .collect();
+        // Classes in the labels that classes.json no longer has
+        for (name, [user, model]) in &counts {
+            if !classes.iter().any(|c| c.name == *name) {
+                listed.push(json!({"name": name, "label": name, "color": null, "user": user, "model": model, "unknown": true}));
+            }
+        }
+        let root = self.inspector.root();
+        let segments: Vec<Value> = rows
+            .into_iter()
+            .map(|mut row| {
+                // The segment's video file, for the link into the labeling mode
+                let session = row["session"].as_str().unwrap_or_default().to_string();
+                let stem = row["stem"].as_str().unwrap_or_default().to_string();
+                row["file"] = json!(SessionInfo::read(&root.join(&session)).ok().and_then(
+                    |info| {
+                        info.video
+                            .segments
+                            .into_iter()
+                            .map(|s| s.file)
+                            .find(|f| Self::stem(f) == stem)
+                    }
+                ));
+                row
+            })
+            .collect();
+        let labeled: u64 = segments.iter().filter_map(|s| s["labeled"].as_u64()).sum();
+        Ok(json!({
+            "dir": dir,
+            "classes": listed,
+            "segments": segments,
+            "labeled_frames": labeled,
+            "target_frames": TARGET_FRAMES,
         }))
     }
 
@@ -683,6 +774,39 @@ pub fn assign_ids(detections: &mut [ObjectBox], tracked: &[ObjectBox]) {
             detection.id = track.id;
         }
     }
+}
+
+/// Boxes per class drawn by people and by models (`[user, model]`), and per
+/// segment (`(session, stem, frames)`) its frames, the frames a person
+/// labeled ([`labels::is_reviewed`]) and its boxes by people and models
+pub fn count_labels(
+    segments: &[(String, String, Vec<FrameObjects>)],
+) -> (BTreeMap<&str, [u64; 2]>, Vec<Value>) {
+    let mut classes: BTreeMap<&str, [u64; 2]> = BTreeMap::new();
+    let mut rows = Vec::new();
+    for (session, stem, frames) in segments {
+        let (mut user, mut model) = (0, 0);
+        for frame in frames {
+            for b in &frame.boxes {
+                let by_model = b.by == labels::Source::Model;
+                classes.entry(&b.class).or_default()[usize::from(by_model)] += 1;
+                if by_model {
+                    model += 1;
+                } else {
+                    user += 1;
+                }
+            }
+        }
+        rows.push(json!({
+            "session": session,
+            "stem": stem,
+            "frames": frames.len(),
+            "labeled": frames.iter().filter(|f| labels::is_reviewed(f)).count(),
+            "user": user,
+            "model": model,
+        }));
+    }
+    (classes, rows)
 }
 
 /// Per class: boxes, frames and mean score; per track: class, frames, first
@@ -750,7 +874,12 @@ impl Vision {
         match path {
             "info" => Ok(self.info()),
             "job" => Ok(json!(self.job())),
-            "results" => Ok(self.results(text("s"), text("seg"))?),
+            "results" => Ok(self.results(
+                text("s"),
+                text("seg"),
+                (text("all") != "1").then(|| text("map")),
+            )?),
+            "overview" => Ok(self.overview()?),
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
                 anyhow::anyhow!("no endpoint {path}"),
@@ -1018,7 +1147,7 @@ mod tests {
             },
         );
         let (s, seg) = ("2026-09-25_11-26-22", "video-01.mkv");
-        assert_eq!(vision.results(s, seg).unwrap()["frames"], json!([]));
+        assert_eq!(vision.results(s, seg, None).unwrap()["frames"], json!([]));
         assert!(vision.send(s, seg, "").is_err());
 
         // A stored run: frame 0 finds a person, frame 2 a clock
@@ -1032,7 +1161,7 @@ mod tests {
             &frames,
         )
         .unwrap();
-        let results = vision.results(s, seg).unwrap();
+        let results = vision.results(s, seg, None).unwrap();
         assert_eq!(results["frames"][0]["ms"]["decode"], 1.0);
         assert_eq!(results["classes"].as_array().unwrap().len(), 2);
 
@@ -1068,6 +1197,65 @@ mod tests {
         let sent = vision.send(s, seg, "").unwrap();
         assert_eq!(sent["dropped"], json!({"clock": 1, "person": 1}));
         assert!(vision.send(s, seg, "person").is_err());
+
+        // Our classes only: the person is a player, the clock is hidden
+        let ours = vision.results(s, seg, Some("person=player")).unwrap();
+        assert_eq!(ours["frames"][0]["boxes"][0]["class"], "player");
+        assert_eq!(ours["frames"][1]["boxes"], json!([]));
+        assert_eq!(ours["hidden"], json!({"clock": 1}));
+        assert_eq!(ours["classes"][0]["class"], "player");
+        assert_eq!(vision.results(s, seg, None).unwrap()["hidden"], Value::Null);
+
+        // The overview counts the labels: frame 0 (model) and frame 2 (user)
+        let overview = vision.overview().unwrap();
+        assert_eq!(overview["labeled_frames"], 1);
+        assert_eq!(overview["target_frames"], TARGET_FRAMES);
+        let class = |name: &str| {
+            overview["classes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["name"] == name)
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(class("player")["model"], 1);
+        assert_eq!(class("chum")["user"], 1);
+        assert_eq!(class("golden_egg")["user"], 0);
+        assert_eq!(overview["segments"][0]["stem"], "video-01");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn labels_are_counted() {
+        let user = |class: &str| labels::ObjectBox {
+            by: labels::Source::User,
+            ..ObjectBox::model(class, [0.1; 4], 1.0)
+        };
+        let segments = vec![
+            (
+                "s1".to_string(),
+                "video-01".to_string(),
+                vec![
+                    FrameObjects::new(0, vec![user("chum"), user("chum")]),
+                    FrameObjects::new(1, vec![ObjectBox::model("chum", [0.1; 4], 0.5)]),
+                    // Checked and found empty: labeled
+                    FrameObjects::new(2, vec![]),
+                ],
+            ),
+            (
+                "s2".to_string(),
+                "video-02".to_string(),
+                vec![FrameObjects::new(5, vec![user("basket")])],
+            ),
+        ];
+        let (classes, rows) = count_labels(&segments);
+        assert_eq!(classes["chum"], [2, 1]);
+        assert_eq!(classes["basket"], [1, 0]);
+        assert_eq!(
+            rows[0],
+            json!({"session": "s1", "stem": "video-01", "frames": 3, "labeled": 2, "user": 2, "model": 1})
+        );
+        assert_eq!(rows[1]["labeled"], 1);
     }
 }

@@ -1892,6 +1892,11 @@ input:focus-visible {
   outline-offset: 2px;
 }
 
+/* The app being dragged to another place */
+.app-nav a.is-dragged {
+  opacity: 0.4;
+}
+
 .app-icon {
   flex: none;
   width: 18px;
@@ -3763,4 +3768,304 @@ body {
 
 .p-v-tracks .data-table tbody tr {
   cursor: pointer;
+}
+
+/* The scrubber keeps a usable width; the buttons wrap around it */
+.p-v-frame .v-steps {
+  flex-wrap: wrap;
+}
+
+.p-v-frame .v-scrub {
+  min-width: 160px;
+}
+
+.v-dataset .v-classes-wrap {
+  max-height: 640px;
+}
+
+/* The classes panel: the labeled dataset (the default) or the run */
+.v-tabs {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.v-dataset {
+  display: grid;
+  gap: 10px;
+}
+
+.v-dataset-table td,
+.v-dataset-table th {
+  text-align: right;
+}
+
+.v-dataset-table td:first-child,
+.v-dataset-table th:first-child {
+  text-align: left;
+}
+
+/* Classes without a single box yet */
+.v-dataset-table tr.v-none td {
+  color: var(--text-3);
+}
+
+/* ========================================================= predictor
+ * The Predictor app: the video with the predicted inputs over it and a
+ * small controller, the timeline (truth filled, prediction as lines), the
+ * agreement numbers, the run form and the stored predictions.
+ */
+
+:root:not([data-app="predictor"]) [data-app-only="predictor"] {
+  display: none !important;
+}
+
+#predictor-layout {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  align-items: start;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-areas:
+    "video run"
+    "timeline agree"
+    "runs runs";
+}
+
+.p-p-video {
+  grid-area: video;
+}
+.p-p-timeline {
+  grid-area: timeline;
+}
+.p-p-agree {
+  grid-area: agree;
+}
+.p-p-run {
+  grid-area: run;
+}
+.p-p-runs {
+  grid-area: runs;
+}
+
+[data-theme="joy"] #predictor-layout {
+  max-width: 1360px;
+}
+
+[data-theme="telemetry"] #predictor-layout {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-areas:
+    "video video video video video video video video run run run run"
+    "timeline timeline timeline timeline timeline timeline timeline timeline agree agree agree agree"
+    "runs runs runs runs runs runs runs runs runs runs runs runs";
+}
+
+[data-theme="telemetry"] .p-p-video {
+  --panel-no: "01";
+}
+[data-theme="telemetry"] .p-p-timeline {
+  --panel-no: "02";
+}
+[data-theme="telemetry"] .p-p-agree {
+  --panel-no: "03";
+}
+[data-theme="telemetry"] .p-p-run {
+  --panel-no: "04";
+}
+[data-theme="telemetry"] .p-p-runs {
+  --panel-no: "05";
+}
+
+@media (max-width: 1100px) {
+  :root[data-theme] #predictor-layout {
+    max-width: 900px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "video" "timeline" "agree" "run" "runs";
+  }
+}
+
+:root[data-layout="phone"][data-theme] #predictor-layout {
+  max-width: 480px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "video" "timeline" "agree" "run" "runs";
+}
+
+#p-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+#p-video[hidden] {
+  display: none;
+}
+
+/* The transport and overlay choice wrap on narrow screens */
+.p-p-video .v-steps {
+  flex-wrap: wrap;
+}
+
+/* The truth drawn on the video is told apart from the prediction */
+.input-hud.p-hud-truth .hud-key rect {
+  stroke: var(--s1);
+}
+
+.p-controller {
+  display: grid;
+  grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.p-mini .procon {
+  max-width: 260px;
+  padding: 2% 3%;
+  border-radius: var(--radius-sm);
+}
+
+.p-probs {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  font-size: 12px;
+}
+
+.p-prob {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 36px 14px;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.p-prob i {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--s2);
+  opacity: 0.45;
+}
+
+.p-prob.on {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.p-prob.on i {
+  opacity: 1;
+}
+
+.p-prob b {
+  font-weight: 500;
+  text-align: right;
+}
+
+.p-prob em {
+  color: var(--s1);
+  font-style: normal;
+}
+
+.p-timeline {
+  display: block;
+  width: 100%;
+  height: 120px;
+  cursor: pointer;
+}
+
+.p-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.p-legend i {
+  display: inline-block;
+  width: 14px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.p-key-truth {
+  background: var(--s1);
+  opacity: 0.55;
+}
+
+.p-key-pred {
+  height: 2px !important;
+  background: var(--s2);
+}
+
+.p-agree-table td,
+.p-agree-table th {
+  text-align: right;
+}
+
+.p-agree-table td:first-child,
+.p-agree-table th:first-child {
+  text-align: left;
+}
+
+.p-runs-wrap {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.p-p-runs .data-table tbody tr {
+  cursor: pointer;
+}
+
+.p-tag {
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--inset);
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+#p-error.p-oom {
+  font-weight: 600;
+}
+
+.p-log {
+  font-size: 12px;
+}
+
+.p-log summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.p-log code,
+.p-log pre {
+  display: block;
+  margin: 6px 0 0;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  font:
+    11px var(--font-num),
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+}
+
+@media (max-width: 720px) {
+  :root[data-theme] #predictor-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "video" "timeline" "agree" "run" "runs";
+  }
+
+  .p-controller {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+:root[data-layout="phone"] .p-controller {
+  grid-template-columns: minmax(0, 1fr);
 }

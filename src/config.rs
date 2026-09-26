@@ -118,6 +118,9 @@ pub struct StudioConfig {
     /// The Vision app
     #[serde(default)]
     pub vision: VisionConfig,
+    /// The Predictor app
+    #[serde(default)]
+    pub predictor: PredictorConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
 }
@@ -175,6 +178,19 @@ pub struct VisionConfig {
     pub classes: Option<String>,
     /// Lowest score kept; by default 0.25
     pub confidence: Option<f32>,
+}
+
+/// The Predictor app: the inverse dynamics model's predictions on any video
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct PredictorConfig {
+    /// The AgentZero folder, where `uv run agentzero-predict` runs and
+    /// `runs/*/best.pt` are the checkpoints, relative to this config file;
+    /// by default `../AgentZero`
+    pub agentzero: Option<String>,
+    /// Folder of stored predictions (`<video>/<checkpoint>/pred.jsonl` and
+    /// `run.json`), relative to this config file; by default `Predictions`
+    /// next to the Inkspector's root
+    pub results: Option<String>,
 }
 
 /// The machine running `procon-proxy`

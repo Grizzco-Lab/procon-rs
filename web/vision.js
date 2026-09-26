@@ -1,5 +1,7 @@
 // Vision app: detect and track objects in a recorded segment, review the
-// boxes frame by frame, and send them to the labels as model boxes. Runs
+// boxes frame by frame through our classes (classes.json; the COCO ones
+// behind a toggle), and send them to the labels as model boxes. The
+// classes panel opens on the labeled dataset. Runs
 // after app.js and inspect.js and uses their helpers ($, escapeHtml). Runs
 // go through /api/vision (see src/vision.rs); frames come from the
 // Inkspector's frame endpoint. State lives in the hash:
@@ -51,6 +53,8 @@
     /** Track highlighted in the trail */
     track: null,
     pollTimer: null,
+    /** Playing the processed frames */
+    playing: false,
   };
 
   const img = $("v-img");
@@ -87,7 +91,76 @@
     return data;
   }
 
+  /** Our classes by name, from the dataset overview */
+  const ourClasses = new Map();
+
+  const labelOf = (name) => ourClasses.get(name)?.label ?? name;
+
+  // ---------------------------------------------------- dataset overview
+
+  /** Our classes with their labeled boxes, and the labeled segments */
+  async function loadOverview() {
+    let overview;
+    try {
+      overview = await api("overview");
+    } catch (error) {
+      $("v-dataset-classes").innerHTML =
+        `<tr><td colspan="3" class="level-critical">${escapeHtml(error.message)}</td></tr>`;
+      return;
+    }
+    ourClasses.clear();
+    for (const c of overview.classes) if (!c.unknown) ourClasses.set(c.name, c);
+    const { labeled_frames: labeled, target_frames: target } = overview;
+    $("v-target-text").textContent = `${labeled} / ${target}`;
+    $("v-target-frames").textContent = target;
+    const meter = $("v-target");
+    meter.dataset.level = labeled >= target ? "ok" : "warning";
+    meter.querySelector(".meter-fill").style.width =
+      `${Math.min(100, (100 * labeled) / target)}%`;
+    $("v-dataset-classes").innerHTML = overview.classes
+      .map(
+        (c) =>
+          `<tr class="${c.user + c.model ? "" : "v-none"}"><td><i class="v-swatch" style="background:${c.color ?? colorOf(c.name)}"></i>${escapeHtml(c.label)}${c.unknown ? ' <span class="p-tag">not in classes.json</span>' : ""}</td><td class="num">${c.user}</td><td class="num">${c.model}</td></tr>`,
+      )
+      .join("");
+    if (!overview.classes.length) {
+      $("v-dataset-classes").innerHTML =
+        `<tr><td colspan="3" class="panel-note">No classes.json yet: open the Inkspector's Label mode.</td></tr>`;
+    }
+    $("v-dataset-segments").innerHTML = overview.segments.length
+      ? overview.segments
+          .map((s) => {
+            const name = `${s.session} · ${s.file ?? s.stem}`;
+            const link = s.file
+              ? `<a href="#inspect/${new URLSearchParams({ s: s.session, seg: s.file, label: 1 })}">${escapeHtml(name)}</a>`
+              : escapeHtml(name);
+            return `<tr><td>${link}</td><td class="num">${s.labeled} of ${s.frames}</td><td class="num">${s.user} + ${s.model} model</td></tr>`;
+          })
+          .join("")
+      : `<tr><td colspan="3" class="panel-note">Nothing labeled yet.</td></tr>`;
+    $("v-dataset-dir").textContent = overview.dir;
+    if (vis.results) show(vis.index);
+  }
+
+  /** The classes panel's two views: the dataset or the run on screen */
+  function showTab(tab) {
+    remember("tab", tab);
+    const dataset = tab === "dataset";
+    $("v-tab-dataset").setAttribute("aria-pressed", String(dataset));
+    $("v-tab-run").setAttribute("aria-pressed", String(!dataset));
+    $("v-dataset").hidden = !dataset;
+    $("v-run-classes").hidden = dataset;
+    $("v-send-form").hidden = dataset;
+    $("v-sent").hidden = dataset || !$("v-sent").innerHTML;
+    $("v-classes-note").hidden = dataset;
+  }
+
+  $("v-tab-dataset").onclick = () => showTab("dataset");
+  $("v-tab-run").onclick = () => showTab("run");
+
   function colorOf(name) {
+    const ours = ourClasses.get(name)?.color;
+    if (ours) return ours;
     let hash = 0;
     for (const c of name) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
     return PALETTE[hash % PALETTE.length];
@@ -153,6 +226,10 @@
   }
 
   const summaryOf = (name) => vis.sessions?.find((s) => s.name === name);
+
+  /** Frame n of the selected segment, from the Inkspector */
+  const frameUrl = (n) =>
+    `/api/inspect/frame?${new URLSearchParams({ ...selected(), n })}`;
 
   function fillSegments() {
     const summary = summaryOf($("v-session").value);
@@ -373,8 +450,11 @@
 
   async function loadResults(s, seg, frame) {
     let results;
+    const all = $("v-all").checked ? "1" : "0";
     try {
-      results = await api(`results?${new URLSearchParams({ s, seg })}`);
+      results = await api(
+        `results?${new URLSearchParams({ s, seg, map: $("v-map").value, all })}`,
+      );
     } catch (error) {
       $("v-results-note").textContent = error.message;
       return;
@@ -389,11 +469,20 @@
     scrub.max = Math.max(0, frames.length - 1);
     $("v-empty").hidden = frames.length > 0;
     img.hidden = !frames.length;
-    $("v-results-note").textContent = run
-      ? `${run.model_name} · ${frames.length} frames · ${new Date(run.started_ms).toLocaleString()}`
-      : frames.length
-        ? `${frames.length} frames`
-        : "";
+    const hidden = Object.values(results.hidden ?? {}).reduce(
+      (sum, n) => sum + n,
+      0,
+    );
+    $("v-results-note").textContent = [
+      run
+        ? `${run.model_name} · ${frames.length} frames · ${new Date(run.started_ms).toLocaleString()}`
+        : frames.length
+          ? `${frames.length} frames`
+          : "",
+      hidden ? `${hidden} boxes of other classes hidden` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
     // The form starts from the run on screen, to run it again or change it
     if (run && !running(vis.job)) {
       $("v-start").value = run.start;
@@ -405,6 +494,7 @@
     renderTracks();
     renderJob();
     $("v-sent").hidden = true;
+    $("v-sent").innerHTML = "";
     const wanted = frame ?? frames[vis.index]?.frame ?? 0;
     const index = frames.findIndex((f) => f.frame >= wanted);
     show(index < 0 ? Math.max(0, frames.length - 1) : index);
@@ -423,7 +513,7 @@
     vis.index = Math.max(0, Math.min(frames.length - 1, index));
     const line = frames[vis.index];
     const { s, seg } = selected();
-    const src = `/api/inspect/frame?${new URLSearchParams({ s, seg, n: line.frame })}`;
+    const src = frameUrl(line.frame);
     if (img.getAttribute("src") !== src) img.src = src;
     $("v-scrub").value = vis.index;
     $("v-frame-chip").textContent =
@@ -473,7 +563,7 @@
         }),
       );
       const label = [
-        box.class,
+        labelOf(box.class),
         scores && box.score != null ? box.score.toFixed(2) : null,
         box.id != null ? `#${box.id}` : null,
       ]
@@ -501,7 +591,7 @@
       ? classes
           .map(
             (c) =>
-              `<tr><td><i class="v-swatch" style="background:${colorOf(c.class)}"></i>${escapeHtml(c.class)}</td><td class="num">${c.boxes}</td><td class="num">${c.frames}</td><td class="num">${c.mean_score.toFixed(2)}</td></tr>`,
+              `<tr><td><i class="v-swatch" style="background:${colorOf(c.class)}"></i>${escapeHtml(labelOf(c.class))}</td><td class="num">${c.boxes}</td><td class="num">${c.frames}</td><td class="num">${c.mean_score.toFixed(2)}</td></tr>`,
           )
           .join("")
       : `<tr><td colspan="4" class="panel-note">${frames.length ? "No objects found." : "No results yet."}</td></tr>`;
@@ -521,7 +611,7 @@
     }
     for (const t of tracks) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td class="num">#${t.id}</td><td><i class="v-swatch" style="background:${colorOf(t.class)}"></i>${escapeHtml(t.class)}</td><td class="num">${t.frames}</td><td class="num">${t.first}</td><td class="num">${t.last}</td>`;
+      tr.innerHTML = `<td class="num">#${t.id}</td><td><i class="v-swatch" style="background:${colorOf(t.class)}"></i>${escapeHtml(labelOf(t.class))}</td><td class="num">${t.frames}</td><td class="num">${t.first}</td><td class="num">${t.last}</td>`;
       if (vis.track === t.id) tr.className = "current";
       tr.onclick = () => {
         vis.track = vis.track === t.id ? null : t.id;
@@ -603,19 +693,86 @@
     }
   }
 
-  const step = (delta) => show(vis.index + delta);
+  const step = (delta) => {
+    pause();
+    show(vis.index + delta);
+  };
   $("v-prev").onclick = () => step(-1);
   $("v-next").onclick = () => step(1);
-  $("v-scrub").oninput = (event) => show(Number(event.target.value));
+  $("v-scrub").oninput = (event) => {
+    pause();
+    show(Number(event.target.value));
+  };
+
+  // ------------------------------------------------------------ playback
+
+  /** Play the processed frames at the recording's pace (a frame every
+   * `step` frames), each shown once its picture has loaded */
+  async function play() {
+    const frames = vis.results?.frames ?? [];
+    if (vis.playing || frames.length < 2) return;
+    if (vis.index >= frames.length - 1) show(0);
+    vis.playing = true;
+    $("v-play").textContent = "Pause";
+    const fps = summaryOf(selected().s)?.fps || 30;
+    const results = vis.results;
+    while (vis.playing && vis.results === results) {
+      if (vis.index >= frames.length - 1) break;
+      const started = performance.now();
+      const between = frames[vis.index + 1].frame - frames[vis.index].frame;
+      show(vis.index + 1);
+      // Ask for the next pictures early; the server decodes them in windows
+      for (let k = 1; k <= 3; k++) {
+        const next = frames[vis.index + k];
+        if (next) new Image().src = frameUrl(next.frame);
+      }
+      await new Promise((resolve) => {
+        if (img.complete) resolve();
+        else img.addEventListener("load", resolve, { once: true });
+        img.addEventListener("error", resolve, { once: true });
+      });
+      const wait = (between * 1000) / fps - (performance.now() - started);
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+    pause();
+  }
+
+  function pause() {
+    vis.playing = false;
+    $("v-play").textContent = "Play";
+  }
+
+  const togglePlay = () => (vis.playing ? pause() : play());
+  $("v-play").onclick = togglePlay;
   $("v-scores").onchange = () => show(vis.index);
   $("v-tracked").onchange = () => show(vis.index);
 
+  /** Load the results again, through our classes or all of them */
+  const reloadResults = () => {
+    const { s, seg } = selected();
+    if (s && seg) loadResults(s, seg, vis.results?.frames[vis.index]?.frame);
+  };
+  $("v-all").onchange = reloadResults;
+  $("v-map").onchange = () => {
+    remember("map", $("v-map").value);
+    reloadResults();
+  };
+
+  // Space plays, arrows step, as in the Inkspector; the page never scrolls
+  // for them. Text fields and checkboxes keep their keys; the scrubber
+  // takes these ones from the page.
   document.addEventListener("keydown", (event) => {
     if (!vis.shown || !vis.results?.frames.length) return;
-    const tag = event.target.tagName;
-    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    const target = event.target;
+    if (
+      target.matches?.(
+        "input:not([type=range]), select, textarea, [contenteditable]",
+      )
+    )
+      return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key === "ArrowLeft") step(event.shiftKey ? -10 : -1);
+    if (event.key === " ") togglePlay();
+    else if (event.key === "ArrowLeft") step(event.shiftKey ? -10 : -1);
     else if (event.key === "ArrowRight") step(event.shiftKey ? 10 : 1);
     else return;
     event.preventDefault();
@@ -643,6 +800,7 @@
         <p class="panel-note path">${escapeHtml(sent.file)}</p>
         <a class="btn btn-small" href="${link}">Open frame ${frame} in the Inkspector's Label mode</a>`;
       out.hidden = false;
+      loadOverview();
     } catch (error) {
       out.innerHTML = `<p class="notice">${escapeHtml(error.message)}</p>`;
       out.hidden = false;
@@ -662,6 +820,7 @@
   }
 
   async function route(state) {
+    loadOverview();
     try {
       await Promise.all([loadInfo(), loadSessions()]);
     } catch (error) {
@@ -690,12 +849,18 @@
     const { app, state } = event.detail;
     vis.shown = app === "vision";
     if (vis.shown) route(state);
-    else clearTimeout(vis.pollTimer);
+    else {
+      clearTimeout(vis.pollTimer);
+      pause();
+    }
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (vis.shown && !document.hidden) poll();
+    if (document.hidden) pause();
+    else if (vis.shown) poll();
   });
+
+  showTab(remembered("tab", "dataset"));
 
   document.querySelector('.app-nav [data-app="vision"]').href = remembered(
     "view",
