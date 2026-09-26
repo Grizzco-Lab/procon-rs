@@ -220,7 +220,7 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         tokio::select! {
-            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, vision, predictor, Arc::clone(&follow), config.web.port) => {}
+            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, vision, predictor, Arc::clone(&follow), &config.web) => {}
             _ = tokio::signal::ctrl_c() => {
                 // Let ffmpeg finish the video file and session.json get its end time
                 if studio.recorder.status().state != RecorderState::Idle {

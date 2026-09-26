@@ -7,6 +7,10 @@ replay_address = "192.168.4.94:7332"
 [web]
 # Dashboard port (8080 is taken on this host)
 port = 8090
+# Host names besides localhost and IP addresses the dashboard answers to,
+# e.g. a name that points at this machine; requests for other names, and
+# requests coming from other sites, are refused
+# allowed_hosts = ["studio.cjr.host"]
 
 [recording]
 # Session folders are <prefix>YYYY-MM-DD_HH-MM-SS/; the dashboard can change it

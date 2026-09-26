@@ -19,6 +19,7 @@
 //! - `/api/predictor/...`: the Predictor app's runs and predictions, see
 //!   [`crate::predictor`]
 
+use crate::config::WebConfig;
 use crate::cuttlefish::{self, Cuttlefish};
 use crate::dump::{Dumper, Frame};
 use crate::follow::{self, Follow};
@@ -99,8 +100,9 @@ pub async fn serve(
     vision: Arc<Vision>,
     predictor: Arc<Predictor>,
     follow: Arc<Follow>,
-    port: u16,
+    web: &WebConfig,
 ) {
+    let port = web.port;
     let status = watch::Sender::new(String::new());
     tokio::spawn(publish_status(Arc::clone(&studio), status.clone()));
 
@@ -314,9 +316,78 @@ pub async fn serve(
         .or(cuttlefish::routes(cuttlefish))
         .or(vision::routes(vision))
         .or(predictor::routes(predictor));
+    let routes = same_origin(web.allowed_hosts.clone())
+        .and(routes)
+        .recover(forbidden);
 
     log::info!("Dashboard on http://0.0.0.0:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;
+}
+
+/// A request from another site, or for a host name the dashboard does not
+/// serve
+#[derive(Debug)]
+struct Forbidden(String);
+
+impl warp::reject::Reject for Forbidden {}
+
+/// Only requests for our own host from our own pages: the `Host` must be
+/// `localhost`, an IP address or one of `allowed`, which stops DNS
+/// rebinding, and an `Origin`, when the browser sends one, must be that same
+/// host, which stops other sites posting commands (CSRF)
+fn same_origin(allowed: Vec<String>) -> impl Filter<Extract = (), Error = warp::Rejection> + Clone {
+    warp::header::optional::<String>("host")
+        .and(warp::header::optional::<String>("origin"))
+        .and_then(move |host: Option<String>, origin: Option<String>| {
+            let verdict = check_origin(host.as_deref(), origin.as_deref(), &allowed);
+            async move { verdict.map_err(|e| warp::reject::custom(Forbidden(e))) }
+        })
+        .untuple_one()
+}
+
+/// Whether a request's `Host` and `Origin` headers are acceptable
+fn check_origin(
+    host: Option<&str>,
+    origin: Option<&str>,
+    allowed: &[String],
+) -> Result<(), String> {
+    let host = host.ok_or("no Host header")?;
+    let name = match host.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or(rest),
+        None => host.rsplit_once(':').map_or(host, |(name, _)| name),
+    };
+    let known = name.eq_ignore_ascii_case("localhost")
+        || name.parse::<std::net::IpAddr>().is_ok()
+        || allowed.iter().any(|a| a.eq_ignore_ascii_case(name));
+    if !known {
+        return Err(format!(
+            "host {name} is not served here; add it to [web] allowed_hosts"
+        ));
+    }
+    match origin {
+        None => Ok(()),
+        Some(origin) => {
+            let authority = origin.split_once("://").map(|(_, rest)| rest);
+            match authority {
+                Some(authority) if authority.eq_ignore_ascii_case(host) => Ok(()),
+                _ => Err(format!("requests from {origin} are not accepted")),
+            }
+        }
+    }
+}
+
+/// Answer refused requests with 403 and let other rejections through
+async fn forbidden(rejection: warp::Rejection) -> Result<impl warp::Reply, warp::Rejection> {
+    match rejection.find::<Forbidden>() {
+        Some(Forbidden(reason)) => {
+            log::warn!("Refused a request: {reason}");
+            Ok(warp::reply::with_status(
+                reason.clone(),
+                StatusCode::FORBIDDEN,
+            ))
+        }
+        None => Err(rejection),
+    }
 }
 
 /// The icon set (`web/icons/`): SVGs and the gallery page
@@ -520,4 +591,26 @@ fn memory() -> Option<(u64, u64)> {
         })
     };
     Some((field("MemAvailable:")?, field("MemTotal:")?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_origin;
+
+    #[test]
+    fn hosts_and_origins() {
+        let allowed = [String::from("studio.example.com")];
+        let ok = |host, origin| check_origin(Some(host), origin, &allowed).is_ok();
+        // Same-origin pages, with or without an Origin header
+        assert!(ok("localhost:8090", None));
+        assert!(ok("192.168.4.20:8090", Some("http://192.168.4.20:8090")));
+        assert!(ok("[::1]:8090", Some("http://[::1]:8090")));
+        assert!(ok("studio.example.com", Some("https://studio.example.com")));
+        // DNS rebinding: an unknown name pointing at us
+        assert!(!ok("evil.example.net:8090", None));
+        // CSRF: another site posting to us
+        assert!(!ok("localhost:8090", Some("https://evil.example.net")));
+        assert!(!ok("localhost:8090", Some("null")));
+        assert!(check_origin(None, None, &allowed).is_err());
+    }
 }

@@ -216,6 +216,11 @@ pub struct RemoteProxyConfig {
 pub struct WebConfig {
     /// Port for the dashboard
     pub port: u16,
+    /// Host names the dashboard answers to besides `localhost` and IP
+    /// addresses (e.g. `studio.example.com` behind a proxy); others are
+    /// refused, which stops DNS rebinding
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
 }
 
 /// Session recording defaults
