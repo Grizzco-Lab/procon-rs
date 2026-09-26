@@ -5,8 +5,14 @@
 //! configuration advertises remote wakeup (see [`crate::gadget`]). Linux's
 //! dwc2 driver has no wakeup operation (writing the UDC's `srp` file does
 //! nothing), so this drives the controller's remote wakeup bit directly
-//! through `/dev/mem`, as the DWC2 databook describes: set `DCTL.RmtWkUpSig`
-//! while the bus is suspended, hold it 1–15 ms, clear it.
+//! through `/dev/mem`, as the driver's own `dwc2_gadget_exit_clock_gating`
+//! does: when the bus is suspended the driver stops the controller's clock
+//! (`PCGCTL.StopPclk`), which also freezes the status registers, so restart
+//! the clock, set `DCTL.RmtWkUpSig`, hold it 1–15 ms and clear it. If the host
+//! does not resume, the clock is stopped again as the driver left it.
+//!
+//! The Switch 2 ignores this (and a Pro Controller plugged into it directly
+//! cannot wake it either); the original Switch may not.
 
 use anyhow::{Context, Result, bail};
 use core::ptr::NonNull;
@@ -19,12 +25,19 @@ use std::os::unix::fs::OpenOptionsExt;
 const GSNPSID: usize = 0x040;
 /// Device control register; bit 0 signals remote wakeup
 const DCTL: usize = 0x804;
-/// Device status register; bit 0 is set while the bus is suspended
+/// Device status register; bit 0 is set while the bus is suspended, bits 8–21
+/// count the host's frames
 const DSTS: usize = 0x808;
+/// Power and clock gating control; bit 0 stops the PHY clock, bit 1 gates HCLK
+const PCGCTL: usize = 0xE00;
+const PCGCTL_STOPPCLK: u32 = 1 << 0;
+const PCGCTL_GATEHCLK: u32 = 1 << 1;
 const DCTL_RMTWKUPSIG: u32 = 1 << 0;
 const DSTS_SUSPSTS: u32 = 1 << 0;
 /// How long to signal resume; USB allows 1–15 ms
 const SIGNAL_TIME: Duration = Duration::from_millis(10);
+/// How long the host gets to resume the bus before the clock is stopped again
+const RESUME_WAIT: Duration = Duration::from_millis(50);
 const MAP_SIZE: usize = 4096;
 
 /// The DWC2 registers, mapped from `/dev/mem`
@@ -77,20 +90,33 @@ impl RemoteWakeup {
         Ok(wakeup)
     }
 
-    /// The host has suspended the bus, as a sleeping Switch does
+    /// The host has suspended the bus, as a sleeping Switch does; with the
+    /// clock stopped the status bit is stale, so the stopped clock counts too
     pub fn bus_suspended(&self) -> bool {
-        self.read(DSTS) & DSTS_SUSPSTS != 0
+        self.read(DSTS) & DSTS_SUSPSTS != 0 || self.read(PCGCTL) & PCGCTL_STOPPCLK != 0
     }
 
-    /// Signal resume if the bus is suspended; returns whether it did
-    pub fn wake(&self) -> bool {
+    /// Signal resume if the bus is suspended; returns whether the host came back
+    pub fn wake(&self) -> Option<bool> {
         if !self.bus_suspended() {
-            return false;
+            return None;
         }
+        let gating = self.read(PCGCTL);
+        // Start the clock again: ungate HCLK, then the PHY clock
+        self.write(PCGCTL, gating & !PCGCTL_GATEHCLK);
+        self.write(PCGCTL, gating & !(PCGCTL_GATEHCLK | PCGCTL_STOPPCLK));
+        let frame = self.read(DSTS) >> 8 & 0x3FFF;
         self.write(DCTL, self.read(DCTL) | DCTL_RMTWKUPSIG);
         std::thread::sleep(SIGNAL_TIME);
         self.write(DCTL, self.read(DCTL) & !DCTL_RMTWKUPSIG);
-        true
+        std::thread::sleep(RESUME_WAIT);
+        // Frames counting again means the host resumed the bus
+        let resumed = self.read(DSTS) >> 8 & 0x3FFF != frame;
+        if !resumed {
+            // Leave the controller as the driver expects while suspended
+            self.write(PCGCTL, gating);
+        }
+        Some(resumed)
     }
 
     fn read(&self, offset: usize) -> u32 {

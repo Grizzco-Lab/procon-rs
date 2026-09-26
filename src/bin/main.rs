@@ -124,5 +124,6 @@ fn main() -> anyhow::Result<()> {
     });
     // Stops ffmpeg even when idle
     studio.video.set_input(None)?;
+    studio.video.stop_audio();
     Ok(())
 }

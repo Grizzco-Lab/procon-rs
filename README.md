@@ -226,11 +226,11 @@ The codebase is organized into the following modules:
 - **`src/bin/procon-proxy.rs`** - USB proxy executable (`procon-proxy`): proxy and frame streaming
 - **`src/replay.rs`** - Action format, loading replay files, and the proxy's replay port
 - **`src/player.rs`** - Replay panel: plays loaded actions to the proxy
-- **`src/wake.rs`** - USB remote wakeup, so Home wakes a sleeping Switch
 - **`src/motion.rs`** - Controller orientation from the IMU for Splatoon mode
 - **`src/config.rs`** - Configuration management using TOML format
 - **`src/gadget.rs`** - USB gadget management for automatic device setup
 - **`src/proxy.rs`** - Core proxy functionality for bidirectional HID forwarding
+- **`src/wake.rs`** - USB remote wakeup on Home (for the original Switch; the Switch 2 ignores it)
 - **`src/device.rs`** - Nintendo Switch Pro Controller device connection and communication
 - **`src/dump.rs`** - Dumpers (file, async, fan-out to several); the frame format comes from `gameplay-data`
 - **`src/stream.rs`** - Frame link: proxy-side TCP streamer and studio-side receiver
@@ -273,7 +273,9 @@ The codebase is organized into the following modules:
 - **"No USB device controller found"**: Verify your device supports USB gadget mode
 - **"Pro Controller not found"**: Check USB connection and device permissions
 - **High CPU usage**: Try enabling CPU affinity in the configuration
-- **Switch asleep**: the proxy logs "Switch stopped taking input" and drops
-  reports until it wakes. Home signals USB remote wakeup (the gadget advertises
-  it, and `src/wake.rs` drives the Pi 4's DWC2 controller directly, since its
-  Linux driver cannot); the log says whether the bus was suspended 
+- **Switch asleep**: the proxy logs "Switch stopped taking input" once and drops
+  reports until it wakes. Home then signals USB remote wakeup (`src/wake.rs`
+  drives the Pi 4's DWC2 controller directly, since its Linux driver cannot).
+  The Switch 2 ignores it, as it does a Pro Controller plugged in directly: wake
+  it with its power button or a wireless controller. The original Switch may
+  accept it (untested) 

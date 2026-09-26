@@ -20,7 +20,8 @@ pub struct ProController(HidDevice);
 
 impl ProController {
     pub fn connect() -> Result<Self> {
-        log::info!("Searching for Nintendo Switch Pro Controller...");
+        // Debug only: reconnecting calls this twice a second
+        log::debug!("Searching for Nintendo Switch Pro Controller...");
         let hid_api = HidApi::new()?;
         let Some(info) = hid_api
             .device_list()

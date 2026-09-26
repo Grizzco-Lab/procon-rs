@@ -34,7 +34,7 @@ pub struct Proxy {
     dumper: Box<dyn Dumper>,
     /// Actions from a replay client, applied to input reports while one is connected
     replay: Replay,
-    /// Wakes a sleeping Switch when Home is pressed
+    /// Signals USB resume when Home is pressed while the Switch sleeps
     wakeup: Option<RemoteWakeup>,
     hidg_path: String,
     config: ProxyConfig,
@@ -141,19 +141,24 @@ impl Proxy {
                 // device, which reopening would not change
                 Err(e) if host_gone(&e) => {
                     if !host_idle {
-                        log::info!("Switch stopped taking input (asleep?); press Home to wake it");
+                        log::info!("Switch stopped taking input (asleep?)");
                         host_idle = true;
                     }
+                    // Only an original Switch may accept this; the Switch 2 does not
                     let home = input_buffer[HOME.0] & HOME.1 != 0;
                     if let Some(wakeup) = &self.wakeup
                         && home
                         && last_wake.is_none_or(|at| at.elapsed() >= WAKE_RETRY)
                     {
                         last_wake = Some(Instant::now());
-                        if wakeup.wake() {
-                            log::info!("Home pressed: signalled USB resume");
-                        } else {
-                            log::info!("Home pressed, but the bus is not suspended; cannot wake");
+                        match wakeup.wake() {
+                            Some(true) => log::info!("Home pressed: the Switch resumed the bus"),
+                            Some(false) => log::info!(
+                                "Home pressed: signalled resume, the Switch did not answer"
+                            ),
+                            None => log::info!(
+                                "Home pressed, but the bus is not suspended; cannot wake"
+                            ),
                         }
                     }
                 }
@@ -221,14 +226,20 @@ fn log_command(report: &[u8]) {
 /// handle and a controller handle of its own; never returns
 fn forward_output(hidg_path: &str, retry: Duration) {
     let mut buffer = [0u8; 64];
+    // Say once that the devices are missing, not on every retry
+    let mut waiting = false;
     loop {
         let gadget = open_hidg(hidg_path, false);
         let controller = ProController::connect();
         let (Ok(mut gadget), Ok(mut controller)) = (gadget, controller) else {
-            log::warn!("Output forwarding cannot open its devices - retrying...");
+            if !waiting {
+                log::warn!("Output forwarding cannot open its devices - retrying...");
+                waiting = true;
+            }
             std::thread::sleep(retry);
             continue;
         };
+        waiting = false;
         log::info!("Forwarding output reports to the controller");
         loop {
             // Blocks until the Switch sends something

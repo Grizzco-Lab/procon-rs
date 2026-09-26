@@ -80,7 +80,7 @@ cargo clippy
 
 **Replay (`src/replay.rs`, `src/player.rs`)**: JSON-line `Action`s, loaded from a session, `controller.bin` or `.jsonl`; the studio's Replay panel (`Player`) sends them to the proxy's replay port, and while it is connected the latest action overwrites (or, with `mix`, combines with) input reports before they are recorded and forwarded
 
-**Remote wakeup (`src/wake.rs`)**: when the sleeping Switch stops reading reports, Home sets the DWC2 `DCTL.RmtWkUpSig` bit through `/dev/mem` (the dwc2 driver has no wakeup op)
+**Remote wakeup (`src/wake.rs`)**: while the Switch sleeps, Home restarts the DWC2 clock (the driver stops it on suspend: `PCGCTL.StopPclk`, which also freezes `DSTS`) and sets `DCTL.RmtWkUpSig` through `/dev/mem`, as the driver's own `dwc2_gadget_exit_clock_gating` does (the dwc2 driver has no wakeup op). The Switch 2 ignores it (a Pro Controller plugged in directly cannot wake it either); the original Switch is untested
 
 **Proxy (`src/proxy.rs`)** forwards input and output on separate threads: a write to the controller blocks ~9 ms, and the Switch sends rumble constantly. Each frame's `forward_us` is the time from reading the report to the Switch taking it (poll POLLOUT on the gadget); the dashboard shows it as the "Proxy +x ms" chip
 

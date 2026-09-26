@@ -341,6 +341,13 @@ impl Video {
         self.lock().preview_matches_recording
     }
 
+    /// Stop the sound capture before exiting
+    pub fn stop_audio(&self) {
+        if let Some(audio) = &self.audio {
+            audio.stop();
+        }
+    }
+
     /// Give recordings from the next file on the sound track, or not
     pub fn set_record_audio(&self, enabled: bool) {
         self.lock().record_audio = enabled;

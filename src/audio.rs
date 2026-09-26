@@ -11,9 +11,9 @@ use crate::dump::unix_ms;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use anyhow::{Context, Result};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use core::time::Duration;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -49,6 +49,10 @@ pub struct Audio {
     inner: Arc<Mutex<Inner>>,
     /// Unix ms of the latest chunk
     last_chunk_ms: Arc<AtomicU64>,
+    /// Process id of the running ffmpeg, 0 if none
+    pid: Arc<AtomicU32>,
+    /// Set on exit: ffmpeg is stopped and not restarted
+    stopped: Arc<AtomicBool>,
 }
 
 impl Audio {
@@ -57,14 +61,27 @@ impl Audio {
         let audio = Audio::default();
         let reader = audio.clone();
         thread::spawn(move || {
-            loop {
-                if let Err(e) = reader.grab(&source) {
+            while !reader.stopped.load(Ordering::Relaxed) {
+                if let Err(e) = reader.grab(&source)
+                    && !reader.stopped.load(Ordering::Relaxed)
+                {
                     log::warn!("Audio capture from {}: {:#}", source, e);
                 }
                 thread::sleep(Duration::from_secs(3));
             }
         });
         audio
+    }
+
+    /// Stop reading for good, before the studio exits: ffmpeg runs in its own
+    /// process group, so a terminal's Ctrl+C does not reach it
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::Relaxed);
+        let pid = self.pid.swap(0, Ordering::Relaxed);
+        if pid != 0 {
+            // SAFETY: signals only the ffmpeg this handle started
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        }
     }
 
     /// Sound arrived within the last second
@@ -121,11 +138,23 @@ impl Audio {
             .args(["-ac", &CHANNELS.to_string(), "pipe:1"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .process_group(0)
             .spawn()
             .context("cannot run ffmpeg")?;
+        self.pid.store(child.id(), Ordering::Relaxed);
         let mut stdout = child.stdout.take().context("no ffmpeg stdout")?;
+        if let Some(stderr) = child.stderr.take() {
+            let stopped = Arc::clone(&self.stopped);
+            thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    // Complaints about the closed pipe while exiting are expected
+                    if !stopped.load(Ordering::Relaxed) {
+                        log::warn!("ffmpeg (audio): {}", line);
+                    }
+                }
+            });
+        }
         log::info!("Capturing audio from {}", source);
         let mut chunk = vec![0u8; CHUNK_BYTES];
         while stdout.read_exact(&mut chunk).is_ok() {
@@ -150,6 +179,7 @@ impl Audio {
                 inner.history.pop_front();
             }
         }
+        self.pid.store(0, Ordering::Relaxed);
         let _ = child.kill();
         let status = child.wait()?;
         anyhow::bail!("ffmpeg exited ({status})")
