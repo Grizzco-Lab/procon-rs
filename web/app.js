@@ -58,10 +58,12 @@ function markView() {
       String(button.dataset.pick === root.dataset.theme),
     );
   }
-  $("pick-phone").setAttribute(
-    "aria-pressed",
-    String(root.dataset.layout === "phone"),
-  );
+  for (const button of document.querySelectorAll("[data-pick-layout]")) {
+    button.setAttribute(
+      "aria-pressed",
+      String(button.dataset.pickLayout === root.dataset.layout),
+    );
+  }
   for (const button of document.querySelectorAll("[data-pick-nav]")) {
     button.setAttribute(
       "aria-pressed",
@@ -73,9 +75,11 @@ function markView() {
 for (const button of document.querySelectorAll("[data-pick]")) {
   button.addEventListener("click", () => setView("theme", button.dataset.pick));
 }
-$("pick-phone").addEventListener("click", () =>
-  setView("layout", root.dataset.layout === "phone" ? "auto" : "phone"),
-);
+for (const button of document.querySelectorAll("[data-pick-layout]")) {
+  button.addEventListener("click", () =>
+    setView("layout", button.dataset.pickLayout),
+  );
+}
 for (const button of document.querySelectorAll("[data-pick-nav]")) {
   button.addEventListener("click", () =>
     setView("nav", button.dataset.pickNav),
@@ -117,7 +121,8 @@ const studioShown = () => root.dataset.app === "studio" && !document.hidden;
 
 // The app links can be put in any order, as in an editor's activity bar:
 // drag them, or move the focused one with Alt+arrows. The order is kept in
-// localStorage (procon-app-order); apps it does not name go last.
+// localStorage (procon-app-order); apps it does not name go last. The
+// default order comes back by dragging them back.
 const appNav = document.querySelector(".app-nav");
 const DEFAULT_ORDER = [...appNav.querySelectorAll("[data-app]")].map(
   (link) => link.dataset.app,
@@ -153,11 +158,6 @@ try {
 } catch {
   // No order kept yet, or storage refused
 }
-
-$("reset-app-order").addEventListener("click", () => {
-  orderApps(DEFAULT_ORDER);
-  saveAppOrder();
-});
 
 /** Whether the links run top to bottom (the rail) rather than left to right */
 const navVertical = () =>
@@ -589,8 +589,10 @@ function updateClock(now) {
   const chip = $("chip-rec");
   // Only on change: the chip is on screen in every app, and rewriting it on
   // every animation frame makes the browser repaint it every frame
-  if (chip.dataset.state !== recorder.state)
+  if (chip.dataset.state !== recorder.state) {
     chip.dataset.state = recorder.state;
+    chip.title = `${REC_LABEL[recorder.state]}: recording is run from the Studio app`;
+  }
   const chipText =
     recorder.state === "idle"
       ? "Not recording"
@@ -1048,14 +1050,19 @@ function renderStatus(status) {
   setChip(
     "chip-link",
     link.connected ? "good" : "critical",
-    link.connected ? "Proxy connected" : "Proxy not connected",
-    `${link.address}${link.connected ? `, host clock ${offset} vs proxy` : ""}`,
+    link.connected ? "Proxy" : "No proxy",
+    link.connected
+      ? `Proxy connected: ${link.address}, host clock ${offset} vs proxy`
+      : `Proxy not connected: ${link.address}`,
   );
   const input = link.connected && link.input_rate > 0;
   setChip(
     "chip-controller",
     input ? "good" : "critical",
-    input ? "Controller input" : "No controller input",
+    input ? "Controller" : "No controller",
+    input
+      ? `Controller input at ${link.input_rate.toFixed(1)} Hz`
+      : "No controller input",
   );
   renderLatency(link.forward_us);
   $("input-rate").textContent = input
@@ -1130,7 +1137,12 @@ function renderStatus(status) {
 /** Time reports spend in the proxy, from reading them to the Switch taking them */
 function renderLatency(forward) {
   if (!forward) {
-    setChip("chip-latency", "off", "Proxy latency unknown");
+    setChip(
+      "chip-latency",
+      "off",
+      "Latency –",
+      "Proxy latency unknown: no reports forwarded in the last half second",
+    );
     return;
   }
   const mean = forward.mean / 1000;
@@ -1138,8 +1150,8 @@ function renderLatency(forward) {
   setChip(
     "chip-latency",
     max < 4 ? "good" : max < 10 ? "warning" : "critical",
-    `Proxy +${mean.toFixed(1)} ms`,
-    `From the proxy reading a report to the Switch taking it: mean ${mean.toFixed(2)} ms, ` +
+    `+${mean.toFixed(1)} ms`,
+    `Proxy latency. From the proxy reading a report to the Switch taking it: mean ${mean.toFixed(2)} ms, ` +
       `max ${max.toFixed(2)} ms over the last half second. The controller's own USB ` +
       `polling (up to 8 ms) comes on top, as it would without the proxy.`,
   );

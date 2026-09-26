@@ -129,12 +129,6 @@ body[data-rec="recording"] .topbar {
   fill: var(--accent);
 }
 
-.status-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .chip {
   display: inline-flex;
   align-items: center;
@@ -189,40 +183,6 @@ body[data-rec="recording"] .topbar {
   50% {
     opacity: 0.25;
   }
-}
-
-.theme-picker {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  font-size: 12px;
-}
-
-.theme-picker-label {
-  margin-right: 4px;
-  color: var(--text-3);
-}
-
-.theme-picker button {
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-}
-
-#pick-phone {
-  margin-left: 6px;
-}
-
-.theme-picker button[aria-pressed="true"] {
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--bg);
-  font-weight: 600;
 }
 
 /* ------------------------------------------------------------ layout */
@@ -808,7 +768,7 @@ body[data-rec="idle"] .rec-clock {
 }
 
 .btn:focus-visible,
-.theme-picker button:focus-visible,
+.view-menu button:focus-visible,
 input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -1376,21 +1336,11 @@ input:focus-visible {
   font-weight: 700;
 }
 
-[data-theme="joy"] .theme-picker button {
+[data-theme="joy"] .view-menu button {
   height: 32px;
   border-radius: 999px;
   border-color: #d8dbe0;
   background: #ffffff;
-}
-
-[data-theme="joy"] #pick-phone {
-  margin-left: 6px;
-}
-
-.theme-picker button[aria-pressed="true"] {
-  background: var(--text);
-  border-color: var(--text);
-  color: #ffffff;
 }
 
 [data-theme="joy"] .panel-head h2 {
@@ -1578,20 +1528,10 @@ input:focus-visible {
   border-radius: 1px;
 }
 
-[data-theme="telemetry"] .theme-picker button {
-  height: 24px;
+[data-theme="telemetry"] .view-menu button {
+  height: 26px;
   border-radius: 2px;
   text-transform: uppercase;
-}
-
-[data-theme="telemetry"] #pick-phone {
-  margin-left: 6px;
-}
-
-.theme-picker button[aria-pressed="true"] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
 }
 
 [data-theme="telemetry"] .panel {
@@ -1830,10 +1770,6 @@ input:focus-visible {
     display: flex;
   }
 
-  .theme-picker {
-    margin-left: 0;
-  }
-
   .rec-clock {
     font-size: 44px;
   }
@@ -1850,59 +1786,53 @@ input:focus-visible {
 }
 
 /* ============================================================== apps
- * One page, several apps (see data-app on the root). The app links sit in
- * a left rail that widens on hover, or in the top bar (data-nav); phones
- * always use the top bar.
+ * One page, several apps (see data-app on the root). The app links are
+ * navigation, so they look like it: a segmented switch in the top bar, or a
+ * dock-like rail on the left (data-nav="side", wider screens only; phones
+ * always use the bar). Where only an icon fits, the name shows as a tooltip.
  */
 
 :root {
-  --rail: 56px;
+  --rail: 72px;
+  /* The switch's track, its hover and the selected segment */
+  --nav-track: var(--inset);
+  --nav-track-border: var(--inset-border);
+  --nav-hover: color-mix(in oklab, var(--text) 7%, transparent);
+  --nav-on: #32353d;
+  --nav-on-ink: var(--text);
+  --nav-on-shadow:
+    0 1px 2px rgb(0 0 0 / 0.45), inset 0 0 0 1px rgb(255 255 255 / 0.06);
+  --rail-bg: var(--panel);
+  --rail-on: color-mix(in oklab, var(--accent) 14%, var(--panel));
+  /* Tooltips over the page */
+  --tip-bg: var(--text);
+  --tip-ink: var(--bg);
+  /* Hairlines between groups in the bar */
+  --divider: color-mix(in oklab, var(--text) 14%, transparent);
+}
+
+/* The light theme's switch is a darker track with a white segment */
+:root[data-theme="joy"] {
+  --nav-track: rgb(31 33 36 / 0.06);
+  --nav-track-border: transparent;
+  --nav-hover: rgb(31 33 36 / 0.06);
+  --nav-on: #ffffff;
+  --nav-on-shadow: 0 1px 3px rgb(16 24 40 / 0.16);
+  --rail-on: color-mix(in oklab, var(--accent) 9%, #ffffff);
+}
+
+/* Telemetry's switch is a row of tabs, the open one underlined */
+:root[data-theme="telemetry"] {
+  --nav-track: transparent;
+  --nav-track-border: var(--panel-border);
+  --nav-on: color-mix(in oklab, var(--accent) 12%, transparent);
+  --nav-on-ink: var(--accent);
+  --nav-on-shadow: inset 0 -2px 0 var(--accent);
+  --rail-on: color-mix(in oklab, var(--accent) 12%, var(--panel));
 }
 
 :root:not([data-app="inspect"]) [data-app-only="inspect"] {
   display: none !important;
-}
-
-.app-nav {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.app-nav a {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-sm);
-  color: var(--text-2);
-  font-size: 12.5px;
-  font-weight: 500;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.app-nav a:hover {
-  background: var(--btn-hover);
-}
-
-.app-nav a[aria-current="page"] {
-  border-color: var(--text);
-  background: var(--text);
-  color: var(--bg);
-  font-weight: 600;
-}
-
-.app-nav a:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* The app being dragged to another place */
-.app-nav a.is-dragged {
-  opacity: 0.4;
 }
 
 .app-icon {
@@ -1921,12 +1851,70 @@ input:focus-visible {
   stroke: none;
 }
 
+/* The switch in the top bar: one track, the open app raised in it */
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--nav-track-border);
+  border-radius: calc(var(--radius-sm) + 3px);
+  background: var(--nav-track);
+}
+
+.app-nav a {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px 0 9px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.app-nav a:hover {
+  background: var(--nav-hover);
+  color: var(--text);
+}
+
+.app-nav a[aria-current="page"] {
+  background: var(--nav-on);
+  box-shadow: var(--nav-on-shadow);
+  color: var(--nav-on-ink);
+  font-weight: 600;
+}
+
+.app-nav a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The app being dragged to another place */
+.app-nav a.is-dragged {
+  opacity: 0.4;
+}
+
+.app-nav .app-icon {
+  width: 22px;
+  height: 22px;
+}
+
+/* ------------------------------------------------------------ the rail */
+
 @media (min-width: 721px) {
   :root[data-nav="side"]:not([data-layout="phone"]) body {
     padding-left: var(--rail);
   }
 
-  /* A rail over the page's left edge; hovering widens it over the content */
+  /* Apps at the top, the tools (.bar-tools) at the foot, like a dock */
   :root[data-nav="side"]:not([data-layout="phone"]) .app-nav {
     position: fixed;
     top: 0;
@@ -1934,47 +1922,147 @@ input:focus-visible {
     left: 0;
     z-index: 40;
     flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
+    gap: 8px;
     width: var(--rail);
-    padding: 12px 8px;
+    padding: 14px 0 130px;
+    border: 0;
     border-right: 1px solid var(--panel-border);
-    background: var(--panel);
-    overflow: hidden;
-    transition:
-      width 0.15s,
-      box-shadow 0.15s;
-  }
-
-  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav:hover,
-  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav:focus-within {
-    width: 200px;
-    box-shadow: 8px 0 28px rgb(0 0 0 / 0.28);
+    border-radius: 0;
+    background: var(--rail-bg);
   }
 
   :root[data-nav="side"]:not([data-layout="phone"]) .app-nav a {
-    height: 40px;
-    padding: 0 11px;
-    gap: 14px;
-    border-color: transparent;
-    font-size: 14px;
+    flex: none;
+    justify-content: center;
+    width: 50px;
+    height: 50px;
+    padding: 0;
+    border-radius: 14px;
   }
 
-  :root[data-nav="side"]:not([data-layout="phone"]) .app-icon {
-    width: 20px;
-    height: 20px;
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav .app-icon {
+    width: 30px;
+    height: 30px;
+    transition: transform 0.15s ease-out;
   }
 
-  :root[data-nav="side"]:not([data-layout="phone"]) .app-name {
-    opacity: 0;
-    transition: opacity 0.1s;
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav a:hover .app-icon {
+    transform: scale(1.1);
   }
 
-  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav:hover .app-name,
   :root[data-nav="side"]:not([data-layout="phone"])
-    .app-nav:focus-within
+    .app-nav
+    a[aria-current="page"] {
+    background: var(--rail-on);
+    box-shadow: none;
+  }
+
+  /* The open app's mark on the rail's edge */
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .app-nav
+    a[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    top: 12px;
+    bottom: 12px;
+    left: -11px;
+    width: 4px;
+    border-radius: 0 4px 4px 0;
+    background: var(--accent);
+  }
+
+  /* Every name is a tooltip, to the right of its icon */
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav .app-name,
+  :root[data-nav="side"]:not([data-layout="phone"]) .bar-tools .tool-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .app-nav
+    a:is(:hover, :focus-visible)
+    .app-name,
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .bar-tools
+    .tool-button:is(:hover, :focus-visible)
+    .tool-name {
+    top: 50%;
+    right: auto;
+    left: calc(100% + 12px);
+    width: auto;
+    height: auto;
+    padding: 5px 10px;
+    overflow: visible;
+    clip-path: none;
+    border-radius: 7px;
+    background: var(--tip-bg);
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.28);
+    color: var(--tip-ink);
+    font-size: 12.5px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    white-space: nowrap;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  /* The dragged icon has no tooltip */
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .app-nav
+    a.is-dragged
     .app-name {
-    opacity: 1;
+    display: none;
+  }
+
+  /* View and language at the rail's foot, over its padding */
+  :root[data-nav="side"]:not([data-layout="phone"]) .bar-tools {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    z-index: 41;
+    flex-direction: column;
+    gap: 6px;
+    width: calc(var(--rail) - 1px);
+    padding: 12px 0 16px;
+  }
+
+  /* A short rule between the apps and the tools */
+  :root[data-nav="side"]:not([data-layout="phone"]) .bar-tools::before {
+    content: "";
+    width: 28px;
+    height: 1px;
+    margin-bottom: 6px;
+    background: var(--divider);
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .tool-button {
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-color: transparent;
+    border-radius: 12px;
+    background: transparent;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .tool-button .app-icon {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-nav a,
+  .app-nav .app-icon {
+    transition: none !important;
+  }
+
+  .app-nav a:hover .app-icon {
+    transform: none !important;
   }
 }
 
@@ -2122,10 +2210,6 @@ input:focus-visible {
 .pred-input {
   max-width: none;
   width: 100%;
-}
-
-.status-strip #i-session {
-  max-width: 240px;
 }
 
 /* A video player's progress bar */
@@ -2371,18 +2455,20 @@ input:focus-visible {
 }
 
 /* ============================================================ top bar
- * One grid for every theme: the brand, the app switch (top nav), the status
- * chips (which wrap inside their cell) and the View button. Where the chips
- * would not fit next to the brand they get the full second row; phones stack
- * brand and View, then the app switch, then the chips.
+ * One row: the brand, the app switch (top nav), the status and the tools
+ * (language, View). Three kinds of things, three looks: navigation is a
+ * segmented switch, status is passive (a dot and a word, details on hover,
+ * nothing to press) and actions are buttons. Where the row runs short, the
+ * switch first shows only the open app's name, then the status takes a row
+ * of its own; phones stack brand and tools, the switch, then the status.
  */
 
 .topbar {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
-  grid-template-areas: "brand nav status view";
+  grid-template-areas: "brand nav status tools";
   align-items: center;
-  gap: 10px 16px;
+  gap: 8px 20px;
 }
 
 .topbar .brand {
@@ -2391,159 +2477,475 @@ input:focus-visible {
 
 .topbar .app-nav {
   grid-area: nav;
+  justify-self: start;
+  min-width: 0;
 }
 
 .topbar .status-strip {
   grid-area: status;
-  align-items: center;
 }
 
-.topbar .view-button {
-  grid-area: view;
+.topbar .bar-tools {
+  grid-area: tools;
 }
 
 @media (min-width: 721px) {
-  /* The app links live in the rail, outside the bar */
+  /* The app links and tools live in the rail, outside the bar */
   :root[data-nav="side"]:not([data-layout="phone"]) .topbar {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas: "brand status view";
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "brand status";
   }
 }
 
-/* The page is a size container, so the bar knows how much room it has (the
-   rail's width already taken off). The Inkspector's chips need more. */
-body {
-  container: page / inline-size;
+/* ------------------------------------------------------------ status */
+
+.status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  row-gap: 6px;
+  min-width: 0;
 }
 
-@container page (max-width: 1280px) {
-  .topbar {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas:
-      "brand nav view"
-      "status status status";
-  }
-}
-
-@container page (max-width: 1800px) {
-  :root[data-app="inspect"] .topbar {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas:
-      "brand nav view"
-      "status status status";
-  }
-}
-
-/* Without the app switch in the bar, the middle stays empty */
-@container page (max-width: 1280px) {
-  :root[data-nav="side"]:not([data-layout="phone"]) .topbar {
-    grid-template-areas:
-      "brand . view"
-      "status status status";
-  }
-}
-
-@container page (max-width: 1800px) {
-  :root[data-app="inspect"][data-nav="side"]:not([data-layout="phone"])
-    .topbar {
-    grid-template-areas:
-      "brand . view"
-      "status status status";
-  }
-}
-
-.topbar .app-nav {
-  justify-self: start;
-}
-
-/* Chips of one app stay together when the strip wraps */
+/* Indicators of one app stay together; the open app's come first */
 .chip-group {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 16px;
+  min-width: 0;
 }
 
-.status-strip {
-  column-gap: 16px;
+.chip-group[data-app-only]:has(> .chip:not([hidden])) {
+  margin-right: 16px;
+  padding-right: 16px;
+  border-right: 1px solid var(--divider);
 }
 
-[data-theme="joy"] #inspect-viewer,
-[data-theme="joy"] #inspect-picker {
-  max-width: 1360px;
-}
-
-:root[data-layout="phone"] .topbar {
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "brand view"
-    "nav nav"
-    "status status";
+/* On phones the groups take a line each, with no rule between */
+:root[data-layout="phone"]
+  .chip-group[data-app-only]:has(> .chip:not([hidden])) {
+  padding-right: 0;
+  border-right: 0;
 }
 
 @media (max-width: 720px) {
-  .topbar {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "brand view"
-      "nav nav"
-      "status status";
+  .chip-group[data-app-only]:has(> .chip:not([hidden])) {
+    padding-right: 0;
+    border-right: 0;
   }
 }
 
-.view-button {
-  display: inline-flex;
+/* Passive: no border, fill or hover; the title has the details */
+.status-strip .chip {
+  gap: 7px;
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: default;
+}
+
+.status-strip .chip-text {
+  min-width: 0;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-strip .chip-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+}
+
+/* A soft ring makes the dot read as a light, not a bullet */
+.status-strip .chip[data-level="good"] .chip-dot {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--good) 22%, transparent);
+}
+
+.status-strip .chip[data-level="warning"] .chip-dot {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--warning) 22%, transparent);
+}
+
+.status-strip .chip[data-level="critical"] .chip-dot {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--critical) 25%, transparent);
+}
+
+/* What needs attention is brighter than what is fine */
+.status-strip .chip[data-level="critical"],
+.status-strip .chip[data-level="warning"] {
+  color: var(--text);
+}
+
+/* Recording is the one live badge */
+.status-strip .chip-rec[data-state="recording"] {
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--rec) 18%, transparent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.status-strip .chip-rec[data-state="paused"] {
+  color: var(--text);
+}
+
+/*
+ * Where the open app has status of its own and the bar runs short, healthy
+ * studio indicators keep only their dot (their title still names them);
+ * trouble always shows its words
+ */
+@container page (min-width: 1061px) and (max-width: 1440px) {
+  :root[data-nav="top"]:not([data-layout="phone"])
+    .status-strip:has([data-app-only] > .chip:not([hidden]))
+    :is(#chip-link, #chip-controller)[data-level="good"]
+    .chip-text,
+  :root[data-nav="top"]:not([data-layout="phone"])
+    .status-strip:has([data-app-only] > .chip:not([hidden]))
+    #chip-rec[data-state="idle"]
+    .chip-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+/* ------------------------------------------------------------- tools */
+
+.bar-tools {
+  display: flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--panel-border);
+}
+
+.tool-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 7px;
+  border: 1px solid var(--btn-border);
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--btn-bg);
   color: var(--text-2);
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
 }
 
-.view-button:hover {
+.tool-button:hover {
   background: var(--btn-hover);
+  color: var(--text);
 }
 
-.view-button .app-icon {
-  width: 16px;
-  height: 16px;
+.tool-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
-/* The menu opens under the View button, above everything */
+.tool-button .app-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.view-button {
+  padding-right: 11px;
+}
+
+/* In the bar, the language switch is an icon; its name is a bubble */
+[data-toggle-lang] .tool-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+[data-toggle-lang]:is(:hover, :focus-visible) .tool-name {
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: auto;
+  height: auto;
+  padding: 5px 10px;
+  overflow: visible;
+  clip-path: none;
+  border-radius: 7px;
+  background: var(--tip-bg);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.28);
+  color: var(--tip-ink);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------- View menu
+ * One grid: labels in the first column, every row's options starting on
+ * the second
+ */
+
 .view-menu:not(:popover-open) {
   display: none;
 }
 
 .view-menu:popover-open {
   position: fixed;
-  inset: 52px 12px auto auto;
+  inset: 56px 12px auto auto;
   display: grid;
-  grid-template-columns: auto auto;
+  grid-template-columns: max-content max-content;
   align-items: center;
-  gap: 10px 14px;
+  gap: 10px 18px;
   margin: 0;
-  padding: 14px 16px;
+  padding: 16px 18px;
   border: 1px solid var(--panel-border);
   border-radius: var(--radius);
   background: var(--panel);
   color: var(--text);
   box-shadow: 0 12px 32px rgb(0 0 0 / 0.3);
+  font-size: 12.5px;
 }
 
-.view-menu .theme-picker-label {
-  margin: 0;
+.view-label {
+  color: var(--text-3);
 }
 
 .view-choices {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.view-menu button {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--btn-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.view-menu button:hover {
+  background: var(--btn-hover);
+  color: var(--text);
+}
+
+.view-menu button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* Under the View button wherever the bar puts it (Joy centres the bar) */
+@supports (anchor-name: --view) {
+  .view-button {
+    anchor-name: --view;
+  }
+
+  .view-menu:popover-open {
+    position-anchor: --view;
+    inset: calc(anchor(bottom) + 6px) anchor(right) auto auto;
+  }
+}
+
+/* From the rail's foot, the menu opens to the right of the button */
+@media (min-width: 721px) {
+  :root[data-nav="side"]:not([data-layout="phone"]) .view-menu:popover-open {
+    inset: auto auto 14px calc(var(--rail) + 12px);
+  }
+
+  @supports (anchor-name: --view) {
+    :root[data-nav="side"]:not([data-layout="phone"]) .view-menu:popover-open {
+      inset: auto auto anchor(bottom) calc(anchor(right) + 24px);
+    }
+  }
+}
+
+/* ------------------------------------------------------ narrow bars
+ * The page is a size container, so the bar knows how much room it has
+ * (the rail's width already taken off). Joy keeps its bar at the layout's
+ * width, so it gives up room sooner.
+ */
+
+body {
+  container: page / inline-size;
+}
+
+/*
+ * App names in the switch: the open app's always; the others' where the bar
+ * has room (wide pages), else as a bubble under the icon on hover or focus.
+ * Out of sight they are still read by screen readers.
+ */
+.app-nav a:not([aria-current]) .app-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.app-nav a:not([aria-current]) {
+  padding: 0 8px;
+}
+
+.app-nav a:not([aria-current]):is(:hover, :focus-visible) .app-name {
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 60;
+  width: auto;
+  height: auto;
+  padding: 5px 10px;
+  overflow: visible;
+  clip-path: none;
+  border-radius: 7px;
+  background: var(--tip-bg);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.28);
+  color: var(--tip-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+/* Room for every name: back in line (`:is(..., *)` outranks the bubble) */
+@container page (min-width: 1441px) {
+  :root[data-nav="top"]:not(
+      [data-layout="phone"],
+      [data-app="inspect"],
+      [data-theme="joy"]
+    )
+    .app-nav
+    a:not([aria-current]):is(:hover, :focus-visible, *)
+    .app-name {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0;
+    overflow: visible;
+    clip-path: none;
+    border: 0;
+    background: none;
+    box-shadow: none;
+    color: inherit;
+    font: inherit;
+    transform: none;
+  }
+
+  :root[data-nav="top"]:not(
+      [data-layout="phone"],
+      [data-app="inspect"],
+      [data-theme="joy"]
+    )
+    .app-nav
+    a:not([aria-current]) {
+    padding: 0 12px 0 9px;
+  }
+}
+
+/* The Inkspector's status and Joy's narrower bar need more room */
+@container page (min-width: 1721px) {
+  :root[data-nav="top"]:not([data-layout="phone"])
+    .app-nav
+    a:not([aria-current]):is(:hover, :focus-visible, *)
+    .app-name {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0;
+    overflow: visible;
+    clip-path: none;
+    border: 0;
+    background: none;
+    box-shadow: none;
+    color: inherit;
+    font: inherit;
+    transform: none;
+  }
+
+  :root[data-nav="top"]:not([data-layout="phone"])
+    .app-nav
+    a:not([aria-current]) {
+    padding: 0 12px 0 9px;
+  }
+}
+
+/* Too narrow for one row: the status gets the second */
+@container page (max-width: 1060px) {
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand nav tools"
+      "status status status";
+  }
+
+  .topbar .status-strip {
+    justify-content: flex-start;
+  }
+}
+
+@container page (max-width: 760px) {
+  :root[data-nav="side"]:not([data-layout="phone"]) .topbar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "brand" "status";
+  }
+}
+
+/* Phones last, over every wider arrangement above */
+:root[data-layout="phone"][data-app][data-theme] .topbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "brand tools"
+    "nav nav"
+    "status status";
+}
+
+:root[data-layout="phone"] .topbar .status-strip {
+  justify-content: flex-start;
+}
+
+@media (max-width: 720px) {
+  :root[data-app][data-theme] .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand tools"
+      "nav nav"
+      "status status";
+  }
+
+  .topbar .status-strip {
+    justify-content: flex-start;
+  }
+
+  .view-menu:popover-open {
+    right: 12px;
+    left: 12px;
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+}
+
+/* ------------------------------------------------ app-specific heads */
+
+[data-theme="joy"] #inspect-viewer,
+[data-theme="joy"] #inspect-picker {
+  max-width: 1360px;
 }
 
 /* Navigation in the Frame panel: back to the session list */
@@ -2574,64 +2976,20 @@ body {
   outline-offset: 2px;
 }
 
-/* Under the View button wherever the bar puts it (Joy centres the bar) */
-@supports (anchor-name: --view) {
-  .view-button {
-    anchor-name: --view;
-  }
-
-  .view-menu:popover-open {
-    position-anchor: --view;
-    inset: calc(anchor(bottom) + 6px) anchor(right) auto auto;
-  }
-}
-
-/* Joy keeps its bar at the layout's width, too narrow for one row here */
-:root[data-theme="joy"][data-app="inspect"] .topbar {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas:
-    "brand nav view"
-    "status status status";
-}
-
-@media (min-width: 721px) {
-  :root[data-theme="joy"][data-app="inspect"][data-nav="side"]:not(
-      [data-layout="phone"]
-    )
-    .topbar {
-    grid-template-areas:
-      "brand . view"
-      "status status status";
-  }
-}
-
-/* On phones the app switch and the video panel's controls may wrap */
-.topbar .app-nav {
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
 .p-video .panel-head {
   flex-wrap: wrap;
 }
 
-/* Phones last, over every wider arrangement above */
-:root[data-layout="phone"][data-app][data-theme] .topbar {
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "brand view"
-    "nav nav"
-    "status status";
+/* The Inkspector's session and segment pickers, in the Session card */
+.p-session .panel-head .controls {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
-@media (max-width: 720px) {
-  :root[data-app][data-theme] .topbar {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "brand view"
-      "nav nav"
-      "status status";
-  }
+.p-session .panel-head .select {
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* ============================================================ drawing

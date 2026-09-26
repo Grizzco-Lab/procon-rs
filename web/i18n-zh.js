@@ -8,6 +8,7 @@
 I18N.zh = {
   "lang.name": "中文",
   "view.language": "语言 Language",
+  "view.switchTo": "切换到 {lang}",
 
   // Cuttlefish: the views
   "cf.name": "鱼干司令",

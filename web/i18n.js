@@ -10,7 +10,8 @@
 // A value is a string with {name} placeholders, or a function of the values
 // (for plurals). A key missing from a language falls back to English.
 //
-// The language is chosen in the View menu (buttons with data-pick-lang),
+// The language is chosen in the View menu (buttons with data-pick-lang) or
+// switched by the button next to it (data-toggle-lang),
 // remembered in localStorage `procon-lang`, and defaults to the browser's.
 // Changing it fires a `lang-change` event on window, so scripts redraw what
 // they drew themselves.
@@ -21,6 +22,7 @@ const I18N = {
   en: {
     "lang.name": "English",
     "view.language": "Language",
+    "view.switchTo": "Switch to {lang}",
 
     // Cuttlefish: the views
     "cf.name": "Cuttlefish",
@@ -396,7 +398,16 @@ function applyI18n(root = document) {
     button.textContent = I18N[lang]?.["lang.name"] ?? lang;
     button.setAttribute("aria-pressed", String(lang === i18nCurrent));
   }
+  // The quick switch names the language it goes to
+  for (const button of document.querySelectorAll("[data-toggle-lang]")) {
+    button.querySelector(".tool-name").textContent = t("view.switchTo", {
+      lang: I18N[otherLang()]["lang.name"],
+    });
+  }
 }
+
+/** The language the quick switch goes to */
+const otherLang = () => (i18nCurrent === "zh" ? "en" : "zh");
 
 /** Show the page in `lang` and remember it */
 function setLang(lang) {
@@ -414,6 +425,9 @@ function setLang(lang) {
 document.addEventListener("DOMContentLoaded", () => {
   for (const button of document.querySelectorAll("[data-pick-lang]")) {
     button.addEventListener("click", () => setLang(button.dataset.pickLang));
+  }
+  for (const button of document.querySelectorAll("[data-toggle-lang]")) {
+    button.addEventListener("click", () => setLang(otherLang()));
   }
   applyI18n();
 });

@@ -115,7 +115,27 @@
   font-weight: 600;
 }
 
-[data-theme="salmon"] .view-button,
+/* Status in the bar stays passive: paper text and a dot, no pill */
+[data-theme="salmon"] .status-strip .chip {
+  border: 0;
+  background: none;
+  color: var(--text-2);
+}
+
+[data-theme="salmon"] .status-strip .chip-rec[data-state="recording"] {
+  border: 2px solid var(--sr-ink);
+  background: var(--rec);
+  color: #1a1320;
+}
+
+[data-theme="salmon"]
+  .status-strip
+  .chip-rec[data-state="recording"]
+  .chip-dot {
+  background: #1a1320;
+}
+
+[data-theme="salmon"] .tool-button,
 [data-theme="salmon"] .select,
 [data-theme="salmon"]
   input:not([type="checkbox"], [type="radio"], [type="range"]) {
@@ -165,7 +185,24 @@
   max-width: 100%;
 }
 
-/* ------------------------------------------------------- app rail */
+/* ------------------------------------------------ app switch and rail
+ * The open app is an orange sticker; names show on paper tags
+ */
+
+[data-theme="salmon"] {
+  --nav-track: #161914;
+  --nav-track-border: #2f342b;
+  --nav-hover: #252922;
+  --tip-bg: var(--sr-paper);
+  --tip-ink: #1a1320;
+  --divider: #3f453a;
+  --rail-on: var(--sr-orange);
+}
+
+[data-theme="salmon"] .app-nav {
+  border-width: 2px;
+  border-radius: 999px;
+}
 
 [data-theme="salmon"] .app-nav a {
   border: 2px solid transparent;
@@ -185,6 +222,20 @@
   --icon-halo: var(--sr-ink);
 }
 
+/* Tooltips: paper tags (the rules in style.css clear this where names are
+   in line) */
+[data-theme="salmon"]
+  .app-nav
+  a:not([aria-current]):is(:hover, :focus-visible)
+  .app-name,
+[data-theme="salmon"] [data-toggle-lang]:is(:hover, :focus-visible) .tool-name {
+  border: 2px solid var(--sr-ink);
+  box-shadow: 2px 3px 0 var(--sr-ink);
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
 @media (min-width: 721px) {
   [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"]) .app-nav {
     border-right: 4px solid var(--sr-lime);
@@ -193,14 +244,41 @@
       var(--sr-ink);
   }
 
-  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"]) .app-nav a {
-    height: 44px;
-    padding: 0 8px;
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
+    .app-nav
+    a:is(:hover, :focus-visible)
+    .app-name,
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
+    .tool-button:is(:hover, :focus-visible)
+    .tool-name {
+    border: 2px solid var(--sr-ink);
+    box-shadow: 2px 3px 0 var(--sr-ink);
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: 0.02em;
   }
 
-  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"]) .app-icon {
-    width: 24px;
-    height: 24px;
+  /* Stickers on the dock: the open one on an orange tile */
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"]) .app-nav a {
+    border-radius: 16px;
+  }
+
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
+    .app-nav
+    a[aria-current="page"]::before {
+    left: -13px;
+    background: var(--sr-lime);
+  }
+
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
+    .app-nav
+    a:hover:not([aria-current]) {
+    background: #252922;
+  }
+
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
+    .tool-button {
+    border: 0;
   }
 }
 
@@ -302,7 +380,7 @@
   border-color: var(--sr-ink);
 }
 
-[data-theme="salmon"] .theme-picker button[aria-pressed="true"] {
+[data-theme="salmon"] .view-menu button[aria-pressed="true"] {
   border-color: var(--sr-ink);
 }
 

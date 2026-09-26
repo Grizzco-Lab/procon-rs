@@ -43,63 +43,45 @@
         </svg>
         <span class="brand-name">ProCon <b>Studio</b></span>
       </div>
-      <!-- Apps: a rail on the left or a switch in this bar, see data-nav -->
+      <!-- Apps: a rail on the left or a segmented switch in this bar (see
+           data-nav); each name shows as a tooltip where only icons fit -->
       <nav class="app-nav" aria-label="Apps">
-        <a href="#studio" data-app="studio" title="Studio">
+        <a href="#studio" data-app="studio">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="icons/app-studio.svg#i" />
           </svg>
           <span class="app-name">Studio</span>
         </a>
-        <a href="#inspect" data-app="inspect" title="Inkspector">
+        <a href="#inspect" data-app="inspect">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="icons/app-inkspector.svg#i" />
           </svg>
           <span class="app-name">Inkspector</span>
         </a>
-        <a href="#cuttlefish" data-app="cuttlefish" title="Cuttlefish">
+        <a href="#cuttlefish" data-app="cuttlefish">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="icons/app-cuttlefish.svg#i" />
           </svg>
           <span class="app-name">Cuttlefish</span>
         </a>
-        <a href="#vision" data-app="vision" title="Vision">
+        <a href="#vision" data-app="vision">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="icons/app-vision.svg#i" />
           </svg>
           <span class="app-name">Vision</span>
         </a>
-        <a href="#predictor" data-app="predictor" title="Predictor">
+        <a href="#predictor" data-app="predictor">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="icons/app-predictor.svg#i" />
           </svg>
           <span class="app-name">Predictor</span>
         </a>
       </nav>
-      <div class="status-strip">
-        <span class="chip-group">
-          <span class="chip" id="chip-link" data-level="off">
-            <span class="chip-dot"></span
-            ><span class="chip-text">Connecting…</span>
-          </span>
-          <span class="chip" id="chip-controller" data-level="off">
-            <span class="chip-dot"></span
-            ><span class="chip-text">No controller input</span>
-          </span>
-          <span class="chip" id="chip-latency" data-level="off">
-            <span class="chip-dot"></span
-            ><span class="chip-text">Proxy latency unknown</span>
-          </span>
-          <span class="chip chip-rec" id="chip-rec" data-state="idle">
-            <span class="chip-dot"></span
-            ><span class="chip-text">Not recording</span>
-          </span>
-        </span>
-        <!-- Inkspector only: which session, where in it and its delay -->
+      <!-- Status: passive indicators (a dot and a word, details on hover),
+           the open app's first, then the studio's own -->
+      <div class="status-strip" role="group" aria-label="Status">
+        <!-- Inkspector only: where in the session and its delay -->
         <span class="chip-group" data-app-only="inspect">
-          <select class="select" id="i-session" aria-label="Inspected session">
-            <option value="">All sessions</option>
-          </select>
           <span class="chip num" id="i-position" hidden></span>
           <span class="chip" id="i-delay-chip" data-level="off" hidden>
             <span class="chip-dot"></span><span class="chip-text"></span>
@@ -123,65 +105,102 @@
             <span class="chip-dot"></span><span class="chip-text"></span>
           </span>
         </span>
+        <span class="chip-group">
+          <span class="chip" id="chip-link" data-level="off">
+            <span class="chip-dot"></span
+            ><span class="chip-text">Connecting…</span>
+          </span>
+          <span class="chip" id="chip-controller" data-level="off">
+            <span class="chip-dot"></span
+            ><span class="chip-text">Controller</span>
+          </span>
+          <span class="chip" id="chip-latency" data-level="off">
+            <span class="chip-dot"></span
+            ><span class="chip-text">Latency –</span>
+          </span>
+          <span
+            class="chip chip-rec"
+            id="chip-rec"
+            data-state="idle"
+            title="Idle: recording is run from the Studio app"
+          >
+            <span class="chip-dot"></span
+            ><span class="chip-text">Not recording</span>
+          </span>
+        </span>
       </div>
-      <!-- View menu: a popover, so it closes on Escape or a click outside -->
-      <button
-        type="button"
-        class="view-button"
-        popovertarget="view-menu"
-        title="Theme, layout and app navigation"
-      >
-        <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M4 7h4M16 7h4M4 17h10M18 17h2M10 5v4M14 15v4" />
-        </svg>
-        <span>View</span>
-      </button>
-      <div class="theme-picker view-menu" id="view-menu" popover>
-        <span class="theme-picker-label">Theme</span>
+      <!-- Tools: in the bar, or at the foot of the rail -->
+      <div class="bar-tools">
+        <button
+          type="button"
+          class="tool-button"
+          id="lang-toggle"
+          data-toggle-lang
+        >
+          <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <use href="icons/ui-language.svg#i" />
+          </svg>
+          <span class="tool-name">Language</span>
+        </button>
+        <!-- View menu: a popover, so it closes on Escape or a click outside -->
+        <button
+          type="button"
+          class="tool-button view-button"
+          popovertarget="view-menu"
+        >
+          <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <use href="icons/ui-settings.svg#i" />
+          </svg>
+          <span class="tool-name">View</span>
+        </button>
+      </div>
+      <!-- One grid: a label column and the options' column, so every row's
+           first option lines up -->
+      <div class="view-menu" id="view-menu" popover>
+        <span class="view-label">Theme</span>
         <div class="view-choices">
           <button type="button" data-pick="studio">Studio</button>
           <button type="button" data-pick="joy">Joy</button>
           <button type="button" data-pick="telemetry">Telemetry</button>
           <button type="button" data-pick="salmon">Salmon Run</button>
         </div>
-        <span class="theme-picker-label">Layout</span>
+        <span class="view-label">Layout</span>
         <div class="view-choices">
           <button
             type="button"
-            id="pick-phone"
+            data-pick-layout="auto"
+            title="Fit the window: panels side by side on wide screens"
+          >
+            Auto
+          </button>
+          <button
+            type="button"
+            data-pick-layout="phone"
             title="Single-column phone layout"
           >
             Phone
           </button>
         </div>
-        <span class="theme-picker-label" data-i18n="view.language"
-          >Language</span
-        >
+        <span class="view-label" data-i18n="view.language">Language</span>
         <div class="view-choices">
           <button type="button" data-pick-lang="en" lang="en">English</button>
           <button type="button" data-pick-lang="zh" lang="zh-CN"></button>
         </div>
-        <span class="theme-picker-label">Apps</span>
+        <span class="view-label">Apps</span>
         <div class="view-choices">
           <button
             type="button"
             data-pick-nav="side"
-            title="Apps in a left rail"
+            title="Apps in a left rail; drag them, or Alt+arrows on one, to reorder"
           >
             Side rail
           </button>
-          <button type="button" data-pick-nav="top" title="Apps in the top bar">
-            Top bar
-          </button>
-        </div>
-        <div class="view-choices">
           <button
             type="button"
-            id="reset-app-order"
-            title="Drag the apps, or Alt+arrows on one, to reorder them"
+            data-pick-nav="top"
+            title="Apps in the top bar; drag them, or Alt+arrows on one, to reorder"
           >
-            Reset app order
+            Top bar
           </button>
         </div>
       </div>
@@ -1007,7 +1026,20 @@
         <section class="panel p-session" aria-labelledby="h-session">
           <header class="panel-head">
             <h2 id="h-session">Session</h2>
-            <select class="select" id="i-segment" aria-label="Segment"></select>
+            <div class="controls">
+              <select
+                class="select"
+                id="i-session"
+                aria-label="Inspected session"
+              >
+                <option value="">All sessions</option>
+              </select>
+              <select
+                class="select"
+                id="i-segment"
+                aria-label="Segment"
+              ></select>
+            </div>
           </header>
           <div class="tiles" id="i-session-tiles"></div>
           <p class="panel-note" id="i-session-note"></p>

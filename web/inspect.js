@@ -316,8 +316,12 @@ function drawSession() {
   const chip = $("i-delay-chip");
   chip.hidden = false;
   chip.dataset.level = LEVELS[info.calibration?.applied?.source] ?? "off";
-  chip.querySelector(".chip-text").textContent =
-    `delay ${delayText(info.calibration)}`;
+  // Short in the bar; the dot tells the source's confidence, the title the rest
+  const applied = info.calibration?.applied;
+  chip.querySelector(".chip-text").textContent = applied
+    ? `delay ${applied.source === "setup" ? "≈" : ""}${Math.round(applied.video_delay_ms)} ms`
+    : "no delay";
+  chip.title = `Video delay ${delayText(info.calibration)}: ${delaySourceText(info.calibration)}`;
   $("i-delay-remove").hidden = info.calibration?.applied?.source !== "manual";
 
   const tile = (label, value, note) =>

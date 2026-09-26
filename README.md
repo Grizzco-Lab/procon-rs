@@ -87,13 +87,15 @@ controller; point `[proxy] address` at `localhost:7331`.
 
 One page with five apps, switched without reloading: **Studio** (`#studio`),
 **Inkspector** (`#inspect`), **Cuttlefish** (`#cuttlefish`), **Vision**
-(`#vision`) and **Predictor** (`#predictor`). The app links sit in a left rail or in the top bar; the
-connection, controller, proxy latency and recording chips stay in the top bar
-in every app. The **View** menu picks the theme (Studio, Joy or
-Telemetry), the Phone layout (also used automatically on narrow screens) and
+(`#vision`) and **Predictor** (`#predictor`). The app links sit in a left rail
+(with the language switch and View at its foot) or in the top bar; drag them,
+or press Alt+arrows on one, to reorder them. The proxy, controller, proxy
+latency and recording indicators stay in the top bar in every app (hover one
+for details). The **View** menu picks the theme (Studio, Joy, Telemetry or
+Salmon Run), the layout (Auto, or Phone, which narrow screens also use),
 where the app links go (Side rail or Top bar) and the language (English or
-Simplified Chinese, by default the browser's; so far Cuttlefish and its Knowledge view are
-translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
+Simplified Chinese, by default the browser's; so far Cuttlefish and its
+Knowledge view are translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
 Studio's preview pauses, and each app stops its own work while hidden.
 
 ### Studio

@@ -163,11 +163,18 @@ change) and then runs the binary.
 
 The page holds five apps switched by the hash (`#studio`, `#inspect/...`,
 `#cuttlefish/...`, `#vision/...`, `#predictor/...`) without reloading; the app
-links are a left rail or a top-bar switch (`data-nav`), in the order the user
-dragged them into (or moved with Alt+arrows; `procon-app-order`, new apps go
-last, "Reset app order" in the View menu), and the View menu sets
-`data-theme`, `data-layout` and `data-nav`, remembered in `localStorage`, and
-the language. `web/i18n.js` is the language layer: a dictionary per language
+links are a dock-like left rail (apps at the top, the language switch and
+View at its foot, names as tooltips) or a segmented switch in the top bar
+(`data-nav`; other apps' names become tooltips where the bar runs short), in
+the order the user dragged them into (or moved with Alt+arrows;
+`procon-app-order`, new apps go last). The top bar keeps three looks apart:
+navigation (the switch), status (passive indicators, a dot and a word, the
+details in their title; the open app's first, then the studio's) and actions
+(buttons: language, View). It stays one row down to about 1060 px of page
+width (healthy link indicators drop to their dot first when an app adds its
+own status), then the status takes a row of its own. The View menu sets
+`data-theme`, `data-layout` (Auto or Phone) and `data-nav`, remembered in
+`localStorage`, and the language. `web/i18n.js` is the language layer: a dictionary per language
 (English in it, Simplified Chinese in `web/i18n-zh.js`), `t(key, values)`,
 and `data-i18n*` attributes on the page's elements; a change fires
 `lang-change` for what scripts draw. The Cuttlefish app and its Knowledge view
