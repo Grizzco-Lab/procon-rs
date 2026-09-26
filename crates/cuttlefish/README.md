@@ -13,9 +13,10 @@ with the frames, the retrieved knowledge and a jargon glossary. Library
 cargo build --release -p cuttlefish
 alias cuttlefish=target/release/cuttlefish
 
-# Data lives outside the repo: --data, $CUTTLEFISH_DATA or ~/.local/share/cuttlefish
-# (the studio uses "Knowledge" next to its sessions; point the CLI at the same)
-export CUTTLEFISH_DATA=/home/cjr/DropboxRemote/SalmonRun/Knowledge
+# The knowledge folder is the studio's: found through its config (--config,
+# else ./config.toml: [cuttlefish] knowledge, else "Knowledge" next to the
+# sessions), else --data or $CUTTLEFISH_DATA; without any, the CLI stops
+cd ~/Developing/procon-rs    # where config.toml is
 export CUTTLEFISH_CONTACT=you@example.org   # put in the crawler's User-Agent
 
 cuttlefish ingest inbox                    # everything dropped into <data>/inbox/
@@ -42,9 +43,9 @@ cuttlefish eval eval.example.toml --answer
 ```
 
 The first command that embeds downloads the embedding model (about 470 MB)
-into `~/.cache/cuttlefish/models/` (`$CUTTLEFISH_CACHE`, else
-`$XDG_CACHE_HOME/cuttlefish`), on this machine rather than in a synced data
-folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
+into `~/.cache/procon-cuttlefish/models/` (`$CUTTLEFISH_CACHE`, else
+`$XDG_CACHE_HOME/procon-cuttlefish`), on this machine rather than in a synced
+data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
 (default `claude-opus-5-5`), `--effort` its effort (default `high`).
 `RUST_LOG=debug` shows more.
 
@@ -63,7 +64,7 @@ folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   docs/<id>.json     processed documents with source, url or inbox path, title,
                      language, license, attribution, fetch time, weight and text
   index/             meta.json, entries.jsonl, vectors.f32
-~/.cache/cuttlefish/ models/, thumbs/, unpack/: on this machine only
+~/.cache/procon-cuttlefish/ models/, thumbs/, unpack/: on this machine only
 ```
 
 Ingesting the same url again replaces its document (`--refresh` refetches
@@ -79,13 +80,17 @@ from another machine. The index is rewritten every 50 documents of an import
 and at its end. The folder's parent must exist, so an unmounted synced folder
 is not silently replaced.
 
-A data folder of the older layout (`$XDG_DATA_HOME/cuttlefish`, usually
-`~/.local/share/cuttlefish`) is copied over by `store::migrate` (the studio
-at startup, the CLI on each run): its model into the cache, its documents,
-index, raw files, glossary and digest into the data folder if that holds none.
-Once the copy checks out (same document ids and index size, every raw and model
-file with its size) the old folder is renamed to
-`cuttlefish.migrated-<date>.safe-to-delete`; nothing is deleted.
+The data folder of before (`$XDG_DATA_HOME/cuttlefish`, usually
+`~/.local/share/cuttlefish`) is shared with another program, so
+`store::migrate` (the studio at startup, the CLI on each run) handles only our
+entries there: `docs/`, `index/`, `raw/`, `terms/`, `reports/`, `inbox/`,
+`glossary.toml`, `digest.md`, `assets.json`, `inbox.json` and `models/`. Their
+data is copied into the knowledge folder if that holds none and checked (every
+file with its size); then they are moved into
+`procon-migrated-<date>.safe-to-delete/` in that folder, the model too (it is
+downloaded again into the cache). Anything else there stays untouched, nothing
+is deleted, and nothing moves when the copy differs. `Store::open` refuses
+that folder.
 
 ## The inbox
 
@@ -97,7 +102,7 @@ which can also upload into it) looks at each file by name and first bytes:
 |---|---|
 | md, txt, rst, org, adoc, html, pdf, docx, srt, vtt | a document (chunked, embedded), keyed by its inbox path |
 | DiscordChatExporter JSON | its conversations |
-| json, yaml, toml, csv, tsv, po, properties | a name table if it holds the same keys in several languages; never embedded |
+| json, yaml, toml, csv, tsv, po, properties | a name table if it holds the same keys in several languages; never embedded. Otherwise a data table: a small text document of `key / path: value` lines under 1 MB, skipped above. Project configuration (`package.json`, `Cargo.toml`, ...) is skipped |
 | png, jpg, gif, webp, svg, bmp, ico, avif | an asset |
 | zip, tar(.gz/.xz/.bz2/.zst), 7z | unpacked with `bsdtar` into the cache, contents taken the same way |
 | code, media, office files other than docx, fonts, binaries, unknown | skipped, with the reason |

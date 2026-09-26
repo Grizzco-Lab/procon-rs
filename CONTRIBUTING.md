@@ -237,10 +237,16 @@ and a rename, takes no locks, skips unreadable or conflict-copy files, drops
 index entries of documents that are gone, rebuilds an index that does not read
 and embeds documents it lacks (`Store::catch_up`, when the store loads). The
 model, thumbnails and unpacked archives live in `cuttlefish::store::cache_dir`
-(`~/.cache/cuttlefish`). At startup `cuttlefish::store::migrate` copies the old
-`~/.local/share/cuttlefish` (`$XDG_DATA_HOME`) over, verifies the copy (same
-document ids and index size, every raw and model file) and only then renames the
-old folder to `*.migrated-<date>.safe-to-delete`; the overview lists such folders.
+(`~/.cache/procon-cuttlefish`; `~/.cache/cuttlefish` belongs to another
+program). The old default `~/.local/share/cuttlefish` (`$XDG_DATA_HOME`) is
+that program's folder too: at startup `cuttlefish::store::migrate` touches only
+our entries there (`DATA_DIRS`, `DATA_FILES`, `models`), copies their data into
+the knowledge folder, checks the copy (every file with its size) and only then
+moves them into `procon-migrated-<date>.safe-to-delete/` inside it; the
+overview lists such folders. `Store::open` refuses that folder. The CLI resolves
+the knowledge folder like the studio from `--config` (default `./config.toml`),
+else `$CUTTLEFISH_DATA`, else fails. Structured files without names in several
+languages become small text documents (`tables::as_text`, under 1 MB).
 
 The inbox (`cuttlefish::inbox`) is `<knowledge>/inbox/`. `POST
 knowledge/upload?path=` streams a file into it (a bounded channel to a blocking

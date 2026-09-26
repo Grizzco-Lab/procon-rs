@@ -1726,25 +1726,39 @@
             </div>
             <div class="k-inbox" data-for="inbox">
               <p class="panel-note">
-                Drop anything here: guides, name tables, whole projects, icons,
-                zip files. Prose becomes searchable documents, names in several
-                languages go into the glossary, images into the assets. Files
-                can also be put straight into
-                <span class="path" id="k-inbox-folder">the inbox folder</span>.
+                <span data-i18n="k.inbox.intro"
+                  >Drop anything here: guides, name tables, whole projects,
+                  icons, zip files. Prose becomes searchable documents, names in
+                  several languages go into the glossary, images into the
+                  assets. Files can also be put straight into</span
+                >
+                <span class="path" id="k-inbox-folder">the inbox folder</span>
               </p>
               <div class="k-drop" id="k-drop">
-                <span>Drop files or folders here, or</span>
-                <button type="button" class="btn btn-small" id="k-pick-files">
+                <span data-i18n="k.inbox.drop"
+                  >Drop files or folders here, or</span
+                >
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  id="k-pick-files"
+                  data-i18n="k.inbox.pickFiles"
+                >
                   Choose files
                 </button>
-                <button type="button" class="btn btn-small" id="k-pick-folder">
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  id="k-pick-folder"
+                  data-i18n="k.inbox.pickFolder"
+                >
                   Choose a folder
                 </button>
                 <input type="file" id="k-files" multiple hidden />
                 <input type="file" id="k-folder" webkitdirectory hidden />
               </div>
               <label class="field">
-                <span class="readout-label"
+                <span class="readout-label" data-i18n="k.inbox.into"
                   >Into a folder of the inbox (optional)</span
                 >
                 <input
@@ -1996,7 +2010,9 @@
 
         <section class="panel p-k-overview" aria-labelledby="h-k-overview">
           <header class="panel-head">
-            <h2 id="h-k-overview">What the store holds</h2>
+            <h2 id="h-k-overview" data-i18n="k.ov.title">
+              What the store holds
+            </h2>
           </header>
           <div class="k-overview" id="k-overview"></div>
           <div class="k-report" id="k-report" hidden></div>
@@ -2004,7 +2020,7 @@
 
         <section class="panel p-k-assets" aria-labelledby="h-k-assets">
           <header class="panel-head">
-            <h2 id="h-k-assets">Assets</h2>
+            <h2 id="h-k-assets" data-i18n="k.assets">Assets</h2>
             <span class="panel-note" id="k-assets-note"></span>
           </header>
           <div class="cf-row">
@@ -2014,9 +2030,18 @@
               type="search"
               placeholder="Name, path or term: Splattershot, バクダン…"
               aria-label="Filter assets"
+              data-i18n-placeholder="k.assets.filter"
+              data-i18n-aria-label="k.assets.filterLabel"
             />
-            <select class="select" id="k-asset-folder" aria-label="Folder">
-              <option value="">All folders</option>
+            <select
+              class="select"
+              id="k-asset-folder"
+              aria-label="Folder"
+              data-i18n-aria-label="k.assets.folder"
+            >
+              <option value="" data-i18n="k.assets.allFolders">
+                All folders
+              </option>
             </select>
           </div>
           <ul class="k-assets" id="k-assets"></ul>

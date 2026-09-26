@@ -238,11 +238,18 @@ or deleted.
 |---|---|
 | Guides and notes: markdown, text, HTML, PDF, Word `.docx`, subtitles `.srt`/`.vtt` | Documents, split into chunks and embedded for search and the AI |
 | Name tables: JSON, YAML, TOML, CSV, TSV, `.po`, `.properties`, locale folders (`locales/ja/…`, `USen.json`, `JPja.json`, …) | Glossary terms: the same key in several languages (weapon, stage, boss names) with the language codes, where each came from, and joined to the glossary's own terms when a name matches. Never embedded. Huge interface-text dumps keep only keys that name things |
+| Data tables without several languages (weapon stats, …) | A small text document (`key / path: value` lines) when under 1 MB; bigger ones are skipped with the reason. Project configuration (`package.json`, `Cargo.toml`, …) is skipped |
 | Source code, a git repository, a zip of one | The code is skipped; its README, docs and string and locale files are read as above. `node_modules`, build output, `.git` and binaries are never entered |
 | Images and icons (PNG, JPEG, GIF, WebP, SVG, …) | Assets: size, a thumbnail, a name from the file name, and the glossary term it shows when the file name says (`Wst_Shooter_Normal_00.png` → Splattershot) |
 | Zip and tar archives | Unpacked (in the local cache) and taken the same way |
 | DiscordChatExporter JSON | Its conversations |
 | Anything else (video, Excel, fonts, programs, unknown formats) | Skipped, with the reason in the report |
+
+Two limits to know: Excel (`.xlsx`) and Nintendo's own formats (`.msbt`,
+`.bin`, `.sarc`, …) are not read (save a sheet as CSV; datamined text usually
+exists as JSON too). And an image is linked to a glossary term by the end of
+its file name, so `sockeye-station-low-tide.jpg` links to "Low Tide", not to
+the stage.
 
 Every import writes a report (taken as what, skipped and why, failed, gone
 from the inbox). Files are remembered by content: importing again does
@@ -253,11 +260,17 @@ The knowledge folder may be synced (Dropbox, rclone): the store writes whole
 files through a rename, locks nothing, and skips files that arrive half-synced
 or as conflict copies; documents synced in from another machine are embedded
 when the store next loads. The embedding model (about 470 MB), thumbnails and
-unpacked archives stay on this machine, in `~/.cache/cuttlefish`. The store of
-before, `~/.local/share/cuttlefish`, is copied over once when the studio starts;
-when the copy checks out, the old folder is renamed to
-`cuttlefish.migrated-<date>.safe-to-delete` (the Knowledge tab says so) and can
-be deleted.
+unpacked archives stay on this machine, in `~/.cache/procon-cuttlefish`.
+
+The store of before lived in `~/.local/share/cuttlefish`, a folder another
+program (with its own `~/.cache/cuttlefish`) uses too. When the studio starts,
+only our entries there (`docs/`, `index/`, `raw/`, the glossary, `models/`, …)
+are handled: their data is copied into the knowledge folder and checked, then
+they are moved into `~/.local/share/cuttlefish/procon-migrated-<date>.safe-to-delete/`
+(the Knowledge tab shows where). That folder can be deleted; the other
+program's files are never touched. The CLI `cuttlefish` finds the same
+knowledge folder through the studio's `config.toml` (`--config`, else
+`./config.toml`), else `$CUTTLEFISH_DATA`.
 
 ### Vision
 

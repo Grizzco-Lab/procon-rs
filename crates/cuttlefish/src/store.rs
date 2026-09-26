@@ -15,13 +15,14 @@
 //!   index/             chunk vectors (see [`crate::index`])
 //! ```
 //!
-//! The folder is `--data`, else `$CUTTLEFISH_DATA`, else
-//! `~/.local/share/cuttlefish` (the studio passes its `[cuttlefish]
-//! knowledge`). What needs no syncing stays on this machine, in
-//! [`cache_dir`]: the embedding model, thumbnails, unpacked archives.
-//! [`migrate`] copies a folder of the older layout (everything in
-//! `~/.local/share/cuttlefish`) over and, once the copy checks out, renames
-//! the old folder to `*.migrated-<date>.safe-to-delete`.
+//! The studio passes its `[cuttlefish] knowledge` (by default `Knowledge`
+//! next to the Inkspector's root); the CLI finds the same folder through the
+//! studio's config, else `--data` or `$CUTTLEFISH_DATA`. What needs no
+//! syncing stays on this machine, in [`cache_dir`]: the embedding model,
+//! thumbnails, unpacked archives. [`migrate`] copies our entries of the
+//! folder of before (`~/.local/share/cuttlefish`, shared with another
+//! program) over and moves them into a `procon-migrated-<date>.safe-to-delete`
+//! folder there, leaving the rest alone.
 //!
 //! Safe on a synced folder: every file is written whole through a
 //! temporary file and a rename ([`write_atomic`]), nothing is locked, and
@@ -83,9 +84,10 @@ fn home() -> PathBuf {
     PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
 }
 
-/// The data folder of before, and the CLI's default without
-/// `$CUTTLEFISH_DATA`: `$XDG_DATA_HOME/cuttlefish`, else
-/// `~/.local/share/cuttlefish`
+/// Where the data folder was before: `$XDG_DATA_HOME/cuttlefish`, else
+/// `~/.local/share/cuttlefish`. Another program uses that folder too, so
+/// [`migrate`] takes only our entries out of it and [`Store::open`] refuses
+/// it.
 pub fn legacy_root() -> PathBuf {
     std::env::var_os("XDG_DATA_HOME")
         .filter(|v| !v.is_empty())
@@ -95,7 +97,8 @@ pub fn legacy_root() -> PathBuf {
 
 /// Folder on this machine for what is not synced (the embedding model,
 /// thumbnails, unpacked archives): `$CUTTLEFISH_CACHE`, else
-/// `$XDG_CACHE_HOME/cuttlefish`, else `~/.cache/cuttlefish`
+/// `$XDG_CACHE_HOME/procon-cuttlefish`, else `~/.cache/procon-cuttlefish`
+/// (`~/.cache/cuttlefish` belongs to another program)
 pub fn cache_dir() -> PathBuf {
     let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
     if let Some(dir) = var("CUTTLEFISH_CACHE") {
@@ -103,7 +106,7 @@ pub fn cache_dir() -> PathBuf {
     }
     var("XDG_CACHE_HOME")
         .map_or_else(|| home().join(".cache"), PathBuf::from)
-        .join("cuttlefish")
+        .join("procon-cuttlefish")
 }
 
 /// Folder for embedding model files: `models` in [`cache_dir`]
@@ -161,20 +164,20 @@ pub struct Store {
 }
 
 impl Store {
-    /// The default data folder: `$CUTTLEFISH_DATA` or [`legacy_root`]
-    pub fn default_root() -> PathBuf {
-        match std::env::var_os("CUTTLEFISH_DATA").filter(|d| !d.is_empty()) {
-            Some(d) => PathBuf::from(d),
-            None => legacy_root(),
-        }
-    }
-
     /// Opens (or creates) a data folder for vectors of `embedder`. The
     /// folder's parent must exist, so a synced folder that is missing is not
     /// silently replaced by a new one. Chunks of documents that are gone
     /// are dropped; an index that does not read starts empty, for
-    /// [`Store::catch_up`] to rebuild.
+    /// [`Store::catch_up`] to rebuild. The folder of before
+    /// ([`legacy_root`]) is refused: another program owns it.
     pub fn open(root: &Path, embedder: &dyn Embedder) -> Result<Self> {
+        let legacy = legacy_root();
+        ensure!(
+            root != legacy
+                && (root.canonicalize().ok()).is_none_or(|r| Some(r) != legacy.canonicalize().ok()),
+            "{} belongs to another program; give the knowledge folder with --config, --data or $CUTTLEFISH_DATA",
+            root.display()
+        );
         let parent = root.parent().filter(|p| !p.as_os_str().is_empty());
         ensure!(
             parent.is_none_or(Path::is_dir),
@@ -425,13 +428,16 @@ fn copy_tree(from: &Path, to: &Path) -> Result<usize> {
     Ok(n)
 }
 
-/// Whether a data folder holds anything of its own: documents, an index, a
-/// glossary or a digest
-fn holds_data(root: &Path) -> bool {
-    doc_ids(root).is_ok_and(|ids| !ids.is_empty())
-        || ["index/meta.json", "glossary.toml", "digest.md"]
-            .iter()
-            .any(|p| root.join(p).exists())
+/// Folders of a data folder that are ours and hold data
+const DATA_DIRS: [&str; 6] = ["docs", "index", "raw", "terms", "reports", "inbox"];
+
+/// Files of a data folder that are ours
+const DATA_FILES: [&str; 4] = ["glossary.toml", "digest.md", "assets.json", "inbox.json"];
+
+/// Our entries in a data folder of the older layout: its data, and the
+/// embedding model it once kept (not copied: it is downloaded again)
+fn our_entries() -> impl Iterator<Item = &'static str> {
+    DATA_DIRS.into_iter().chain(DATA_FILES).chain(["models"])
 }
 
 /// Sizes of the files in a folder and below, by path inside it
@@ -459,67 +465,58 @@ fn sizes(dir: &Path) -> BTreeMap<PathBuf, u64> {
     out
 }
 
-/// Whether `copy` has every file of `original`, with the same size
-fn has_all(original: &Path, copy: &Path) -> bool {
-    let copied = sizes(copy);
-    sizes(original)
-        .iter()
-        .all(|(path, size)| copied.get(path) == Some(size))
+/// Whether a data folder holds any data of ours: a file in one of its data
+/// folders, or one of its data files
+fn holds_data(root: &Path) -> bool {
+    DATA_DIRS.iter().any(|d| !sizes(&root.join(d)).is_empty())
+        || DATA_FILES.iter().any(|f| root.join(f).is_file())
 }
 
-/// Chunks in a data folder's index (0 without one); `None` if it does not
-/// read
-fn index_len(root: &Path) -> Option<usize> {
-    match FlatIndex::load(&root.join("index")) {
-        Ok(Some(i)) => Some(i.len()),
-        Ok(None) => Some(0),
-        Err(_) => None,
-    }
-}
-
-/// Whether `root` holds the data of `old`: the same documents, as many
-/// chunks in the index, every raw download, the same glossary and digest
+/// Whether `root` holds a copy of the data of `old`: every file of its data
+/// folders with the same size, and the same data files
 fn holds_copy_of(old: &Path, root: &Path) -> bool {
-    let same_file = |name: &str| {
-        let a = std::fs::read(old.join(name)).ok();
-        a.is_none() || a == std::fs::read(root.join(name)).ok()
-    };
-    doc_ids(old).ok() == doc_ids(root).ok()
-        && index_len(old).is_some()
-        && index_len(old) == index_len(root)
-        && has_all(&old.join("raw"), &root.join("raw"))
-        && same_file("glossary.toml")
-        && same_file("digest.md")
+    let dirs = DATA_DIRS.iter().all(|d| {
+        let copied = sizes(&root.join(d));
+        sizes(&old.join(d))
+            .iter()
+            .all(|(path, size)| copied.get(path) == Some(size))
+    });
+    let files = DATA_FILES.iter().all(|f| {
+        let a = std::fs::read(old.join(f)).ok();
+        a.is_none() || a == std::fs::read(root.join(f)).ok()
+    });
+    dirs && files
 }
 
-/// The name `old` is moved aside to after [`migrate`]:
-/// `<name>.migrated-<YYYY-MM-DD>.safe-to-delete` beside it
+/// Name of the folder [`migrate`] moves our entries into
+const ASIDE_PREFIX: &str = "procon-migrated-";
+
+/// Suffix of that folder's name
+const ASIDE_SUFFIX: &str = ".safe-to-delete";
+
+/// A new folder in `old` to move our entries into:
+/// `procon-migrated-<YYYY-MM-DD>.safe-to-delete`
 fn aside_name(old: &Path) -> Option<PathBuf> {
-    let name = old.file_name()?.to_string_lossy();
     let date = chrono::Local::now().format("%Y-%m-%d");
     (1..100)
         .map(|n| match n {
-            1 => alloc::format!("{name}.migrated-{date}.safe-to-delete"),
-            n => alloc::format!("{name}.migrated-{date}-{n}.safe-to-delete"),
+            1 => alloc::format!("{ASIDE_PREFIX}{date}{ASIDE_SUFFIX}"),
+            n => alloc::format!("{ASIDE_PREFIX}{date}-{n}{ASIDE_SUFFIX}"),
         })
-        .map(|aside| old.with_file_name(aside))
+        .map(|name| old.join(name))
         .find(|aside| !aside.exists())
 }
 
-/// Folders [`migrate`] moved aside from `old` that are still there
+/// Folders [`migrate`] moved our entries of `old` into that are still there
 pub fn moved_aside(old: &Path) -> Vec<PathBuf> {
-    let (Some(dir), Some(name)) = (old.parent(), old.file_name()) else {
-        return Vec::new();
-    };
-    let prefix = alloc::format!("{}.migrated-", name.to_string_lossy());
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = std::fs::read_dir(old) else {
         return Vec::new();
     };
     let mut out: Vec<PathBuf> = entries
         .flatten()
         .filter(|e| {
             let n = e.file_name().to_string_lossy().into_owned();
-            n.starts_with(&prefix) && n.ends_with(".safe-to-delete")
+            n.starts_with(ASIDE_PREFIX) && n.ends_with(ASIDE_SUFFIX)
         })
         .map(|e| e.path())
         .collect();
@@ -532,35 +529,28 @@ pub fn moved_aside(old: &Path) -> Vec<PathBuf> {
 pub struct Migration {
     /// What was copied, in words
     pub copied: Vec<String>,
-    /// Where the old folder was moved aside to
+    /// The folder in `old` our entries were moved into
     pub moved_aside: Option<PathBuf>,
 }
 
-/// Brings a data folder of the older layout (`old`, usually
-/// [`legacy_root`]) over: its embedding model is copied into `models` (see
-/// [`models_dir`]), and its documents, index, raw downloads, glossary and
-/// digest into `root` when `root` holds none of these yet. Then, if
-/// everything of ours in `old` is found in its new place (every model file
-/// with its size; the same documents and as many index entries, raw files,
-/// glossary and digest), `old` is renamed to
-/// `<name>.migrated-<date>.safe-to-delete` beside it, never deleted. It is
-/// left as it is when `old` is `root`, when `root`'s parent is missing (an
-/// unmounted synced folder) or when anything differs.
-pub fn migrate(old: &Path, root: &Path, models: &Path) -> Result<Migration> {
+/// Brings our entries of a data folder of the older layout (`old`, usually
+/// [`legacy_root`], a folder another program uses too) over. Only our
+/// entries are touched (see [`DATA_DIRS`], [`DATA_FILES`] and `models`);
+/// anything else in `old` stays as it is.
+///
+/// Our data is copied into `root` when `root` holds none, and checked (every
+/// file with its size, the same small files). Then our entries, the model
+/// included (it is downloaded again into [`models_dir`]), are moved into
+/// `old/procon-migrated-<date>.safe-to-delete/`, never deleted. Without data
+/// (empty folders, the model), they are moved there all the same. Nothing
+/// is moved when `old` is `root`, when `root`'s parent is missing (an
+/// unmounted synced folder), when `root` holds data of its own already, or
+/// when the copy differs.
+pub fn migrate(old: &Path, root: &Path) -> Result<Migration> {
     let mut done = Migration::default();
-    if !old.is_dir() {
+    let ours: Vec<&str> = our_entries().filter(|n| old.join(n).exists()).collect();
+    if !old.is_dir() || ours.is_empty() {
         return Ok(done);
-    }
-    let old_models = old.join("models");
-    if old_models.is_dir() && old_models != models {
-        let n = copy_tree(&old_models, models)?;
-        if n > 0 {
-            done.copied.push(alloc::format!(
-                "{n} model files from {} to {}",
-                old_models.display(),
-                models.display()
-            ));
-        }
     }
     let same = match (old.canonicalize(), root.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
@@ -571,47 +561,59 @@ pub fn migrate(old: &Path, root: &Path, models: &Path) -> Result<Migration> {
     if same || parent_missing {
         return Ok(done);
     }
-    let data = holds_data(old);
-    if data && !holds_data(root) {
-        for name in ["docs", "index", "raw"] {
+    if holds_data(old) {
+        if holds_data(root) {
+            log::warn!(
+                "{} and {} both hold knowledge; nothing is copied or moved",
+                old.display(),
+                root.display()
+            );
+            return Ok(done);
+        }
+        for name in DATA_DIRS {
             if old.join(name).is_dir() {
                 let n = copy_tree(&old.join(name), &root.join(name))?;
                 done.copied.push(alloc::format!("{n} files of {name}/"));
             }
         }
-        for name in ["glossary.toml", "digest.md"] {
-            let from = old.join(name);
-            if from.is_file() && !root.join(name).exists() {
-                write_atomic(&root.join(name), &std::fs::read(&from)?)?;
+        for name in DATA_FILES {
+            if old.join(name).is_file() {
+                write_atomic(&root.join(name), &std::fs::read(old.join(name))?)?;
                 done.copied.push(String::from(name));
             }
         }
-    }
-    if !done.copied.is_empty() {
+        if !holds_copy_of(old, root) {
+            log::warn!(
+                "{} does not hold all of {} after copying; nothing is moved",
+                root.display(),
+                old.display()
+            );
+            return Ok(done);
+        }
         log::info!(
             "Copied from {} to {}: {}",
             old.display(),
             root.display(),
             done.copied.join(", ")
         );
-    }
-    let models_ok = !old_models.is_dir() || has_all(&old_models, models);
-    if !models_ok || (data && !holds_copy_of(old, root)) {
-        log::warn!(
-            "{} is not moved aside: {} does not hold all of it; nothing was deleted",
-            old.display(),
-            if models_ok { root } else { models }.display()
+    } else {
+        log::info!(
+            "Nothing needed migrating from {}: our folders there are empty",
+            old.display()
         );
-        return Ok(done);
     }
-    let aside = aside_name(old).context("no name to move the old folder aside to")?;
-    std::fs::rename(old, &aside).with_context(|| alloc::format!("renaming {}", old.display()))?;
+    let aside = aside_name(old).context("no name to move our old entries aside to")?;
+    std::fs::create_dir(&aside).with_context(|| alloc::format!("creating {}", aside.display()))?;
+    for name in &ours {
+        std::fs::rename(old.join(name), aside.join(name))
+            .with_context(|| alloc::format!("moving {name} into {}", aside.display()))?;
+    }
     log::info!(
-        "Moved the old knowledge folder {} aside to {}: its contents are copied to {} and {}; it is safe to delete",
-        old.display(),
+        "Moved our old entries ({}) into {}; the knowledge is in {} now and that folder is safe to delete. Other files in {} are left alone.",
+        ours.join(", "),
         aside.display(),
         root.display(),
-        models.display()
+        old.display()
     );
     done.moved_aside = Some(aside);
     Ok(done)
@@ -725,73 +727,99 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
-    #[test]
-    fn migrates_by_copying() {
-        let old = temp("old");
-        let new = temp("new");
-        let models = temp("models");
-        let e = HashEmbedder { dim: 64 };
-        let mut store = Store::open(&old, &e).unwrap();
-        store
-            .add(&doc("a", "Eggs", "Bank the golden eggs."), &e)
-            .unwrap();
-        store.save().unwrap();
+    /// A folder of before: another program's files, and ours when `data`
+    fn old_folder(name: &str, data: bool) -> PathBuf {
+        let old = temp(name);
+        std::fs::create_dir_all(old.join("WebKit")).unwrap();
+        std::fs::write(old.join("hsts-storage.sqlite"), b"not ours").unwrap();
+        std::fs::write(old.join("WebKit/cache"), b"not ours either").unwrap();
+        std::fs::create_dir_all(old.join("docs")).unwrap();
         std::fs::create_dir_all(old.join("models/m")).unwrap();
         std::fs::write(old.join("models/m/w.bin"), b"weights").unwrap();
-        std::fs::write(old.join("hsts-storage.sqlite"), b"not ours").unwrap();
-        let done = migrate(&old, &new, &models).unwrap();
+        if data {
+            let e = HashEmbedder { dim: 64 };
+            let mut store = Store::open(&old, &e).unwrap();
+            store
+                .add(&doc("a", "Eggs", "Bank the golden eggs."), &e)
+                .unwrap();
+            store.save().unwrap();
+            std::fs::write(old.join("glossary.toml"), crate::glossary::SEED).unwrap();
+        }
+        old
+    }
+
+    /// The other program's files are there, unchanged
+    fn foreign_untouched(old: &Path) {
+        assert_eq!(
+            std::fs::read(old.join("hsts-storage.sqlite")).unwrap(),
+            b"not ours"
+        );
+        assert_eq!(
+            std::fs::read(old.join("WebKit/cache")).unwrap(),
+            b"not ours either"
+        );
+    }
+
+    #[test]
+    fn migrates_our_entries_only() {
+        let old = old_folder("old", true);
+        let new = temp("new");
+        let done = migrate(&old, &new).unwrap();
         assert_eq!(done.copied.len(), 3, "{done:?}");
-        assert_eq!(std::fs::read(models.join("m/w.bin")).unwrap(), b"weights");
-        assert!(!new.join("hsts-storage.sqlite").exists());
-        assert!(!new.join("models").exists());
+        let e = HashEmbedder { dim: 64 };
         assert_eq!(Store::open(&new, &e).unwrap().index().len(), 1);
-        // Everything matched: the old folder is moved aside, not deleted
+        assert!(new.join("glossary.toml").is_file());
+        assert!(!new.join("models").exists());
+        // Ours moved into a folder of its own, nothing deleted; the other
+        // program's files stay where they were
         let aside = done.moved_aside.unwrap();
-        assert!(!old.exists());
+        assert_eq!(aside.parent(), Some(old.as_path()));
         let name = aside.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with("procon-migrated-"), "{name}");
         assert!(name.ends_with(".safe-to-delete"), "{name}");
-        assert!(aside.join("docs").read_dir().unwrap().next().is_some());
+        for ours in ["docs", "index", "models", "glossary.toml"] {
+            assert!(!old.join(ours).exists(), "{ours}");
+            assert!(aside.join(ours).exists(), "{ours}");
+        }
+        foreign_untouched(&old);
         assert_eq!(moved_aside(&old), core::slice::from_ref(&aside));
-        // A second run finds nothing to do
-        assert_eq!(migrate(&old, &new, &models).unwrap(), Migration::default());
-        for dir in [aside, new, models] {
+        // A second run finds nothing of ours
+        assert_eq!(migrate(&old, &new).unwrap(), Migration::default());
+        foreign_untouched(&old);
+        for dir in [old, new] {
             std::fs::remove_dir_all(dir).unwrap();
         }
     }
 
     #[test]
-    fn keeps_the_old_folder_when_the_copy_differs() {
-        let old = temp("old-kept");
+    fn moves_empty_folders_without_copying() {
+        let old = old_folder("old-empty", false);
+        let new = temp("new-empty");
+        let done = migrate(&old, &new).unwrap();
+        assert!(done.copied.is_empty());
+        let aside = done.moved_aside.unwrap();
+        assert!(aside.join("docs").is_dir() && aside.join("models/m/w.bin").is_file());
+        assert!(!old.join("docs").exists());
+        assert!(!new.exists());
+        foreign_untouched(&old);
+        std::fs::remove_dir_all(old).unwrap();
+    }
+
+    #[test]
+    fn moves_nothing_when_the_new_folder_has_data() {
+        let old = old_folder("old-kept", true);
         let new = temp("new-kept");
-        let models = temp("models-kept");
         let e = HashEmbedder { dim: 64 };
-        let mut store = Store::open(&old, &e).unwrap();
-        store
-            .add(&doc("a", "Eggs", "Bank the golden eggs."), &e)
-            .unwrap();
-        store.save().unwrap();
-        // The new folder holds other documents already: nothing is copied
-        // and the old folder stays where it is
         let mut other = Store::open(&new, &e).unwrap();
         other
             .add(&doc("b", "Tides", "Low tide moves the basket."), &e)
             .unwrap();
         other.save().unwrap();
-        let done = migrate(&old, &new, &models).unwrap();
-        assert_eq!(done, Migration::default());
-        assert!(old.join("docs").is_dir());
+        assert_eq!(migrate(&old, &new).unwrap(), Migration::default());
+        assert!(old.join("docs").is_dir() && old.join("index/meta.json").is_file());
         assert!(moved_aside(&old).is_empty());
-        // Nor when a model file did not arrive whole
-        std::fs::remove_dir_all(new.join("docs")).unwrap();
-        std::fs::remove_dir_all(new.join("index")).unwrap();
-        std::fs::create_dir_all(old.join("models")).unwrap();
-        std::fs::write(old.join("models/w.bin"), b"weights").unwrap();
-        std::fs::create_dir_all(&models).unwrap();
-        std::fs::write(models.join("w.bin"), b"cut").unwrap();
-        let done = migrate(&old, &new, &models).unwrap();
-        assert_eq!(done.moved_aside, None);
-        assert!(old.is_dir());
-        for dir in [old, new, models] {
+        foreign_untouched(&old);
+        for dir in [old, new] {
             std::fs::remove_dir_all(dir).unwrap();
         }
     }

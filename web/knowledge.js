@@ -33,6 +33,8 @@
     pollTimer: null,
     /** The uploads so far, one after another */
     uploads: Promise.resolve(),
+    /** The import report shown, if any */
+    report: null,
     /** Whether an import was running at the last look */
     wasRunning: false,
   };
@@ -243,7 +245,9 @@
     for (const el of $("k-import-form").querySelectorAll("[data-for]")) {
       el.hidden = !el.dataset.for.split(" ").includes(kind);
     }
-    $("k-import-go").textContent = kind === "inbox" ? "Import inbox" : "Import";
+    $("k-import-go").textContent = t(
+      kind === "inbox" ? "k.inbox.import" : "k.import",
+    );
     if (kind === "inbox" && k.shown) loadInbox();
   }
 
@@ -420,8 +424,14 @@
     }
     $("k-inbox-folder").textContent = pending.folder;
     $("k-inbox-status").textContent = pending.files
-      ? `The inbox holds ${pending.files} files (${size(pending.bytes)}); ${pending.new ? `${pending.new} new or changed since the last import` : "all imported"}.`
-      : "The inbox is empty.";
+      ? t("k.inbox.status", {
+          files: pending.files,
+          size: size(pending.bytes),
+          state: pending.new
+            ? t("k.inbox.new", { n: pending.new })
+            : t("k.inbox.allImported"),
+        })
+      : t("k.inbox.empty");
   }
 
   /** Every file of a dropped folder, with its path */
@@ -467,14 +477,18 @@
     const log = $("k-upload-log");
     box.hidden = false;
     log.textContent = skipped.length
-      ? `${skipped.length} hidden, dependency or too large files left out\n`
+      ? `${t("k.upload.left", { n: skipped.length })}\n`
       : "";
     let sent = 0;
     let failed = 0;
     const show = (done, current) => {
-      $("k-upload-what").textContent = current ?? "Uploaded";
-      $("k-upload-count").textContent =
-        `${done}/${queue.length} files · ${size(sent)} of ${size(total)}`;
+      $("k-upload-what").textContent = current ?? t("k.upload.done");
+      $("k-upload-count").textContent = t("k.upload.count", {
+        done,
+        total: queue.length,
+        sent: size(sent),
+        size: size(total),
+      });
       $("k-upload-fill").style.width = `${total ? (100 * sent) / total : 100}%`;
     };
     for (const [i, { file, path }] of queue.entries()) {
@@ -506,17 +520,17 @@
                     })(),
                   ),
                 );
-          xhr.onerror = () => reject(new Error("connection lost"));
+          xhr.onerror = () => reject(new Error(t("k.upload.lost")));
           xhr.send(file);
         });
       } catch (error) {
         failed++;
-        log.textContent += `failed ${target}: ${error.message}\n`;
+        log.textContent += `${t("k.upload.failed", { path: target, error: error.message })}\n`;
       }
       sent = before + file.size;
     }
     show(queue.length);
-    log.textContent += `${queue.length - failed} files uploaded${failed ? `, ${failed} failed` : ""}. Import the inbox to digest them.\n`;
+    log.textContent += `${t(failed ? "k.upload.someFailed" : "k.upload.summary", { n: queue.length - failed, failed })}\n`;
     loadInbox();
   }
 
@@ -568,52 +582,51 @@
   function reportHtml(report) {
     const byKind = {};
     for (const t of report.taken) (byKind[t.kind] ??= []).push(t);
-    const names = {
-      document: "Documents",
-      discord: "Discord exports",
-      glossary: "Name tables → glossary",
-      asset: "Images and icons",
-    };
     const list = (items) =>
       `<ul>${items.map((t) => `<li><span class="path">${escapeHtml(t.path)}</span> <span class="panel-note">${escapeHtml(t.detail)}</span></li>`).join("")}</ul>`;
     const taken = Object.entries(byKind)
       .map(
         ([kind, items]) =>
-          `<details${items.length <= 12 ? " open" : ""}><summary><b>${escapeHtml(names[kind] ?? kind)}</b> ${items.length}</summary>${list(items)}</details>`,
+          `<details${items.length <= 12 ? " open" : ""}><summary><b>${escapeHtml(t(`k.report.kind.${kind}`))}</b> ${items.length}</summary>${list(items)}</details>`,
       )
       .join("");
     const skipped = report.skipped
       .map(
         (s) =>
-          `<details><summary>${escapeHtml(s.reason)} <span class="num">${s.count}</span></summary><ul>${s.examples.map((e) => `<li class="path">${escapeHtml(e)}</li>`).join("")}${s.count > s.examples.length ? `<li class="panel-note">and ${s.count - s.examples.length} more</li>` : ""}</ul></details>`,
+          `<details><summary>${escapeHtml(s.reason)} <span class="num">${s.count}</span></summary><ul>${s.examples.map((e) => `<li class="path">${escapeHtml(e)}</li>`).join("")}${s.count > s.examples.length ? `<li class="panel-note">${escapeHtml(t("k.report.more", { n: s.count - s.examples.length }))}</li>` : ""}</ul></details>`,
       )
       .join("");
     const failed = report.failed.length
-      ? `<details open><summary class="level-critical"><b>Failed</b> ${report.failed.length}</summary>${list(report.failed)}</details>`
+      ? `<details open><summary class="level-critical"><b>${escapeHtml(t("k.report.failed"))}</b> ${report.failed.length}</summary>${list(report.failed)}</details>`
       : "";
     const gone = report.gone.length
-      ? `<details><summary>Gone from the inbox ${report.gone.length}</summary><ul>${report.gone.map((g) => `<li class="path">${escapeHtml(g)}</li>`).join("")}</ul></details>`
+      ? `<details><summary>${escapeHtml(t("k.report.gone"))} ${report.gone.length}</summary><ul>${report.gone.map((g) => `<li class="path">${escapeHtml(g)}</li>`).join("")}</ul></details>`
       : "";
     const notes = report.notes.length
       ? `<ul class="k-notes">${report.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>`
       : "";
     return `
-      <div class="k-report-head"><b>Import of ${escapeHtml(new Date(report.started).toLocaleString())}</b>
-        <span class="panel-note">${report.files} files looked at, ${report.unchanged} unchanged${report.cancelled ? ", cancelled" : ""}</span>
-        <button type="button" class="mode-toggle" data-close-report>Close</button></div>
-      ${taken || `<p class="panel-note">Nothing new taken.</p>`}
+      <div class="k-report-head"><b>${escapeHtml(t("k.report.title", { time: new Date(report.started).toLocaleString(i18nLocale()) }))}</b>
+        <span class="panel-note">${escapeHtml(t(report.cancelled ? "k.report.statsCancelled" : "k.report.stats", { files: report.files, unchanged: report.unchanged }))}</span>
+        <button type="button" class="mode-toggle" data-close-report>${escapeHtml(t("k.report.close"))}</button></div>
+      ${taken || `<p class="panel-note">${escapeHtml(t("k.report.nothing"))}</p>`}
       ${failed}
-      ${skipped ? `<h3 class="readout-label">Skipped</h3>${skipped}` : ""}
+      ${skipped ? `<h3 class="readout-label">${escapeHtml(t("k.report.skipped"))}</h3>${skipped}` : ""}
       ${gone}${notes}`;
+  }
+
+  /** Shows the report last opened (again, in another language) */
+  function drawReport() {
+    $("k-report").innerHTML = reportHtml(k.report);
   }
 
   async function showReport(id) {
     const box = $("k-report");
     try {
-      box.innerHTML = reportHtml(
-        await api(`report?${new URLSearchParams({ id })}`),
-      );
+      k.report = await api(`report?${new URLSearchParams({ id })}`);
+      drawReport();
     } catch (error) {
+      k.report = null;
       box.innerHTML = `<p class="notice">${escapeHtml(error.message)}</p>`;
     }
     box.hidden = false;
@@ -621,8 +634,9 @@
   }
 
   $("k-report").addEventListener("click", (event) => {
-    if (event.target.closest("[data-close-report]"))
-      $("k-report").hidden = true;
+    if (!event.target.closest("[data-close-report]")) return;
+    k.report = null;
+    $("k-report").hidden = true;
   });
 
   // ------------------------------------------------------------- overview
@@ -637,7 +651,7 @@
               `<span class="k-count">${escapeHtml(name(key))} <b class="num">${n}</b></span>`,
           )
           .join("")
-      : `<span class="panel-note">none</span>`;
+      : `<span class="panel-note">${escapeHtml(t("k.none"))}</span>`;
   }
 
   async function loadOverview() {
@@ -651,38 +665,41 @@
     }
     const tables = o.glossary.tables
       .map(
-        (t) =>
-          `<li><span class="path">${escapeHtml(t.source)}</span> <b class="num">${t.terms}</b> terms · ${escapeHtml(t.languages.join(", "))}<br /><span class="panel-note">${escapeHtml(t.note)}</span></li>`,
+        (table) =>
+          `<li><span class="path">${escapeHtml(table.source)}</span> ${escapeHtml(t("k.ov.tableTerms", { n: table.terms }))} · ${escapeHtml(table.languages.join(", "))}<br /><span class="panel-note">${escapeHtml(table.note)}</span></li>`,
       )
       .join("");
     const folders = Object.fromEntries(
-      Object.entries(o.assets.folders).map(([f, n]) => [f || "(inbox)", n]),
+      Object.entries(o.assets.folders).map(([f, n]) => [
+        f || t("k.ov.inboxFolder"),
+        n,
+      ]),
     );
     const reports = o.reports
       .map(
         (r) =>
-          `<li><button type="button" class="mode-toggle" data-report="${escapeHtml(r.id)}">${escapeHtml(new Date(r.started).toLocaleString())}</button> <span class="panel-note">${escapeHtml(r.summary)}</span></li>`,
+          `<li><button type="button" class="mode-toggle" data-report="${escapeHtml(r.id)}">${escapeHtml(new Date(r.started).toLocaleString(i18nLocale()))}</button> <span class="panel-note">${escapeHtml(r.summary)}</span></li>`,
       )
       .join("");
     const aside = o.moved_aside
       .map(
         (path) =>
-          `<p class="notice is-info">The old knowledge folder was copied here and moved aside to <span class="path">${escapeHtml(path)}</span>. Everything in it is in this folder and the local model cache now; it is safe to delete.</p>`,
+          `<p class="notice is-info">${t("k.ov.movedAside", { path: `<span class="path">${escapeHtml(path)}</span>` })}</p>`,
       )
       .join("");
     $("k-overview").innerHTML = `${aside}
-      <div class="k-ov-block"><h3 class="readout-label">Documents <b class="num">${o.documents.total}</b></h3>
+      <div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.documents"))} <b class="num">${o.documents.total}</b></h3>
         <div class="k-counts">${counts(o.documents.sources, sourceName)}</div>
         <div class="k-counts">${counts(o.documents.formats)}</div></div>
-      <div class="k-ov-block"><h3 class="readout-label">Glossary <b class="num">${o.glossary.terms}</b> terms, ${o.glossary.imported} with imported names</h3>
+      <div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.glossary"))} <b class="num">${o.glossary.terms}</b> · ${escapeHtml(t("k.ov.imported", { n: o.glossary.imported }))}</h3>
         <div class="k-counts">${counts(o.glossary.languages)}</div>
-        ${tables ? `<ul class="k-tables">${tables}</ul>` : `<p class="panel-note">No name tables imported yet.</p>`}</div>
-      <div class="k-ov-block"><h3 class="readout-label">Assets <b class="num">${o.assets.total}</b>, ${o.assets.linked} linked to a term</h3>
+        ${tables ? `<ul class="k-tables">${tables}</ul>` : `<p class="panel-note">${escapeHtml(t("k.ov.noTables"))}</p>`}</div>
+      <div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.assets"))} <b class="num">${o.assets.total}</b> · ${escapeHtml(t("k.ov.linked", { n: o.assets.linked }))}</h3>
         <div class="k-counts">${counts(folders)}</div></div>
-      <div class="k-ov-block"><h3 class="readout-label">Inbox</h3>
-        <p class="panel-note">${o.inbox.files} files (${size(o.inbox.bytes)}), ${o.inbox.new} new or changed · <span class="path">${escapeHtml(o.inbox.folder)}</span></p></div>
-      <div class="k-ov-block"><h3 class="readout-label">Last imports of the inbox</h3>
-        ${reports ? `<ul class="k-reports">${reports}</ul>` : `<p class="panel-note">None yet.</p>`}</div>`;
+      <div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.kind.inbox"))}</h3>
+        <p class="panel-note">${escapeHtml(t("k.ov.inboxNote", { files: o.inbox.files, size: size(o.inbox.bytes), n: o.inbox.new }))} · <span class="path">${escapeHtml(o.inbox.folder)}</span></p></div>
+      <div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.ov.reports"))}</h3>
+        ${reports ? `<ul class="k-reports">${reports}</ul>` : `<p class="panel-note">${escapeHtml(t("k.ov.noReports"))}</p>`}</div>`;
   }
 
   $("k-overview").addEventListener("click", (event) => {
@@ -706,17 +723,22 @@
     const options = Object.entries(data.folders)
       .map(
         ([f, n]) =>
-          `<option value="${escapeHtml(f)}">${escapeHtml(f || "(inbox)")} · ${n}</option>`,
+          `<option value="${escapeHtml(f)}">${escapeHtml(f || t("k.ov.inboxFolder"))} · ${n}</option>`,
       )
       .join("");
-    select.innerHTML = `<option value="">All folders</option>${options}`;
+    select.innerHTML = `<option value="">${escapeHtml(t("k.assets.allFolders"))}</option>${options}`;
     select.value = folder;
     $("k-assets-note").textContent = data.total
-      ? `${data.matching} of ${data.total}${data.matching > data.assets.length ? `, first ${data.assets.length} shown` : ""}`
+      ? t(
+          data.matching > data.assets.length
+            ? "k.assets.firstShown"
+            : "k.docs.shown",
+          { n: data.matching, total: data.total, shown: data.assets.length },
+        )
       : "";
     const list = $("k-assets");
     if (!data.total) {
-      list.innerHTML = `<li class="panel-note">No images yet: drop icons or image folders into the inbox and import it.</li>`;
+      list.innerHTML = `<li class="panel-note">${escapeHtml(t("k.assets.none"))}</li>`;
       return;
     }
     list.replaceChildren(
@@ -796,14 +818,11 @@
     const button = event.target.closest("[data-delete]");
     if (!button) return;
     const doc = k.documents.find((d) => d.id === button.dataset.delete);
-    const from = doc?.path
-      ? ` Its file stays in the inbox; it comes back only if the file changes or is imported with "Again if stored".`
-      : "";
-    if (
-      !doc ||
-      !confirm(`Delete "${doc.title}" and its ${doc.chunks} chunks?${from}`)
-    )
-      return;
+    const question = t(doc?.path ? "k.delete.askInbox" : "k.delete.ask", {
+      title: doc?.title,
+      n: doc?.chunks,
+    });
+    if (!doc || !confirm(question)) return;
     button.disabled = true;
     try {
       await api("delete", { ids: [doc.id] });

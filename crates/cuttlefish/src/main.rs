@@ -20,9 +20,15 @@ use std::path::{Path, PathBuf};
 #[derive(Parser)]
 #[command(about = "Cuttlefish: Salmon Run knowledge store and AI reviewer")]
 struct Cli {
-    /// Data folder (default: $CUTTLEFISH_DATA or ~/.local/share/cuttlefish)
+    /// Knowledge folder; by default the studio's (see --config), else
+    /// $CUTTLEFISH_DATA
     #[arg(long, global = true)]
     data: Option<PathBuf>,
+    /// The studio's config file, whose knowledge folder is used ([cuttlefish]
+    /// knowledge, else Knowledge next to the Inkspector's root); by default
+    /// ./config.toml when there is one
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -204,8 +210,8 @@ struct Sink {
 /// index lacks (synced in from elsewhere)
 fn open(data: &Path, catch_up: bool) -> Result<(Store, E5Embedder)> {
     let models = store::models_dir();
-    if let Err(e) = store::migrate(&store::legacy_root(), data, &models) {
-        log::warn!("could not copy the older data folder: {e:#}");
+    if let Err(e) = store::migrate(&store::legacy_root(), data) {
+        log::warn!("could not bring the older data folder over: {e:#}");
     }
     let embedder = E5Embedder::load(&models)?;
     let mut store = Store::open(data, &embedder)?;
@@ -263,10 +269,72 @@ impl ingest::Sink for Sink {
     }
 }
 
+/// Where the studio with this config keeps its knowledge, as the studio
+/// finds it: `[cuttlefish] knowledge` (relative to the config file), else
+/// `Knowledge` next to the sessions' folder, which is `[inspect] root` or
+/// the folder of the recording prefix (the dashboard's choice, saved in
+/// `<config>.state.json`, before `[recording] prefix`)
+fn studio_knowledge(config: &Path) -> Result<PathBuf> {
+    let text =
+        std::fs::read_to_string(config).with_context(|| format!("reading {}", config.display()))?;
+    let value: toml::Value =
+        toml::from_str(&text).with_context(|| format!("in {}", config.display()))?;
+    let dir = config.parent().unwrap_or(Path::new("."));
+    let get = |table: &str, key: &str| value.get(table)?.get(key)?.as_str().map(String::from);
+    if let Some(knowledge) = get("cuttlefish", "knowledge") {
+        return Ok(dir.join(knowledge));
+    }
+    let sessions = match get("inspect", "root") {
+        Some(root) => dir.join(root),
+        None => {
+            let saved = std::fs::read(config.with_extension("state.json"))
+                .ok()
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+                .and_then(|state| state["prefix"].as_str().map(String::from));
+            let prefix = saved
+                .or_else(|| get("recording", "prefix"))
+                .context("the config has no [recording] prefix")?;
+            // As the recorder: "a/b-" lives in "a", "a/b/" in "a/b"
+            match Path::new(&format!("{prefix}x")).parent() {
+                Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+                _ => PathBuf::from("."),
+            }
+        }
+    };
+    Ok(sessions
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("Knowledge"))
+}
+
+/// The knowledge folder: `--data`, else the studio's through `--config` (or
+/// `./config.toml` when there is one), else `$CUTTLEFISH_DATA`
+fn knowledge_folder(data: Option<PathBuf>, config: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(data) = data {
+        return Ok(data);
+    }
+    let config = config.or_else(|| Some(PathBuf::from("config.toml")).filter(|c| c.is_file()));
+    if let Some(config) = config {
+        let data = studio_knowledge(&config)?;
+        log::info!(
+            "knowledge folder of {}: {}",
+            config.display(),
+            data.display()
+        );
+        return Ok(data);
+    }
+    match std::env::var_os("CUTTLEFISH_DATA").filter(|d| !d.is_empty()) {
+        Some(d) => Ok(PathBuf::from(d)),
+        None => bail!(
+            "no knowledge folder: run where the studio's config.toml is, or give --config <studio config>, --data <folder> or $CUTTLEFISH_DATA"
+        ),
+    }
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
-    let data = cli.data.clone().unwrap_or_else(Store::default_root);
+    let data = knowledge_folder(cli.data.clone(), cli.config.clone())?;
     match cli.command {
         Command::Ingest(i) => ingest(&data, i),
         Command::Search { query, k } => {

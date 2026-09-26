@@ -194,20 +194,24 @@ fn item_name(item: &Value) -> Option<String> {
     })
 }
 
-fn flatten(value: &Value, path: &mut Vec<String>, out: &mut Vec<Leaf>) {
+/// The strings of a tree by key path; with `all`, numbers and switches too
+fn flatten(value: &Value, all: bool, path: &mut Vec<String>, out: &mut Vec<Leaf>) {
     match value {
         Value::String(s) => out.push(Leaf::new(path.clone(), s)),
+        Value::Number(_) | Value::Bool(_) if all => {
+            out.push(Leaf::new(path.clone(), &value.to_string()))
+        }
         Value::Object(map) => {
             for (k, v) in map {
                 path.push(k.clone());
-                flatten(v, path, out);
+                flatten(v, all, path, out);
                 path.pop();
             }
         }
         Value::Array(items) => {
             for (i, v) in items.iter().enumerate() {
                 path.push(item_name(v).unwrap_or_else(|| i.to_string()));
-                flatten(v, path, out);
+                flatten(v, all, path, out);
                 path.pop();
             }
         }
@@ -354,10 +358,8 @@ fn properties_leaves(text: &str) -> Vec<Leaf> {
         .collect()
 }
 
-/// The strings of a structured file (by extension: `json`, `yaml`, `yml`,
-/// `toml`, `csv`, `tsv`, `po`, `properties`) and the language the file
-/// declares, if any
-pub fn read(path: &Path) -> Result<(Vec<Leaf>, Option<&'static str>)> {
+/// A file's extension, lowercase, and its text
+fn read_text(path: &Path) -> Result<(String, String)> {
     let ext = path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -365,18 +367,52 @@ pub fn read(path: &Path) -> Result<(Vec<Leaf>, Option<&'static str>)> {
     let bytes =
         std::fs::read(path).with_context(|| alloc::format!("reading {}", path.display()))?;
     let text = String::from_utf8_lossy(&bytes);
-    let text = text.trim_start_matches('\u{feff}');
-    let tree = |value: Value| {
-        let mut out = Vec::new();
-        flatten(&value, &mut Vec::new(), &mut out);
-        (out, None)
+    Ok((ext, String::from(text.trim_start_matches('\u{feff}'))))
+}
+
+/// The tree of a JSON, YAML or TOML text; `None` for other formats
+fn parse_tree(ext: &str, text: &str) -> Result<Option<Value>> {
+    Ok(Some(match ext {
+        "json" => serde_json::from_str(text).context("not JSON")?,
+        "yaml" | "yml" => serde_yaml_ng::from_str(text).context("not YAML")?,
+        "toml" => serde_json::to_value(toml::from_str::<toml::Value>(text).context("not TOML")?)?,
+        _ => return Ok(None),
+    }))
+}
+
+/// Largest data table (a structured file without names in several
+/// languages) kept as a text document
+pub const MAX_TEXT: u64 = 1 << 20;
+
+/// A data table as text for a document: one `key / path: value` line per
+/// value of a JSON, YAML or TOML file (numbers and switches included), and
+/// other formats (CSV, ...) as they are
+pub fn as_text(path: &Path) -> Result<String> {
+    let (ext, text) = read_text(path)?;
+    let Some(tree) = parse_tree(&ext, &text)? else {
+        return Ok(text);
     };
+    let mut leaves = Vec::new();
+    flatten(&tree, true, &mut Vec::new(), &mut leaves);
+    Ok(leaves
+        .iter()
+        .map(|l| alloc::format!("{}: {}", l.path.join(" / "), l.value))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+/// The strings of a structured file (by extension: `json`, `yaml`, `yml`,
+/// `toml`, `csv`, `tsv`, `po`, `properties`) and the language the file
+/// declares, if any
+pub fn read(path: &Path) -> Result<(Vec<Leaf>, Option<&'static str>)> {
+    let (ext, text) = read_text(path)?;
+    let text = text.as_str();
+    if let Some(tree) = parse_tree(&ext, text)? {
+        let mut out = Vec::new();
+        flatten(&tree, false, &mut Vec::new(), &mut out);
+        return Ok((out, None));
+    }
     Ok(match ext.as_str() {
-        "json" => tree(serde_json::from_str(text).context("not JSON")?),
-        "yaml" | "yml" => tree(serde_yaml_ng::from_str(text).context("not YAML")?),
-        "toml" => tree(serde_json::to_value(
-            toml::from_str::<toml::Value>(text).context("not TOML")?,
-        )?),
         "csv" => (table_leaves(text, None), None),
         "tsv" => (table_leaves(text, Some('\t')), None),
         "po" => po_leaves(text),
@@ -771,6 +807,25 @@ mod tests {
         let table = build("ui/*.json", &[m("ui/en.json", en), m("ui/ja.json", ja)]);
         assert_eq!(table.terms.len(), 1);
         assert!(table.note.starts_with("1 of 511 kept"), "{}", table.note);
+    }
+
+    #[test]
+    fn data_tables_as_text() {
+        let path = std::env::temp_dir().join(alloc::format!(
+            "cuttlefish-data-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"[{"__RowId": "Shooter_Normal_00", "Range": 1.5, "Auto": true, "Special": "Trizooka"}]"#,
+        )
+        .unwrap();
+        let text = as_text(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            text,
+            "Shooter_Normal_00 / Auto: true\nShooter_Normal_00 / Range: 1.5\nShooter_Normal_00 / Special: Trizooka\nShooter_Normal_00 / __RowId: Shooter_Normal_00"
+        );
     }
 
     #[test]

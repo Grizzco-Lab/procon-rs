@@ -178,15 +178,11 @@ fn main() -> anyhow::Result<()> {
         .cuttlefish
         .knowledge
         .map_or_else(|| beside("Knowledge"), |dir| config_dir.join(dir));
-    // The knowledge store of before (~/.local/share/cuttlefish) is copied
-    // over once, its embedding model into the local cache; once the copy
-    // checks out, the old folder is renamed to *.safe-to-delete
-    if let Err(e) = cuttlefish::store::migrate(
-        &cuttlefish::store::legacy_root(),
-        &knowledge,
-        &cuttlefish::store::models_dir(),
-    ) {
-        log::warn!("Could not copy the older knowledge store: {:#}", e);
+    // Our entries of the store of before (in ~/.local/share/cuttlefish, a
+    // folder another program owns) are copied over once and, when the copy
+    // checks out, moved into a procon-migrated-*.safe-to-delete folder there
+    if let Err(e) = cuttlefish::store::migrate(&cuttlefish::store::legacy_root(), &knowledge) {
+        log::warn!("Could not bring the older knowledge store over: {:#}", e);
     }
     let mut settings = cuttlefish::llm::Settings::default();
     if let Some(model) = config.cuttlefish.model {

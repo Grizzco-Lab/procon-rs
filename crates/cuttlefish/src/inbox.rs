@@ -31,7 +31,7 @@
 
 use crate::assets::{self, Asset, Catalogue};
 use crate::discord;
-use crate::doc::{SourceKind, doc_id};
+use crate::doc::{Document, SourceKind, doc_id};
 use crate::ingest::{Meta, Sink};
 use crate::store::{Store, write_atomic};
 use crate::tables::{self, Member};
@@ -122,6 +122,23 @@ pub fn classify(rel: &str, head: impl FnOnce() -> Vec<u8>) -> Route {
         .any(|e| name.ends_with(e))
     {
         return Route::Archive;
+    }
+    if [
+        "package.json",
+        "tsconfig.json",
+        "jsconfig.json",
+        "composer.json",
+        "deno.json",
+        "cargo.toml",
+        "pyproject.toml",
+        "pubspec.yaml",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        ".prettierrc.json",
+    ]
+    .contains(&name.as_str())
+    {
+        return Route::Skip("project configuration");
     }
     if [
         "package-lock.json",
@@ -805,16 +822,32 @@ impl Import<'_> {
             }
             let source = alloc::format!("{INBOX}/{family}");
             let table = tables::build(&source, &read);
-            let kind = if table.terms.is_empty() {
+            if table.terms.is_empty() {
+                // A data table: small ones are kept as text
                 tables::remove(&self.root, &table.id)?;
-                for m in &ok {
-                    self.report.skip(
-                        "structured file without names in several languages",
-                        &m.found.rel,
-                    );
+                for m in ok {
+                    let mut seen = Seen {
+                        kind: String::from("no-table"),
+                        ..m.seen
+                    };
+                    if seen.bytes > tables::MAX_TEXT {
+                        self.report.skip(
+                            "data table over 1 MB without names in several languages",
+                            &m.found.rel,
+                        );
+                    } else if let Err(e) = self.data_table(&m.found, &mut seen) {
+                        self.report.failed.push(Taken {
+                            path: m.found.rel.clone(),
+                            kind: String::from("document"),
+                            detail: alloc::format!("{e:#}"),
+                        });
+                        continue;
+                    }
+                    self.new.files.insert(m.found.rel, seen);
                 }
-                "no-table"
-            } else {
+                continue;
+            }
+            let kind = {
                 tables::save(&self.root, &table)?;
                 let detail = alloc::format!(
                     "{} terms in {} from {} ({})",
@@ -840,6 +873,35 @@ impl Import<'_> {
                 self.new.files.insert(m.found.rel, seen);
             }
         }
+        Ok(())
+    }
+
+    /// A structured file without names in several languages, as a small
+    /// text document of its values
+    fn data_table(&mut self, found: &Found, seen: &mut Seen) -> Result<()> {
+        let text = tables::as_text(&found.path)?;
+        if text.trim().chars().count() < MIN_TEXT {
+            self.report
+                .skip("structured file with too little data", &found.rel);
+            return Ok(());
+        }
+        let key = alloc::format!("{INBOX}/{}", found.rel);
+        let name = found.rel.rsplit('/').next().unwrap_or_default();
+        let source = self.meta.source.unwrap_or(SourceKind::File);
+        let mut doc = Document::new(source, &key, String::from(name), text);
+        doc.path = Some(key);
+        self.meta.apply(&mut doc);
+        let chunks = self.sink.add(&doc)?;
+        let lines = doc.text.lines().count();
+        self.sink
+            .note(&alloc::format!("+ {} ({chunks} chunks)", found.rel));
+        self.report.take(
+            &found.rel,
+            "document",
+            alloc::format!("data table as text: {lines} lines, {chunks} chunks"),
+        );
+        seen.kind = String::from("document");
+        seen.id = Some(doc.id);
         Ok(())
     }
 
@@ -1148,6 +1210,11 @@ mod tests {
         write(&root, "repo/package.json", br#"{"name": "tool"}"#);
         write(
             &root,
+            "data/weapons.json",
+            br#"[{"__RowId": "Shooter_Normal_00", "Range": 1.0, "Damage": 36, "Special": "Trizooka"}]"#,
+        );
+        write(
+            &root,
             "icons/Wst_splattershot.svg",
             br#"<svg viewBox="0 0 64 64"></svg>"#,
         );
@@ -1159,7 +1226,7 @@ mod tests {
         let meta = Meta::default();
         assert_eq!(pending(&root).new, 7);
         let report = import(&mut sink, &root, &cache, &meta).unwrap();
-        assert_eq!(report.count("document"), 1, "{report:#?}");
+        assert_eq!(report.count("document"), 2, "{report:#?}");
         assert_eq!(report.count("glossary"), 1);
         assert_eq!(report.count("asset"), 1);
         assert!(report.failed.is_empty(), "{:?}", report.failed);
@@ -1170,11 +1237,7 @@ mod tests {
         );
         assert!(reasons.iter().any(|r| r.starts_with("too little text")));
         assert!(reasons.iter().any(|r| r.starts_with("source code")));
-        assert!(
-            reasons
-                .iter()
-                .any(|r| r.starts_with("structured file without"))
-        );
+        assert!(reasons.contains(&"project configuration"), "{reasons:?}");
         assert!(report.notes.iter().any(|n| n.contains("node_modules")));
         assert!(
             report
@@ -1182,9 +1245,12 @@ mod tests {
                 .iter()
                 .any(|n| n.starts_with("repo is a git repository"))
         );
-        assert_eq!(sink.docs.len(), 1);
+        assert_eq!(sink.docs.len(), 2);
         assert_eq!(sink.docs[0].path.as_deref(), Some("inbox/guides/eggs.md"));
         assert_eq!(sink.docs[0].id, document_id("guides/eggs.md"));
+        // A data table without languages is a small text document
+        assert_eq!(sink.docs[1].title, "weapons.json");
+        assert!(sink.docs[1].text.contains("Shooter_Normal_00 / Damage: 36"));
         // Names reached the glossary, and the icon is linked to its term
         let glossary = Store::load_glossary(&root).unwrap();
         let term = glossary.lookup("スプラシューター").unwrap();
@@ -1212,12 +1278,16 @@ mod tests {
         let changed = import(&mut sink, &root, &cache, &meta).unwrap();
         assert_eq!(changed.count("document"), 1);
         assert_eq!(changed.gone, ["icons/Wst_splattershot.svg"]);
-        assert_eq!(sink.docs.len(), 1);
-        assert!(sink.docs[0].text.contains("twenty seconds"));
+        assert_eq!(sink.docs.len(), 2);
+        let eggs = sink
+            .docs
+            .iter()
+            .find(|d| d.id == document_id("guides/eggs.md"));
+        assert!(eggs.unwrap().text.contains("twenty seconds"));
         assert!(Catalogue::load(&root).assets.is_empty());
         assert_eq!(reports(&root, 10).len(), 3);
         let first = &reports(&root, 10)[2];
-        assert_eq!(super::report(&root, &first.id).unwrap().taken.len(), 3);
+        assert_eq!(super::report(&root, &first.id).unwrap().taken.len(), 4);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
