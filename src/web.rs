@@ -153,6 +153,7 @@ pub async fn serve(
                 let file = ICONS.get_file(name).ok_or_else(warp::reject::not_found)?;
                 let content_type = match name.rsplit_once('.') {
                     Some((_, "svg")) => "image/svg+xml",
+                    Some((_, "js")) => "text/javascript; charset=utf-8",
                     _ => "text/html; charset=utf-8",
                 };
                 Ok::<_, warp::Rejection>(warp::reply::with_header(
