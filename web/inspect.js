@@ -1,7 +1,8 @@
 // Inkspector app: pick a recorded session, then check its controller labels
 // against the video frame by frame. Runs next to app.js and uses its helpers
 // ($, root, drawInputHud, stickPercent); its state lives in the hash as
-// #inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>&pred=<path>.
+// #inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>&pred=<path> (and label=1
+// to open in the labeling mode).
 
 /** Stick difference (raw 12-bit units) that counts as a mismatch */
 const STICK_TOLERANCE = 256;

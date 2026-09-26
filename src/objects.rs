@@ -226,6 +226,32 @@ impl Annotations {
     }
 }
 
+impl Annotations {
+    /// Merge a model's boxes into a segment's labels by the
+    /// `gameplay-vision` prelabel rule: frames a person has labeled are
+    /// never changed, frames with only model boxes get the new ones, frames
+    /// without a line get one. Written under the same lock as the labeling
+    /// mode's saves. Answers with the file and what was done.
+    pub fn merge_model_boxes(
+        &self,
+        session: &str,
+        segment: &str,
+        predicted: Vec<gameplay_vision::labels::FrameObjects>,
+    ) -> Result<(PathBuf, gameplay_vision::labels::MergeStats)> {
+        use gameplay_vision::labels;
+        let path = self.path(session, segment)?;
+        let _writing = self.writing.lock().unwrap();
+        let (merged, stats) = labels::merge_model_boxes(labels::read_objects(&path)?, predicted);
+        let mut text = String::new();
+        for line in &merged {
+            text.push_str(&serde_json::to_string(line)?);
+            text.push('\n');
+        }
+        write_atomic(&path, text.as_bytes())?;
+        Ok((path, stats))
+    }
+}
+
 /// The lines of a labels file by frame; a missing file has none
 pub fn read_objects(path: &Path) -> Result<BTreeMap<u64, FrameObjects>> {
     let text = match std::fs::read_to_string(path) {

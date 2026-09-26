@@ -37,16 +37,20 @@
 //!   [{"t_s", "t_end_s"?, "text", "shapes"}]}`, which the page adds as
 //!   Cuttlefish's; `501` while the reviewer cannot start (no
 //!   `ANTHROPIC_API_KEY`, the only place the key is read from)
+//! - `knowledge/...`: the knowledge view (stats, search, ask, translate,
+//!   imports, glossary), see [`crate::knowledge`]; its store and embedder
+//!   also serve `ai`
 //!
 //! Errors are `{"error": "..."}` with status 400 (404 for a missing review).
 
 use crate::inspect::{Inspector, ffprobe};
+use crate::knowledge::{Knowledge, Status};
 use crate::objects::write_atomic;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use cuttlefish::llm::Settings;
-use cuttlefish::review::{self as ai, ReviewRequest, Reviewer};
+use cuttlefish::review::{self as ai, ReviewRequest};
 use gameplay_data::session::SessionInfo;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -223,12 +227,9 @@ pub struct Cuttlefish {
     cache: PathBuf,
     downloads: Arc<Mutex<BTreeMap<String, Download>>>,
     writing: Mutex<()>,
-    /// The `cuttlefish` crate's data folder (knowledge store, models)
-    knowledge: PathBuf,
-    /// Model settings of the reviewer
-    settings: Settings,
-    /// The reviewer, opened on the first question
-    reviewer: Mutex<Option<Arc<Reviewer>>>,
+    /// The `cuttlefish` crate's store, shared by the reviewer and the
+    /// knowledge view
+    knowledge: Arc<Knowledge>,
 }
 
 /// A reply before it becomes an HTTP response
@@ -254,9 +255,6 @@ impl Reply {
     }
 }
 
-/// An error with the status it answers with
-struct Status(StatusCode, anyhow::Error);
-
 impl Cuttlefish {
     pub fn new(
         inspector: Arc<Inspector>,
@@ -271,9 +269,7 @@ impl Cuttlefish {
             cache,
             downloads: Arc::default(),
             writing: Mutex::default(),
-            knowledge,
-            settings,
-            reviewer: Mutex::default(),
+            knowledge: Arc::new(Knowledge::new(knowledge, settings)),
         }
     }
 
@@ -547,37 +543,23 @@ impl Cuttlefish {
 
     // ----------------------------------------------------------------- AI
 
-    /// The reviewer, opened once; an error (no key, no model) is tried again
-    /// on the next question
-    fn reviewer(&self) -> Result<Arc<Reviewer>> {
-        let mut reviewer = self.reviewer.lock().unwrap();
-        if let Some(reviewer) = &*reviewer {
-            return Ok(Arc::clone(reviewer));
-        }
-        let opened = Arc::new(
-            Reviewer::open(&self.knowledge, self.settings.clone())
-                .context("Cuttlefish cannot start")?,
-        );
-        *reviewer = Some(Arc::clone(&opened));
-        Ok(opened)
-    }
-
     /// Ask the reviewer about `t_s`..`t_end_s` (or the moment around `t_s`)
     /// of a video; comments as the page stores them
     fn ask(
         &self,
-        reviewer: &Reviewer,
         video: &VideoRef,
         t_s: f64,
         t_end_s: Option<f64>,
         question: Option<&str>,
         review: Option<&str>,
-    ) -> Result<Vec<Value>> {
+    ) -> Result<Vec<Value>, Status> {
         let (start_s, end_s) = match t_end_s {
             Some(end) => (t_s, end),
             None => ((t_s - MOMENT_S.0).max(0.0), t_s + MOMENT_S.1),
         };
-        ensure!(end_s > start_s, "the range must end after it starts");
+        if end_s <= start_s {
+            return Err(anyhow::anyhow!("the range must end after it starts").into());
+        }
         let path = self.video_path(video)?;
         let comments = match review {
             Some(id) if !id.is_empty() => self.review(id)?.comments,
@@ -609,7 +591,8 @@ impl Cuttlefish {
                 })
                 .collect(),
         };
-        Ok(reviewer
+        Ok(self
+            .knowledge
             .review(&request)?
             .into_iter()
             .map(page_comment)
@@ -632,6 +615,7 @@ impl Cuttlefish {
             None if path == "downloads" => Ok(Reply::json(self.downloads())),
             None if path == "video" => self.video(&video()?, range).map_err(bad),
             None if path == "meta" => Ok(Reply::json(self.meta(&video()?).map_err(bad)?)),
+            Some(("knowledge", rest)) => Ok(Reply::json(self.knowledge.get(rest, query)?)),
             Some(("reviews", id)) => {
                 let path = self.review_path(id).map_err(bad)?;
                 if !path.is_file() {
@@ -685,20 +669,19 @@ impl Cuttlefish {
                 let t_s = body["t_s"]
                     .as_f64()
                     .ok_or_else(|| bad(anyhow::anyhow!("no t_s")))?;
-                let reviewer = self
-                    .reviewer()
-                    .map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))?;
-                let comments = self
-                    .ask(
-                        &reviewer,
-                        &video,
-                        t_s,
-                        body["t_end_s"].as_f64(),
-                        body["question"].as_str(),
-                        body["review"].as_str(),
-                    )
-                    .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))?;
+                // No key: say so before extracting frames
+                self.knowledge.client()?;
+                let comments = self.ask(
+                    &video,
+                    t_s,
+                    body["t_end_s"].as_f64(),
+                    body["question"].as_str(),
+                    body["review"].as_str(),
+                )?;
                 Ok(Reply::json(json!({ "comments": comments })))
+            }
+            (&Method::POST, Some(("knowledge", rest))) => {
+                Ok(Reply::json(self.knowledge.post(rest, body)?))
             }
             _ => Err(Status(
                 StatusCode::NOT_FOUND,

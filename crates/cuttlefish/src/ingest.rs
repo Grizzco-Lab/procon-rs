@@ -323,7 +323,8 @@ pub fn files(
     for (i, p) in paths.iter().enumerate() {
         check(sink)?;
         sink.progress(i, paths.len());
-        let mut doc = file::load(p, meta.source.unwrap_or(SourceKind::File))?;
+        let mut doc = file::load(p, meta.source.unwrap_or(SourceKind::File))
+            .with_context(|| alloc::format!("reading {}", p.display()))?;
         if let Some(url) = url {
             doc.url = Some(String::from(url));
         }

@@ -1,7 +1,8 @@
 //! Studio dashboard server: live controller view, video preview, recording controls
 //!
 //! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`, `/inspect.js`,
-//!   `/sketch.js`, `/label.js`, `/cuttlefish.js`: the page, embedded from `web/`
+//!   `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`, `/vision.js`:
+//!   the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
 //!   report, `{"type":"status"}` text twice a second, and the video preview
 //!   as binary fragmented-MP4 messages (an init segment, then one per frame)
@@ -9,8 +10,10 @@
 //!   with `{"recorder": ..., "replay": ...}` or `{"error": "..."}`
 //! - `GET /api/inspect/...`: the Inkspector app's data, see [`crate::inspect`];
 //!   errors are `400` with `{"error": "..."}`
-//! - `/api/cuttlefish/...`: the Cuttlefish app's reviews and videos, see
-//!   [`crate::cuttlefish`]
+//! - `/api/cuttlefish/...`: the Cuttlefish app's reviews, videos and
+//!   knowledge, see [`crate::cuttlefish`] and [`crate::knowledge`]
+//! - `/api/vision/...`: the Vision app's runs and results, see
+//!   [`crate::vision`]
 
 use crate::cuttlefish::{self, Cuttlefish};
 use crate::dump::{Dumper, Frame};
@@ -19,6 +22,7 @@ use crate::motion::Orientation;
 use crate::parser::ProConParser;
 use crate::studio::{Command, Studio};
 use crate::video::{ChunkKind, PreviewChunk};
+use crate::vision::{self, Vision};
 use alloc::collections::VecDeque;
 use alloc::ffi::CString;
 use alloc::sync::Arc;
@@ -85,6 +89,7 @@ pub async fn serve(
     studio: Arc<Studio>,
     inspector: Arc<Inspector>,
     cuttlefish: Arc<Cuttlefish>,
+    vision: Arc<Vision>,
     port: u16,
 ) {
     let status = watch::Sender::new(String::new());
@@ -112,12 +117,15 @@ pub async fn serve(
         )
     });
 
-    // The drawing layer, the Inkspector's labeling mode and the Cuttlefish app
+    // The drawing layer, the Inkspector's labeling mode, the Cuttlefish app
+    // with its knowledge view, and the Vision app
     let scripts = warp::path!(String).and_then(|name: String| async move {
         let body = match name.as_str() {
             "sketch.js" => include_str!("../web/sketch.js"),
             "label.js" => include_str!("../web/label.js"),
             "cuttlefish.js" => include_str!("../web/cuttlefish.js"),
+            "knowledge.js" => include_str!("../web/knowledge.js"),
+            "vision.js" => include_str!("../web/vision.js"),
             _ => return Err(warp::reject::not_found()),
         };
         Ok(asset(body, "text/javascript; charset=utf-8"))
@@ -269,7 +277,8 @@ pub async fn serve(
         .or(api)
         .or(delay)
         .or(objects)
-        .or(cuttlefish::routes(cuttlefish));
+        .or(cuttlefish::routes(cuttlefish))
+        .or(vision::routes(vision));
 
     log::info!("Dashboard on http://0.0.0.0:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;

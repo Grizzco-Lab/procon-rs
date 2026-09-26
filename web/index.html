@@ -73,6 +73,17 @@
           </svg>
           <span class="app-name">Cuttlefish</span>
         </a>
+        <a href="#vision" data-app="vision" title="Vision">
+          <!-- An eye in the corners of a detection box -->
+          <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 8V4h4M17 4h4v4M21 16v4h-4M7 20H3v-4" />
+            <path
+              d="M6 12c1.6-2.7 3.6-4 6-4s4.4 1.3 6 4c-1.6 2.7-3.6 4-6 4s-4.4-1.3-6-4z"
+            />
+            <circle class="app-icon-dot" cx="12" cy="12" r="1.8" />
+          </svg>
+          <span class="app-name">Vision</span>
+        </a>
       </nav>
       <div class="status-strip">
         <span class="chip-group">
@@ -105,7 +116,25 @@
         </span>
         <!-- Cuttlefish only: the open review and whether it is saved -->
         <span class="chip-group" data-app-only="cuttlefish">
+          <!-- The library's two views; hidden in the player -->
+          <span class="cf-tabs" id="cf-tabs">
+            <a class="mode-toggle" href="#cuttlefish" data-tab="reviews"
+              >Reviews</a
+            >
+            <a
+              class="mode-toggle"
+              href="#cuttlefish/view=knowledge"
+              data-tab="knowledge"
+              >Knowledge</a
+            >
+          </span>
           <span class="chip" id="cf-chip" data-level="off" hidden>
+            <span class="chip-dot"></span><span class="chip-text"></span>
+          </span>
+        </span>
+        <!-- Vision only: the current or last run -->
+        <span class="chip-group" data-app-only="vision">
+          <span class="chip" id="v-chip" data-level="off" hidden>
             <span class="chip-dot"></span><span class="chip-text"></span>
           </span>
         </span>
@@ -1194,6 +1223,584 @@
           </p>
         </section>
       </main>
+
+      <!-- Knowledge: the store behind Cuttlefish (search, ask, imports) -->
+      <main class="layout" id="cf-knowledge" hidden>
+        <section class="panel p-k-stats" aria-labelledby="h-k-stats">
+          <header class="panel-head">
+            <h2 id="h-k-stats">Knowledge</h2>
+            <span class="panel-note path" id="k-data"></span>
+          </header>
+          <p class="panel-note" id="k-loading">
+            Loading the knowledge store… The first time, the embedding model
+            (about 470 MB) is downloaded into the data folder.
+          </p>
+          <div class="tiles" id="k-tiles" hidden>
+            <div class="tile">
+              <span class="tile-label">Documents</span>
+              <span class="tile-value num" id="k-documents">0</span>
+              <span class="tile-note" id="k-sources-note"></span>
+            </div>
+            <div class="tile">
+              <span class="tile-label">Chunks</span>
+              <span class="tile-value num" id="k-chunks">0</span>
+              <span class="tile-note" id="k-embedder"></span>
+            </div>
+            <div class="tile">
+              <span class="tile-label">Glossary</span>
+              <span class="tile-value num" id="k-terms">0</span>
+              <span class="tile-note" id="k-glossary-note"></span>
+            </div>
+            <div class="tile">
+              <span class="tile-label">Digest</span>
+              <span class="tile-value" id="k-digest">–</span>
+              <span class="tile-note">digest.md, sent with every question</span>
+            </div>
+          </div>
+          <div class="k-keys" id="k-keys"></div>
+          <p class="notice" id="k-stats-error" hidden></p>
+        </section>
+
+        <section class="panel p-k-search" aria-labelledby="h-k-search">
+          <header class="panel-head">
+            <h2 id="h-k-search">Search</h2>
+            <span class="panel-note">nearest chunks, any language, no key</span>
+          </header>
+          <form class="cf-row" id="k-search-form">
+            <input
+              class="select cf-grow"
+              id="k-q"
+              type="search"
+              placeholder="Stinger at low tide, バクダンの処理…"
+              aria-label="Search the knowledge"
+              required
+            />
+            <select class="select" id="k-k" aria-label="Results">
+              <option value="5">5</option>
+              <option value="8" selected>8</option>
+              <option value="15">15</option>
+              <option value="30">30</option>
+            </select>
+            <button type="submit" class="btn btn-small">Search</button>
+          </form>
+          <p class="notice" id="k-search-error" hidden></p>
+          <ol class="k-hits" id="k-hits"></ol>
+        </section>
+
+        <section class="panel p-k-ask" aria-labelledby="h-k-ask">
+          <header class="panel-head">
+            <h2 id="h-k-ask">Ask and translate</h2>
+            <span class="panel-note" id="k-model"></span>
+          </header>
+          <p class="notice is-info" id="k-key-note" hidden>
+            ANTHROPIC_API_KEY is not set where the studio runs, so asking and
+            translating are off. Export it before starting the studio; search,
+            imports and the glossary work without it.
+          </p>
+          <form class="cf-ask" id="k-ask-form">
+            <div class="cf-ask-head">
+              <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 13.5V9a5 5 0 0 1 10 0v4.5z" />
+                <path
+                  d="M7 8.5c-1.6.6-2.4 2.4-2 4.6M17 8.5c1.6.6 2.4 2.4 2 4.6"
+                />
+                <path
+                  d="M8.5 13.5v2.5c0 1.6-.9 2.8-2.2 3.5M12 13.5v7M15.5 13.5v2.5c0 1.6.9 2.8 2.2 3.5"
+                />
+                <circle class="app-icon-dot" cx="10" cy="10.2" r="1.1" />
+                <circle class="app-icon-dot" cx="14" cy="10.2" r="1.1" />
+              </svg>
+              <b>Ask Cuttlefish</b>
+              <span class="panel-note">answers cite the knowledge</span>
+            </div>
+            <textarea
+              class="select cf-question"
+              id="k-question"
+              rows="2"
+              placeholder="When should I leave the basket to kill a Stinger?"
+              aria-label="Question"
+              required
+            ></textarea>
+            <div class="cf-row">
+              <button type="submit" class="btn btn-small" id="k-ask">
+                Ask
+              </button>
+              <span class="panel-note" id="k-ask-status"></span>
+            </div>
+          </form>
+          <div class="k-answer" id="k-answer" hidden></div>
+          <form class="k-translate" id="k-translate-form">
+            <label class="readout-label" for="k-text">Translate</label>
+            <textarea
+              class="select cf-question"
+              id="k-text"
+              rows="2"
+              placeholder="Kill the Steelhead before the Flyfish"
+              required
+            ></textarea>
+            <div class="cf-row">
+              <select class="select" id="k-to" aria-label="Into">
+                <option value="en">English</option>
+                <option value="ja">Japanese</option>
+                <option value="zh">Chinese (simplified)</option>
+                <option value="zh-Hant">Chinese (traditional)</option>
+                <option value="ko">Korean</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+                <option value="it">Italian</option>
+                <option value="ru">Russian</option>
+              </select>
+              <button type="submit" class="btn btn-small" id="k-translate">
+                Translate
+              </button>
+              <span class="panel-note" id="k-translate-status"></span>
+            </div>
+          </form>
+          <p class="k-translation" id="k-translation" hidden></p>
+        </section>
+
+        <section class="panel p-k-import" aria-labelledby="h-k-import">
+          <header class="panel-head">
+            <h2 id="h-k-import">Import</h2>
+            <span class="panel-note">one at a time; web pages politely</span>
+          </header>
+          <form class="k-import" id="k-import-form">
+            <div class="k-kinds" id="k-kinds">
+              <button type="button" class="mode-toggle" data-kind="web">
+                Web pages
+              </button>
+              <button type="button" class="mode-toggle" data-kind="sitemap">
+                Sitemap
+              </button>
+              <button type="button" class="mode-toggle" data-kind="wiki">
+                Wiki category
+              </button>
+              <button type="button" class="mode-toggle" data-kind="youtube">
+                YouTube
+              </button>
+              <button type="button" class="mode-toggle" data-kind="file">
+                Files
+              </button>
+              <button type="button" class="mode-toggle" data-kind="export">
+                Discord export
+              </button>
+              <button type="button" class="mode-toggle" data-kind="bot">
+                Discord bot
+              </button>
+            </div>
+            <label class="field" data-for="web">
+              <span class="readout-label">Page addresses, one per line</span>
+              <textarea
+                class="select cf-question"
+                id="k-urls"
+                rows="3"
+                placeholder="https://example.org/salmon-run-guide"
+              ></textarea>
+            </label>
+            <label class="field" data-for="sitemap">
+              <span class="readout-label">Sitemap address</span>
+              <input
+                class="select"
+                id="k-sitemap"
+                type="url"
+                placeholder="https://example.org/sitemap.xml"
+              />
+            </label>
+            <label class="field" data-for="wiki">
+              <span class="readout-label">MediaWiki api.php</span>
+              <input
+                class="select"
+                id="k-api"
+                type="url"
+                placeholder="https://splatoonwiki.org/w/api.php"
+              />
+            </label>
+            <label class="field" data-for="wiki">
+              <span class="readout-label">Categories, one per line</span>
+              <textarea
+                class="select cf-question"
+                id="k-categories"
+                rows="2"
+                placeholder="Category:Salmon Run"
+              ></textarea>
+            </label>
+            <div class="cf-row" data-for="web sitemap wiki">
+              <label class="check"
+                >At most
+                <input
+                  class="select num k-number"
+                  id="k-max-pages"
+                  type="number"
+                  min="1"
+                  value="50"
+                />
+                pages</label
+              >
+              <label class="check"
+                >one request per site every
+                <input
+                  class="select num k-number"
+                  id="k-delay"
+                  type="number"
+                  min="1"
+                  step="0.5"
+                  value="3"
+                />
+                s</label
+              >
+            </div>
+            <label class="field" data-for="youtube">
+              <span class="readout-label"
+                >Video, playlist or channel (subtitles only)</span
+              >
+              <input
+                class="select"
+                id="k-youtube"
+                type="url"
+                placeholder="https://www.youtube.com/watch?v=…"
+              />
+            </label>
+            <label class="check" data-for="youtube"
+              >At most
+              <input
+                class="select num k-number"
+                id="k-max-videos"
+                type="number"
+                min="1"
+                value="20"
+              />
+              videos</label
+            >
+            <label class="field" data-for="file export">
+              <span class="readout-label"
+                >Files on this machine, full paths, one per line</span
+              >
+              <textarea
+                class="select cf-question"
+                id="k-paths"
+                rows="2"
+                placeholder="/home/me/guides/fundamentals.pdf"
+              ></textarea>
+            </label>
+            <label class="field" data-for="file">
+              <span class="readout-label">Address to cite (optional)</span>
+              <input
+                class="select"
+                id="k-cite"
+                type="url"
+                placeholder="https://…"
+              />
+            </label>
+            <label class="check" data-for="export"
+              ><input type="checkbox" id="k-whole" /> Each file is one
+              conversation (a thread or forum post)</label
+            >
+            <label class="field" data-for="bot">
+              <span class="readout-label">Channel ids, one per line</span>
+              <textarea
+                class="select cf-question"
+                id="k-channels"
+                rows="2"
+                placeholder="123456789012345678"
+              ></textarea>
+            </label>
+            <label class="check" data-for="bot"
+              ><input type="checkbox" id="k-threads" checked /> With threads and
+              forum posts <span class="check-note" id="k-token-note"></span
+            ></label>
+            <div class="cf-row">
+              <select class="select" id="k-source" aria-label="Kind of source">
+                <option value="">Kind: automatic</option>
+                <option value="guide">Guide</option>
+                <option value="wiki">Wiki</option>
+                <option value="web">Web page</option>
+                <option value="video">Video</option>
+                <option value="discord-vod-review">#vod-review</option>
+                <option value="discord">Discord</option>
+                <option value="file">File</option>
+              </select>
+              <input
+                class="select cf-grow"
+                id="k-license"
+                type="text"
+                placeholder="License or terms (optional)"
+                aria-label="License"
+              />
+              <label class="check"
+                ><input type="checkbox" id="k-refresh" /> Again if stored</label
+              >
+            </div>
+            <div class="cf-row">
+              <button type="submit" class="btn btn-small">Import</button>
+            </div>
+          </form>
+          <p class="notice" id="k-import-error" hidden></p>
+          <ul class="cf-downloads" id="k-jobs"></ul>
+        </section>
+
+        <section class="panel p-k-docs" aria-labelledby="h-k-docs">
+          <header class="panel-head">
+            <h2 id="h-k-docs">Documents</h2>
+            <input
+              class="select"
+              id="k-filter"
+              type="search"
+              placeholder="Filter"
+              aria-label="Filter documents"
+            />
+          </header>
+          <div class="table-wrap k-docs-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Source</th>
+                  <th>Chunks</th>
+                  <th>License</th>
+                  <th>Fetched</th>
+                </tr>
+              </thead>
+              <tbody id="k-docs"></tbody>
+            </table>
+          </div>
+          <p class="panel-note" id="k-docs-note"></p>
+        </section>
+
+        <section class="panel p-k-glossary" aria-labelledby="h-k-glossary">
+          <header class="panel-head">
+            <h2 id="h-k-glossary">Glossary</h2>
+            <span class="panel-note" id="k-glossary-size"></span>
+          </header>
+          <form class="cf-row" id="k-glossary-form">
+            <input
+              class="select cf-grow"
+              id="k-term"
+              type="search"
+              placeholder="Steelhead, コジャケ, or a sentence"
+              aria-label="Term or text"
+              required
+            />
+            <button type="submit" class="btn btn-small">Look up</button>
+          </form>
+          <ul class="k-terms" id="k-glossary"></ul>
+        </section>
+      </main>
+    </div>
+
+    <!-- Vision app: detect and track objects in a session, review, send to labels -->
+    <div data-app-section="vision" hidden>
+      <main class="layout" id="vision-layout">
+        <section class="panel p-v-run" aria-labelledby="h-v-run">
+          <header class="panel-head">
+            <h2 id="h-v-run">Detect</h2>
+            <span class="panel-note" id="v-device"></span>
+          </header>
+          <form class="v-form" id="v-form">
+            <div class="cf-row">
+              <select
+                class="select cf-grow"
+                id="v-session"
+                aria-label="Session"
+              ></select>
+              <select
+                class="select"
+                id="v-segment"
+                aria-label="Segment"
+              ></select>
+            </div>
+            <div class="v-range">
+              <label class="field"
+                ><span class="readout-label">First frame</span
+                ><input
+                  class="select num"
+                  id="v-start"
+                  type="number"
+                  min="0"
+                  value="0"
+              /></label>
+              <label class="field"
+                ><span class="readout-label">Every</span
+                ><input
+                  class="select num"
+                  id="v-step"
+                  type="number"
+                  min="1"
+                  value="2"
+              /></label>
+              <label class="field"
+                ><span class="readout-label">Frames</span
+                ><input
+                  class="select num"
+                  id="v-count"
+                  type="number"
+                  min="1"
+                  max="20000"
+                  value="300"
+              /></label>
+            </div>
+            <p class="panel-note" id="v-span"></p>
+            <div class="cf-row">
+              <select
+                class="select cf-grow"
+                id="v-model"
+                aria-label="Model"
+              ></select>
+              <label class="check"
+                ><input type="checkbox" id="v-track" checked /> Track</label
+              >
+              <label class="check" id="v-cpu-wrap" hidden
+                ><input type="checkbox" id="v-cpu" /> CPU</label
+              >
+            </div>
+            <div class="cf-row">
+              <button type="submit" class="btn btn-small" id="v-run">
+                Run
+              </button>
+              <button type="button" class="btn btn-small" id="v-cancel" hidden>
+                Cancel
+              </button>
+            </div>
+          </form>
+          <div class="meter" id="v-progress" hidden>
+            <div class="meter-head">
+              <span class="meter-label" id="v-state"></span>
+              <span class="meter-value num" id="v-count-text"></span>
+            </div>
+            <div class="meter-track"><div class="meter-fill"></div></div>
+            <div class="meter-note" id="v-job-note"></div>
+          </div>
+          <p class="notice" id="v-error" hidden></p>
+          <div class="table-wrap">
+            <table class="data-table v-timings">
+              <thead>
+                <tr>
+                  <th>ms per frame</th>
+                  <th>Mean</th>
+                  <th>p95</th>
+                </tr>
+              </thead>
+              <tbody id="v-timings"></tbody>
+            </table>
+          </div>
+          <p class="panel-note" id="v-timing-note"></p>
+        </section>
+
+        <section class="panel p-v-frame" aria-labelledby="h-v-frame">
+          <header class="panel-head">
+            <h2 id="h-v-frame">Results</h2>
+            <span class="panel-note" id="v-results-note"></span>
+          </header>
+          <div class="screen v-screen">
+            <img id="v-img" alt="" hidden />
+            <svg
+              class="v-boxes"
+              id="v-boxes"
+              viewBox="0 0 640 360"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            ></svg>
+            <p class="v-empty" id="v-empty">
+              No results for this segment yet: run a detection.
+            </p>
+          </div>
+          <div class="v-steps">
+            <button type="button" class="btn btn-small" id="v-prev" title="←">
+              ‹
+            </button>
+            <input
+              class="v-scrub"
+              id="v-scrub"
+              type="range"
+              min="0"
+              max="0"
+              value="0"
+              aria-label="Processed frame"
+            />
+            <button type="button" class="btn btn-small" id="v-next" title="→">
+              ›
+            </button>
+            <span class="chip num" id="v-frame-chip">–</span>
+          </div>
+          <div class="cf-row">
+            <label class="check"
+              ><input type="checkbox" id="v-scores" checked /> Scores</label
+            >
+            <label class="check"
+              ><input type="checkbox" id="v-tracked" /> Tracked only</label
+            >
+            <span class="panel-note" id="v-frame-note"></span>
+          </div>
+        </section>
+
+        <section class="panel p-v-summary" aria-labelledby="h-v-summary">
+          <header class="panel-head">
+            <h2 id="h-v-summary">Classes</h2>
+            <span class="panel-note" id="v-classes-note"></span>
+          </header>
+          <div class="table-wrap v-classes-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Class</th>
+                  <th>Boxes</th>
+                  <th>Frames</th>
+                  <th>Mean score</th>
+                </tr>
+              </thead>
+              <tbody id="v-classes"></tbody>
+            </table>
+          </div>
+          <form class="v-send" id="v-send-form">
+            <label class="readout-label" for="v-map"
+              >Send to labels: rename classes (from=to, comma-separated);
+              classes the labels do not have are left out</label
+            >
+            <div class="cf-row">
+              <input
+                class="select cf-grow"
+                id="v-map"
+                type="text"
+                placeholder="person=player, sports ball=golden_egg"
+              />
+              <button type="submit" class="btn btn-small" id="v-send">
+                Send to labels
+              </button>
+            </div>
+            <p class="panel-note">
+              Model boxes only: frames a person has labeled are never changed.
+            </p>
+          </form>
+          <div class="v-sent" id="v-sent" hidden></div>
+        </section>
+
+        <section class="panel p-v-tracks" aria-labelledby="h-v-tracks">
+          <header class="panel-head">
+            <h2 id="h-v-tracks">Tracks</h2>
+            <span class="panel-note" id="v-tracks-note"></span>
+          </header>
+          <svg
+            class="v-trail"
+            id="v-trail"
+            viewBox="0 0 640 360"
+            aria-label="Where tracks went on screen"
+          ></svg>
+          <div class="table-wrap v-tracks-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Track</th>
+                  <th>Class</th>
+                  <th>Frames</th>
+                  <th>First</th>
+                  <th>Last</th>
+                </tr>
+              </thead>
+              <tbody id="v-tracks"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
     </div>
 
     <script src="app.js"></script>
@@ -1201,6 +1808,8 @@
     <script src="inspect.js"></script>
     <script src="label.js"></script>
     <script src="cuttlefish.js"></script>
+    <script src="knowledge.js"></script>
+    <script src="vision.js"></script>
     <script type="module" src="controller3d.js"></script>
   </body>
 </html>

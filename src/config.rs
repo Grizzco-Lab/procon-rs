@@ -115,6 +115,9 @@ pub struct StudioConfig {
     /// The Cuttlefish app
     #[serde(default)]
     pub cuttlefish: CuttlefishConfig,
+    /// The Vision app
+    #[serde(default)]
+    pub vision: VisionConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
 }
@@ -152,6 +155,29 @@ pub struct CuttlefishConfig {
     pub knowledge: Option<String>,
     /// Model answering "Ask Cuttlefish"; by default the crate's
     pub model: Option<String>,
+}
+
+/// The Vision app: object detection and tracking on recorded sessions
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct VisionConfig {
+    /// Folder of the last results per segment, relative to this config
+    /// file; by default `Vision` next to the Inkspector's root
+    pub results: Option<String>,
+    /// Size of the pretrained COCO YOLOv8 chosen at first: `n`, `s` or `m`;
+    /// by default `n`
+    pub size: Option<String>,
+    /// Our own weights (safetensors, the `gameplay-vision` crate's tensor
+    /// names), relative to this config file; offered as "Custom" next to
+    /// the COCO sizes
+    pub weights: Option<String>,
+    /// Size of the network in `weights` (`n`, `s`, `m`, `l`, `x`); by
+    /// default `n`
+    pub weights_size: Option<String>,
+    /// Class names of `weights`, relative to this config file: a JSON array,
+    /// a `classes.json` or one name per line
+    pub classes: Option<String>,
+    /// Lowest score kept; by default 0.25
+    pub confidence: Option<f32>,
 }
 
 /// The machine running `procon-proxy`

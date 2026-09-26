@@ -3228,3 +3228,533 @@ body {
   min-width: 0;
   max-width: min(520px, 70vw);
 }
+
+/* The library's two views, as tabs in the top bar */
+.cf-tabs {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.cf-tabs[hidden] {
+  display: none;
+}
+
+.cf-tabs a {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.cf-tabs a[aria-current="page"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* ============================================================ knowledge
+ * Cuttlefish's knowledge view: stats, search, ask and translate, imports,
+ * documents and the glossary.
+ */
+
+#cf-knowledge {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  align-items: start;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  grid-template-areas:
+    "stats search"
+    "ask search"
+    "import docs"
+    "glossary docs";
+}
+
+.p-k-stats {
+  grid-area: stats;
+}
+.p-k-search {
+  grid-area: search;
+}
+.p-k-ask {
+  grid-area: ask;
+}
+.p-k-import {
+  grid-area: import;
+}
+.p-k-docs {
+  grid-area: docs;
+}
+.p-k-glossary {
+  grid-area: glossary;
+}
+
+[data-theme="joy"] #cf-knowledge {
+  max-width: 1360px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+[data-theme="telemetry"] #cf-knowledge {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-areas:
+    "stats stats stats stats stats search search search search search search search"
+    "ask ask ask ask ask search search search search search search search"
+    "import import import import import docs docs docs docs docs docs docs"
+    "glossary glossary glossary glossary glossary docs docs docs docs docs docs docs";
+}
+
+[data-theme="telemetry"] .p-k-stats {
+  --panel-no: "01";
+}
+[data-theme="telemetry"] .p-k-search {
+  --panel-no: "02";
+}
+[data-theme="telemetry"] .p-k-ask {
+  --panel-no: "03";
+}
+[data-theme="telemetry"] .p-k-import {
+  --panel-no: "04";
+}
+[data-theme="telemetry"] .p-k-docs {
+  --panel-no: "05";
+}
+[data-theme="telemetry"] .p-k-glossary {
+  --panel-no: "06";
+}
+
+@media (max-width: 1100px) {
+  :root[data-theme] #cf-knowledge {
+    max-width: 900px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary";
+  }
+}
+
+:root[data-layout="phone"][data-theme] #cf-knowledge {
+  max-width: 480px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary";
+}
+
+@media (max-width: 720px) {
+  :root[data-theme] #cf-knowledge {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary";
+  }
+}
+
+.k-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.k-hits,
+.k-terms,
+.k-sources {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Results scroll on their own, so the panels beside keep their places */
+.k-hits {
+  max-height: 560px;
+  overflow: auto;
+}
+
+.k-hit,
+.k-term {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.k-hit-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 13px;
+}
+
+.k-hit-title {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.k-hit a,
+.k-answer a,
+.p-k-docs a {
+  color: var(--accent);
+}
+
+.k-hit-text {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+}
+
+.k-hit-text:hover {
+  -webkit-line-clamp: unset;
+}
+
+.k-answer {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-left: 3px solid var(--s3);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.k-answer[hidden],
+.k-translation[hidden] {
+  display: none;
+}
+
+.k-sources {
+  gap: 4px;
+  font-size: 12.5px;
+}
+
+.k-translate {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.k-translation {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  font-size: 13.5px;
+  white-space: pre-wrap;
+}
+
+.k-import {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.k-import [hidden] {
+  display: none;
+}
+
+.k-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.k-import .field .select {
+  max-width: none;
+}
+
+.k-number {
+  width: 72px;
+}
+
+.k-log {
+  max-height: 9em;
+  margin: 0;
+  overflow: auto;
+  color: var(--text-2);
+  font:
+    11.5px/1.45 var(--font-num),
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.k-docs-wrap {
+  max-height: 560px;
+  overflow: auto;
+}
+
+.p-k-docs .panel-head .select {
+  max-width: 200px;
+}
+
+.k-forms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+
+.k-form b {
+  color: var(--text-3);
+  font-weight: 600;
+}
+
+/* ============================================================ vision
+ * The Vision app: the run (form, progress, timings), the results viewer
+ * with boxes, the per-class table with "send to labels", and the tracks
+ * with their on-screen trails.
+ */
+
+:root:not([data-app="vision"]) [data-app-only="vision"] {
+  display: none !important;
+}
+
+#vision-layout {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  grid-template-areas:
+    "run frame"
+    "summary tracks";
+}
+
+.p-v-run {
+  grid-area: run;
+}
+.p-v-frame {
+  grid-area: frame;
+}
+.p-v-summary {
+  grid-area: summary;
+}
+.p-v-tracks {
+  grid-area: tracks;
+}
+
+/* Joy: a large frame, the run and the classes beside it */
+[data-theme="joy"] #vision-layout {
+  max-width: 1360px;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  grid-template-areas:
+    "frame run"
+    "tracks summary";
+}
+
+[data-theme="telemetry"] #vision-layout {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-areas:
+    "run run run run frame frame frame frame frame frame frame frame"
+    "summary summary summary summary tracks tracks tracks tracks tracks tracks tracks tracks";
+}
+
+[data-theme="telemetry"] .p-v-run {
+  --panel-no: "01";
+}
+[data-theme="telemetry"] .p-v-frame {
+  --panel-no: "02";
+}
+[data-theme="telemetry"] .p-v-summary {
+  --panel-no: "03";
+}
+[data-theme="telemetry"] .p-v-tracks {
+  --panel-no: "04";
+}
+
+@media (max-width: 1100px) {
+  :root[data-theme] #vision-layout {
+    max-width: 900px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "frame" "run" "summary" "tracks";
+  }
+}
+
+:root[data-layout="phone"][data-theme] #vision-layout {
+  max-width: 480px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "frame" "run" "summary" "tracks";
+}
+
+@media (max-width: 720px) {
+  :root[data-theme] #vision-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "frame" "run" "summary" "tracks";
+  }
+}
+
+.v-form,
+.v-send {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.v-range {
+  display: flex;
+  gap: 8px;
+}
+
+.v-range .select {
+  width: 100%;
+  max-width: none;
+}
+
+.v-timings td,
+.v-timings th {
+  text-align: right;
+}
+
+.v-timings td:first-child,
+.v-timings th:first-child {
+  text-align: left;
+}
+
+.v-screen img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.v-screen img[hidden] {
+  display: none;
+}
+
+.v-boxes {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.v-box > rect:first-child {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.v-tag {
+  opacity: 0.9;
+}
+
+.v-box text {
+  fill: #111111;
+  font:
+    600 9.5px var(--font-num),
+    monospace;
+}
+
+.v-empty {
+  position: absolute;
+  margin: 0;
+  padding: 16px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.v-empty[hidden] {
+  display: none;
+}
+
+.v-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.v-scrub {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.v-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+.v-sent {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  font-size: 13px;
+}
+
+.v-sent[hidden] {
+  display: none;
+}
+
+.v-sent p {
+  margin: 0;
+}
+
+.v-sent .btn {
+  justify-self: start;
+  height: auto;
+  min-height: 36px;
+  white-space: normal;
+  color: inherit;
+  text-decoration: none;
+}
+
+.v-trail {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+}
+
+.v-trail-bg {
+  fill: var(--screen);
+}
+
+.v-trail-line {
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.v-trail-now {
+  fill: none;
+  stroke-width: 2;
+}
+
+.v-trail-id {
+  fill: #ffffff;
+  font:
+    600 11px var(--font-num),
+    monospace;
+  paint-order: stroke;
+  stroke: rgb(0 0 0 / 0.6);
+  stroke-width: 3px;
+}
+
+.v-trail-empty {
+  fill: rgb(255 255 255 / 0.55);
+  font-size: 13px;
+  text-anchor: middle;
+}
+
+.v-classes-wrap,
+.v-tracks-wrap {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.p-v-tracks .data-table tbody tr {
+  cursor: pointer;
+}

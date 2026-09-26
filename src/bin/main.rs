@@ -15,6 +15,7 @@ use procon::recorder::{Recorder, RecorderState};
 use procon::stream::{self, LinkStats};
 use procon::studio::{Command, SavedState, Studio};
 use procon::video::Video;
+use procon::vision::{self, Vision};
 use procon::web::{self, LiveFeed};
 use std::path::{Path, PathBuf};
 
@@ -103,7 +104,7 @@ fn main() -> anyhow::Result<()> {
         .as_deref()
         .unwrap_or("../AgentZero/calibration.json");
     let root = config.inspect.root.map(|root| config_dir.join(root));
-    // Annotations and reviews sit next to the sessions' folder by default
+    // Annotations, reviews and vision results sit next to the sessions' folder by default
     let sessions = root.clone().unwrap_or_else(|| studio.recorder.prefix_dir());
     let beside = |name: &str| sessions.parent().unwrap_or(Path::new(".")).join(name);
     let annotations = config
@@ -149,10 +150,15 @@ fn main() -> anyhow::Result<()> {
         settings,
     ));
 
+    let vision = Arc::new(Vision::new(
+        Arc::clone(&inspector),
+        vision::Settings::from_config(config.vision, &config_dir, beside("Vision"))?,
+    ));
+
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         tokio::select! {
-            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, config.web.port) => {}
+            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, vision, config.web.port) => {}
             _ = tokio::signal::ctrl_c() => {
                 // Let ffmpeg finish the video file and session.json get its end time
                 if studio.recorder.status().state != RecorderState::Idle {

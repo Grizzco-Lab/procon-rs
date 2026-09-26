@@ -21,7 +21,11 @@ warp = { version = "0.4.1", features = ["websocket", "server"] }
 futures-util = "0.3.31"
 gameplay-data = { version = "0.1.0", path = "crates/gameplay-data" }
 cuttlefish = { version = "0.1.0", path = "crates/cuttlefish" }
+gameplay-vision = { version = "0.1.0", path = "crates/gameplay-vision" }
 
+[features]
+# The Vision app's detector on an NVIDIA GPU; needs the CUDA toolkit (nvcc)
+cuda = ["gameplay-vision/cuda"]
 
 [[bin]]
 name = "procon"

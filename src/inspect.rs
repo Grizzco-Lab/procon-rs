@@ -160,6 +160,11 @@ impl Inspector {
         }
     }
 
+    /// Object labels of the labeling mode
+    pub fn annotations(&self) -> &Annotations {
+        &self.annotations
+    }
+
     /// Folder holding the session folders
     pub fn root(&self) -> PathBuf {
         self.root

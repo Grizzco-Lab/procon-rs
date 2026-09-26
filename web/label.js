@@ -343,7 +343,14 @@
     if (labels.key !== `${info.session}/${info.segment}`) load(info);
     else render();
   });
-  window.addEventListener("app-route", () => {
+  window.addEventListener("app-route", (event) => {
+    const { app, state } = event.detail;
+    // Opened with label=1 (from the Vision app): labeling, with the labels
+    // read again since they may have changed
+    if (app === "inspect" && state.get("label") === "1") {
+      labels.key = null;
+      if (!labels.on) toggle(true);
+    }
     // Back in the picker: nothing to label
     if (!inspector.info) drawBar();
   });

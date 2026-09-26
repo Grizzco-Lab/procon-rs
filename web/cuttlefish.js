@@ -3,7 +3,8 @@
 // sketch.js and inspect.js and uses their helpers ($, Sketch, clock,
 // escapeHtml). Its state lives in the hash: #cuttlefish (the library),
 // #cuttlefish/r=<review>&t=<s> (a saved review) or
-// #cuttlefish/kind=<kind>&ref=<ref>&start_s=&end_s= (a video not reviewed yet).
+// #cuttlefish/kind=<kind>&ref=<ref>&start_s=&end_s= (a video not reviewed yet)
+// or #cuttlefish/view=knowledge (the knowledge view, see knowledge.js).
 // Reviews are saved as JSON through /api/cuttlefish/reviews/<id>; the format
 // is in src/cuttlefish.rs.
 "use strict";
@@ -983,8 +984,19 @@
 
   // ---------------------------------------------------------------- routing
 
-  /** Show what the hash names: a review, a video, or the library */
+  /** Show what the hash names: a review, a video, the knowledge view or the
+   * library */
   async function route(state) {
+    if (state.get("view") === "knowledge") {
+      // knowledge.js shows its own view
+      leavePlayer();
+      $("cf-player").hidden = true;
+      $("cf-library").hidden = true;
+      setChip("");
+      rememberView("#cuttlefish/view=knowledge");
+      clearTimeout(cf.pollTimer);
+      return;
+    }
     const t = parseFloat(state.get("t")) || 0;
     const id = state.get("r");
     if (id) {
