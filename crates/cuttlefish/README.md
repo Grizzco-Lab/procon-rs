@@ -195,18 +195,38 @@ let comments = reviewer.review(&ReviewRequest {
 })?;
 let answer = reviewer.ask("...")?;
 let ja = reviewer.translate("...", "ja")?;
+
+// A conversation: the earlier turns go along as they were, retrieval runs on
+// the new message and the last user turns, and a video may be attached
+use cuttlefish::review::{ChatRequest, VideoContext};
+use cuttlefish::llm::{Role, Turn};
+let reply = reviewer.chat(&ChatRequest {
+    history: vec![
+        Turn { role: Role::User, text: "What does the Flyfish do?".into() },
+        Turn { role: Role::Assistant, text: "It fires missiles…".into() },
+    ],
+    message: "Translate for my teammate: 我还剩一个镭射".into(),
+    video: Some(VideoContext { video: "…".into(), start_s: 60.0, end_s: 66.0,
+                               frames: vec![], comments: vec![] }),   // or None
+})?;
+// reply.text cites [S1] and names moments as times; reply.sources; reply.comments
+// (timed AiComments, only with a video)
 ```
 
-`review` blocks (seconds to a minute); call it from a blocking task.
+`review` and `chat` block (seconds to a minute); call them from a blocking
+task. Translation requests are ordinary chat messages: the persona translates
+with the glossary's names for the target language, and explains a bare
+callout before translating it.
 
 The studio keeps one `Store` and `E5Embedder` for everything (search, imports
-and reviews) instead of a `Reviewer`: `review::review(&store, &embedder,
-&client, k, &request)` and `review::ask(...)` take the parts separately, with
-a `Client::from_env` made per request. Imports go through `ingest` (`web`,
-`youtube`, `files`, `discord_export`, `discord_bot`), which hand documents to
-an `ingest::Sink` (the CLI prints; the studio logs into its import job) and
-stop when `Sink::cancelled` says so. Its Knowledge tab shows all of this, and
-`inbox::import` does the inbox with the same kind of sink.
+and the chat) instead of a `Reviewer`: `review::chat(&store, &embedder,
+&client, k, &request)`, `review::review(...)` and `review::ask(...)` take the
+parts separately, with a `Client::from_env` made per request. Imports go
+through `ingest` (`web`, `youtube`, `files`, `discord_export`, `discord_bot`),
+which hand documents to an `ingest::Sink` (the CLI prints; the studio logs
+into its import job) and stop when `Sink::cancelled` says so. Its Knowledge
+view shows all of this, and `inbox::import` does the inbox with the same kind
+of sink.
 
 `AiComment` serializes as:
 
@@ -249,8 +269,11 @@ short and opinionated; retrieval covers the long tail.
 language and a definition. Terms found in a query add their other-language
 names to the query (a Japanese question finds English notes; the embedder
 is multilingual too), and the matched terms go into the prompt so answers
-and translations use the community's names. The seed has English and
-Japanese; add Chinese, Spanish, Russian and French names there.
+and translations use the community's names. The seed has English, Japanese,
+the Simplified Chinese names where they are known, and the player's own
+jargon (惯性取消, 搬蛋, 熊刷, 镭射, 出差, 小枪, 外围蛋) with English
+equivalents; lines marked `# unsure:` are names to check. Add Spanish,
+Russian and French names there.
 
 **4. Source quality.** Each document has a weight: #vod-review 1.2, guides
 1.15, wikis/Discord/files 1.0, web pages and video transcripts 0.9
@@ -310,10 +333,11 @@ times larger; it is the natural upgrade once a GPU is available.
 ### Model calls
 
 `llm.rs` posts to `https://api.anthropic.com/v1/messages` with ureq: the
-system prompt as a cached block, one user turn (knowledge excerpts,
-glossary, existing comments, frames as base64 JPEG, the task), adaptive
-thinking (always on for Claude Opus 5.5) with an explicit effort, and for
-reviews a JSON schema (structured output) for the comments. Refusals and
+system prompt as a cached block, the earlier turns of a chat as plain text
+messages, one user turn (knowledge excerpts, glossary, existing comments,
+frames as base64 JPEG, the task), adaptive thinking (always on for Claude
+Opus 5.5) with an explicit effort, and for reviews and chats a JSON schema
+(structured output) for the comments (a chat's has the reply text too). Refusals and
 truncated answers are reported as errors; 429 and 5xx are retried twice.
 Excerpts are marked as reference material, not instructions, since they
 come from the web and chat. Unit tests never touch the network: requests

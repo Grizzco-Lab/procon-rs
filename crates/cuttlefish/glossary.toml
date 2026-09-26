@@ -5,39 +5,41 @@
 # first, then community slang. Retrieval matches any form in queries and
 # comments; translation uses the target language's first form.
 #
-# This seed only has English and Japanese names. Copy it to
-# <data>/glossary.toml, check it and add the other languages there (the file
-# in the data folder replaces this one).
+# This seed has English and Japanese names, the Simplified Chinese names the
+# official release uses where they are known, and the player jargon at the
+# end (the studio's chat examples). A line starting with "# unsure:" marks a
+# name to check. Copy it to <data>/glossary.toml, check it and add the other
+# languages there (the file in the data folder replaces this one).
 
 [[term]]
 id = "salmon-run"
 definition = "The co-op PvE mode: four players collect Golden Eggs over three waves (plus an optional Xtrawave)."
-forms = { en = ["Salmon Run", "Salmon Run Next Wave", "SR"], ja = ["サーモンラン", "サーモンラン NEXT WAVE", "サモラン"] }
+forms = { en = ["Salmon Run", "Salmon Run Next Wave", "SR"], ja = ["サーモンラン", "サーモンラン NEXT WAVE", "サモラン"], zh = ["鲑鱼跑", "打工"] }
 
 [[term]]
 id = "golden-egg"
 definition = "Egg dropped by Boss Salmonids; delivering enough to the basket clears the wave."
-forms = { en = ["Golden Egg", "gold egg"], ja = ["金イクラ"] }
+forms = { en = ["Golden Egg", "gold egg"], ja = ["金イクラ"], zh = ["金鲑鱼卵", "金蛋"] }
 
 [[term]]
 id = "power-egg"
 definition = "Orange eggs from any Salmonid; only count toward the score and pay."
-forms = { en = ["Power Egg"], ja = ["イクラ"] }
+forms = { en = ["Power Egg"], ja = ["イクラ"], zh = ["鲑鱼卵"] }
 
 [[term]]
 id = "egg-basket"
 definition = "The goal where Golden Eggs are delivered."
-forms = { en = ["Egg Basket", "basket"], ja = ["イクラコンテナ", "コンテナ"] }
+forms = { en = ["Egg Basket", "basket"], ja = ["イクラコンテナ", "コンテナ"], zh = ["鲑鱼卵容器", "容器", "篮子"] }
 
 [[term]]
 id = "hazard-level"
 definition = "Difficulty percentage of a job, up to 333%."
-forms = { en = ["Hazard Level"], ja = ["キケン度"] }
+forms = { en = ["Hazard Level"], ja = ["キケン度"], zh = ["危险度"] }
 
 [[term]]
 id = "eggsecutive-vp"
 definition = "Highest rank; its points go up to 999."
-forms = { en = ["Eggsecutive VP", "EVP"], ja = ["でんせつ"] }
+forms = { en = ["Eggsecutive VP", "EVP"], ja = ["でんせつ"], zh = ["传说"] }
 
 [[term]]
 id = "evp-999"
@@ -52,7 +54,7 @@ forms = { en = ["Xtrawave", "XTRAWAVE"], ja = ["EX-WAVE"] }
 [[term]]
 id = "big-run"
 definition = "Limited-time event where Salmonids attack a PvP stage."
-forms = { en = ["Big Run"], ja = ["ビッグラン"] }
+forms = { en = ["Big Run"], ja = ["ビッグラン"], zh = ["大型跑"] }
 
 [[term]]
 id = "eggstra-work"
@@ -62,12 +64,13 @@ forms = { en = ["Eggstra Work"], ja = ["バイトチームコンテスト", "チ
 [[term]]
 id = "grizzco"
 definition = "The company (Mr. Grizz) that runs Salmon Run jobs."
-forms = { en = ["Grizzco"], ja = ["クマサン商会"] }
+forms = { en = ["Grizzco"], ja = ["クマサン商会"], zh = ["熊先生商会"] }
 
 [[term]]
 id = "high-tide"
 definition = "Water level with a smaller shore area."
-forms = { en = ["High Tide"], ja = ["満潮"] }
+# unsure: the zh names of the tides
+forms = { en = ["High Tide"], ja = ["満潮"], zh = ["满潮", "涨潮"] }
 
 [[term]]
 id = "normal-tide"
@@ -77,47 +80,48 @@ forms = { en = ["Normal Tide", "mid tide"], ja = ["通常"] }
 [[term]]
 id = "low-tide"
 definition = "Water level exposing the lower shore; the basket moves down."
-forms = { en = ["Low Tide"], ja = ["干潮"] }
+# unsure: the zh names of the tides
+forms = { en = ["Low Tide"], ja = ["干潮"], zh = ["干潮", "退潮"] }
 
 [[term]]
 id = "steelhead"
 definition = "Boss that grows a bomb on its head and throws it; shoot the bomb to detonate it on the boss."
-forms = { en = ["Steelhead"], ja = ["バクダン"] }
+forms = { en = ["Steelhead"], ja = ["バクダン"], zh = ["炸弹鱼"] }
 
 [[term]]
 id = "flyfish"
 definition = "Boss with two missile pods; throw a bomb into each open pod."
-forms = { en = ["Flyfish"], ja = ["カタパッド"] }
+forms = { en = ["Flyfish"], ja = ["カタパッド"], zh = ["垫肩飞鱼"] }
 
 [[term]]
 id = "steel-eel"
 definition = "Boss that chases one player leaving ink; shoot the driver at the tail."
-forms = { en = ["Steel Eel"], ja = ["ヘビ"] }
+forms = { en = ["Steel Eel"], ja = ["ヘビ"], zh = ["蛇鱼"] }
 
 [[term]]
 id = "scrapper"
 definition = "Armored boss; hit it from the front to stun it, then shoot the exposed back."
-forms = { en = ["Scrapper"], ja = ["テッパン"] }
+forms = { en = ["Scrapper"], ja = ["テッパン"], zh = ["铁板鱼"] }
 
 [[term]]
 id = "stinger"
 definition = "Tower of pots that snipes from the shore; shoot the pots off from the side."
-forms = { en = ["Stinger"], ja = ["タワー"] }
+forms = { en = ["Stinger"], ja = ["タワー"], zh = ["高塔鱼"] }
 
 [[term]]
 id = "maws"
 definition = "Boss that attacks from under the ink; drop a bomb on its marker."
-forms = { en = ["Maws"], ja = ["モグラ"] }
+forms = { en = ["Maws"], ja = ["モグラ"], zh = ["鼹鼠鱼"] }
 
 [[term]]
 id = "drizzler"
 definition = "Boss with an umbrella that launches a rain torpedo; shoot the torpedo back."
-forms = { en = ["Drizzler"], ja = ["コウモリ"] }
+forms = { en = ["Drizzler"], ja = ["コウモリ"], zh = ["蝙蝠鱼"] }
 
 [[term]]
 id = "fish-stick"
-definition = "Boss that plants a pillar and inks around it; players climb the pillar to kill it."
-forms = { en = ["Fish Stick"], ja = ["ハシラ"] }
+definition = "Boss that plants a pillar and inks around it; players climb the pillar to kill it. Chinese players say 柱子 (the pillar) for climbing it."
+forms = { en = ["Fish Stick"], ja = ["ハシラ"], zh = ["柱鱼", "柱子"] }
 
 [[term]]
 id = "flipper-flopper"
@@ -127,22 +131,22 @@ forms = { en = ["Flipper-Flopper"], ja = ["ダイバー"] }
 [[term]]
 id = "big-shot"
 definition = "Boss with a cannon on the shore; players can use the cannon after killing it."
-forms = { en = ["Big Shot"], ja = ["テッキュウ"] }
+forms = { en = ["Big Shot"], ja = ["テッキュウ"], zh = ["铁球鱼"] }
 
 [[term]]
 id = "slammin-lid"
 definition = "Flying lid carrying small Salmonids; attack from below, then from above once it lands."
-forms = { en = ["Slammin' Lid"], ja = ["ナベブタ"] }
+forms = { en = ["Slammin' Lid"], ja = ["ナベブタ"], zh = ["锅盖鱼"] }
 
 [[term]]
 id = "smallfry"
 definition = "Small, fast lesser Salmonid."
-forms = { en = ["Smallfry"], ja = ["コジャケ"] }
+forms = { en = ["Smallfry"], ja = ["コジャケ"], zh = ["小鲑鱼"] }
 
 [[term]]
 id = "chum"
 definition = "Regular lesser Salmonid with a frying pan."
-forms = { en = ["Chum"], ja = ["シャケ"] }
+forms = { en = ["Chum"], ja = ["シャケ"], zh = ["鲑鱼"] }
 
 [[term]]
 id = "cohock"
@@ -152,7 +156,7 @@ forms = { en = ["Cohock"], ja = ["ドスコイ"] }
 [[term]]
 id = "goldie"
 definition = "Golden Salmonid that drops Golden Eggs when hit."
-forms = { en = ["Goldie"], ja = ["キンシャケ"] }
+forms = { en = ["Goldie"], ja = ["キンシャケ"], zh = ["黄金鲑鱼"] }
 
 [[term]]
 id = "griller"
@@ -167,17 +171,17 @@ forms = { en = ["Mudmouth"], ja = ["ドロシャケ"] }
 [[term]]
 id = "cohozuna"
 definition = "King Salmonid: a giant Cohock."
-forms = { en = ["Cohozuna"], ja = ["ヨコヅナ"] }
+forms = { en = ["Cohozuna"], ja = ["ヨコヅナ"], zh = ["横纲"] }
 
 [[term]]
 id = "horrorboros"
 definition = "King Salmonid: a flying dragon; hit the weak points on its back."
-forms = { en = ["Horrorboros"], ja = ["タツ"] }
+forms = { en = ["Horrorboros"], ja = ["タツ"], zh = ["辰龙"] }
 
 [[term]]
 id = "megalodontia"
 definition = "King Salmonid: a giant shark that bites from below."
-forms = { en = ["Megalodontia"], ja = ["ジョー"] }
+forms = { en = ["Megalodontia"], ja = ["ジョー"], zh = ["巨颚"] }
 
 [[term]]
 id = "rush"
@@ -217,22 +221,22 @@ forms = { en = ["Mudmouth Eruptions"], ja = ["ドロシャケ噴出"] }
 [[term]]
 id = "spawning-grounds"
 definition = "Salmon Run stage."
-forms = { en = ["Spawning Grounds"], ja = ["シェケナダム"] }
+forms = { en = ["Spawning Grounds"], ja = ["シェケナダム"], zh = ["鲑鱼坝"] }
 
 [[term]]
 id = "marooners-bay"
 definition = "Salmon Run stage."
-forms = { en = ["Marooner's Bay"], ja = ["難破船ドン・ブラコ"] }
+forms = { en = ["Marooner's Bay"], ja = ["難破船ドン・ブラコ"], zh = ["漂浮落难船"] }
 
 [[term]]
 id = "gone-fission-hydroplant"
 definition = "Salmon Run stage."
-forms = { en = ["Gone Fission Hydroplant"], ja = ["ムニ・エール海洋発電所"] }
+forms = { en = ["Gone Fission Hydroplant"], ja = ["ムニ・エール海洋発電所"], zh = ["麦年海洋发电所"] }
 
 [[term]]
 id = "sockeye-station"
 definition = "Salmon Run stage."
-forms = { en = ["Sockeye Station"], ja = ["アラマキ砦"] }
+forms = { en = ["Sockeye Station"], ja = ["アラマキ砦"], zh = ["新卷堡"] }
 
 [[term]]
 id = "jammin-salmon-junction"
@@ -248,3 +252,47 @@ forms = { en = ["Salmonid Smokeyard"], ja = ["トキシラズいぶし工房"] }
 id = "bonerattle-arena"
 definition = "Salmon Run stage."
 forms = { en = ["Bonerattle Arena"], ja = ["どんぴこ闘技場"] }
+
+# ---------------------------------------------------------------------------
+# Player jargon (the studio's chat examples). English forms marked "unsure"
+# are literal or descriptive: the English community may have no fixed word.
+
+[[term]]
+id = "inertia-cancel"
+definition = "Movement technique that cancels the momentum of a jump or dash so the player stops or turns at once; used to keep egg runs tight."
+# unsure: no established English community term found; "inertia cancel" is literal
+forms = { en = ["inertia cancel", "momentum cancel"], zh = ["惯性取消"] }
+
+[[term]]
+id = "egg-run"
+definition = "Carrying Golden Eggs to the basket."
+forms = { en = ["egg run", "egg running", "carry eggs", "running eggs"], ja = ["納品"], zh = ["搬蛋", "运蛋"] }
+
+[[term]]
+id = "grizzco-weapon"
+definition = "A Grizzco-brand weapon (the gold rental Splatana, Brush, Slosher, Charger, Blaster, Stringer or Dualies); Chinese players call one a bear weapon, and this player's 熊刷 is one (often the Grizzco Splatana or Brush)."
+# unsure: whether 熊刷 means any Grizzco weapon or the Grizzco Brush / Splatana only
+forms = { en = ["Grizzco weapon", "bear weapon"], ja = ["クマブキ", "クマサン武器"], zh = ["熊武", "熊刷", "熊武器"] }
+
+[[term]]
+id = "killer-wail-51"
+definition = "Special weapon: six laser megaphones lock on and fire; in Salmon Run it clears lesser Salmonids and hits bosses at range."
+forms = { en = ["Killer Wail 5.1", "wail"], ja = ["メガホンレーザー5.1ch", "メガホン"], zh = ["喇叭镭射5.1", "镭射", "喇叭"] }
+
+[[term]]
+id = "fetch-eggs"
+definition = "Leaving the basket area to collect Golden Eggs lying farther out, then coming back; a short trip, not a post."
+# unsure: 出差 ("business trip") has no fixed English equivalent
+forms = { en = ["fetch eggs", "go out for eggs", "egg trip"], zh = ["出差"] }
+
+[[term]]
+id = "short-range-weapon"
+definition = "A light, short-ranged weapon (Splattershot Jr., Sploosh-o-matic, Aerospray, ...): quick at running eggs, weak against bosses at range."
+# unsure: 小枪 ("small gun") is descriptive; English players say "short-range weapon" or name the weapon
+forms = { en = ["short-range weapon", "short-range shooter", "light weapon"], zh = ["小枪"] }
+
+[[term]]
+id = "outer-eggs"
+definition = "Golden Eggs lying at the edge of the stage, away from the basket."
+# unsure: descriptive English
+forms = { en = ["outer eggs", "far eggs", "eggs on the outside"], zh = ["外围蛋"] }

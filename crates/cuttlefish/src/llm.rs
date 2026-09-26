@@ -31,11 +31,31 @@ pub enum Block {
     Jpeg(Vec<u8>),
 }
 
-/// One request: a system prompt (cached across requests) and one user turn
+/// Who wrote a turn of a conversation
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// The player
+    User,
+    /// The model
+    Assistant,
+}
+
+/// An earlier turn of a conversation, text only
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Turn {
+    pub role: Role,
+    pub text: String,
+}
+
+/// One request: a system prompt (cached across requests), the earlier turns
+/// of the conversation, if any, and the user turn to answer
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prompt {
     /// Stable instructions and reference material
     pub system: String,
+    /// Earlier turns, oldest first, alternating user and assistant
+    pub history: Vec<Turn>,
     /// The user turn: knowledge, frames, the question
     pub user: Vec<Block>,
     /// JSON schema the answer must follow (structured output), if any
@@ -84,6 +104,12 @@ pub fn build_body(settings: &Settings, prompt: &Prompt) -> Value {
     if let Some(schema) = &prompt.schema {
         output_config["format"] = json!({"type": "json_schema", "schema": schema});
     }
+    let mut messages: Vec<Value> = prompt
+        .history
+        .iter()
+        .map(|turn| json!({"role": turn.role, "content": [{"type": "text", "text": turn.text}]}))
+        .collect();
+    messages.push(json!({"role": "user", "content": content}));
     json!({
         "model": settings.model,
         "max_tokens": settings.max_tokens,
@@ -92,7 +118,7 @@ pub fn build_body(settings: &Settings, prompt: &Prompt) -> Value {
             "text": prompt.system,
             "cache_control": {"type": "ephemeral"},
         }],
-        "messages": [{"role": "user", "content": content}],
+        "messages": messages,
         "output_config": output_config,
     })
 }
@@ -311,6 +337,10 @@ pub(crate) mod tests {
     fn builds_bodies() {
         let prompt = Prompt {
             system: String::from("sys"),
+            history: alloc::vec![Turn {
+                role: Role::Assistant,
+                text: String::from("earlier")
+            }],
             user: alloc::vec![
                 Block::Text(String::from("hi")),
                 Block::Jpeg(alloc::vec![1, 2, 3])
@@ -320,7 +350,10 @@ pub(crate) mod tests {
         let body = build_body(&Settings::default(), &prompt);
         assert_eq!(body["model"], "claude-opus-5-5");
         assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
-        let content = &body["messages"][0]["content"];
+        assert_eq!(body["messages"][0]["role"], "assistant");
+        assert_eq!(body["messages"][0]["content"][0]["text"], "earlier");
+        assert_eq!(body["messages"][1]["role"], "user");
+        let content = &body["messages"][1]["content"];
         assert_eq!(content[0]["text"], "hi");
         assert_eq!(content[1]["source"]["media_type"], "image/jpeg");
         assert_eq!(content[1]["source"]["data"], "AQID");
@@ -367,6 +400,7 @@ pub(crate) mod tests {
             client
                 .send(&Prompt {
                     system: String::new(),
+                    history: alloc::vec![],
                     user: alloc::vec![],
                     schema: None
                 })

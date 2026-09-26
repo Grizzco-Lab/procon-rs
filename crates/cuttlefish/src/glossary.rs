@@ -281,6 +281,29 @@ mod tests {
     }
 
     #[test]
+    fn finds_player_jargon() {
+        let g = Glossary::seed();
+        let ids =
+            |text: &str| -> Vec<String> { g.find_in(text).iter().map(|t| t.id.clone()).collect() };
+        assert_eq!(ids("惯性取消搬蛋快"), ["inertia-cancel", "egg-run"]);
+        assert_eq!(
+            ids("我刚拿的熊刷，不应该上柱子拍的"),
+            ["grizzco-weapon", "fish-stick"]
+        );
+        assert_eq!(
+            ids("小枪可以优先出差回收一些外围蛋，但不要待太久卡新一波怪"),
+            ["short-range-weapon", "fetch-eggs", "outer-eggs"]
+        );
+        assert_eq!(ids("我还剩一个镭射"), ["killer-wail-51"]);
+        assert_eq!(
+            g.lookup("Killer Wail 5.1").unwrap().name("zh"),
+            Some("喇叭镭射5.1")
+        );
+        // The longest Chinese name wins: a Goldie is not a Chum
+        assert_eq!(ids("黄金鲑鱼掉金鲑鱼卵"), ["goldie", "golden-egg"]);
+    }
+
+    #[test]
     fn expands_across_languages() {
         let g = Glossary::seed();
         let q = g.expand("バクダンの処理");
@@ -326,6 +349,9 @@ mod tests {
         let g = Glossary::seed();
         let t = g.lookup("Maws").unwrap();
         let s = Glossary::prompt_lines(&[t], Some("ja"));
-        assert!(s.starts_with("- maws (ja: モグラ; en: Maws)"), "{s}");
+        assert!(
+            s.starts_with("- maws (ja: モグラ; en: Maws; zh: 鼹鼠鱼)"),
+            "{s}"
+        );
     }
 }

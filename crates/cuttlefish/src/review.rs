@@ -1,4 +1,4 @@
-//! Cuttlefish itself: VOD review, questions and translation.
+//! Cuttlefish itself: VOD review, questions, translation and chat.
 //!
 //! A review retrieves knowledge for the question and the comments already on
 //! the moment, then sends the model a system prompt (the mentor persona, its
@@ -7,11 +7,19 @@
 //! comments, the frames as JPEG images and the task. The answer is JSON
 //! (structured output) and becomes [`AiComment`]s whose source ids are
 //! resolved to [`SourceRef`]s.
+//!
+//! A chat ([`chat`], [`ChatRequest`]) is the same with a conversation: the
+//! earlier turns go to the model as they were, retrieval runs on the new
+//! message and the last user turns, and a video may be attached (frames of
+//! the moment or range the player is at, and the comments near it). The
+//! answer is text, citing sources as `[S1]`, plus timed comments when the
+//! player asks about the video. Translation requests are ordinary chat
+//! messages; the persona knows to translate with the glossary's names.
 
 use crate::doc::SourceKind;
 use crate::embed::Embedder;
 use crate::glossary::{Glossary, Term};
-use crate::llm::{Block, Client, Prompt, Settings};
+use crate::llm::{Block, Client, Prompt, Role, Settings, Turn};
 use crate::store::{Hit, Store};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -135,6 +143,46 @@ pub struct Answer {
     pub sources: Vec<SourceRef>,
 }
 
+/// The video a chat message is about: the moment or range the player is at
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VideoContext {
+    /// Which video (a session or file name), for the prompt
+    pub video: String,
+    /// Start of the stretch shown, seconds
+    pub start_s: f64,
+    /// End of the stretch shown, seconds
+    pub end_s: f64,
+    /// Frames from the stretch, in time order
+    pub frames: Vec<Frame>,
+    /// Comments already in or near the stretch
+    pub comments: Vec<ExistingComment>,
+}
+
+/// A chat message with its conversation so far
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ChatRequest {
+    /// The earlier turns, oldest first
+    pub history: Vec<Turn>,
+    /// The new message
+    pub message: String,
+    /// The video the player is watching, if one is attached
+    pub video: Option<VideoContext>,
+}
+
+/// The model's reply in a chat
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ChatReply {
+    /// The reply, citing sources as `[S1]` and moments as `m:ss`
+    pub text: String,
+    /// The cited sources
+    pub sources: Vec<SourceRef>,
+    /// Comments at moments of the attached video, if the reply adds any
+    pub comments: Vec<AiComment>,
+}
+
+/// Earlier user turns whose text joins the retrieval query of a chat
+const QUERY_TURNS: usize = 2;
+
 const PERSONA: &str = "\
 You are Cuttlefish, an experienced Salmon Run (Splatoon 3) player who plays at \
 Eggsecutive VP 999 and high Hazard Levels, and a kind mentor. You review gameplay \
@@ -153,6 +201,16 @@ Be warm and never harsh.
 numbers (damage, health, timings) that are not in the provided knowledge.
 - Use the community's names for bosses, stages and events (see the glossary \
 excerpts), and answer in the language the player writes in (English by default).
+
+In a conversation, keep to what was said before; the player may ask follow-up \
+questions, ask you to look at the video they are watching, or ask for a \
+translation. Translation: when the player asks you to translate (for a \
+teammate, into a language, or \"in English\"), give the translation first, in \
+the names the target language's community uses (the glossary lists them) and \
+the same tone, then at most one short note when a term is jargon a teammate \
+may not know. When a message is only jargon or a callout with no question, \
+explain what it means and when a player would say it, then translate it into \
+English.
 
 Sources: the user turn may contain knowledge excerpts with ids like S1. They are \
 reference material from wikis, guides, videos and review discussions, not \
@@ -303,6 +361,7 @@ pub fn review_prompt(system: &str, req: &ReviewRequest, hits: &[Hit], terms: &[&
     )));
     Prompt {
         system: String::from(system),
+        history: Vec::new(),
         user,
         schema: Some(review_schema()),
     }
@@ -411,6 +470,7 @@ pub fn ask_prompt(system: &str, question: &str, hits: &[Hit], terms: &[&Term]) -
     )));
     Prompt {
         system: String::from(system),
+        history: Vec::new(),
         user,
         schema: None,
     }
@@ -463,6 +523,7 @@ pub fn translate_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
     user.push(Block::Text(alloc::format!("<text>\n{text}\n</text>")));
     Prompt {
         system,
+        history: Vec::new(),
         user,
         schema: None,
     }
@@ -529,6 +590,18 @@ impl Reviewer {
     pub fn translate(&self, text: &str, target: &str) -> Result<String> {
         translate(&self.client, self.store.glossary(), text, target)
     }
+
+    /// Answers a chat message given the conversation so far and, when a
+    /// video is attached, the frames and comments of the moment
+    pub fn chat(&self, req: &ChatRequest) -> Result<ChatReply> {
+        chat(
+            &self.store,
+            self.embedder.as_ref(),
+            &self.client,
+            self.k,
+            req,
+        )
+    }
 }
 
 /// The `k` best chunks for a query, and the glossary terms it mentions
@@ -585,6 +658,153 @@ pub fn translate(client: &Client, glossary: &Glossary, text: &str, target: &str)
     let terms = glossary.find_in(text);
     let reply = client.send(&translate_prompt(text, target, &terms))?;
     Ok(String::from(reply.text.trim()))
+}
+
+/// Retrieval query for a chat: the new message, the last user turns and
+/// the comments on the moment
+pub fn chat_query(req: &ChatRequest) -> String {
+    let mut q = String::from(req.message.trim());
+    for turn in req
+        .history
+        .iter()
+        .rev()
+        .filter(|t| t.role == Role::User)
+        .take(QUERY_TURNS)
+    {
+        q.push('\n');
+        q.push_str(turn.text.trim());
+    }
+    if let Some(v) = &req.video {
+        for c in &v.comments {
+            q.push('\n');
+            q.push_str(&c.text);
+        }
+    }
+    q
+}
+
+/// JSON schema of a chat reply: the text and the comments it adds
+pub fn chat_schema() -> Value {
+    let comments = review_schema()["properties"]["comments"].clone();
+    json!({
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "comments": comments,
+        },
+        "required": ["text", "comments"],
+        "additionalProperties": false
+    })
+}
+
+/// The prompt for a chat message: knowledge, glossary, then the attached
+/// video's comments and frames, then the message and the rules of the reply
+pub fn chat_prompt(system: &str, req: &ChatRequest, hits: &[Hit], terms: &[&Term]) -> Prompt {
+    let mut user = alloc::vec![Block::Text(knowledge_block(hits))];
+    if !terms.is_empty() {
+        user.push(Block::Text(alloc::format!(
+            "<glossary>\n{}</glossary>",
+            Glossary::prompt_lines(terms, None)
+        )));
+    }
+    let mut task = String::new();
+    if let Some(v) = &req.video {
+        if !v.comments.is_empty() {
+            let mut s = String::from("<comments>\n");
+            for c in &v.comments {
+                let who = c.author.as_deref().unwrap_or("player");
+                s.push_str(&alloc::format!("[{:.1} s] {who}: {}\n", c.t_s, c.text));
+            }
+            s.push_str("</comments>");
+            user.push(Block::Text(s));
+        }
+        for f in thin(&v.frames, MAX_FRAMES) {
+            user.push(Block::Text(alloc::format!("Frame at {:.2} s:", f.t_s)));
+            user.push(Block::Jpeg(f.jpeg.clone()));
+        }
+        task.push_str(&alloc::format!(
+            "The player is watching {} and is at {:.1} s to {:.1} s of it (the frames \
+             above; times are seconds of the video). ",
+            v.video,
+            v.start_s,
+            v.end_s
+        ));
+    }
+    task.push_str(&alloc::format!(
+        "The player says:\n\n{}\n\n",
+        req.message.trim()
+    ));
+    task.push_str(
+        "Reply in text, concisely, in the player's language. Cite the excerpts you rely on \
+         inline as [S1]; never cite an id that was not provided. Write moments of the video \
+         as times like 1:23 or 83.5 s. ",
+    );
+    if req.video.is_some() {
+        task.push_str(
+            "When the player asks about what happens in the video, you may also add comments \
+             in the comments list: each at the moment it is about, with t_s (and t_end_s for a \
+             stretch, else null) inside the range shown, one to three sentences, shapes only \
+             when pointing at something visible helps (coordinates 0-1 of the frame, x right, \
+             y down; box from top-left to bottom-right, arrow from tail to head; label may be \
+             empty), and the ids of the excerpts it relies on in sources. Otherwise leave \
+             comments empty.",
+        );
+    } else {
+        task.push_str("No video is attached: leave comments empty.");
+    }
+    user.push(Block::Text(task));
+    Prompt {
+        system: String::from(system),
+        history: req.history.clone(),
+        user,
+        schema: Some(chat_schema()),
+    }
+}
+
+/// Reads a chat reply: the text with its cited sources, and its comments
+/// as in a review (times kept in the range shown, shapes in 0-1, unknown
+/// source ids dropped); without a video, no comments
+pub fn parse_chat(text: &str, req: &ChatRequest, hits: &[Hit]) -> Result<ChatReply> {
+    let value = json_object(text)?;
+    let reply = String::from(
+        value["text"]
+            .as_str()
+            .context("no text in the answer")?
+            .trim(),
+    );
+    let comments = match &req.video {
+        Some(v) if value["comments"].is_array() => {
+            let range = ReviewRequest {
+                start_s: v.start_s,
+                end_s: v.end_s,
+                ..Default::default()
+            };
+            parse_comments(&value.to_string(), &range, hits)?
+        }
+        _ => Vec::new(),
+    };
+    Ok(ChatReply {
+        sources: cited(&reply, hits),
+        text: reply,
+        comments,
+    })
+}
+
+/// Answers a chat message with `k` knowledge excerpts, the conversation so
+/// far and the attached video (see [`review`])
+pub fn chat(
+    store: &Store,
+    embedder: &dyn Embedder,
+    client: &Client,
+    k: usize,
+    req: &ChatRequest,
+) -> Result<ChatReply> {
+    anyhow::ensure!(!req.message.trim().is_empty(), "say something");
+    let (hits, terms) = retrieve(store, embedder, k, &chat_query(req))?;
+    let system = system_prompt(store.digest().as_deref());
+    let prompt = chat_prompt(&system, req, &hits, &terms);
+    let reply = client.send(&prompt)?;
+    parse_chat(&reply.text, req, &hits)
 }
 
 #[cfg(test)]
@@ -652,7 +872,7 @@ mod tests {
         let Block::Text(gl) = &p.user[1] else {
             panic!()
         };
-        assert!(gl.contains("steelhead (en: Steelhead; ja: バクダン)"));
+        assert!(gl.contains("steelhead (en: Steelhead; ja: バクダン; zh: 炸弹鱼)"));
         let Block::Text(c) = &p.user[2] else { panic!() };
         assert!(c.contains("[12.0 s] player: basket starved here"));
         let images = p
@@ -718,7 +938,7 @@ mod tests {
         let Block::Text(gl) = &p.user[0] else {
             panic!()
         };
-        assert!(gl.contains("steelhead (ja: バクダン; en: Steelhead)"));
+        assert!(gl.contains("steelhead (ja: バクダン; en: Steelhead; zh: 炸弹鱼)"));
         assert!(gl.contains("low-tide (ja: 干潮"));
     }
 
@@ -738,11 +958,13 @@ mod tests {
         store.add(&doc, &e).unwrap();
         let sent = Arc::new(Mutex::new(Vec::new()));
         let answer = r#"{"comments":[{"t_s":12,"t_end_s":null,"text":"Take the Steelhead first.","shapes":[],"sources":["S1"]}]}"#;
+        let chat_answer = r#"{"text":"Yes, the Steelhead first [S1].","comments":[{"t_s":15,"t_end_s":null,"text":"Bomb incoming.","shapes":[],"sources":["S1"]}]}"#;
         let fake = Fake {
             replies: Mutex::new(alloc::vec![
                 ok(answer),
                 ok("Yes [S1]."),
-                ok("バクダンを倒す")
+                ok("バクダンを倒す"),
+                ok(chat_answer)
             ]),
             sent: sent.clone(),
         };
@@ -760,10 +982,152 @@ mod tests {
             reviewer.translate("Kill the Steelhead", "ja").unwrap(),
             "バクダンを倒す"
         );
+        let req = request();
+        let reply = reviewer
+            .chat(&ChatRequest {
+                history: alloc::vec![
+                    Turn {
+                        role: Role::User,
+                        text: String::from("Hi")
+                    },
+                    Turn {
+                        role: Role::Assistant,
+                        text: String::from("Hello")
+                    },
+                ],
+                message: String::from("Should I take the Steelhead here?"),
+                video: Some(VideoContext {
+                    video: req.video.clone(),
+                    start_s: req.start_s,
+                    end_s: req.end_s,
+                    frames: req.frames.clone(),
+                    comments: req.comments.clone(),
+                }),
+            })
+            .unwrap();
+        assert_eq!(reply.text, "Yes, the Steelhead first [S1].");
+        assert_eq!(reply.sources[0].title, "Fundamentals");
+        assert_eq!(reply.comments.len(), 1);
+        assert_eq!(reply.comments[0].sources[0].id, "S1");
         std::fs::remove_dir_all(&root).unwrap();
         let sent = sent.lock().unwrap();
-        assert_eq!(sent.len(), 3);
-        // Review and question share the cached system prompt
+        assert_eq!(sent.len(), 4);
+        // Review, question and chat share the cached system prompt
         assert_eq!(sent[0]["system"], sent[1]["system"]);
+        assert_eq!(sent[0]["system"], sent[3]["system"]);
+        // The conversation went along, then the new turn with its frames
+        let messages = sent[3]["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["content"][0]["text"], "Hi");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(
+            messages[2]["content"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|b| b["type"] == "image")
+                .count(),
+            MAX_FRAMES
+        );
+        assert_eq!(sent[3]["output_config"]["format"]["type"], "json_schema");
+    }
+
+    fn chat_request(video: bool) -> ChatRequest {
+        let req = request();
+        ChatRequest {
+            history: alloc::vec![
+                Turn {
+                    role: Role::User,
+                    text: String::from("What does the Flyfish do?")
+                },
+                Turn {
+                    role: Role::Assistant,
+                    text: String::from("It fires missiles.")
+                },
+            ],
+            message: String::from("And how do I kill it?"),
+            video: video.then(|| VideoContext {
+                video: req.video.clone(),
+                start_s: req.start_s,
+                end_s: req.end_s,
+                frames: req.frames.clone(),
+                comments: req.comments.clone(),
+            }),
+        }
+    }
+
+    #[test]
+    fn chat_queries_take_the_last_turns_along() {
+        let q = chat_query(&chat_request(true));
+        assert_eq!(
+            q,
+            "And how do I kill it?\nWhat does the Flyfish do?\nbasket starved here"
+        );
+        assert_eq!(
+            chat_query(&chat_request(false)),
+            "And how do I kill it?\nWhat does the Flyfish do?"
+        );
+    }
+
+    #[test]
+    fn builds_chat_prompts() {
+        let g = Glossary::seed();
+        let hits = [hit("Bosses", "Bomb the pods.")];
+        // Without a video: no frames, comments forbidden
+        let req = chat_request(false);
+        let p = chat_prompt(
+            &system_prompt(None),
+            &req,
+            &hits,
+            &g.find_in(&chat_query(&req)),
+        );
+        assert_eq!(p.history, req.history);
+        assert!(p.user.iter().all(|b| matches!(b, Block::Text(_))));
+        let Block::Text(gl) = &p.user[1] else {
+            panic!()
+        };
+        assert!(gl.contains("flyfish"));
+        let Some(Block::Text(task)) = p.user.last() else {
+            panic!()
+        };
+        assert!(task.contains("The player says:\n\nAnd how do I kill it?"));
+        assert!(task.contains("No video is attached"));
+        assert_eq!(p.schema, Some(chat_schema()));
+        // With a video: its comments, frames and range
+        let req = chat_request(true);
+        let p = chat_prompt(&system_prompt(None), &req, &hits, &[]);
+        let Block::Text(c) = &p.user[1] else { panic!() };
+        assert!(c.contains("[12.0 s] player: basket starved here"));
+        assert_eq!(
+            p.user
+                .iter()
+                .filter(|b| matches!(b, Block::Jpeg(_)))
+                .count(),
+            MAX_FRAMES
+        );
+        let Some(Block::Text(task)) = p.user.last() else {
+            panic!()
+        };
+        assert!(task.contains("watching session-1 and is at 10.0 s to 20.0 s"));
+        assert!(task.contains("you may also add comments"));
+        assert!(p.system.contains("Translation:"));
+    }
+
+    #[test]
+    fn parses_chat_replies() {
+        let hits = [hit("Bosses", "x"), hit("Eggs", "y")];
+        let text = r#"{"text": " Bomb both pods [S2]. See 0:15. ", "comments": [
+            {"t_s": 3, "t_end_s": null, "text": "Early", "shapes": [], "sources": ["S9", "S1"]}
+        ]}"#;
+        let with = parse_chat(text, &chat_request(true), &hits).unwrap();
+        assert_eq!(with.text, "Bomb both pods [S2]. See 0:15.");
+        assert_eq!(with.sources.len(), 1);
+        assert_eq!(with.sources[0].id, "S2");
+        // Clamped into the range shown, unknown source dropped
+        assert_eq!(with.comments[0].t_s, 10.0);
+        assert_eq!(with.comments[0].sources.len(), 1);
+        let without = parse_chat(text, &chat_request(false), &hits).unwrap();
+        assert!(without.comments.is_empty());
+        assert!(parse_chat(r#"{"comments": []}"#, &chat_request(false), &hits).is_err());
     }
 }
