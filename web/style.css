@@ -3264,8 +3264,10 @@ body {
 }
 
 /* ============================================================ cuttlefish
- * The Cuttlefish app: a library (open a video, reviews) and the player
- * (video with drawings and a timeline of comments, the comments beside).
+ * The Cuttlefish app: a library (open a video, the reviews, the chat bar
+ * that starts one) and the player (video with drawings and a timeline of
+ * comments, the comments and notes under it, the chat beside; a review
+ * without a video shows the chat and "Attach a video").
  */
 
 :root:not([data-app="cuttlefish"]) [data-app-only="cuttlefish"] {
@@ -3283,18 +3285,26 @@ body {
 #cf-library {
   max-width: 1360px;
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-  grid-template-areas: "open reviews";
+  grid-template-areas:
+    "open reviews"
+    "entry entry";
 }
 
-/* The notes sit under the video; the comments column spans both rows, and
- * the flexible second row takes its extra height, so no gap opens under the
- * video */
+/* The chat column spans every row; the flexible last row takes the extra
+ * height, so no gap opens under the notes */
 #cf-player {
   grid-template-columns: minmax(0, 3fr) minmax(0, 1.4fr);
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   grid-template-areas:
-    "video comments"
-    "notes comments";
+    "video chat"
+    "comments chat"
+    "notes chat";
+}
+
+/* Without a video the chat is the main area, "Attach a video" beside */
+#cf-player.is-chat {
+  grid-template-rows: 1fr;
+  grid-template-areas: "chat attach";
 }
 
 .p-cf-open {
@@ -3302,6 +3312,9 @@ body {
 }
 .p-cf-reviews {
   grid-area: reviews;
+}
+.p-cf-entry {
+  grid-area: entry;
 }
 .p-cf-video {
   grid-area: video;
@@ -3311,6 +3324,12 @@ body {
 }
 .p-cf-notes {
   grid-area: notes;
+}
+.p-cf-chat {
+  grid-area: chat;
+}
+.p-cf-attach {
+  grid-area: attach;
 }
 
 [data-theme="joy"] #cf-player,
@@ -3324,26 +3343,39 @@ body {
 
 [data-theme="telemetry"] #cf-library {
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-template-areas: "open open open open open reviews reviews reviews reviews reviews reviews reviews";
+  grid-template-areas:
+    "open open open open open reviews reviews reviews reviews reviews reviews reviews"
+    "entry entry entry entry entry entry entry entry entry entry entry entry";
 }
 
 [data-theme="telemetry"] #cf-player {
   grid-template-columns: repeat(12, minmax(0, 1fr));
   grid-template-areas:
-    "video video video video video video video video comments comments comments comments"
-    "notes notes notes notes notes notes notes notes comments comments comments comments";
+    "video video video video video video video video chat chat chat chat"
+    "comments comments comments comments comments comments comments comments chat chat chat chat"
+    "notes notes notes notes notes notes notes notes chat chat chat chat";
+}
+
+[data-theme="telemetry"] #cf-player.is-chat {
+  grid-template-areas: "chat chat chat chat chat chat chat chat attach attach attach attach";
 }
 
 [data-theme="telemetry"] .p-cf-open,
-[data-theme="telemetry"] .p-cf-video {
+[data-theme="telemetry"] .p-cf-video,
+[data-theme="telemetry"] .is-chat .p-cf-chat {
   --panel-no: "01";
 }
 [data-theme="telemetry"] .p-cf-reviews,
-[data-theme="telemetry"] .p-cf-comments {
+[data-theme="telemetry"] .p-cf-comments,
+[data-theme="telemetry"] .p-cf-attach {
   --panel-no: "02";
 }
+[data-theme="telemetry"] .p-cf-entry,
 [data-theme="telemetry"] .p-cf-notes {
   --panel-no: "03";
+}
+[data-theme="telemetry"] .p-cf-chat {
+  --panel-no: "04";
 }
 
 @media (max-width: 1100px) {
@@ -3351,12 +3383,16 @@ body {
   :root[data-theme] #cf-player {
     max-width: 900px;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "open" "reviews";
+    grid-template-areas: "open" "reviews" "entry";
   }
 
   :root[data-theme] #cf-player {
     grid-template-rows: none;
-    grid-template-areas: "video" "comments" "notes";
+    grid-template-areas: "video" "chat" "comments" "notes";
+  }
+
+  :root[data-theme] #cf-player.is-chat {
+    grid-template-areas: "chat" "attach";
   }
 }
 
@@ -3364,29 +3400,272 @@ body {
 :root[data-layout="phone"][data-theme] #cf-player {
   max-width: 480px;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "open" "reviews";
+  grid-template-areas: "open" "reviews" "entry";
 }
 
 :root[data-layout="phone"][data-theme] #cf-player {
   grid-template-rows: none;
-  grid-template-areas: "video" "comments" "notes";
+  grid-template-areas: "video" "chat" "comments" "notes";
+}
+
+:root[data-layout="phone"][data-theme] #cf-player.is-chat {
+  grid-template-areas: "chat" "attach";
 }
 
 @media (max-width: 720px) {
   :root[data-theme] #cf-library,
   :root[data-theme] #cf-player {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "open" "reviews";
+    grid-template-areas: "open" "reviews" "entry";
   }
 
   :root[data-theme] #cf-player {
     grid-template-rows: none;
-    grid-template-areas: "video" "comments" "notes";
+    grid-template-areas: "video" "chat" "comments" "notes";
+  }
+
+  :root[data-theme] #cf-player.is-chat {
+    grid-template-areas: "chat" "attach";
   }
 }
 
+/* On wide pages the chat bar stays in view at the bottom of the library,
+ * like a chat app's input (on narrow ones it would cover the panels above),
+ * and the chat panel keeps to the viewport beside the video, its thread
+ * scrolling inside */
+@media (min-width: 1101px) {
+  :root:not([data-layout="phone"]) .p-cf-entry {
+    position: sticky;
+    bottom: var(--gap);
+    z-index: 2;
+  }
+
+  :root:not([data-layout="phone"]) #cf-player:not(.is-chat) .p-cf-chat {
+    position: sticky;
+    top: var(--gap);
+    max-height: calc(100vh - 2 * var(--gap));
+  }
+}
+
+.p-cf-chat .panel-head,
+.p-cf-entry .panel-head {
+  flex: none;
+}
+
+.p-cf-chat .panel-title .app-icon,
+.p-cf-entry .panel-title .app-icon {
+  width: 22px;
+  height: 22px;
+}
+
+/* The thread */
+.cf-chat {
+  display: grid;
+  flex: 1 1 auto;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  margin: 0;
+  padding: 0 2px;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+#cf-player.is-chat .cf-chat {
+  min-height: 40vh;
+}
+
+.cf-msg {
+  display: grid;
+  gap: 6px;
+  max-width: 92%;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.cf-msg.is-user {
+  justify-self: end;
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--inset-border));
+  background: color-mix(in oklab, var(--accent) 10%, var(--inset));
+}
+
+.cf-msg.is-ai {
+  justify-self: start;
+  border-left: 3px solid var(--s3);
+}
+
+.cf-msg-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.cf-msg.is-ai .cf-author {
+  color: var(--s3);
+}
+
+.cf-msg-head .cf-meta {
+  margin-left: auto;
+  font-size: 11.5px;
+}
+
+.cf-msg-text {
+  font-size: 13.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A time in an answer seeks the video */
+.cf-tlink {
+  padding: 0 5px;
+  border: 1px solid color-mix(in oklab, var(--accent) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.cf-tlink:hover,
+.cf-time:hover {
+  background: color-mix(in oklab, var(--accent) 24%, transparent);
+}
+
+/* [S1] in an answer */
+.cf-cite {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--s3) 18%, transparent);
+  color: var(--s3);
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  vertical-align: 0.15em;
+}
+
+.cf-sources summary {
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cf-sources .k-sources {
+  margin-top: 6px;
+  padding-left: 0;
+  list-style: none;
+}
+
+.cf-sources a {
+  color: var(--accent);
+}
+
+.cf-msg-comments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* An empty chat offers the examples */
+.cf-chat-empty {
+  display: grid;
+  gap: 10px;
+}
+
+.cf-chat-empty .panel-note {
+  line-height: 1.45;
+}
+
+.cf-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cf-chip {
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid var(--inset-border);
+  border-radius: 999px;
+  background: var(--inset);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.cf-chip:hover {
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--inset-border));
+  color: var(--text);
+}
+
+/* The composer: a growing input and Send */
+.cf-composer {
+  display: grid;
+  flex: none;
+  gap: 8px;
+  margin: 0;
+}
+
+.cf-composer-row,
+.p-cf-entry .cf-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.cf-input {
+  flex: 1;
+  max-width: none;
+  height: auto;
+  min-height: 40px;
+  padding: 9px 10px;
+  font: inherit;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
+}
+
+.cf-send {
+  flex: none;
+}
+
+.cf-context {
+  gap: 6px;
+}
+
+.cf-composer-note {
+  flex: none;
+  min-height: 1.2em;
+  margin: 0;
+}
+
+.cf-composer-note:empty {
+  display: none;
+}
+
+.cf-composer-note.is-error {
+  color: var(--critical);
+}
+
+.cf-composer-note.is-warning {
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
 .p-cf-video .panel-head,
-.p-cf-comments .panel-head {
+.p-cf-comments .panel-head,
+.p-cf-chat .panel-head,
+.p-cf-attach .panel-head {
   flex-wrap: wrap;
 }
 
@@ -3547,28 +3826,6 @@ body {
 
 .cf-add {
   margin-left: auto;
-}
-
-.cf-ask {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 12px;
-  border: 1px solid color-mix(in oklab, var(--s3) 45%, var(--panel-border));
-  border-radius: var(--radius-sm);
-  background: color-mix(in oklab, var(--s3) 8%, var(--panel));
-}
-
-.cf-ask-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  color: var(--s3);
-}
-
-.cf-ask-head b {
-  color: var(--text);
 }
 
 .cf-question,
@@ -4115,8 +4372,10 @@ body {
 }
 
 /* ============================================================ knowledge
- * Cuttlefish's knowledge view: stats, search, ask and translate, imports,
- * documents and the glossary.
+ * Cuttlefish's knowledge view, managing the store: imports and the inbox,
+ * what the store holds, documents, the glossary, assets and search. The
+ * left column feeds and looks things up, the right column shows what is
+ * there.
  */
 
 #cf-knowledge {
@@ -4125,37 +4384,14 @@ body {
   margin: 0 auto;
   align-items: start;
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-  grid-template-areas:
-    "stats search"
-    "ask search"
-    "import docs"
-    "glossary docs"
-    "overview assets";
 }
 
-.p-k-stats {
-  grid-area: stats;
-}
-.p-k-search {
-  grid-area: search;
-}
-.p-k-ask {
-  grid-area: ask;
-}
-.p-k-import {
-  grid-area: import;
-}
-.p-k-docs {
-  grid-area: docs;
-}
-.p-k-glossary {
-  grid-area: glossary;
-}
-.p-k-overview {
-  grid-area: overview;
-}
-.p-k-assets {
-  grid-area: assets;
+/* Each column stacks its panels on its own, so a tall panel on one side
+ * opens no gap on the other */
+.k-col {
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
 }
 
 [data-theme="joy"] #cf-knowledge {
@@ -4164,58 +4400,43 @@ body {
 }
 
 [data-theme="telemetry"] #cf-knowledge {
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-template-areas:
-    "stats stats stats stats stats search search search search search search search"
-    "ask ask ask ask ask search search search search search search search"
-    "import import import import import docs docs docs docs docs docs docs"
-    "glossary glossary glossary glossary glossary docs docs docs docs docs docs docs"
-    "overview overview overview overview overview assets assets assets assets assets assets assets";
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
 }
 
-[data-theme="telemetry"] .p-k-stats {
+[data-theme="telemetry"] .p-k-import {
   --panel-no: "01";
 }
-[data-theme="telemetry"] .p-k-search {
+[data-theme="telemetry"] .p-k-overview {
   --panel-no: "02";
 }
-[data-theme="telemetry"] .p-k-ask {
+[data-theme="telemetry"] .p-k-docs {
   --panel-no: "03";
 }
-[data-theme="telemetry"] .p-k-import {
+[data-theme="telemetry"] .p-k-glossary {
   --panel-no: "04";
 }
-[data-theme="telemetry"] .p-k-docs {
+[data-theme="telemetry"] .p-k-assets {
   --panel-no: "05";
 }
-[data-theme="telemetry"] .p-k-glossary {
+[data-theme="telemetry"] .p-k-search {
   --panel-no: "06";
-}
-[data-theme="telemetry"] .p-k-overview {
-  --panel-no: "07";
-}
-[data-theme="telemetry"] .p-k-assets {
-  --panel-no: "08";
 }
 
 @media (max-width: 1100px) {
   :root[data-theme] #cf-knowledge {
     max-width: 900px;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary" "overview" "assets";
   }
 }
 
 :root[data-layout="phone"][data-theme] #cf-knowledge {
   max-width: 480px;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary" "overview" "assets";
 }
 
 @media (max-width: 720px) {
   :root[data-theme] #cf-knowledge {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary" "overview" "assets";
   }
 }
 
@@ -4266,7 +4487,6 @@ body {
 }
 
 .k-hit a,
-.k-answer a,
 .p-k-docs a {
   color: var(--accent);
 }
@@ -4286,40 +4506,10 @@ body {
   -webkit-line-clamp: unset;
 }
 
-.k-answer {
-  display: grid;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--inset-border);
-  border-left: 3px solid var(--s3);
-  border-radius: var(--radius-sm);
-  background: var(--inset);
-}
-
-.k-answer[hidden],
-.k-translation[hidden] {
-  display: none;
-}
-
+/* The sources an answer cites (the chat's messages use it too) */
 .k-sources {
   gap: 4px;
   font-size: 12.5px;
-}
-
-.k-translate {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-}
-
-.k-translation {
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--inset-border);
-  border-radius: var(--radius-sm);
-  background: var(--inset);
-  font-size: 13.5px;
-  white-space: pre-wrap;
 }
 
 .k-import {

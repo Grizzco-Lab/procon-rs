@@ -73,8 +73,8 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/inspect.rs` | Inkspector backend: sessions, frames, labels, delays |
 | `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes, Follow's write rules |
 | `src/follow.rs` | Follow: boxes carried over the next frames by AgentZero's SAM 2 tracker, proxied from a thread; starts the tracker |
-| `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` and the video), video bytes with ranges, yt-dlp downloads into new reviews, migration of the older flat layout, "Ask Cuttlefish" with the shared knowledge store |
-| `src/knowledge.rs` | Cuttlefish's Knowledge tab: the store and embedder loaded once, search, ask, translate, glossary, import jobs, inbox uploads, overview, assets and thumbnails, document deletion |
+| `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` with the chat, and the video, optional), video bytes with ranges, yt-dlp downloads into new or existing reviews, migration of the older flat layout, the chat endpoint over the shared knowledge store |
+| `src/knowledge.rs` | Cuttlefish's Knowledge view: the store and embedder loaded once (the chat's retrieval too), search, glossary, import jobs, inbox uploads, overview, assets and thumbnails, document deletion |
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results through our classes, dataset overview, send to labels |
 | `src/predictor.rs` | Predictor app backend: `agentzero-predict` runs as a child process, stored predictions, windows of predictions and truth, agreement numbers |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
@@ -177,8 +177,9 @@ own status), then the status takes a row of its own. The View menu sets
 `localStorage`, and the language. `web/i18n.js` is the language layer: a dictionary per language
 (English in it, Simplified Chinese in `web/i18n-zh.js`), `t(key, values)`,
 and `data-i18n*` attributes on the page's elements; a change fires
-`lang-change` for what scripts draw. The Cuttlefish app and its Knowledge view
-use it; other apps can adopt it key by key. The Studio's preview pauses and its views stop
+`lang-change` for what scripts draw; an entry may be a list (the chat's
+example messages). The Cuttlefish app and its Knowledge view use it; other
+apps can adopt it key by key. The Studio's preview pauses and its views stop
 drawing while another app is shown. `web/controller3d.js` loads three.js from
 jsdelivr and extrudes the SVG view's outline; the SVG stays as the fallback. The
 input overlay (`drawInputHud` in `app.js`) is shared by the Studio's video and
@@ -218,20 +219,34 @@ own process group, stopped with the studio.
 
 `src/cuttlefish.rs` keeps each review as a folder, `<reviews>/<id>/review.json`
 plus the video when it lives there (`video.file`): a YouTube range downloads
-into a new review folder, a local file can be copied in, and a session review
-points at its recording. The file name is checked to be a plain name, so a
-path never leaves its folder. `Cuttlefish::migrate` moves reviews of the
-older flat layout into folders at startup, with their YouTube videos from the
-old download cache. A review may hold `notes` on the whole video. A YouTube
-review without its title gets it (with channel and upload date) from
-`yt-dlp --skip-download` on a thread, once per run, when it is listed or
-opened; a save keeps those fields when the page's copy lacks them. It also
-serves videos, and single thumbnails (`GET thumb`, ffmpeg, cached in memory)
-for the player's neighbours strip; `src/knowledge.rs` holds
-the `cuttlefish` crate's `Store` and `E5Embedder`, loaded once on first use and
-shared by "Ask Cuttlefish" (`cuttlefish::review::review` over the borrowed
-store, embedder and a client made per request), the Knowledge tab's search,
-questions and translations, and imports. Imports use `cuttlefish::ingest`
+into a new review folder (or, with `review`, into a chat's review that has no
+video yet), a local file can be copied in, and a session review points at its
+recording. The file name is checked to be a plain name, so a path never leaves
+its folder. `Cuttlefish::migrate` moves reviews of the older flat layout into
+folders at startup, with their YouTube videos from the old download cache. A
+review may hold `notes` on the whole video and `messages`, its chat with
+Cuttlefish (role, text, the moment or range a user message was asked with,
+the sources an answer cites, the ids of the comments it added, time); a review
+started from the chat has no `video` until one is attached. A YouTube review
+without its title gets it (with channel and upload date) from `yt-dlp
+--skip-download` on a thread, once per run, when it is listed or opened; a
+save keeps those fields when the page's copy lacks them. It also serves videos,
+and single thumbnails (`GET thumb`, ffmpeg, cached in memory) for the player's
+neighbours strip.
+
+The chat: `POST chat` takes the message, the earlier turns (the page owns the
+review and sends its `messages`), the video and the moment or range it is
+about; `Cuttlefish::video_context` extracts the frames with ffmpeg and picks
+the review's comments near them, and `cuttlefish::review::chat` retrieves
+knowledge for the message plus the last user turns, sends the conversation
+with the frames and a JSON schema, and answers text (citing `[S1]`, naming
+moments as times), sources and timed comments. The page appends both turns to
+the review and saves it (Cuttlefish's turn even after the review was left),
+and adds his comments as its own. `src/knowledge.rs` holds the `cuttlefish`
+crate's `Store` and `E5Embedder`, loaded once on first use and shared by the
+chat (`Knowledge::chat` over the borrowed store, embedder and a client made
+per request), the Knowledge view's search, and imports; `GET knowledge/model`
+tells the page whether the key is set without loading the store. Imports use `cuttlefish::ingest`
 (the same code as the CLI) with a `Sink` that writes the job's log; one runs
 at a time, and the index is written every fifty documents and at the end (it
 may live in a synced folder, where each write uploads it whole). The

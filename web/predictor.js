@@ -217,7 +217,8 @@
       const response = await fetch("/api/cuttlefish/reviews");
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
-      pred.reviews = data.reviews;
+      // A review started from Cuttlefish's chat may have no video yet
+      pred.reviews = data.reviews.filter((r) => r.video);
     } catch (error) {
       pred.reviews = [];
       $("p-review").replaceChildren(

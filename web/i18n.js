@@ -27,11 +27,10 @@ const I18N = {
     // Cuttlefish: the views
     "cf.name": "Cuttlefish",
     "cf.tab.reviews": "Reviews",
-    "cf.tab.reviewsNote":
-      "Your video reviews: comments and drawings on the frames",
+    "cf.tab.reviewsNote": "Ask Cuttlefish, open a video, browse your reviews",
     "cf.tab.knowledge": "Knowledge",
     "cf.tab.knowledgeNote":
-      "What Cuttlefish knows: guides, wiki pages and VODs to search and ask",
+      "What Cuttlefish knows: import material, documents, glossary, assets, search",
     "cf.loading": "Loading…",
 
     // Library
@@ -67,6 +66,9 @@ const I18N = {
     "cf.kind.session": "Session",
     "cf.kind.file": "File",
     "cf.kind.youtube": "YouTube",
+    "cf.kind.chat": "Chat",
+    "cf.reviews.noVideo": "no video yet",
+    "cf.reviews.messages": ({ n }) => (n === 1 ? "1 message" : `${n} messages`),
     "cf.range.end": "end",
     "cf.youtube.lookingUp": "looking up the title…",
     "cf.youtube.open": "Open the original on YouTube at this time",
@@ -146,31 +148,62 @@ const I18N = {
     "cf.notes.deleteAsk": "Delete this note?",
 
     // Saving
-    "cf.save.new": "not saved yet: comment to start the review",
+    "cf.save.new": "not saved yet: comment or ask to start the review",
     "cf.save.dirty": "unsaved changes",
     "cf.save.saving": "saving…",
     "cf.save.saved": "saved as {id}",
     "cf.save.error": "not saved: {error}",
 
-    // Ask Cuttlefish
+    // Ask Cuttlefish: the chat
     "cf.ask": "Ask Cuttlefish",
     "cf.ask.note": "a veteran's eye on your play",
-    "cf.ask.placeholder": "Optional question, e.g. why was I splatted here?",
     "cf.ask.moment": "Comment on this moment",
-    "cf.ask.range": "Review range",
+    "cf.ask.momentMessage":
+      "Comment on this moment: what matters most here, and what would you do next time?",
     "cf.ask.from": "from",
     "cf.ask.to": "to",
     "cf.ask.fromLabel": "Range start",
     "cf.ask.toLabel": "Range end",
     "cf.ask.badRange": "The range must end after it starts",
     "cf.ask.watching": "Cuttlefish is watching…",
-    "cf.ask.failed": "Could not ask Cuttlefish: {error}",
-    "cf.ask.pending":
-      "Cuttlefish can't answer yet: {error}. Your own comments and drawings are saved as usual.",
-    "cf.ask.error": "Cuttlefish could not answer: {error}",
-    "cf.ask.added": ({ n }) =>
-      n === 1 ? "Cuttlefish added 1 comment" : `Cuttlefish added ${n} comments`,
-    "cf.ask.nothing": "Cuttlefish had nothing to add",
+    "cf.chat.entryNote":
+      "a question, a callout to translate, jargon to explain; each conversation is a review, with or without a video",
+    "cf.chat.messageLabel": "Message to Cuttlefish",
+    "cf.chat.send": "Send",
+    "cf.chat.keys": "Enter sends · Shift+Enter for a new line",
+    "cf.chat.thinking": "Cuttlefish is thinking… (up to a minute)",
+    "cf.chat.noKey":
+      "ANTHROPIC_API_KEY is not set where the studio runs, so Cuttlefish cannot answer yet. Export it before starting the studio; your messages, comments and drawings are saved as usual.",
+    "cf.chat.failed": "Could not reach Cuttlefish: {error}",
+    "cf.chat.error": "Cuttlefish could not answer: {error}",
+    "cf.chat.empty":
+      "Ask anything about Salmon Run, paste a callout to translate for a teammate, or ask about the moment you are watching. Answers cite the knowledge; times in them seek the video.",
+    "cf.chat.try": "Try one:",
+    // The player's own jargon, shown in every language (data, like the
+    // glossary), and two requests in English
+    "cf.chat.examples": [
+      "惯性取消搬蛋快",
+      "我刚拿的熊刷，不应该上柱子拍的",
+      "小枪可以优先出差回收一些外围蛋，但不要待太久卡新一波怪",
+      "我还剩一个镭射",
+      "Translate for an English-speaking teammate: 小枪可以优先出差回收一些外围蛋",
+      "When should I leave the basket to kill a Stinger?",
+    ],
+    "cf.chat.with": "With the video:",
+    "cf.chat.ctxMoment": "this moment",
+    "cf.chat.ctxRange": "a range",
+    "cf.chat.ctxNone": "no frames",
+    "cf.chat.at": "at {time}",
+    "cf.chat.sources": "Sources",
+    "cf.chat.commentsAdded": ({ n }) =>
+      n === 1 ? "1 comment added" : `${n} comments added`,
+    "cf.chat.seek": "Go to {time}",
+    "cf.attach.title": "Attach a video",
+    "cf.attach.note":
+      "optional: Cuttlefish can then look at the moments you ask about",
+    "cf.attach.attach": "Attach",
+    "cf.attach.download": "Download and attach",
+    "cf.attach.failed": "Not attached: {error}",
 
     // Knowledge
     "k.loading":
@@ -179,7 +212,7 @@ const I18N = {
     "k.chunks": "Chunks",
     "k.glossary": "Glossary",
     "k.digest": "Digest",
-    "k.digestNote": "digest.md, sent with every question",
+    "k.digestNote": "digest.md, sent with every message",
     "k.stats.cannotOpen": "The knowledge store cannot open: {error}",
     "k.stats.nothing": "nothing imported yet",
     "k.stats.ownGlossary": "glossary.toml in the data folder",
@@ -188,14 +221,12 @@ const I18N = {
     "k.no": "No",
     "k.key.set": "set",
     "k.key.notSet": "not set",
-    "k.key.anthropic": "Needed to ask and translate",
+    "k.key.anthropic": "Needed by the chat",
     "k.key.discord": "Needed to import through a Discord bot",
     "k.key.discordNote": "(needs DISCORD_BOT_TOKEN where the studio runs)",
-    "k.keyNote":
-      "ANTHROPIC_API_KEY is not set where the studio runs, so asking and translating are off. Export it before starting the studio; search, imports and the glossary work without it.",
-    "k.noKey": "ANTHROPIC_API_KEY is not set where the studio runs.",
     "k.search": "Search",
-    "k.searchNote": "nearest chunks, any language, no key",
+    "k.searchNote":
+      "nearest chunks, any language, no key; what the chat retrieves",
     "k.searchPlaceholder": "Stinger at low tide, バクダンの処理…",
     "k.searchLabel": "Search the knowledge",
     "k.results": "Results",
@@ -203,27 +234,6 @@ const I18N = {
     "k.search.none":
       "Nothing found: the store is empty. Import something first.",
     "k.licenseUnknown": "license unknown",
-    "k.askTitle": "Ask and translate",
-    "k.askNote": "answers cite the knowledge",
-    "k.question": "Question",
-    "k.questionPlaceholder":
-      "When should I leave the basket to kill a Stinger?",
-    "k.ask": "Ask",
-    "k.ask.thinking": "Cuttlefish is thinking… (up to a minute)",
-    "k.translate": "Translate",
-    "k.translatePlaceholder": "Kill the Steelhead before the Flyfish",
-    "k.translate.running": "Translating…",
-    "k.into": "Into",
-    "k.lang.en": "English",
-    "k.lang.ja": "Japanese",
-    "k.lang.zh": "Chinese (simplified)",
-    "k.lang.zhHant": "Chinese (traditional)",
-    "k.lang.ko": "Korean",
-    "k.lang.es": "Spanish",
-    "k.lang.fr": "French",
-    "k.lang.de": "German",
-    "k.lang.it": "Italian",
-    "k.lang.ru": "Russian",
     "k.import": "Import",
     "k.importNote": "one at a time; web pages politely",
     "k.kind.web": "Web pages",
@@ -362,14 +372,17 @@ const i18nLocale = () => (i18nCurrent === "zh" ? "zh-CN" : "en");
 
 /** The string of `key` in the language shown, with {name} placeholders
  * filled from `values`; English when the language lacks it, the key when
- * neither has it */
+ * neither has it. An entry that is a list (example messages) comes back
+ * as a list of strings. */
 function t(key, values = {}) {
   const entry = I18N[i18nCurrent]?.[key] ?? I18N.en[key];
   if (entry == null) return key;
   const text = typeof entry === "function" ? entry(values) : entry;
-  return text.replace(/\{(\w+)\}/g, (match, name) =>
-    values[name] != null ? String(values[name]) : match,
-  );
+  const fill = (s) =>
+    s.replace(/\{(\w+)\}/g, (match, name) =>
+      values[name] != null ? String(values[name]) : match,
+    );
+  return Array.isArray(text) ? text.map(fill) : fill(text);
 }
 
 /** Translate the marked elements under `root` */

@@ -174,21 +174,45 @@ Labels come from `crates/gameplay-data`, the same code the training side uses.
 
 ### Cuttlefish
 
-Reviews a video (a recorded segment, a video file on the PC or a range of a
-YouTube video) with comments at its times and shapes drawn on the paused frame:
-a notebook of mistakes and lessons to flip through later. Each review is a
-folder in `[cuttlefish] reviews`, `<id>/review.json`, with its video when the
-video belongs to it: a YouTube range is downloaded straight into its review
-(with the video's title, channel and upload date, shown in the library), and a
-local file can be copied in with **Copy into review**. A recorded session is
-never copied; its review points at the recording. Deleting a review deletes its
-folder, video included, after a confirmation. Reviews saved before this layout
-(`<id>.json`) move into folders when the studio starts, and a YouTube video
-still in `~/.cache/procon-cuttlefish` moves into its review. A YouTube review
-without its title (such as one moved from the old layout) gets the title,
-channel and upload date in the background the first time it is listed or
-opened; the title in the library, the review's header and the top bar links
-to the original video on YouTube, at the playhead in the review.
+A chat with Cuttlefish, the AI reviewer, and video reviews: a recorded
+segment, a video file on the PC or a range of a YouTube video with comments at
+its times and shapes drawn on the paused frame, a notebook of mistakes and
+lessons to flip through later. The app has two views, **Reviews** and
+**Knowledge**.
+
+**Reviews** is the entry: the reviews so far, **Open a video** (a session, a
+file, a YouTube range), and at the bottom **Ask Cuttlefish**, a chat bar.
+Typing there (a question, a callout to translate for a teammate, jargon to
+explain: the examples rotate as its placeholder and sit above it as chips)
+starts a new review without a video, opens it and sends the message. Inside a
+review the chat is the panel beside the video (the main area when there is no
+video, with **Attach a video** beside it: a session, a file, or a YouTube range
+downloaded into the review). The chat keeps its whole history; Cuttlefish's
+answers cite the knowledge (`[S1]`, listed under **Sources**) and name moments
+as times that seek the video when clicked, and when asked about the video they
+can add timed comments with drawings, linked from the answer. **With the
+video** chooses what a message takes along: the frames around the playhead
+(**this moment**), a **range**, or **no frames** (for a translation, say);
+**Comment on this moment** sends a review request for the playhead. Every
+message is saved in the review's `review.json` (`messages`, with role, text,
+the moment or range it was asked with, sources and time), so reopening the
+review shows the conversation. The chat needs `ANTHROPIC_API_KEY` in the
+studio's environment (the only place it is read from); without it the chat
+says so and messages, comments and drawings are still saved.
+
+Each review is a folder in `[cuttlefish] reviews`, `<id>/review.json`, with
+its video when the video belongs to it: a YouTube range is downloaded straight
+into its review (with the video's title, channel and upload date, shown in the
+library), and a local file can be copied in with **Copy into review**. A
+recorded session is never copied; its review points at the recording. Deleting
+a review deletes its folder, video included, after a confirmation. Reviews
+saved before this layout (`<id>.json`) move into folders when the studio
+starts, and a YouTube video still in `~/.cache/procon-cuttlefish` moves into
+its review. A YouTube review without its title (such as one moved from the old
+layout) gets the title, channel and upload date in the background the first
+time it is listed or opened; the title in the library, the review's header and
+the top bar links to the original video on YouTube, at the playhead in the
+review.
 
 While reviewing:
 
@@ -201,28 +225,28 @@ While reviewing:
 - **Notes**, under the video: comments on the whole video, at no time
   (general notes, rants), which can be edited and deleted.
 
-**Ask Cuttlefish** sends the range's frames and nearby comments to Claude with
-knowledge from the store and adds its comments. The **Knowledge** tab (next to
-**Reviews** above the library) shows and fills that store (`crates/cuttlefish`,
-folder `[cuttlefish] knowledge`):
+The chat sends the message, the conversation so far, the frames it takes along
+and the nearby comments to Claude with knowledge retrieved from the store for
+it. The **Knowledge** view (next to **Reviews** above the library) manages
+that store (`crates/cuttlefish`, folder `[cuttlefish] knowledge`); asking and
+translating are the chat's job. It is laid out in two columns, feeding and
+looking up on the left, what is there on the right:
 
-- what it holds: documents per kind of source, chunks, glossary, digest, and
-  whether `ANTHROPIC_API_KEY` and `DISCORD_BOT_TOKEN` are set (never their
-  values);
-- **Search**: the nearest chunks with their source, link, license and score,
-  in any language, without a key;
-- **Ask** and **Translate**: need `ANTHROPIC_API_KEY` in the studio's
-  environment (the only place it is read from);
 - **Import**: the **Inbox** (below), web pages, a sitemap or a MediaWiki
   category (robots.txt obeyed, one request per site every few seconds),
   YouTube subtitles, files on the PC (markdown, text, HTML, PDF, Word, subtitles),
   a Discord export or a Discord bot; one import at a time, with its log and a
   Cancel button;
-- the documents (each can be deleted), a glossary lookup, **What the store
-  holds** (documents by source and format, glossary terms by language and the
-  name tables they came from, assets by folder, the last imports with their
-  reports) and **Assets**, a browser of the imported images and icons with
-  the names of the weapon or boss they show.
+- **Glossary**, a lookup of a term or of the terms a sentence mentions, and
+  **Search**, the nearest chunks with their source, link, license and score,
+  in any language, without a key (what the chat retrieves);
+- **What the store holds**: documents, chunks, glossary and digest counts,
+  whether `ANTHROPIC_API_KEY` and `DISCORD_BOT_TOKEN` are set (never their
+  values), then documents by source and format, glossary terms by language
+  and the name tables they came from, assets by folder, the inbox and the
+  last imports with their reports; **Documents** (each can be deleted) and
+  **Assets**, a browser of the imported images and icons with the names of
+  the weapon or boss they show.
 
 **Where to put things.** The knowledge folder is `Knowledge` next to the
 Inkspector's root (with the data on Dropbox,

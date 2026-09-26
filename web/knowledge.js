@@ -1,10 +1,11 @@
-// Cuttlefish's knowledge view (#cuttlefish/view=knowledge): what the store
-// holds, search, questions and translations, imports (uploads into the
-// inbox and its import report included), documents, the glossary and the
-// asset browser, through /api/cuttlefish/knowledge/... (see
-// src/knowledge.rs). Runs after
-// cuttlefish.js, which hides its library and player for this view, and uses
-// the helpers of i18n.js, app.js and inspect.js (t, $, escapeHtml).
+// Cuttlefish's knowledge view (#cuttlefish/view=knowledge): managing what
+// Cuttlefish knows. Imports (uploads into the inbox and its import report
+// included), what the store holds, documents, the glossary, the asset
+// browser and search, through /api/cuttlefish/knowledge/... (see
+// src/knowledge.rs). Questions and translations are the chat's, in
+// cuttlefish.js. Runs after cuttlefish.js, which hides its library and
+// player for this view, and uses the helpers of i18n.js, app.js and
+// inspect.js (t, $, escapeHtml).
 "use strict";
 
 (() => {
@@ -128,16 +129,12 @@
       ? t("k.stats.ownGlossary")
       : t("k.stats.seedGlossary");
     $("k-digest").textContent = stats.digest ? t("k.yes") : t("k.no");
-    $("k-model").textContent = stats.model;
     const keyChip = (name, set, what) =>
       `<span class="chip" data-level="${set ? "good" : "off"}" title="${escapeHtml(what)}"><span class="chip-dot"></span><span class="chip-text">${name} ${set ? t("k.key.set") : t("k.key.notSet")}</span></span>`;
     $("k-keys").innerHTML =
       keyChip("ANTHROPIC_API_KEY", stats.anthropic_key, t("k.key.anthropic")) +
-      keyChip("DISCORD_BOT_TOKEN", stats.discord_token, t("k.key.discord"));
-    $("k-key-note").hidden = stats.anthropic_key;
-    for (const id of ["k-ask", "k-translate"]) {
-      $(id).disabled = !stats.anthropic_key;
-    }
+      keyChip("DISCORD_BOT_TOKEN", stats.discord_token, t("k.key.discord")) +
+      `<span class="chip" data-level="off"><span class="chip-text">${escapeHtml(stats.model)}</span></span>`;
     $("k-token-note").textContent = stats.discord_token
       ? ""
       : t("k.key.discordNote");
@@ -178,61 +175,6 @@
       list.append(li);
     }
   };
-
-  // ---------------------------------------------------- ask and translate
-
-  /** The message for a failed model call */
-  function modelError(error) {
-    return error.status === 501 ? t("k.noKey") : error.message;
-  }
-
-  $("k-ask-form").onsubmit = async (event) => {
-    event.preventDefault();
-    const question = $("k-question").value.trim();
-    if (!question) return;
-    const status = $("k-ask-status");
-    const out = $("k-answer");
-    $("k-ask").disabled = true;
-    status.textContent = t("k.ask.thinking");
-    try {
-      const answer = await api("ask", { question });
-      const sources = answer.sources
-        .map(
-          (s) =>
-            `<li><b>${escapeHtml(s.id)}</b> ${titleLink(s.title, s.url)}${s.heading ? ` › ${escapeHtml(s.heading)}` : ""} <span class="panel-note">${escapeHtml(sourceName(s.source))} · ${escapeHtml(s.license ?? t("k.licenseUnknown"))}</span></li>`,
-        )
-        .join("");
-      out.innerHTML = `<p class="cf-text">${escapeHtml(answer.text)}</p>${sources ? `<ol class="k-sources">${sources}</ol>` : ""}`;
-      out.hidden = false;
-      status.textContent = "";
-    } catch (error) {
-      status.textContent = modelError(error);
-    } finally {
-      $("k-ask").disabled = !k.stats?.anthropic_key;
-    }
-  };
-
-  $("k-translate-form").onsubmit = async (event) => {
-    event.preventDefault();
-    const text = $("k-text").value.trim();
-    if (!text) return;
-    const status = $("k-translate-status");
-    $("k-translate").disabled = true;
-    status.textContent = t("k.translate.running");
-    remember("to", $("k-to").value);
-    try {
-      const data = await api("translate", { text, to: $("k-to").value });
-      const out = $("k-translation");
-      out.textContent = data.text;
-      out.hidden = false;
-      status.textContent = "";
-    } catch (error) {
-      status.textContent = modelError(error);
-    } finally {
-      $("k-translate").disabled = !k.stats?.anthropic_key;
-    }
-  };
-  $("k-to").value = remembered("to", "ja");
 
   // --------------------------------------------------------------- import
 

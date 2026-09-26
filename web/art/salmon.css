@@ -316,6 +316,18 @@
   --band: var(--sr-lime);
 }
 
+/* The knowledge view's second column starts its bands further round, so the
+ * two columns differ */
+[data-theme="salmon"] .k-col + .k-col .panel:nth-of-type(6n + 1) {
+  --band: var(--sr-pink);
+}
+[data-theme="salmon"] .k-col + .k-col .panel:nth-of-type(6n + 2) {
+  --band: var(--sr-purple);
+}
+[data-theme="salmon"] .k-col + .k-col .panel:nth-of-type(6n + 3) {
+  --band: var(--sr-lime);
+}
+
 /* Headings as tilted paper stickers with an ink dot in the band colour */
 [data-theme="salmon"] .panel-head h2 {
   display: inline-flex;
@@ -417,6 +429,58 @@
 
 [data-theme="salmon"] .data-table tr.current {
   background: color-mix(in oklab, var(--sr-orange) 22%, var(--panel));
+}
+
+/* ------------------------------------------------------------- chat
+ * Messages as speech stickers: the player's in workwear orange, the
+ * reviewer's on paper with a teal edge; example chips as small stickers
+ */
+
+[data-theme="salmon"] .cf-msg {
+  border: 2px solid var(--sr-ink);
+  box-shadow: 2px 3px 0 var(--sr-ink);
+}
+
+[data-theme="salmon"] .cf-msg.is-user {
+  background: color-mix(in oklab, var(--sr-orange) 28%, var(--panel));
+}
+
+[data-theme="salmon"] .cf-msg.is-ai {
+  border-left: 6px solid var(--sr-teal);
+}
+
+[data-theme="salmon"] .cf-msg.is-ai .cf-author {
+  color: var(--sr-teal);
+}
+
+[data-theme="salmon"] .cf-chip {
+  border: 2px solid var(--sr-ink);
+  background: var(--sr-paper);
+  color: #1a1320;
+  box-shadow: 2px 2px 0 var(--sr-ink);
+  font-weight: 600;
+}
+
+[data-theme="salmon"] .cf-chip:hover {
+  background: var(--sr-gold);
+  color: #1a1320;
+}
+
+[data-theme="salmon"] .cf-tlink,
+[data-theme="salmon"] .cf-time {
+  border-color: var(--sr-ink);
+  background: var(--sr-gold);
+  color: #1a1320;
+  font-weight: 600;
+}
+
+[data-theme="salmon"] .cf-cite {
+  background: var(--sr-teal);
+  color: var(--sr-ink);
+}
+
+[data-theme="salmon"] .cf-input {
+  border: 2px solid var(--sr-ink);
 }
 
 /* ------------------------------------------------------ controller

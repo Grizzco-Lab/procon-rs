@@ -1,18 +1,29 @@
-// Cuttlefish app: review a video with comments at its times and drawings on
-// its paused frames, notes on the whole video, and ask Cuttlefish (the AI)
-// for his. Runs after i18n.js, app.js, sketch.js and inspect.js and uses
-// their helpers (t, $, Sketch, clock, escapeHtml). Its state lives in the
-// hash: #cuttlefish (the library), #cuttlefish/r=<review>&t=<s> (a saved
-// review) or #cuttlefish/kind=<kind>&ref=<ref>&start_s=&end_s= (a video not
-// reviewed yet) or #cuttlefish/view=knowledge (the knowledge view, see
-// knowledge.js). Reviews are saved as JSON through
-// /api/cuttlefish/reviews/<id>, each in a folder of its own with its YouTube
-// (or copied) video; the format is in src/cuttlefish.rs.
+// Cuttlefish app: chat with Cuttlefish (the AI), review a video with comments
+// at its times and drawings on its paused frames, and notes on the whole
+// video. Runs after i18n.js, app.js, sketch.js and inspect.js and uses their
+// helpers (t, $, Sketch, clock, escapeHtml). Its state lives in the hash:
+// #cuttlefish (the library: the reviews, "open a video" and the chat bar,
+// whose first message starts a review without a video),
+// #cuttlefish/r=<review>&t=<s> (a saved review) or
+// #cuttlefish/kind=<kind>&ref=<ref>&start_s=&end_s= (a video not reviewed
+// yet) or #cuttlefish/view=knowledge (the knowledge view, see knowledge.js).
+// Reviews are saved as JSON through /api/cuttlefish/reviews/<id>, each in a
+// folder of its own with its YouTube (or copied) video and its chat; the
+// format is in src/cuttlefish.rs. The page owns the review: a chat message
+// goes to /api/cuttlefish/chat with the conversation so far, and both turns
+// are saved with the review by the page.
 "use strict";
 
 (() => {
   /** A comment without an end shows its drawings this long, in seconds */
   const HOLD_S = 2;
+  /** The chat inputs' placeholder changes this often, in ms */
+  const PLACEHOLDER_MS = 5000;
+  /** Characters of a chat's first message that name a review without a
+   * video */
+  const TOPIC_CHARS = 60;
+  /** Lines a chat input grows to before it scrolls */
+  const INPUT_ROWS = 6;
   /** A danmaku comment, and its drawings, show this long, in seconds */
   const DANMAKU_S = 5;
   /** Danmaku comments floating in the corner at most */
@@ -56,9 +67,10 @@
     sessions: null,
     /** The last reviews listing, drawn again when the language changes */
     listing: null,
-    /** The open review: {video, comments, notes}, or null in the library */
+    /** The open review: {video?, comments, notes, messages}, or null in the
+     * library */
     review: null,
-    /** Its file name without .json once saved */
+    /** Its folder name once saved */
     id: null,
     fps: DEFAULT_FPS,
     /** Id of the comment being edited, whose drawings can change */
@@ -77,6 +89,18 @@
     metaTimer: null,
     /** Whole second the YouTube links point at */
     linkSecond: null,
+  };
+
+  /** The chat with Cuttlefish */
+  const chat = {
+    /** A message is on its way */
+    sending: false,
+    /** Whether ANTHROPIC_API_KEY is set where the studio runs; null until
+     * asked */
+    key: null,
+    /** Which example the placeholders show */
+    example: 0,
+    placeholderTimer: null,
   };
 
   /** Danmaku: comments shown over the video as playback reaches them */
@@ -203,7 +227,23 @@
       session: t("cf.kind.session"),
       file: t("cf.kind.file"),
       youtube: t("cf.kind.youtube"),
+      chat: t("cf.kind.chat"),
     })[kind] ?? kind;
+
+  /** The first message of a chat, shortened, as a review's name */
+  function topicOf(topic) {
+    const text = String(topic ?? "")
+      .trim()
+      .split("\n")[0];
+    if (!text) return t("cf.kind.chat");
+    return text.length > TOPIC_CHARS ? `${text.slice(0, TOPIC_CHARS)}…` : text;
+  }
+
+  /** What a review is called: its video, or the chat's first message */
+  function reviewName(review) {
+    if (review.video) return videoName(review.video);
+    return topicOf(review.messages?.find((m) => m.role === "user")?.text);
+  }
 
   /** Author as shown */
   const authorName = (author) =>
@@ -239,7 +279,7 @@
     const v = cf.review?.video;
     const href = youtubeAt(v, video.currentTime || 0);
     if (!text) return label.replaceChildren();
-    const name = v ? videoName(v) : "";
+    const name = cf.review ? reviewName(cf.review) : "";
     label.innerHTML = href
       ? `<a class="cf-yt" href="${escapeHtml(href)}" target="_blank" rel="noopener" title="${escapeHtml(t("cf.youtube.open"))}">${escapeHtml(name)} ↗</a> · ${escapeHtml(text)}`
       : escapeHtml(name ? `${name} · ${text}` : text);
@@ -270,11 +310,19 @@
     loadSessions();
     loadReviews();
     pollDownloads();
+    drawChips($("cf-entry-chips"), $("cf-entry-text"));
+    checkKey();
   }
+
+  /** The session pickers: the library's "Open a video" and the player's
+   * "Attach a video" */
+  const SESSION_PICKERS = [
+    ["cf-session", "cf-segment"],
+    ["cf-attach-session-pick", "cf-attach-segment"],
+  ];
 
   async function loadSessions() {
     if (cf.sessions) return;
-    const select = $("cf-session");
     try {
       const response = await fetch("/api/inspect/sessions");
       const data = await response.json();
@@ -282,31 +330,47 @@
       cf.sessions = data.sessions;
     } catch (error) {
       cf.sessions = [];
-      select.replaceChildren(
-        new Option(
-          t("cf.open.noSessionsBecause", { error: error.message }),
-          "",
-        ),
-      );
+      for (const [sessions] of SESSION_PICKERS) {
+        $(sessions).replaceChildren(
+          new Option(
+            t("cf.open.noSessionsBecause", { error: error.message }),
+            "",
+          ),
+        );
+      }
       return;
     }
-    select.replaceChildren(
-      ...cf.sessions.map((s) => new Option(s.name, s.name)),
-    );
-    if (!cf.sessions.length)
-      select.add(new Option(t("cf.open.noSessions"), ""));
-    fillSegments();
+    for (const [sessions, segments] of SESSION_PICKERS) {
+      const select = $(sessions);
+      select.replaceChildren(
+        ...cf.sessions.map((s) => new Option(s.name, s.name)),
+      );
+      if (!cf.sessions.length)
+        select.add(new Option(t("cf.open.noSessions"), ""));
+      fillSegments(sessions, segments);
+    }
   }
 
-  function fillSegments() {
-    const summary = cf.sessions?.find((s) => s.name === $("cf-session").value);
-    const select = $("cf-segment");
+  function fillSegments(sessions, segments) {
+    const summary = cf.sessions?.find((s) => s.name === $(sessions).value);
+    const select = $(segments);
     select.replaceChildren(
       ...(summary?.segments ?? []).map(
         (s) => new Option(s.file + (s.sound ? " ♪" : ""), s.file),
       ),
     );
     select.hidden = (summary?.segments.length ?? 0) < 2;
+  }
+
+  /** The video a session picker names */
+  function pickedSession(sessions, segments) {
+    const session = $(sessions).value;
+    if (!session) return null;
+    const segment = $(segments).value;
+    return {
+      kind: "session",
+      ref: segment ? `${session}/${segment}` : session,
+    };
   }
 
   async function loadReviews() {
@@ -354,26 +418,32 @@
       const v = review.video;
       const tr = document.createElement("tr");
       const details = [];
-      if (v.kind === "youtube") {
+      if (v?.kind === "youtube") {
         if (!v.title && fetching.has(review.id))
           details.push(t("cf.youtube.lookingUp"));
         if (channelText(v)) details.push(channelText(v));
       }
-      if (v.file) details.push(t("cf.reviews.fileIn", { file: v.file }));
+      if (v?.file) details.push(t("cf.reviews.fileIn", { file: v.file }));
+      if (!v) details.push(t("cf.reviews.noVideo"));
+      if (review.messages)
+        details.push(t("cf.reviews.messages", { n: review.messages }));
       details.push(review.id);
-      const href = youtubeAt(v);
+      const href = v ? youtubeAt(v) : null;
       const link = href
         ? ` <a class="cf-yt" href="${escapeHtml(href)}" target="_blank" rel="noopener" title="${escapeHtml(t("cf.youtube.openStart"))}">YouTube ↗</a>`
         : "";
+      // A review without a video is named by its first message
+      const kind = v ? kindName(v.kind) : kindName("chat");
+      const name = v ? videoName(v) : topicOf(review.topic);
       tr.innerHTML = `
-        <td><span class="cf-kind">${escapeHtml(kindName(v.kind))}</span> <span class="cf-video-name">${escapeHtml(videoName(v))}</span>${escapeHtml(rangeText(v))}<br><span class="panel-note">${escapeHtml(details.join(" · "))}${link}</span></td>
+        <td><span class="cf-kind">${escapeHtml(kind)}</span> <span class="cf-video-name">${escapeHtml(name)}</span>${v ? escapeHtml(rangeText(v)) : ""}<br><span class="panel-note">${escapeHtml(details.join(" · "))}${link}</span></td>
         <td class="num">${review.comments}</td>
         <td class="cf-changed">${escapeHtml(changedText(review.modified_ms))}</td>
         <td><button type="button" class="mode-toggle" data-delete>${escapeHtml(t("cf.delete"))}</button></td>`;
       tr.onclick = (event) => {
         if (event.target.closest("a")) return;
         if (event.target.closest("[data-delete]")) {
-          deleteReview(review.id, v.file);
+          deleteReview(review.id, v?.file);
           return;
         }
         location.hash = `#cuttlefish/${new URLSearchParams({ r: review.id })}`;
@@ -410,49 +480,73 @@
     note.textContent = message ?? "";
   }
 
-  $("cf-session").onchange = fillSegments;
+  for (const [sessions, segments] of SESSION_PICKERS) {
+    $(sessions).onchange = () => fillSegments(sessions, segments);
+  }
   $("cf-form-session").onsubmit = (event) => {
     event.preventDefault();
-    const session = $("cf-session").value;
-    if (!session) return;
-    const segment = $("cf-segment").value;
-    openVideoHash({
-      kind: "session",
-      ref: segment ? `${session}/${segment}` : session,
-    });
+    const v = pickedSession("cf-session", "cf-segment");
+    if (v) openVideoHash(v);
   };
   $("cf-form-file").onsubmit = (event) => {
     event.preventDefault();
     openVideoHash({ kind: "file", ref: $("cf-file").value.trim() });
   };
-  $("cf-form-youtube").onsubmit = async (event) => {
-    event.preventDefault();
-    openError(null);
-    const body = { url: $("cf-url").value.trim() };
+
+  /** Start downloading a YouTube range: into a new review, or into the
+   * review `into`, which has no video. `url`, `from` and `to` are the form's
+   * inputs; errors go to `showError`. */
+  async function startDownload(url, from, to, into, showError) {
+    showError(null);
+    const body = { url: $(url).value.trim() };
     for (const [key, id] of [
-      ["start_s", "cf-from"],
-      ["end_s", "cf-to"],
+      ["start_s", from],
+      ["end_s", to],
     ]) {
       const text = $(id).value;
       const seconds = parseTime(text);
       if (text.trim() && seconds == null)
-        return openError(t("cf.open.badTime", { text }));
+        return showError(t("cf.open.badTime", { text }));
       if (seconds != null) body[key] = seconds;
     }
+    if (into) body.review = into;
     const response = await fetch("/api/cuttlefish/download", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
     const download = await response.json();
-    if (!response.ok) return openError(download.error);
+    if (!response.ok) return showError(download.error);
     // The download is the new review (or the one that has the video)
-    if (download.state === "done") return openReviewHash(download.id);
+    if (download.state === "done") return downloaded(download.id);
     cf.waiting = download.id;
     pollDownloads();
+  }
+
+  /** A download finished: open its review, or give the open review (the
+   * one it went into) the video the server wrote for it; the page's copy
+   * keeps its newer messages */
+  async function downloaded(id) {
+    if (cf.review && cf.id === id) {
+      const response = await fetch(
+        `/api/cuttlefish/reviews/${encodeURIComponent(id)}`,
+      );
+      const stored = await response.json();
+      if (!response.ok) return attachError(stored.error);
+      if (cf.id !== id || !stored.video) return;
+      attachVideo(stored.video);
+      return;
+    }
+    openReviewHash(id);
+  }
+
+  $("cf-form-youtube").onsubmit = (event) => {
+    event.preventDefault();
+    startDownload("cf-url", "cf-from", "cf-to", null, openError);
   };
 
-  /** Show the downloads, and keep asking while one runs */
+  /** Show the downloads (in the library, or under "Attach a video"), and
+   * keep asking while one runs */
   async function pollDownloads() {
     clearTimeout(cf.pollTimer);
     let data;
@@ -465,7 +559,8 @@
       done: t("cf.download.done"),
       failed: t("cf.download.failed"),
     };
-    const list = $("cf-downloads");
+    const list = cf.review ? $("cf-attach-downloads") : $("cf-downloads");
+    const showError = cf.review ? attachError : openError;
     list.replaceChildren(
       ...data.downloads.map((d) => {
         const li = document.createElement("li");
@@ -477,30 +572,73 @@
           <div class="cf-download-head"><span class="cf-download-url">${escapeHtml(d.url)}${escapeHtml(range)}</span><span class="num">${d.state === "running" ? `${percent.toFixed(0)}%` : escapeHtml(states[d.state] ?? d.state)}</span></div>
           <div class="meter-track"><div class="meter-fill" style="width:${d.state === "done" ? 100 : percent}%"></div></div>
           <span class="panel-note ${d.state === "failed" ? "level-critical" : ""}">${escapeHtml(d.message)}</span>`;
-        if (d.state === "done") li.onclick = () => openReviewHash(d.id);
+        if (d.state === "done") li.onclick = () => downloaded(d.id);
         return li;
       }),
     );
     const waiting = data.downloads.find((d) => d.id === cf.waiting);
     if (waiting?.state === "failed") {
       cf.waiting = null;
-      openError(waiting.message);
+      showError(waiting.message);
     } else if (waiting?.state === "done") {
       cf.waiting = null;
-      return openReviewHash(waiting.id);
+      return downloaded(waiting.id);
     }
     if (cf.shown && data.downloads.some((d) => d.state === "running")) {
       cf.pollTimer = setTimeout(pollDownloads, 1000);
     }
   }
 
+  // ------------------------------------------------------ attach a video
+
+  function attachError(message) {
+    const note = $("cf-attach-error");
+    note.hidden = !message;
+    note.textContent = message ?? "";
+  }
+
+  /** Give the open review (started from the chat) its video and show it */
+  function attachVideo(v) {
+    if (!cf.review || cf.review.video) return;
+    const review = cf.review;
+    const id = cf.id;
+    review.video = v;
+    leavePlayer();
+    openReview(review, id, 0);
+    scheduleSave();
+  }
+
+  $("cf-attach-session").onsubmit = (event) => {
+    event.preventDefault();
+    const v = pickedSession("cf-attach-session-pick", "cf-attach-segment");
+    if (v) attachVideo(v);
+  };
+  $("cf-attach-file").onsubmit = (event) => {
+    event.preventDefault();
+    const ref = $("cf-attach-path").value.trim();
+    if (ref) attachVideo({ kind: "file", ref });
+  };
+  $("cf-attach-youtube").onsubmit = (event) => {
+    event.preventDefault();
+    if (!cf.id) return;
+    startDownload(
+      "cf-attach-url",
+      "cf-attach-from",
+      "cf-attach-to",
+      cf.id,
+      attachError,
+    );
+  };
+
   // -------------------------------------------------------------- player
 
-  /** Show a review (or a new one of `v`) at time `t` */
+  /** Show a review (or a new one of `v`) at time `t`; a review without a
+   * video shows its chat and "Attach a video" */
   async function openReview(review, id, at) {
     clearTimeout(cf.pollTimer);
     clearTimeout(cf.listTimer);
     review.notes ??= [];
+    review.messages ??= [];
     cf.review = review;
     cf.id = id;
     cf.active = null;
@@ -509,17 +647,30 @@
     strip.key = "";
     $("cf-library").hidden = true;
     $("cf-player").hidden = false;
-    $("cf-ai-note").hidden = true;
+    const withVideo = Boolean(review.video);
+    $("cf-player").classList.toggle("is-chat", !withVideo);
+    for (const panel of ["p-cf-video", "p-cf-comments", "p-cf-notes"]) {
+      document.querySelector(`.${panel}`).hidden = !withVideo;
+    }
+    document.querySelector(".p-cf-attach").hidden = withVideo;
+    attachError(null);
     const note = $("cf-video-note");
     note.hidden = true;
     note.textContent = "";
     screen.style.aspectRatio = "";
     cf.fps = DEFAULT_FPS;
     clearDanmaku();
+    markSaved(id ? "saved" : "new");
+    drawChat();
+    checkKey();
+    if (!withVideo) {
+      writeHash(0);
+      pollDownloads();
+      return;
+    }
     video.src = `/api/cuttlefish/video?${videoQuery(review.video, id)}`;
     markCopy();
     video.playbackRate = parseFloat($("cf-speed").value);
-    markSaved(id ? "saved" : "new");
     drawInfo();
     drawNotes();
     // A video opens paused, ready to draw on
@@ -548,7 +699,7 @@
 
   /** Take the title, channel and date the server has for the video */
   function takeMeta(v) {
-    if (!cf.review || !v || !sameVideo(cf.review.video, v)) return;
+    if (!cf.review?.video || !v || !sameVideo(cf.review.video, v)) return;
     let changed = false;
     for (const key of ["title", "channel", "upload_date"]) {
       if (v[key] && cf.review.video[key] !== v[key]) {
@@ -565,7 +716,7 @@
    * ask again for a while */
   function lookForMeta(review, id, tries) {
     clearTimeout(cf.metaTimer);
-    if (!id || review.video.kind !== "youtube" || review.video.title) return;
+    if (!id || review.video?.kind !== "youtube" || review.video.title) return;
     if (tries <= 0) return;
     cf.metaTimer = setTimeout(async () => {
       if (cf.review !== review) return;
@@ -662,7 +813,7 @@
     const params = cf.id
       ? new URLSearchParams({ r: cf.id })
       : videoQuery(cf.review.video);
-    if (at > 0) params.set("t", at.toFixed(3));
+    if (cf.review.video && at > 0) params.set("t", at.toFixed(3));
     const hash = `#cuttlefish/${params}`;
     history.replaceState(null, "", hash);
     rememberView(hash);
@@ -958,7 +1109,7 @@
   function renderStrip() {
     const box = $("cf-strip");
     const duration = video.duration;
-    if (!cf.review || !duration || playing()) return;
+    if (!cf.review?.video || !duration || playing()) return;
     const spacing = strip.spacing;
     const center = Math.round(video.currentTime / spacing) * spacing;
     const query = videoQuery(cf.review.video, cf.id);
@@ -1056,7 +1207,7 @@
 
   /** A comment by the user at the current time, opened for editing */
   function addComment(focus = true) {
-    if (!cf.review) return;
+    if (!cf.review?.video) return;
     video.pause();
     const comment = {
       id: newId("c"),
@@ -1346,18 +1497,28 @@
     }
   }
 
+  /** Name the open review if it has no folder yet, and put it in the hash */
+  function ensureId() {
+    if (!cf.id) {
+      cf.id = newReviewId();
+      writeHash();
+    }
+    return cf.id;
+  }
+
   /** Write the review; the first save names it and puts it in the hash */
   function save() {
     cf.saveTimer = null;
     const review = cf.review;
     if (!review) return;
-    if (!cf.id) {
-      cf.id = newReviewId();
-      writeHash();
-    }
-    const id = cf.id;
+    putReview(review, ensureId());
+  }
+
+  /** PUT a review, after the saves before it; the chip follows while the
+   * review is the open one */
+  function putReview(review, id) {
     const body = JSON.stringify(review);
-    markSaved("saving");
+    if (cf.review === review) markSaved("saving");
     cf.saving = cf.saving.then(async () => {
       try {
         const response = await fetch(
@@ -1382,86 +1543,348 @@
 
   // ------------------------------------------------------ ask Cuttlefish
 
-  $("cf-ask").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (!cf.review) return;
-    const range = event.submitter?.value === "range";
-    const now = video.currentTime;
-    const active = activeComment();
-    let from = now;
-    let to = null;
-    if (range) {
-      from =
-        parseTime($("cf-ask-from").value) ??
-        active?.t_s ??
-        Math.max(0, now - RANGE_S);
-      to = parseTime($("cf-ask-to").value) ?? active?.t_end_s ?? now;
-      if (to <= from) return aiNote(t("cf.ask.badRange"), true);
-      $("cf-ask-from").value = shortTime(from);
-      $("cf-ask-to").value = shortTime(to);
+  /** The chat's example messages: the placeholders and the chips */
+  const examples = () => t("cf.chat.examples");
+
+  /** Whether the studio has the model's key; asked once, shown in the
+   * composers' notes when it does not */
+  async function checkKey() {
+    if (chat.key == null) {
+      try {
+        const data = await (
+          await fetch("/api/cuttlefish/knowledge/model")
+        ).json();
+        chat.key = Boolean(data.anthropic_key);
+      } catch {
+        return;
+      }
     }
-    const body = {
-      video: cf.review.video,
-      t_s: from,
-      ...(to != null && { t_end_s: to }),
-      question: $("cf-question").value.trim(),
-      review: cf.id,
+    markKey();
+  }
+
+  function markKey() {
+    if (chat.key !== false || chat.sending) return;
+    for (const id of ["cf-entry-note", "cf-chat-note"]) {
+      $(id).textContent = t("cf.chat.noKey");
+      $(id).classList.add("is-warning");
+    }
+  }
+
+  /** Example messages as chips that fill `input` */
+  function drawChips(box, input) {
+    box.replaceChildren(
+      ...examples().map((example) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "cf-chip";
+        button.textContent = example;
+        button.onclick = () => {
+          input.value = example;
+          grow(input);
+          input.focus();
+        };
+        return button;
+      }),
+    );
+  }
+
+  /** The next example as the placeholder of the empty chat inputs */
+  function rotatePlaceholders() {
+    const list = examples();
+    if (!list.length) return;
+    chat.example = (chat.example + 1) % list.length;
+    for (const id of ["cf-entry-text", "cf-chat-text"]) {
+      $(id).placeholder = list[chat.example];
+      // A long example wraps: the empty input grows for it too
+      if (!$(id).value) grow($(id));
+    }
+  }
+
+  function startPlaceholders() {
+    clearInterval(chat.placeholderTimer);
+    rotatePlaceholders();
+    chat.placeholderTimer = setInterval(rotatePlaceholders, PLACEHOLDER_MS);
+  }
+
+  /** A chat input grows with its text, up to INPUT_ROWS lines */
+  function grow(input) {
+    input.style.height = "auto";
+    const line = parseFloat(getComputedStyle(input).lineHeight) || 20;
+    input.style.height = `${Math.min(input.scrollHeight, line * INPUT_ROWS + 14)}px`;
+  }
+
+  /** Enter sends, Shift+Enter breaks the line */
+  function sendOnEnter(input, form) {
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+    input.addEventListener("input", () => grow(input));
+  }
+
+  /** A message as HTML: escaped, with [S1] citations linked to their
+   * sources and, when a video is attached, times that seek to them */
+  function messageHtml(message) {
+    let html = escapeHtml(message.text);
+    const sources = message.sources ?? [];
+    html = html.replace(/\[(S\d+)\]/g, (match, id) => {
+      const source = sources.find((s) => s.id === id);
+      if (!source) return match;
+      const title = escapeHtml(
+        source.heading ? `${source.title} › ${source.heading}` : source.title,
+      );
+      return source.url
+        ? `<a class="cf-cite" href="${escapeHtml(source.url)}" target="_blank" rel="noopener" title="${title}">${id}</a>`
+        : `<span class="cf-cite" title="${title}">${id}</span>`;
+    });
+    if (!cf.review?.video) return html;
+    const seekButton = (label, seconds) =>
+      `<button type="button" class="cf-tlink num" data-seek="${seconds}" title="${escapeHtml(t("cf.chat.seek", { time: clock(seconds) }))}">${label}</button>`;
+    // 1:23 or 1:23.4, then 83.5 s (or 83.5秒); a bare 5.1 stays as it is
+    html = html.replace(
+      /(^|[^\d:.])(\d{1,3}):([0-5]\d)(\.\d+)?(?![\d:])/g,
+      (match, before, m, s, frac) =>
+        before +
+        seekButton(
+          `${m}:${s}${frac ?? ""}`,
+          60 * m + parseFloat(`${s}${frac ?? ""}`),
+        ),
+    );
+    html = html.replace(
+      /(^|[^\d.:])(\d+(?:\.\d+)?) ?(s\b|秒)/g,
+      (match, before, seconds, unit) =>
+        before + seekButton(`${seconds} ${unit}`, parseFloat(seconds)),
+    );
+    return html;
+  }
+
+  /** The thread: every message, the open review's comments it added, and
+   * the examples while it is empty */
+  function drawChat() {
+    const list = $("cf-chat");
+    const review = cf.review;
+    if (!review) return list.replaceChildren();
+    const messages = review.messages;
+    $("cf-chat-empty").hidden = messages.length > 0;
+    if (!messages.length) drawChips($("cf-chat-chips"), $("cf-chat-text"));
+    const withVideo = Boolean(review.video);
+    $("cf-context").hidden = !withVideo;
+    markContext();
+    list.replaceChildren(
+      ...messages.map((message) => {
+        const li = document.createElement("li");
+        const user = message.role === "user";
+        li.className = `cf-msg ${user ? "is-user" : "is-ai"}`;
+        li.dataset.id = message.id;
+        const when = new Date(message.created_ms).toLocaleTimeString(
+          i18nLocale(),
+          { hour: "2-digit", minute: "2-digit" },
+        );
+        let context = "";
+        if (user && message.t_s != null && withVideo) {
+          const label =
+            message.t_end_s != null
+              ? `${clock(message.t_s)} – ${clock(message.t_end_s)}`
+              : t("cf.chat.at", { time: clock(message.t_s) });
+          context = `<button type="button" class="cf-time num" data-seek="${message.t_s}">${escapeHtml(label)}</button>`;
+        }
+        const sources = (message.sources ?? [])
+          .map(
+            (s) =>
+              `<li><b>${escapeHtml(s.id)}</b> ${s.url ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.title)}</a>` : escapeHtml(s.title)}${s.heading ? ` › ${escapeHtml(s.heading)}` : ""}${s.license ? ` <span class="panel-note">${escapeHtml(s.license)}</span>` : ""}</li>`,
+          )
+          .join("");
+        const added = (message.comments ?? [])
+          .map((id) => review.comments.find((c) => c.id === id))
+          .filter(Boolean)
+          .sort((a, b) => a.t_s - b.t_s);
+        const comments =
+          added.length && withVideo
+            ? `<div class="cf-msg-comments"><span class="panel-note">${escapeHtml(t("cf.chat.commentsAdded", { n: added.length }))}</span> ${added.map((c) => `<button type="button" class="cf-time num" data-comment="${escapeHtml(c.id)}">${timeText(c)}</button>`).join(" ")}</div>`
+            : "";
+        li.innerHTML = `
+          <div class="cf-msg-head">
+            <span class="cf-author">${escapeHtml(user ? t("cf.author.you") : t("cf.name"))}</span>
+            ${context}
+            <span class="cf-meta panel-note num">${escapeHtml(when)}</span>
+          </div>
+          <div class="cf-msg-text">${messageHtml(message)}</div>
+          ${sources ? `<details class="cf-sources"><summary>${escapeHtml(t("cf.chat.sources"))} (${message.sources.length})</summary><ol class="k-sources">${sources}</ol></details>` : ""}
+          ${comments}`;
+        return li;
+      }),
+    );
+    list.scrollTop = list.scrollHeight;
+  }
+
+  $("cf-chat").addEventListener("click", (event) => {
+    const seekTo = event.target.closest("[data-seek]");
+    if (seekTo && cf.review?.video) {
+      video.pause();
+      seek(parseFloat(seekTo.dataset.seek));
+      return;
+    }
+    const comment = event.target.closest("[data-comment]");
+    if (comment) openComment(comment.dataset.comment);
+  });
+
+  /** The range inputs show for a range; the video context is remembered */
+  function markContext() {
+    const ctx = $("cf-ctx").value;
+    $("cf-chat-range").hidden = ctx !== "range";
+    $("cf-chat-review").hidden = ctx === "none";
+  }
+
+  $("cf-ctx").value = remembered("context", "moment");
+  $("cf-ctx").onchange = () => {
+    remember("context", $("cf-ctx").value);
+    markContext();
+  };
+
+  function chatNote(text, error = false) {
+    const note = $("cf-chat-note");
+    note.textContent = text;
+    note.classList.toggle("is-error", error);
+    note.classList.toggle("is-warning", false);
+  }
+
+  /** The moment or range of the video the next message is about, from the
+   * context choice: {t_s, t_end_s?}, or null without a video or frames */
+  function videoContext() {
+    if (!cf.review?.video) return null;
+    const ctx = $("cf-ctx").value;
+    const now = Math.round(video.currentTime * 1000) / 1000;
+    if (ctx === "none") return null;
+    if (ctx !== "range") return { t_s: now };
+    const active = activeComment();
+    const from =
+      parseTime($("cf-chat-from").value) ??
+      active?.t_s ??
+      Math.max(0, now - RANGE_S);
+    const to = parseTime($("cf-chat-to").value) ?? active?.t_end_s ?? now;
+    if (to <= from) throw new Error(t("cf.ask.badRange"));
+    $("cf-chat-from").value = shortTime(from);
+    $("cf-chat-to").value = shortTime(to);
+    return { t_s: from, t_end_s: to };
+  }
+
+  /** Send a message in the open review: the user's turn is saved at once,
+   * Cuttlefish's when it comes, even if the review was left meanwhile; his
+   * timed comments join the review */
+  async function sendChat(text) {
+    const review = cf.review;
+    text = text.trim();
+    if (!review || !text || chat.sending) return;
+    let context;
+    try {
+      context = videoContext();
+    } catch (error) {
+      return chatNote(error.message, true);
+    }
+    const id = ensureId();
+    const message = {
+      id: newId("m"),
+      role: "user",
+      text,
+      ...context,
+      created_ms: Date.now(),
     };
-    aiNote(t("cf.ask.watching"));
+    review.messages.push(message);
+    $("cf-chat-text").value = "";
+    grow($("cf-chat-text"));
+    drawChat();
+    scheduleSave();
+    chat.sending = true;
+    $("cf-chat-send").disabled = true;
+    chatNote(t(context ? "cf.ask.watching" : "cf.chat.thinking"));
+    const body = {
+      review: id,
+      message: text,
+      history: review.messages
+        .slice(0, -1)
+        .map((m) => ({ role: m.role, text: m.text })),
+      video: review.video ?? null,
+      ...context,
+    };
     let response;
     let data;
     try {
-      response = await fetch("/api/cuttlefish/ai", {
+      response = await fetch("/api/cuttlefish/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
       data = await response.json();
     } catch (error) {
-      return aiNote(t("cf.ask.failed", { error: error.message }), true);
+      data = { error: error.message, unreachable: true };
     }
-    if (!response.ok) {
-      const pending = response.status === 501;
-      return aiNote(
-        pending
-          ? t("cf.ask.pending", { error: data.error })
-          : t("cf.ask.error", { error: data.error }),
-        !pending,
-      );
+    chat.sending = false;
+    $("cf-chat-send").disabled = false;
+    if (!response?.ok) {
+      if (cf.review !== review) return;
+      if (data.unreachable)
+        return chatNote(t("cf.chat.failed", { error: data.error }), true);
+      if (response.status === 501) {
+        chat.key = false;
+        return markKey();
+      }
+      return chatNote(t("cf.chat.error", { error: data.error }), true);
     }
     // His comments join the review like the user's
-    const comments = data.comments ?? (data.text ? [data] : []);
-    for (const comment of comments) {
-      cf.review.comments.push({
+    const added = [];
+    for (const c of data.comments ?? []) {
+      const comment = {
         id: newId("c"),
-        t_s: comment.t_s ?? from,
-        ...((comment.t_end_s ?? to) != null && {
-          t_end_s: comment.t_end_s ?? to,
-        }),
+        t_s: c.t_s ?? context?.t_s ?? 0,
+        ...(c.t_end_s != null && { t_end_s: c.t_end_s }),
         author: "Cuttlefish",
-        text: comment.text ?? "",
-        shapes: comment.shapes ?? [],
+        text: c.text ?? "",
+        shapes: c.shapes ?? [],
         created_ms: Date.now(),
-      });
+      };
+      review.comments.push(comment);
+      added.push(comment.id);
     }
-    aiNote(
-      comments.length
-        ? t("cf.ask.added", { n: comments.length })
-        : t("cf.ask.nothing"),
-    );
-    drawComments();
-    drawMarkers();
-    drawShapes();
-    drawStrip();
-    if (comments.length) scheduleSave();
-  });
-
-  function aiNote(text, error = false) {
-    const note = $("cf-ai-note");
-    note.hidden = false;
-    note.textContent = text;
-    note.classList.toggle("is-info", !error);
+    review.messages.push({
+      id: newId("m"),
+      role: "assistant",
+      text: data.text ?? "",
+      ...(data.sources?.length && { sources: data.sources }),
+      ...(added.length && { comments: added }),
+      created_ms: Date.now(),
+    });
+    if (cf.review !== review) return putReview(review, id);
+    chatNote("");
+    drawChat();
+    if (added.length) commentsChanged();
+    else scheduleSave();
   }
+
+  $("cf-chat-form").onsubmit = (event) => {
+    event.preventDefault();
+    sendChat($("cf-chat-text").value);
+  };
+  sendOnEnter($("cf-chat-text"), $("cf-chat-form"));
+  $("cf-chat-review").onclick = () => {
+    if ($("cf-ctx").value === "none") $("cf-ctx").value = "moment";
+    sendChat(t("cf.ask.momentMessage"));
+  };
+
+  /** The library's chat bar: the message starts a new review without a
+   * video and is sent from there */
+  $("cf-entry-form").onsubmit = (event) => {
+    event.preventDefault();
+    const text = $("cf-entry-text").value.trim();
+    if (!text) return;
+    $("cf-entry-text").value = "";
+    grow($("cf-entry-text"));
+    leavePlayer();
+    openReview({ comments: [], notes: [], messages: [] }, newReviewId(), 0);
+    sendChat(text);
+  };
+  sendOnEnter($("cf-entry-text"), $("cf-entry-form"));
 
   // ------------------------------------------------------------- controls
 
@@ -1536,9 +1959,9 @@
     });
   })();
 
-  // Keys act only while a review is open
+  // Keys act only while a review with a video is open
   document.addEventListener("keydown", (event) => {
-    if (!cf.shown || !cf.review) return;
+    if (!cf.shown || !cf.review?.video) return;
     const tag = event.target.tagName;
     if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") {
       if (event.key === "Escape") event.target.blur();
@@ -1566,11 +1989,15 @@
     drawSwatches();
     markTools();
     markPlay();
+    drawChips($("cf-entry-chips"), $("cf-entry-text"));
+    rotatePlaceholders();
+    markKey();
     if (!cf.review) return;
     markSaved(...cf.saved);
     drawInfo();
     drawComments();
     drawNotes();
+    drawChat();
     strip.key = "";
     renderStrip();
   });
@@ -1608,9 +2035,13 @@
     }
     if (state.get("kind")) {
       const v = videoOf(state);
-      if (cf.review && !cf.id && sameVideo(cf.review.video, v)) return;
+      if (cf.review?.video && !cf.id && sameVideo(cf.review.video, v)) return;
       leavePlayer();
-      return openReview({ video: v, comments: [], notes: [] }, null, at);
+      return openReview(
+        { video: v, comments: [], notes: [], messages: [] },
+        null,
+        at,
+      );
     }
     showLibrary();
   }
@@ -1623,9 +2054,13 @@
       clearTimeout(cf.pollTimer);
       clearTimeout(cf.listTimer);
       clearTimeout(cf.metaTimer);
+      clearInterval(chat.placeholderTimer);
     }
     cf.shown = app === "cuttlefish";
-    if (cf.shown) route(state);
+    if (cf.shown) {
+      startPlaceholders();
+      route(state);
+    }
   });
   // Unsaved text is written before the page goes away
   window.addEventListener("pagehide", flushSave);
