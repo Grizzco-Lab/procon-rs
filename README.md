@@ -87,8 +87,15 @@ as it predicts them.
 
 ## Dashboard
 
+One page with two apps, switched without reloading (the preview, capture and
+recording keep running): **Studio** (`#studio`, below) and **Inspector**
+(`#inspect`). The app links sit in a left rail that widens on hover, or in the
+top bar (**View → Nav: Side / Top**; phones always use the top bar). The
+status chips stay in the top bar in both apps.
+
 - **View**: Studio, Joy or Telemetry style, plus a Phone layout (single column,
-  also used automatically on narrow screens). Remembered per browser.
+  also used automatically on narrow screens), and the Nav placement. Remembered
+  per browser.
 - **Record / Pause / Stop**: a session is a folder named from the path prefix
   and the start time, e.g. prefix `/data/procon/mk8-` records into
   `/data/procon/mk8-2026-09-24_21-40-05/`. The prefix's folder must exist.
@@ -109,6 +116,31 @@ as it predicts them.
 
 The path prefix and video input are saved in `config.state.json` next to the
 config, so they survive restarts.
+
+### Inspector
+
+Checks recorded sessions frame by frame: whether the controller labels line up
+with the picture, and later a model's predictions against them.
+
+- **Sessions**: every session under `[inspect] root` (by default the recording
+  prefix's folder) with its start, duration, segments, video size and rate,
+  sound, game settings and calibrated delay.
+- **A segment**: the frame at 360p with its labels drawn by the same input
+  overlay as the live video, a scrubber, play/pause at 0.25x to 1x, the three
+  frames on each side, and a table of their labels (buttons, sticks, gyro
+  degrees over the frame). Keys: Space play/pause, ←/→ one frame (Shift: ten),
+  R a random frame where a button changes or the gyro turns (Shift+R: any), G go
+  to a frame number or time.
+- **Delay**: the `video_delay_ms` box starts at the session's calibrated delay
+  from AgentZero's `calibration.json` (`[inspect] calibration`), when its
+  confidence is high or medium; change it to check the alignment by eye.
+- **Predictions**: a labels `.jsonl` path on the host shows a model's labels
+  under the truth, differences in red.
+- The URL keeps the view (`#inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>`).
+
+Labels come from `crates/gameplay-data`, the same code AgentZero trains with.
+Frames are decoded by ffmpeg on request (a seek, then a short window), so only
+the part of a video being looked at is read.
 
 ### Session folder
 
@@ -168,6 +200,9 @@ level = "info"
 
 `config.toml` on the host sets the proxy's address, dashboard port, default path
 prefix and the ffmpeg capture and encoder options; see the comments in the file.
+An optional `[inspect]` section sets the Inspector's `root` (the folder of
+session folders) and `calibration` (AgentZero's `calibration.json`, by default
+`../AgentZero/calibration.json` next to the config).
 
 ## How It Works
 
@@ -197,14 +232,16 @@ The codebase is organized into the following modules:
 - **`src/gadget.rs`** - USB gadget management for automatic device setup
 - **`src/proxy.rs`** - Core proxy functionality for bidirectional HID forwarding
 - **`src/device.rs`** - Nintendo Switch Pro Controller device connection and communication
-- **`src/dump.rs`** - Frame format and dumpers (file, async, fan-out to several)
+- **`src/dump.rs`** - Dumpers (file, async, fan-out to several); the frame format comes from `gameplay-data`
 - **`src/stream.rs`** - Frame link: proxy-side TCP streamer and studio-side receiver
 - **`src/recorder.rs`** - Session folders and the controller file, with start/pause/resume/stop
 - **`src/video.rs`** - ffmpeg capture: input list, live preview and recorded segments
 - **`src/studio.rs`** - Host coordinator: sessions, `session.json`, saved dashboard settings
 - **`src/audio.rs`** - Capture card sound: always read from PulseAudio, the last 2 s kept, streamed into recordings from their first frame
 - **`src/web.rs`** - Dashboard server: static page, WebSocket live feed and preview, command API
-- **`web/`** - Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`), embedded into the binary
+- **`src/inspect.rs`** - Inspector app backend: session list, frames decoded by ffmpeg, labels via `gameplay-data`
+- **`crates/gameplay-data`** - Recording format (80-byte frames, `session.json`), per-frame alignment of controller input to video, labels and calibration; shared with AgentZero's Python training code
+- **`web/`** - Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`), embedded into the binary
 - **`examples/fake_proxy.rs`** - Streams a synthetic controller like the proxy, no hardware needed
 - **`doc/`** - Setup and dashboard write-up with screenshots
 - **`src/parser.rs`** - HID input report parsing into structured controller state

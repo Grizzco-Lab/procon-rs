@@ -9,7 +9,7 @@
 
 use core::f64::consts::TAU;
 use core::time::Duration;
-use procon::dump::{Dumper, Frame};
+use procon::dump::{Dumper, stamped};
 use procon::stream::FrameStreamer;
 
 /// (byte offset, bit mask) of every Pro Controller button in an input report
@@ -47,7 +47,7 @@ fn main() -> anyhow::Result<()> {
 
     // A wired Pro Controller reports every 8 ms
     for tick in 0u64.. {
-        let mut frame = Frame::new(tick as u32, &fake_report(tick));
+        let mut frame = stamped(tick as u32, &fake_report(tick));
         // About what a real proxy adds before the Switch takes a report
         frame.forward_us = 400 + (tick % 7) as u16 * 90;
         streamer.dump(&frame)?;

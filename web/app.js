@@ -62,6 +62,12 @@ function markView() {
     "aria-pressed",
     String(root.dataset.layout === "phone"),
   );
+  for (const button of document.querySelectorAll("[data-pick-nav]")) {
+    button.setAttribute(
+      "aria-pressed",
+      String(button.dataset.pickNav === root.dataset.nav),
+    );
+  }
 }
 
 for (const button of document.querySelectorAll("[data-pick]")) {
@@ -70,7 +76,42 @@ for (const button of document.querySelectorAll("[data-pick]")) {
 $("pick-phone").addEventListener("click", () =>
   setView("layout", root.dataset.layout === "phone" ? "auto" : "phone"),
 );
+for (const button of document.querySelectorAll("[data-pick-nav]")) {
+  button.addEventListener("click", () =>
+    setView("nav", button.dataset.pickNav),
+  );
+}
 markView();
+
+// ------------------------------------------------------------------ apps
+
+// One page, several apps: #studio (the default) and #inspect/<state>. Switching
+// only shows another section, so the socket, preview and capture keep running.
+const APPS = ["studio", "inspect"];
+
+/** Show the app the hash names and tell it the rest of the hash */
+function routeApp() {
+  const hash = location.hash.slice(1);
+  const slash = hash.indexOf("/");
+  const name = slash < 0 ? hash : hash.slice(0, slash);
+  const app = APPS.includes(name) ? name : "studio";
+  root.dataset.app = app;
+  for (const section of document.querySelectorAll("[data-app-section]")) {
+    section.hidden = section.dataset.appSection !== app;
+  }
+  for (const link of document.querySelectorAll(".app-nav [data-app]")) {
+    if (link.dataset.app === app) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  const state = new URLSearchParams(slash < 0 ? "" : hash.slice(slash + 1));
+  window.dispatchEvent(
+    new CustomEvent("app-route", { detail: { app, state } }),
+  );
+}
+
+window.addEventListener("hashchange", routeApp);
+// Every app's script has run by then
+document.addEventListener("DOMContentLoaded", routeApp);
 
 // ----------------------------------------------------------- controller view
 
@@ -288,13 +329,24 @@ chart.svg.addEventListener("pointerleave", () => {
 });
 
 function pushGyro(now, gyro) {
-  const last = chart.samples[chart.samples.length - 1];
+  const { samples } = chart;
+  const last = samples[samples.length - 1];
   // One sample per display frame is plenty
   if (last && now - last.t < 15) return;
-  chart.samples.push({
+  samples.push({
     t: now,
     v: [gyro.gyro_x * GYRO_DPS, gyro.gyro_y * GYRO_DPS, gyro.gyro_z * GYRO_DPS],
   });
+  // Trim here too, not only when drawing: a hidden tab gets no animation
+  // frames, and hours of samples would stall the page when it is shown again
+  dropOldSamples(now);
+}
+
+/** Forget samples that have scrolled off the chart */
+function dropOldSamples(now) {
+  const { samples } = chart;
+  while (samples.length && samples[0].t < now - chart.windowMs - 100)
+    samples.shift();
 }
 
 /** Round a range up to 1, 2 or 5 times a power of ten */
@@ -310,8 +362,7 @@ function drawChart(now) {
   if (!width || !height) return;
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
-  while (samples.length && samples[0].t < now - chart.windowMs - 100)
-    samples.shift();
+  dropOldSamples(now);
 
   const labelWidth = 36;
   const plotWidth = width - labelWidth;
@@ -720,9 +771,13 @@ function pump() {
   const ranges = player.el.buffered;
   if (ranges.length) {
     const end = ranges.end(ranges.length - 1);
-    // Jump only when far behind (a stall); keepLive handles small lags
+    const behind = end - player.el.currentTime;
+    // Jump only when far behind (a stall) or ahead of the video: a hidden tab
+    // keeps the clock running without frames, and the picture would stay
+    // frozen until the stream caught up. keepLive handles small lags.
     if (
-      end - player.el.currentTime > 1 ||
+      behind > 1 ||
+      behind < -0.1 ||
       player.el.currentTime < ranges.start(ranges.length - 1)
     ) {
       player.el.currentTime = end - 0.02;
@@ -754,6 +809,8 @@ function onPreviewChunk(data) {
   if (player.queue.length > 120)
     player.queue.splice(1, player.queue.length - 60);
   pump();
+  // Here rather than per animation frame, which a hidden tab does not get
+  keepLive(performance.now());
 }
 
 $("video-input").addEventListener("change", (event) =>
@@ -1008,7 +1065,7 @@ const HUD_KEYS = [
 ];
 
 /** Recent states with their arrival time, to match the delayed picture */
-const hud = { history: [], keys: "" };
+const hud = { history: [] };
 
 function pushHud(now, state) {
   hud.history.push({ t: now, state });
@@ -1035,31 +1092,47 @@ function renderHud(now) {
     entry = item;
   }
   const state = entry.state;
+  const gyro = state.gyro[0] ?? { gyro_y: 0, gyro_z: 0 };
+  drawInputHud(svg, {
+    left: [stickPercent(state.left_stick.x), stickPercent(state.left_stick.y)],
+    right: [
+      stickPercent(state.right_stick.x),
+      stickPercent(state.right_stick.y),
+    ],
+    pressed: new Set(
+      Object.keys(state.buttons).filter((b) => state.buttons[b]),
+    ),
+    yaw: gyro.gyro_z * GYRO_DPS,
+    pitch: gyro.gyro_y * GYRO_DPS,
+  });
+}
 
-  for (const [side, stick] of [
-    ["l", state.left_stick],
-    ["r", state.right_stick],
+/**
+ * Draw inputs on an input overlay SVG (the studio's, or a copy): sticks as
+ * [x, y] in -100..100, the set of pressed button names, and yaw and pitch
+ * rates in °/s (a full bar is 360 °/s either way)
+ */
+function drawInputHud(svg, { left, right, pressed, yaw, pitch }) {
+  const part = (name) => svg.querySelector(`[data-hud="${name}"]`);
+  for (const [side, [x, y]] of [
+    ["l", left],
+    ["r", right],
   ]) {
-    const dx = (stickPercent(stick.x) / 100) * 20;
-    const dy = (-stickPercent(stick.y) / 100) * 20;
-    const dot = $(`hud-stick-${side}`);
-    dot.setAttribute("cx", dx.toFixed(1));
-    dot.setAttribute("cy", dy.toFixed(1));
+    const dot = part(`stick-${side}`);
+    dot.setAttribute("cx", ((x / 100) * 20).toFixed(1));
+    dot.setAttribute("cy", ((-y / 100) * 20).toFixed(1));
   }
 
   // Pressed buttons as a centred row of keys; rebuilt only when they change
-  const pressed = HUD_KEYS.filter(([name]) => state.buttons[name]);
-  const keys = pressed.map(([name]) => name).join();
-  if (keys !== hud.keys) {
-    hud.keys = keys;
+  const keys = HUD_KEYS.filter(([name]) => pressed.has(name));
+  const names = keys.map(([name]) => name).join();
+  if (names !== svg.dataset.keys) {
+    svg.dataset.keys = names;
     const width = (label) => 12 + label.length * 7;
-    const total = pressed.reduce(
-      (sum, [, label]) => sum + width(label) + 4,
-      -4,
-    );
+    const total = keys.reduce((sum, [, label]) => sum + width(label) + 4, -4);
     let x = -total / 2;
-    $("hud-buttons").replaceChildren(
-      ...pressed.map(([, label]) => {
+    part("buttons").replaceChildren(
+      ...keys.map(([, label]) => {
         const key = svgEl("g", {
           class: "hud-key",
           transform: `translate(${x} -10)`,
@@ -1083,14 +1156,12 @@ function renderHud(now) {
     );
   }
 
-  // Turn rate: full bar at 360 °/s either way
-  const gyro = state.gyro[0] ?? { gyro_y: 0, gyro_z: 0 };
-  for (const [id, raw] of [
-    ["hud-yaw", gyro.gyro_z],
-    ["hud-pitch", gyro.gyro_y],
+  for (const [name, dps] of [
+    ["yaw", yaw],
+    ["pitch", pitch],
   ]) {
-    const share = Math.max(-1, Math.min(1, (raw * GYRO_DPS) / 360));
-    const bar = $(id);
+    const share = Math.max(-1, Math.min(1, dps / 360));
+    const bar = part(name);
     bar.setAttribute("x", String(94 + Math.min(0, share) * 60));
     bar.setAttribute("width", String(Math.abs(share) * 60));
   }
@@ -1145,7 +1216,6 @@ function frame(now) {
   drawChart(now);
   updateClock(now);
   updateReplayClock(now);
-  keepLive(now);
   renderHud(now);
   requestAnimationFrame(frame);
 }

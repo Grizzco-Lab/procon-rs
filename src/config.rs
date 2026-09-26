@@ -109,8 +109,23 @@ pub struct StudioConfig {
     pub recording: RecordingConfig,
     /// Video capture
     pub video: VideoConfig,
+    /// The Inspector app
+    #[serde(default)]
+    pub inspect: InspectConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
+}
+
+/// The Inspector app's data
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct InspectConfig {
+    /// Folder holding the session folders; by default the recording
+    /// prefix's folder
+    pub root: Option<String>,
+    /// AgentZero's `calibration.json` with each session's video delay,
+    /// relative to this config file; by default
+    /// `../AgentZero/calibration.json`. A missing file means no calibration.
+    pub calibration: Option<String>,
 }
 
 /// The machine running `procon-proxy`

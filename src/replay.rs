@@ -235,7 +235,7 @@ pub fn load(path: &Path) -> Result<Vec<Action>> {
             std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
         let mut first_ms = None;
         for chunk in bytes.as_chunks::<FRAME_SIZE>().0 {
-            let frame = Frame::from_bytes(chunk);
+            let frame = Frame::parse(chunk);
             let Some(mut action) = Action::from_report(frame.payload()) else {
                 continue;
             };

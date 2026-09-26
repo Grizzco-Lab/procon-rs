@@ -10,7 +10,7 @@
 
 use crate::config::ProxyConfig;
 use crate::device::ProController;
-use crate::dump::{Dumper, Frame};
+use crate::dump::{Dumper, stamped};
 use crate::replay::Replay;
 use crate::wake::RemoteWakeup;
 use anyhow::{Result, bail};
@@ -123,7 +123,7 @@ impl Proxy {
             // Recordings see what the Switch sees
             self.replay.apply(&mut input_buffer[..size]);
             // Timestamp once here so every dumper sees the same frame
-            let mut frame = Frame::new(seq, &input_buffer[..size]);
+            let mut frame = stamped(seq, &input_buffer[..size]);
             seq = seq.wrapping_add(1);
 
             match gadget.write(&input_buffer[..size]) {
@@ -136,9 +136,10 @@ impl Proxy {
                         frame.forward_us = waited.as_micros().clamp(1, u16::MAX as u128) as u16;
                     }
                 }
-                // The Switch is not reading (asleep): drop the report and keep
-                // the device, which reopening would not change
-                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                // The Switch is not reading (asleep: the report waits, or the
+                // endpoint is shut down): drop the report and keep the
+                // device, which reopening would not change
+                Err(e) if host_gone(&e) => {
                     if !host_idle {
                         log::info!("Switch stopped taking input (asleep?); press Home to wake it");
                         host_idle = true;
@@ -170,6 +171,12 @@ impl Proxy {
             }
         }
     }
+}
+
+/// The Switch is not taking reports: the previous one still waits
+/// (`EAGAIN`), or it shut the endpoint down while asleep (`ESHUTDOWN`)
+fn host_gone(error: &std::io::Error) -> bool {
+    error.kind() == ErrorKind::WouldBlock || error.raw_os_error() == Some(libc::ESHUTDOWN)
 }
 
 /// Open the HID gadget device, optionally non-blocking
@@ -228,6 +235,11 @@ fn forward_output(hidg_path: &str, retry: Duration) {
             let size = match gadget.read(&mut buffer) {
                 Ok(0) => continue,
                 Ok(size) => size,
+                // Asleep: nothing to read until the Switch is back
+                Err(e) if host_gone(&e) => {
+                    std::thread::sleep(retry);
+                    continue;
+                }
                 Err(e) => {
                     log::warn!("Failed to read output from HID gadget: {}", e);
                     break;

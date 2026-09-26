@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="studio" data-layout="auto">
+<html lang="en" data-theme="studio" data-layout="auto" data-nav="side">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -12,12 +12,14 @@
     />
     <link rel="stylesheet" href="style.css" />
     <script>
-      // Apply the saved view before first paint; ?theme= and ?layout= override it
+      // Apply the saved view before first paint; ?theme=, ?layout= and ?nav=
+      // override it
       (() => {
         const params = new URLSearchParams(location.search);
         const views = {
           theme: ["studio", "joy", "telemetry"],
           layout: ["auto", "phone"],
+          nav: ["side", "top"],
         };
         for (const [key, allowed] of Object.entries(views)) {
           const value =
@@ -40,6 +42,25 @@
         </svg>
         <span class="brand-name">ProCon <b>Studio</b></span>
       </div>
+      <!-- Apps: a rail on the left or a switch in this bar, see data-nav -->
+      <nav class="app-nav" aria-label="Apps">
+        <a href="#studio" data-app="studio" title="Studio">
+          <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="6" width="13" height="12" rx="2" />
+            <path d="M16 10.5l5-3v9l-5-3z" />
+            <circle class="app-icon-dot" cx="7.5" cy="10.5" r="1.6" />
+          </svg>
+          <span class="app-name">Studio</span>
+        </a>
+        <a href="#inspect" data-app="inspect" title="Inspector">
+          <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="4" width="14" height="10" rx="1.5" />
+            <circle cx="15.5" cy="15.5" r="4" />
+            <path d="M18.5 18.5l3 3" />
+          </svg>
+          <span class="app-name">Inspector</span>
+        </a>
+      </nav>
       <div class="status-strip">
         <span class="chip" id="chip-link" data-level="off">
           <span class="chip-dot"></span
@@ -57,6 +78,30 @@
           <span class="chip-dot"></span
           ><span class="chip-text">Not recording</span>
         </span>
+        <!-- Inspector only: which session, where in it and its delay -->
+        <select
+          class="select"
+          id="i-session"
+          aria-label="Inspected session"
+          data-app-only="inspect"
+        >
+          <option value="">All sessions</option>
+        </select>
+        <span
+          class="chip num"
+          id="i-position"
+          data-app-only="inspect"
+          hidden
+        ></span>
+        <span
+          class="chip"
+          id="i-delay-chip"
+          data-level="off"
+          data-app-only="inspect"
+          hidden
+        >
+          <span class="chip-dot"></span><span class="chip-text"></span>
+        </span>
       </div>
       <nav class="theme-picker" aria-label="View">
         <span class="theme-picker-label">View</span>
@@ -70,10 +115,17 @@
         >
           Phone
         </button>
+        <span class="theme-picker-label nav-label">Nav</span>
+        <button type="button" data-pick-nav="side" title="Apps in a left rail">
+          Side
+        </button>
+        <button type="button" data-pick-nav="top" title="Apps in the top bar">
+          Top
+        </button>
       </nav>
     </header>
 
-    <main class="layout">
+    <main class="layout" data-app-section="studio">
       <section class="panel p-video" aria-labelledby="h-video">
         <header class="panel-head">
           <h2 id="h-video">Video</h2>
@@ -99,19 +151,19 @@
           >
             <g class="hud-stick" transform="translate(48 306)">
               <circle r="26" />
-              <circle class="hud-dot" id="hud-stick-l" r="7" />
+              <circle class="hud-dot" data-hud="stick-l" r="7" />
             </g>
             <g class="hud-stick" transform="translate(592 306)">
               <circle r="26" />
-              <circle class="hud-dot" id="hud-stick-r" r="7" />
+              <circle class="hud-dot" data-hud="stick-r" r="7" />
             </g>
-            <g id="hud-buttons" transform="translate(320 330)"></g>
+            <g data-hud="buttons" transform="translate(320 330)"></g>
             <g class="hud-gyro" transform="translate(14 18)">
               <text y="4">yaw</text>
               <rect class="hud-track" x="34" y="-4" width="120" height="8" />
               <rect
                 class="hud-bar"
-                id="hud-yaw"
+                data-hud="yaw"
                 x="94"
                 y="-4"
                 width="0"
@@ -121,7 +173,7 @@
               <rect class="hud-track" x="34" y="14" width="120" height="8" />
               <rect
                 class="hud-bar"
-                id="hud-pitch"
+                data-hud="pitch"
                 x="94"
                 y="14"
                 width="0"
@@ -638,7 +690,171 @@
       </section>
     </main>
 
+    <!-- Inspector app: session picker, then one segment frame by frame -->
+    <div data-app-section="inspect" hidden>
+      <main class="layout" id="inspect-picker" hidden>
+        <section class="panel p-sessions" aria-labelledby="h-sessions">
+          <header class="panel-head">
+            <h2 id="h-sessions">Sessions</h2>
+            <span class="panel-note" id="i-sessions-note">Loading…</span>
+          </header>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Started</th>
+                  <th>Duration</th>
+                  <th>Segments</th>
+                  <th>Video</th>
+                  <th>Reports</th>
+                  <th>Game settings</th>
+                  <th>Delay</th>
+                </tr>
+              </thead>
+              <tbody id="i-sessions"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <main class="layout" id="inspect-viewer" hidden>
+        <section class="panel p-frame" aria-labelledby="h-frame">
+          <header class="panel-head">
+            <h2 id="h-frame">Frame</h2>
+            <div class="controls">
+              <button
+                type="button"
+                class="btn btn-play"
+                id="i-play"
+                title="Space"
+              >
+                ▶ Play
+              </button>
+              <select class="select" id="i-speed" aria-label="Playback speed">
+                <option value="0.25">0.25×</option>
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+              </select>
+              <button
+                type="button"
+                class="mode-toggle"
+                id="i-sound"
+                title="Play the segment's sound with the frames"
+                hidden
+              >
+                Sound
+              </button>
+              <select class="select" id="i-overlay" aria-label="Overlay">
+                <option value="full">Overlay: Full</option>
+                <option value="minimal">Overlay: Minimal</option>
+                <option value="none">Overlay: None</option>
+              </select>
+              <button type="button" class="btn" id="i-random-active" title="R">
+                Random active
+              </button>
+              <button
+                type="button"
+                class="btn"
+                id="i-random-any"
+                title="Shift+R"
+              >
+                Random
+              </button>
+              <button type="button" class="btn" id="i-goto" title="G">
+                Go to…
+              </button>
+            </div>
+          </header>
+          <!-- The frame, with its labels drawn by a copy of the video's input overlay -->
+          <div class="screen" id="i-screen">
+            <canvas id="i-frame" width="640" height="360"></canvas>
+            <!-- The segment's sound; while it plays, it sets the frame -->
+            <audio id="i-audio" preload="auto"></audio>
+            <span class="no-reports" id="i-no-reports" hidden
+              >No controller report</span
+            >
+          </div>
+          <div class="scrubber" id="i-scrubber">
+            <div class="scrubber-track">
+              <div class="scrubber-fill" id="i-scrub-fill"></div>
+            </div>
+            <div class="scrubber-thumb" id="i-scrub-thumb"></div>
+            <div class="scrubber-bubble" id="i-scrub-bubble" hidden></div>
+          </div>
+        </section>
+
+        <section class="panel p-labels" aria-labelledby="h-labels">
+          <header class="panel-head">
+            <h2 id="h-labels">Labels</h2>
+            <label class="check" for="i-delay"
+              >video_delay_ms
+              <input
+                class="select num delay-input"
+                id="i-delay"
+                type="number"
+                step="1"
+              />
+            </label>
+          </header>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Frame</th>
+                  <th>Valid</th>
+                  <th>Buttons</th>
+                  <th>Left stick</th>
+                  <th>Right stick</th>
+                  <th>Gyro °</th>
+                </tr>
+              </thead>
+              <tbody id="i-rows"></tbody>
+            </table>
+          </div>
+          <label class="field" for="i-pred"
+            >Predictions (labels .jsonl on this machine)
+            <input
+              class="select pred-input"
+              id="i-pred"
+              type="text"
+              placeholder="/path/to/predictions.jsonl"
+            />
+          </label>
+          <p class="panel-note keys">
+            <kbd>Space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> one frame ·
+            <kbd>Shift</kbd> ten · <kbd>R</kbd> random active frame (a button
+            changes or the gyro turns) · <kbd>Shift</kbd>+<kbd>R</kbd> random ·
+            <kbd>G</kbd> go to a frame or time (12.5s, 1:02.5).
+            <span id="i-pred-note" hidden
+              >Cells show truth over <span class="pred">prediction</span>; red
+              ones differ (buttons at all, sticks by more than
+              <span id="i-stick-tol"></span>, gyro by more than
+              <span id="i-gyro-tol"></span>°).</span
+            >
+          </p>
+        </section>
+
+        <section class="panel p-strip" aria-labelledby="h-strip">
+          <header class="panel-head">
+            <h2 id="h-strip">Neighbours</h2>
+            <span class="panel-note">updated while paused</span>
+          </header>
+          <div class="strip" id="i-strip"></div>
+        </section>
+
+        <section class="panel p-session" aria-labelledby="h-session">
+          <header class="panel-head">
+            <h2 id="h-session">Session</h2>
+            <select class="select" id="i-segment" aria-label="Segment"></select>
+          </header>
+          <div class="tiles" id="i-session-tiles"></div>
+          <p class="panel-note" id="i-session-note"></p>
+        </section>
+      </main>
+    </div>
+
     <script src="app.js"></script>
+    <script src="inspect.js"></script>
     <script type="module" src="controller3d.js"></script>
   </body>
 </html>

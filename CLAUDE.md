@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 - Do not add any unused packages
-- Do not manually edit Cargo.toml or Cargo.lock. Only edit by calling `cargo add` or `cargo rm`. Use -F for features. Try not to include unused features.
+- Add and remove dependencies with `cargo add` / `cargo rm` (-F for features; no unused features). Editing Cargo.toml by hand is fine for what cargo cannot do (feature groups, workspace settings, cleanup). Never edit Cargo.lock by hand.
 - Call `cargo fmt` to format the code after finish editing. Use `prettier` for html.
 - All the comments and docs must be in English. Chinese should never appear in the code.
 - Keep it simple.
@@ -102,7 +102,11 @@ cargo clippy
 
 **Input overlay (`web/app.js`)**: the Video panel's "Inputs" toggle draws sticks, pressed buttons and turn rates over the preview, using the state from as long ago as the preview is behind (encoding + player buffer)
 
-**Web dashboard (`src/web.rs`, `web/`)**: warp server with the embedded page, a WebSocket (`state` per input report, `status` once per second, preview JPEGs as binary) and `POST /api/command`
+**Web dashboard (`src/web.rs`, `web/`)**: warp server with the embedded page, a WebSocket (`state` per input report, `status` once per second, preview JPEGs as binary) and `POST /api/command`; one page with two apps switched by hash (`#studio`, `#inspect/...`), nav as a left rail or top-bar switch (`data-nav`)
+
+**Inspector (`src/inspect.rs`, `web/inspect.js`)**: `GET /api/inspect/...` over the sessions under `[inspect] root`: summaries, frames decoded by ffmpeg in short windows (cached), labels via `gameplay-data`, calibrated delay from AgentZero's `calibration.json`
+
+**gameplay-data (`crates/gameplay-data`)**: recording format (80-byte `Frame`, `session.json` model), per-frame alignment, labels, calibration; `python` feature for AgentZero (maturin)
 
 ### Data Flow
 1. **Initialization**: USB gadget auto-setup → Frame streamer and dumper setup → Controller connection

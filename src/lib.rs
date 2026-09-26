@@ -5,6 +5,7 @@ pub mod config;
 pub mod device;
 pub mod dump;
 pub mod gadget;
+pub mod inspect;
 pub mod keystate;
 pub mod motion;
 pub mod parser;

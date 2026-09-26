@@ -8,6 +8,7 @@ use alloc::sync::Arc;
 use clap::Parser;
 use procon::config::{self, StudioConfig};
 use procon::dump::MultiDumper;
+use procon::inspect::Inspector;
 use procon::player::Player;
 use procon::recorder::{Recorder, RecorderState};
 use procon::stream::{self, LinkStats};
@@ -90,10 +91,26 @@ fn main() -> anyhow::Result<()> {
         saved.game_settings.unwrap_or_default(),
     ));
 
+    // Relative Inspector paths start at the config file's folder
+    let config_dir = Path::new(&args.config)
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    let calibration = config
+        .inspect
+        .calibration
+        .as_deref()
+        .unwrap_or("../AgentZero/calibration.json");
+    let inspector = Arc::new(Inspector::new(
+        config.inspect.root.map(|root| config_dir.join(root)),
+        studio.recorder.clone(),
+        config_dir.join(calibration),
+    ));
+
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         tokio::select! {
-            _ = web::serve(feed, Arc::clone(&studio), config.web.port) => {}
+            _ = web::serve(feed, Arc::clone(&studio), inspector, config.web.port) => {}
             _ = tokio::signal::ctrl_c() => {
                 // Let ffmpeg finish the video file and session.json get its end time
                 if studio.recorder.status().state != RecorderState::Idle {

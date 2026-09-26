@@ -1,0 +1,19 @@
+# Python package of this crate, built by maturin with the bindings enabled
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "gameplay-data"
+description = "Recorded gameplay sessions: format and per-frame alignment of controller input to video"
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+dynamic = ["version"]
+
+[tool.maturin]
+features = ["python"]
+module-name = "gameplay_data"
+
+# Rebuild when the Rust sources change (uv otherwise reuses the build)
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "src/**/*.rs" }]

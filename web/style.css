@@ -1840,3 +1840,524 @@ input:focus-visible {
     transition: none;
   }
 }
+
+/* ============================================================== apps
+ * One page, several apps (see data-app on the root). The app links sit in
+ * a left rail that widens on hover, or in the top bar (data-nav); phones
+ * always use the top bar.
+ */
+
+:root {
+  --rail: 56px;
+}
+
+:root:not([data-app="inspect"]) [data-app-only="inspect"] {
+  display: none !important;
+}
+
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.app-nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.app-nav a:hover {
+  background: var(--btn-hover);
+}
+
+.app-nav a[aria-current="page"] {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.app-nav a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.app-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.app-icon-dot {
+  fill: currentColor;
+  stroke: none;
+}
+
+@media (min-width: 721px) {
+  :root[data-nav="side"]:not([data-layout="phone"]) body {
+    padding-left: var(--rail);
+  }
+
+  /* A rail over the page's left edge; hovering widens it over the content */
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    width: var(--rail);
+    padding: 12px 8px;
+    border-right: 1px solid var(--panel-border);
+    background: var(--panel);
+    overflow: hidden;
+    transition:
+      width 0.15s,
+      box-shadow 0.15s;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav:hover,
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav:focus-within {
+    width: 200px;
+    box-shadow: 8px 0 28px rgb(0 0 0 / 0.28);
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav a {
+    height: 40px;
+    padding: 0 11px;
+    gap: 14px;
+    border-color: transparent;
+    font-size: 14px;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-name {
+    opacity: 0;
+    transition: opacity 0.1s;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav:hover .app-name,
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .app-nav:focus-within
+    .app-name {
+    opacity: 1;
+  }
+}
+
+/* ========================================================== inspector
+ * Session picker, then one segment: the frame with its labels drawn by a
+ * copy of the input overlay, the labels table, neighbouring frames and the
+ * session's details. Ids outrank the studio's .layout rules.
+ */
+
+#inspect-picker,
+#inspect-viewer {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+#inspect-picker {
+  max-width: 1360px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "sessions";
+}
+
+.p-sessions {
+  grid-area: sessions;
+}
+.p-frame {
+  grid-area: frame;
+}
+.p-strip {
+  grid-area: strip;
+}
+.p-labels {
+  grid-area: labels;
+}
+.p-session {
+  grid-area: session;
+}
+
+/* Studio: the frame and its neighbours left, labels and session right */
+[data-theme="studio"] #inspect-viewer {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-areas:
+    "frame labels"
+    "strip session";
+}
+
+/* Joy: a large frame with the session card above the labels */
+[data-theme="joy"] #inspect-viewer {
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  grid-template-areas:
+    "frame session"
+    "frame labels"
+    "strip labels";
+}
+
+/* Telemetry: dense twelve-column grid */
+[data-theme="telemetry"] #inspect-viewer {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-areas:
+    "frame frame frame frame frame frame frame labels labels labels labels labels"
+    "strip strip strip strip strip strip strip session session session session session";
+}
+
+@media (max-width: 1100px) {
+  :root[data-theme] #inspect-viewer {
+    max-width: 900px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "frame" "labels" "strip" "session";
+  }
+}
+
+:root[data-layout="phone"] #inspect-viewer,
+:root[data-layout="phone"] #inspect-picker {
+  max-width: 480px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "frame" "labels" "strip" "session";
+}
+
+:root[data-layout="phone"] #inspect-picker {
+  grid-template-areas: "sessions";
+}
+
+@media (max-width: 720px) {
+  :root[data-theme] #inspect-viewer {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "frame" "labels" "strip" "session";
+  }
+}
+
+.p-frame .panel-head,
+.p-labels .panel-head {
+  flex-wrap: wrap;
+}
+
+.panel-head .controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.p-frame .btn,
+.p-session .btn {
+  height: 32px;
+}
+
+.btn-play {
+  min-width: 96px;
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn-play:hover {
+  background: color-mix(in oklab, var(--accent) 88%, #ffffff);
+}
+
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+#i-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.no-reports {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--critical);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.delay-input {
+  width: 90px;
+}
+
+.pred-input {
+  max-width: none;
+  width: 100%;
+}
+
+.status-strip #i-session {
+  max-width: 240px;
+}
+
+/* A video player's progress bar */
+.scrubber {
+  position: relative;
+  height: 22px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.scrubber-track {
+  position: absolute;
+  inset: 7px 0;
+  border: 1px solid var(--inset-border);
+  border-radius: 999px;
+  background: var(--inset);
+  overflow: hidden;
+}
+
+.scrubber-fill {
+  width: 0;
+  height: 100%;
+  background: var(--fill);
+}
+
+.scrubber-thumb {
+  position: absolute;
+  top: 3px;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.scrubber-bubble {
+  position: absolute;
+  bottom: 26px;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  font: 12px var(--font-num);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.strip {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+:root[data-layout="phone"] .strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 720px) {
+  .strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.strip figure {
+  margin: 0;
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.strip figure.current {
+  border-color: var(--accent);
+}
+
+.strip img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--screen);
+}
+
+.strip figcaption {
+  padding: 3px 5px;
+  color: var(--text-2);
+  font: 10px/1.35 var(--font-num);
+  overflow-wrap: anywhere;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: 12px/1.4 var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table th {
+  color: var(--text-3);
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.data-table th,
+.data-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--panel-border);
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.data-table tbody tr {
+  cursor: pointer;
+}
+
+.data-table tbody tr:hover {
+  background: var(--inset);
+}
+
+.data-table tr.current {
+  background: color-mix(in oklab, var(--accent) 16%, var(--panel));
+}
+
+.data-table td.mismatch {
+  background: color-mix(in oklab, var(--critical) 26%, var(--panel));
+  color: var(--critical);
+}
+
+.pred {
+  color: var(--accent);
+}
+
+.segments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.level-good {
+  color: var(--good);
+}
+.level-warning {
+  color: var(--warning);
+}
+.level-critical {
+  color: var(--critical);
+}
+
+.p-session .tiles {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.p-session .tile-value {
+  font-size: 18px;
+}
+
+.keys kbd {
+  padding: 0 4px;
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  background: var(--btn-bg);
+  font: 11px var(--font-num);
+}
+
+.p-labels .field {
+  flex: none;
+}
+
+/* The View menu gained the Nav choice; let it wrap on narrow screens */
+.theme-picker {
+  flex-wrap: wrap;
+}
+
+/* The Inspector's full overlay, after AgentZero's agentzero-overlay */
+.full-hud {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  font:
+    10px system-ui,
+    sans-serif;
+}
+
+.full-band {
+  fill: rgb(0 0 0 / 0.75);
+}
+
+.full-title,
+.full-value,
+.full-key text {
+  fill: #ffffff;
+}
+
+.full-alert {
+  fill: #ff3b30;
+  font-weight: 700;
+}
+
+.full-ring {
+  fill: none;
+  stroke: #9a9a9a;
+  stroke-width: 2;
+}
+
+.full-dot {
+  fill: #ffe600;
+}
+
+.full-key rect {
+  fill: none;
+  stroke: #9a9a9a;
+}
+
+.full-key text {
+  fill: #9a9a9a;
+}
+
+.full-key.on rect {
+  fill: #ffe600;
+  stroke: #ffe600;
+}
+
+.full-key.on text {
+  fill: #000000;
+  font-weight: 600;
+}
+
+.full-track {
+  fill: none;
+  stroke: #9a9a9a;
+}
+
+.full-bar {
+  fill: #00e5ff;
+}
+
+.full-mid {
+  stroke: #ffffff;
+}

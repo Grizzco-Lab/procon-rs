@@ -36,6 +36,12 @@ audio_input = "alsa_input.usb-Elgato_Elgato_4K_X_A7SNB42310Y75A-02.analog-stereo
 audio_offset_ms = 0
 preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerolatency", "1", "-delay", "0", "-b:v", "6M", "-maxrate", "8M", "-bufsize", "2M"]
 
+[inspect]
+# Folder of session folders for the Inspector; by default the recording prefix's folder
+# root = "/data/procon"
+# AgentZero's per-session video delays, relative to this file (a missing file means none)
+# calibration = "../AgentZero/calibration.json"
+
 [logging]
 # Log level: error, warn, info, debug, trace
 level = "info"

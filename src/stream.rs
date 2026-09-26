@@ -5,7 +5,7 @@
 //! report arrives for [`HEARTBEAT`] it sends an empty frame (`packet_size == 0`),
 //! so the host can tell an idle controller from a dead link.
 
-use crate::dump::{Dumper, FRAME_SIZE, Frame, unix_ms};
+use crate::dump::{Dumper, FRAME_SIZE, Frame, stamped, unix_ms};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, ensure};
 use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -92,10 +92,10 @@ fn send_frames(mut stream: TcpStream, frames: Receiver<Frame>) {
                     last_seq = frame.seq;
                     frame
                 }
-                Err(RecvTimeoutError::Timeout) => Frame::new(last_seq, &[]),
+                Err(RecvTimeoutError::Timeout) => stamped(last_seq, &[]),
                 Err(RecvTimeoutError::Disconnected) => return Ok(()),
             };
-            stream.write_all(frame.as_bytes())?;
+            stream.write_all(&frame.to_bytes())?;
         }
     })();
     log::info!("Studio {} disconnected: {:?}", peer, result);
@@ -164,7 +164,7 @@ fn receive_once(address: &str, dumper: &mut dyn Dumper, stats: &LinkStats) -> Re
     let mut bytes = [0u8; FRAME_SIZE];
     loop {
         stream.read_exact(&mut bytes)?;
-        let frame = Frame::from_bytes(&bytes);
+        let frame = Frame::parse(&bytes);
 
         window_min = window_min.min(unix_ms() as i64 - frame.timestamp_ms as i64);
         let window_done = window_start.elapsed() >= OFFSET_WINDOW;

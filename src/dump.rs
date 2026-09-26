@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
-use std::mem;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -20,65 +19,13 @@ const QUEUE_WARNING_THRESHOLD: f64 = 0.8;
 /// Interval for checking and logging queue size warnings
 const QUEUE_CHECK_INTERVAL: u64 = 100;
 
-/// One controller report as stored in dump files and sent to the studio host
-#[repr(C, packed)]
-#[derive(Clone, Copy)]
-pub struct Frame {
-    /// Millisecond Unix timestamp, taken when the report was read
-    pub timestamp_ms: u64,
-    /// Actual packet size; zero marks a heartbeat without data
-    pub packet_size: u8,
-    /// Capture sequence number, so gaps reveal dropped frames (zero in older files)
-    pub seq: u32,
-    /// Microseconds from reading the report to the Switch taking it from the
-    /// gadget, saturating at 65535; zero when unknown (the Switch did not take
-    /// it, heartbeats, older files)
-    pub forward_us: u16,
-    /// Padding to 16-byte alignment
-    _padding: [u8; 1],
-    /// HID data (NS Pro Controller full report is 64 bytes)
-    pub data: [u8; 64],
-}
+/// One controller report as stored in dump files and sent to the studio host;
+/// the record layout is shared with the readers through `gameplay-data`
+pub use gameplay_data::frame::{FRAME_SIZE, Frame};
 
-/// Size of a [`Frame`] in bytes
-pub const FRAME_SIZE: usize = mem::size_of::<Frame>();
-
-// Compile-time assertion that our assumptions are correct
-const _: () = {
-    assert!(FRAME_SIZE == 80, "Frame size must be 80 bytes");
-    assert!(mem::align_of::<Frame>() == 1, "Frame must be packed");
-};
-
-impl Frame {
-    /// Timestamp `data` with the current time
-    pub fn new(seq: u32, data: &[u8]) -> Self {
-        let mut frame = Frame {
-            timestamp_ms: unix_ms(),
-            packet_size: data.len().min(64) as u8,
-            seq,
-            forward_us: 0,
-            _padding: [0; 1],
-            data: [0; 64],
-        };
-
-        let copy_len = frame.packet_size as usize;
-        frame.data[..copy_len].copy_from_slice(&data[..copy_len]);
-        frame
-    }
-
-    /// The HID report carried by this frame; empty for a heartbeat
-    pub fn payload(&self) -> &[u8] {
-        &self.data[..self.packet_size as usize]
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self as *const _ as *const u8, FRAME_SIZE) }
-    }
-
-    pub fn from_bytes(bytes: &[u8; FRAME_SIZE]) -> Self {
-        // SAFETY: Frame is plain packed data, valid for any bit pattern
-        unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const Frame) }
-    }
+/// A frame of `data` (empty for a heartbeat) stamped with the current time
+pub fn stamped(seq: u32, data: &[u8]) -> Frame {
+    Frame::new(unix_ms(), seq, data)
 }
 
 /// Current Unix time in milliseconds
@@ -344,7 +291,7 @@ impl FileDumper {
 
 impl Dumper for FileDumper {
     fn dump(&mut self, frame: &Frame) -> Result<()> {
-        self.writer.write_all(frame.as_bytes())?;
+        self.writer.write_all(&frame.to_bytes())?;
         self.frame_count += 1;
 
         // Flush every FLUSH_INTERVAL frames

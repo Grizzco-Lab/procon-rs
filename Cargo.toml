@@ -19,8 +19,12 @@ usb-gadget = "0.7.5"
 tokio = { version = "1.47.1", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 warp = { version = "0.4.1", features = ["websocket", "server"] }
 futures-util = "0.3.31"
+gameplay-data = { version = "0.1.0", path = "crates/gameplay-data" }
 
 
 [[bin]]
 name = "procon"
 path = "src/bin/main.rs"
+
+[workspace]
+members = ["crates/*"]

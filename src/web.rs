@@ -6,8 +6,11 @@
 //!   as binary fragmented-MP4 messages (an init segment, then one per frame)
 //! - `POST /api/command`: a [`Command`] such as `{"action":"start"}`, answered
 //!   with `{"recorder": ..., "replay": ...}` or `{"error": "..."}`
+//! - `GET /api/inspect/...`: the Inspector app's data, see [`crate::inspect`];
+//!   errors are `400` with `{"error": "..."}`
 
 use crate::dump::{Dumper, Frame};
+use crate::inspect::Inspector;
 use crate::motion::Orientation;
 use crate::parser::ProConParser;
 use crate::studio::{Command, Studio};
@@ -20,6 +23,7 @@ use core::sync::atomic::Ordering;
 use core::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
+use std::collections::HashMap;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::time::Instant;
@@ -72,7 +76,7 @@ impl Dumper for LiveFeed {
 }
 
 /// Serve the dashboard on all interfaces
-pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, port: u16) {
+pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, inspector: Arc<Inspector>, port: u16) {
     let status = watch::Sender::new(String::new());
     tokio::spawn(publish_status(Arc::clone(&studio), status.clone()));
 
@@ -91,6 +95,54 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, port: u16) {
             "text/javascript; charset=utf-8",
         )
     });
+    let inspect_script = warp::path!("inspect.js").map(|| {
+        asset(
+            include_str!("../web/inspect.js"),
+            "text/javascript; charset=utf-8",
+        )
+    });
+
+    // Inspector data reads files and runs ffmpeg; keep that off the async workers
+    let inspect = warp::path!("api" / "inspect" / String)
+        .and(warp::query::<HashMap<String, String>>())
+        .and(warp::header::optional::<String>("range"))
+        .and_then(
+            move |endpoint: String, query: HashMap<String, String>, range: Option<String>| {
+                let inspector = Arc::clone(&inspector);
+                async move {
+                    let result = tokio::task::spawn_blocking(move || {
+                        inspector.handle(&endpoint, &query, range.as_deref())
+                    })
+                    .await;
+                    let reply = match result {
+                        Ok(Ok(reply)) => {
+                            let builder = warp::http::Response::builder()
+                                .header("content-type", reply.content_type)
+                                .header("accept-ranges", "bytes");
+                            match reply.content_range {
+                                Some(range) => builder
+                                    .status(StatusCode::PARTIAL_CONTENT)
+                                    .header("content-range", range),
+                                None => builder,
+                            }
+                            .body(reply.body)
+                        }
+                        Ok(Err(e)) => warp::http::Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .header("content-type", "application/json")
+                            .body(
+                                json!({ "error": format!("{e:#}") })
+                                    .to_string()
+                                    .into_bytes(),
+                            ),
+                        Err(e) => warp::http::Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(e.to_string().into_bytes()),
+                    };
+                    Ok::<_, core::convert::Infallible>(reply.unwrap())
+                }
+            },
+        );
 
     let video = studio.video.clone();
     let websocket = warp::path!("ws")
@@ -125,7 +177,14 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, port: u16) {
         });
 
     let routes = warp::get()
-        .and(index.or(style).or(script).or(model))
+        .and(
+            index
+                .or(style)
+                .or(script)
+                .or(model)
+                .or(inspect_script)
+                .or(inspect),
+        )
         .or(websocket)
         .or(api);
 
