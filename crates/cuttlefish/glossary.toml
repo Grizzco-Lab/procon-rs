@@ -270,9 +270,13 @@ forms = { en = ["egg run", "egg running", "carry eggs", "running eggs"], ja = ["
 
 [[term]]
 id = "grizzco-weapon"
-definition = "A Grizzco-brand weapon (the gold rental Splatana, Brush, Slosher, Charger, Blaster, Stringer or Dualies); Chinese players call one a bear weapon, and this player's 熊刷 is one (often the Grizzco Splatana or Brush)."
-# unsure: whether 熊刷 means any Grizzco weapon or the Grizzco Brush / Splatana only
-forms = { en = ["Grizzco weapon", "bear weapon"], ja = ["クマブキ", "クマサン武器"], zh = ["熊武", "熊刷", "熊武器"] }
+definition = "A Grizzco-brand weapon, one of the gold rental weapons of Salmon Run; in English also G weapon."
+forms = { en = ["Grizzco weapon", "G weapon", "bear weapon"], ja = ["クマブキ", "クマサン武器"], zh = ["熊武", "熊武器"] }
+
+[[term]]
+id = "grizzco-roller"
+definition = "The Grizzco Roller, a Grizzco weapon; Chinese players call it 熊刷."
+forms = { en = ["Grizzco Roller", "G Roller"], zh = ["熊刷"] }
 
 [[term]]
 id = "killer-wail-51"
@@ -282,8 +286,7 @@ forms = { en = ["Killer Wail 5.1", "wail"], ja = ["メガホンレーザー5.1ch
 [[term]]
 id = "fetch-eggs"
 definition = "Leaving the basket area to collect Golden Eggs lying farther out, then coming back; a short trip, not a post."
-# unsure: 出差 ("business trip") has no fixed English equivalent
-forms = { en = ["fetch eggs", "go out for eggs", "egg trip"], zh = ["出差"] }
+forms = { en = ["shore run", "fetch eggs"], zh = ["出差"] }
 
 [[term]]
 id = "short-range-weapon"
@@ -294,5 +297,4 @@ forms = { en = ["short-range weapon", "short-range shooter", "light weapon"], zh
 [[term]]
 id = "outer-eggs"
 definition = "Golden Eggs lying at the edge of the stage, away from the basket."
-# unsure: descriptive English
-forms = { en = ["outer eggs", "far eggs", "eggs on the outside"], zh = ["外围蛋"] }
+forms = { en = ["far eggs", "shore eggs"], zh = ["外围蛋"] }

@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(ids("惯性取消搬蛋快"), ["inertia-cancel", "egg-run"]);
         assert_eq!(
             ids("我刚拿的熊刷，不应该上柱子拍的"),
-            ["grizzco-weapon", "fish-stick"]
+            ["grizzco-roller", "fish-stick"]
         );
         assert_eq!(
             ids("小枪可以优先出差回收一些外围蛋，但不要待太久卡新一波怪"),
