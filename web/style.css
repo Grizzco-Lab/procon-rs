@@ -1534,6 +1534,26 @@ input:focus-visible {
   text-transform: uppercase;
 }
 
+/* The rail's tooltips are labels in the console's voice (this outranks the
+   rail's rules below; the expanded rail keeps its names in line) */
+:root[data-theme="telemetry"][data-nav="side"]:not(
+    [data-layout="phone"],
+    [data-rail="expanded"]
+  )
+  .app-nav
+  .app-name,
+:root[data-theme="telemetry"][data-nav="side"]:not(
+    [data-layout="phone"],
+    [data-rail="expanded"]
+  )
+  .bar-tools
+  .tool-name {
+  border-radius: 3px;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 [data-theme="telemetry"] .panel {
   gap: 10px;
 }
@@ -1802,11 +1822,24 @@ input:focus-visible {
   --nav-on-ink: var(--text);
   --nav-on-shadow:
     0 1px 2px rgb(0 0 0 / 0.45), inset 0 0 0 1px rgb(255 255 255 / 0.06);
-  --rail-bg: var(--panel);
-  --rail-on: color-mix(in oklab, var(--accent) 14%, var(--panel));
+  /* The rail: its surface, edge and shadow, the tiles' corners, hover
+     and the open app's tile, the mark on its edge and the mark's glow */
+  --rail-bg: linear-gradient(180deg, #1a1b20, #15161a 40%, #131418);
+  --rail-border: rgb(255 255 255 / 0.06);
+  --rail-shadow: 6px 0 24px rgb(0 0 0 / 0.35);
+  --rail-radius: 14px;
+  --rail-hover: rgb(255 255 255 / 0.06);
+  --rail-on: color-mix(in oklab, var(--accent) 16%, var(--panel));
+  --rail-on-ring:
+    inset 0 1px 0 rgb(255 255 255 / 0.1),
+    inset 0 0 0 1px color-mix(in oklab, var(--accent) 28%, transparent),
+    0 2px 8px rgb(0 0 0 / 0.3);
+  --rail-mark: var(--accent);
+  --rail-mark-glow: 0 0 8px color-mix(in oklab, var(--accent) 70%, transparent);
   /* Tooltips over the page */
   --tip-bg: var(--text);
   --tip-ink: var(--bg);
+  --tip-shadow: 0 6px 18px rgb(0 0 0 / 0.28);
   /* Hairlines between groups in the bar */
   --divider: color-mix(in oklab, var(--text) 14%, transparent);
 }
@@ -1818,7 +1851,17 @@ input:focus-visible {
   --nav-hover: rgb(31 33 36 / 0.06);
   --nav-on: #ffffff;
   --nav-on-shadow: 0 1px 3px rgb(16 24 40 / 0.16);
-  --rail-on: color-mix(in oklab, var(--accent) 9%, #ffffff);
+  --rail-bg: linear-gradient(180deg, #ffffff, #fbfbfc);
+  --rail-border: rgb(16 24 40 / 0.06);
+  --rail-shadow: 8px 0 30px rgb(16 24 40 / 0.08);
+  --rail-radius: 17px;
+  --rail-hover: rgb(31 33 36 / 0.06);
+  --rail-on: color-mix(in oklab, var(--accent) 10%, #ffffff);
+  --rail-on-ring:
+    inset 0 0 0 1px color-mix(in oklab, var(--accent) 18%, transparent),
+    0 1px 3px rgb(16 24 40 / 0.1);
+  --rail-mark-glow: 0 0 8px color-mix(in oklab, var(--accent) 45%, transparent);
+  --tip-shadow: 0 6px 18px rgb(16 24 40 / 0.22);
 }
 
 /* Telemetry's switch is a row of tabs, the open one underlined */
@@ -1828,7 +1871,15 @@ input:focus-visible {
   --nav-on: color-mix(in oklab, var(--accent) 12%, transparent);
   --nav-on-ink: var(--accent);
   --nav-on-shadow: inset 0 -2px 0 var(--accent);
+  --rail-bg: var(--panel);
+  --rail-border: var(--panel-border);
+  --rail-shadow: none;
+  --rail-radius: 3px;
+  --rail-hover: rgb(255 255 255 / 0.04);
   --rail-on: color-mix(in oklab, var(--accent) 12%, var(--panel));
+  --rail-on-ring: inset 0 0 0 1px
+    color-mix(in oklab, var(--accent) 35%, transparent);
+  --rail-mark-glow: none;
 }
 
 :root:not([data-app="inspect"]) [data-app-only="inspect"] {
@@ -1907,7 +1958,15 @@ input:focus-visible {
   height: 22px;
 }
 
-/* ------------------------------------------------------------ the rail */
+/* ------------------------------------------------------------ the rail
+ * A dock: a surface with a little depth (a soft gradient, a hairline
+ * highlight on its edge and a shadow over the page), even tiles, icons
+ * that lift on hover, the open app on a tile with a mark on the rail's
+ * edge (like the Dock's running-app dot) and names as tooltips beside
+ * the icons. Nothing here filters or blurs, so the live video underneath
+ * costs nothing extra. data-rail="expanded" widens it to icons with
+ * names.
+ */
 
 @media (min-width: 721px) {
   :root[data-nav="side"]:not([data-layout="phone"]) body {
@@ -1922,13 +1981,15 @@ input:focus-visible {
     left: 0;
     z-index: 40;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     width: var(--rail);
-    padding: 14px 0 130px;
+    padding: 14px 11px 168px;
     border: 0;
-    border-right: 1px solid var(--panel-border);
+    border-right: 1px solid var(--rail-border);
     border-radius: 0;
     background: var(--rail-bg);
+    box-shadow: var(--rail-shadow);
+    transition: width 0.2s ease;
   }
 
   :root[data-nav="side"]:not([data-layout="phone"]) .app-nav a {
@@ -1937,61 +1998,86 @@ input:focus-visible {
     width: 50px;
     height: 50px;
     padding: 0;
-    border-radius: 14px;
+    border-radius: var(--rail-radius);
+    transition:
+      background 0.15s,
+      box-shadow 0.15s,
+      color 0.15s;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav a:hover {
+    background: var(--rail-hover);
   }
 
   :root[data-nav="side"]:not([data-layout="phone"]) .app-nav .app-icon {
     width: 30px;
     height: 30px;
-    transition: transform 0.15s ease-out;
+    transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
-  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav a:hover .app-icon {
-    transform: scale(1.1);
+  /* Hover lifts the icon a touch; a press settles it */
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .app-nav
+    a:is(:hover, :focus-visible)
+    .app-icon {
+    transform: translateY(-1px) scale(1.12);
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .app-nav
+    a:active
+    .app-icon {
+    transform: scale(0.96);
+    transition-duration: 0.08s;
   }
 
   :root[data-nav="side"]:not([data-layout="phone"])
     .app-nav
     a[aria-current="page"] {
     background: var(--rail-on);
-    box-shadow: none;
+    box-shadow: var(--rail-on-ring);
   }
 
-  /* The open app's mark on the rail's edge */
+  /* The mark on the rail's edge: a short pill on hover, tall for the open app */
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav a::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: -11px;
+    width: 3px;
+    height: 22px;
+    border-radius: 0 3px 3px 0;
+    background: var(--rail-mark);
+    box-shadow: var(--rail-mark-glow);
+    opacity: 0;
+    transform: translateY(-50%) scaleY(0.25);
+    transition:
+      transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1),
+      opacity 0.15s;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav a:hover::before {
+    opacity: 0.7;
+    transform: translateY(-50%) scaleY(0.45);
+  }
+
   :root[data-nav="side"]:not([data-layout="phone"])
     .app-nav
     a[aria-current="page"]::before {
-    content: "";
-    position: absolute;
-    top: 12px;
-    bottom: 12px;
-    left: -11px;
-    width: 4px;
-    border-radius: 0 4px 4px 0;
-    background: var(--accent);
+    opacity: 1;
+    transform: translateY(-50%) scaleY(1);
   }
 
-  /* Every name is a tooltip, to the right of its icon */
+  /* Every name is a tooltip beside its icon, shown after a short delay
+     (at once from the keyboard); it keeps naming the link for assistive
+     technology while unseen */
   :root[data-nav="side"]:not([data-layout="phone"]) .app-nav .app-name,
   :root[data-nav="side"]:not([data-layout="phone"]) .bar-tools .tool-name {
     position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-
-  :root[data-nav="side"]:not([data-layout="phone"])
-    .app-nav
-    a:is(:hover, :focus-visible)
-    .app-name,
-  :root[data-nav="side"]:not([data-layout="phone"])
-    .bar-tools
-    .tool-button:is(:hover, :focus-visible)
-    .tool-name {
     top: 50%;
     right: auto;
-    left: calc(100% + 12px);
+    left: calc(100% + 15px);
+    z-index: 1;
     width: auto;
     height: auto;
     padding: 5px 10px;
@@ -1999,15 +2085,59 @@ input:focus-visible {
     clip-path: none;
     border-radius: 7px;
     background: var(--tip-bg);
-    box-shadow: 0 6px 18px rgb(0 0 0 / 0.28);
+    box-shadow: var(--tip-shadow);
     color: var(--tip-ink);
     font-size: 12.5px;
     font-weight: 600;
+    line-height: 1.4;
     text-transform: none;
     letter-spacing: 0;
     white-space: nowrap;
-    transform: translateY(-50%);
+    opacity: 0;
+    transform: translate(-6px, -50%);
+    transition:
+      opacity 0.12s ease,
+      transform 0.12s ease;
     pointer-events: none;
+  }
+
+  /* Its arrow, pointing at the icon */
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav .app-name::before,
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .bar-tools
+    .tool-name::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: -4px;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px 0 0 0;
+    background: inherit;
+    transform: translateY(-50%) rotate(-45deg);
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav a:hover .app-name,
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .bar-tools
+    .tool-button:hover
+    .tool-name {
+    opacity: 1;
+    transform: translate(0, -50%);
+    transition-delay: 0.35s;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .app-nav
+    a:focus-visible
+    .app-name,
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .bar-tools
+    .tool-button:focus-visible
+    .tool-name {
+    opacity: 1;
+    transform: translate(0, -50%);
+    transition-delay: 0s;
   }
 
   /* The dragged icon has no tooltip */
@@ -2018,50 +2148,236 @@ input:focus-visible {
     display: none;
   }
 
-  /* View and language at the rail's foot, over its padding */
+  /* View and language at the rail's foot, over its padding, and the
+     chevron that widens the rail under them */
   :root[data-nav="side"]:not([data-layout="phone"]) .bar-tools {
     position: fixed;
     bottom: 0;
     left: 0;
     z-index: 41;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
     width: calc(var(--rail) - 1px);
-    padding: 12px 0 16px;
+    padding: 10px 11px 10px;
+    transition: width 0.2s ease;
   }
 
-  /* A short rule between the apps and the tools */
+  /* A rule between the apps and the tools, fading at its ends */
   :root[data-nav="side"]:not([data-layout="phone"]) .bar-tools::before {
     content: "";
-    width: 28px;
+    width: 100%;
     height: 1px;
-    margin-bottom: 6px;
-    background: var(--divider);
+    margin-bottom: 8px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--divider) 25%,
+      var(--divider) 75%,
+      transparent
+    );
   }
 
   :root[data-nav="side"]:not([data-layout="phone"]) .tool-button {
     justify-content: center;
-    width: 44px;
+    width: 50px;
     height: 44px;
     padding: 0;
     border-color: transparent;
-    border-radius: 12px;
+    border-radius: var(--rail-radius);
     background: transparent;
+    box-shadow: none;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .tool-button:hover {
+    background: var(--rail-hover);
   }
 
   :root[data-nav="side"]:not([data-layout="phone"]) .tool-button .app-icon {
     width: 24px;
     height: 24px;
+    transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"])
+    .tool-button:is(:hover, :focus-visible)
+    .app-icon {
+    transform: translateY(-1px) scale(1.1);
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .rail-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 50px;
+    height: 26px;
+    margin-top: 4px;
+    padding: 0;
+    border: 0;
+    border-radius: calc(var(--rail-radius) / 2);
+    background: transparent;
+    color: var(--text-3);
+    cursor: pointer;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .rail-toggle:hover {
+    background: var(--rail-hover);
+    color: var(--text);
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .rail-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .rail-chevron {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform 0.2s ease;
+  }
+
+  /* ---------------------------------------------- the expanded rail
+   * Icons with their names in rows; the tooltips are not needed
+   */
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"]) {
+    --rail: 216px;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav {
+    gap: 4px;
+    padding: 14px 10px 160px;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav
+    a {
+    justify-content: flex-start;
+    gap: 12px;
+    width: 100%;
+    height: 46px;
+    padding: 0 11px;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav
+    a::before {
+    left: -10px;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav
+    .app-icon {
+    width: 28px;
+    height: 28px;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav
+    .app-name,
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .bar-tools
+    .tool-name {
+    position: static;
+    padding: 0;
+    overflow: hidden;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    color: inherit;
+    font-size: 13.5px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav
+    .app-name::before,
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .bar-tools
+    .tool-name::before {
+    display: none;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav
+    a[aria-current="page"]
+    .app-name {
+    font-weight: 600;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .bar-tools {
+    padding: 10px 10px 10px;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .tool-button {
+    justify-content: flex-start;
+    gap: 12px;
+    width: 100%;
+    height: 40px;
+    padding: 0 13px;
+    font-size: 13px;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .tool-button
+    .app-icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .rail-toggle {
+    width: 100%;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .rail-chevron {
+    transform: rotate(180deg);
+  }
+}
+
+/* The chevron belongs to the rail alone; the Rail row of the View menu too */
+.rail-toggle {
+  display: none;
+}
+
+:root[data-nav="top"] [data-rail-only],
+:root[data-layout="phone"] [data-rail-only] {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  [data-rail-only] {
+    display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .app-nav,
+  .bar-tools,
   .app-nav a,
-  .app-nav .app-icon {
+  .app-nav a::before,
+  .app-nav .app-icon,
+  .app-nav .app-name,
+  .tool-button .app-icon,
+  .tool-name,
+  .rail-chevron {
     transition: none !important;
   }
 
-  .app-nav a:hover .app-icon {
+  .app-nav a:is(:hover, :focus-visible, :active) .app-icon,
+  .tool-button:is(:hover, :focus-visible) .app-icon {
     transform: none !important;
   }
 }

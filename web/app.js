@@ -70,6 +70,19 @@ function markView() {
       String(button.dataset.pickNav === root.dataset.nav),
     );
   }
+  const expanded = root.dataset.rail === "expanded";
+  for (const button of document.querySelectorAll("[data-pick-rail]")) {
+    button.setAttribute(
+      "aria-pressed",
+      String((button.dataset.pickRail === "expanded") === expanded),
+    );
+  }
+  for (const button of document.querySelectorAll("[data-toggle-rail]")) {
+    button.title = expanded
+      ? "Collapse the rail: icons only"
+      : "Expand the rail: icons with names";
+    button.setAttribute("aria-expanded", String(expanded));
+  }
 }
 
 for (const button of document.querySelectorAll("[data-pick]")) {
@@ -83,6 +96,18 @@ for (const button of document.querySelectorAll("[data-pick-layout]")) {
 for (const button of document.querySelectorAll("[data-pick-nav]")) {
   button.addEventListener("click", () =>
     setView("nav", button.dataset.pickNav),
+  );
+}
+// The rail is compact (icons) or expanded (icons with names); the chevron
+// at its foot flips it
+for (const button of document.querySelectorAll("[data-pick-rail]")) {
+  button.addEventListener("click", () =>
+    setView("rail", button.dataset.pickRail),
+  );
+}
+for (const button of document.querySelectorAll("[data-toggle-rail]")) {
+  button.addEventListener("click", () =>
+    setView("rail", root.dataset.rail === "expanded" ? "compact" : "expanded"),
   );
 }
 markView();

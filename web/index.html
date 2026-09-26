@@ -1,5 +1,11 @@
 <!doctype html>
-<html lang="en" data-theme="studio" data-layout="auto" data-nav="side">
+<html
+  lang="en"
+  data-theme="studio"
+  data-layout="auto"
+  data-nav="side"
+  data-rail="compact"
+>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -13,14 +19,15 @@
     <link rel="stylesheet" href="style.css" />
     <link rel="stylesheet" href="art/salmon.css" />
     <script>
-      // Apply the saved view before first paint; ?theme=, ?layout= and ?nav=
-      // override it
+      // Apply the saved view before first paint; ?theme=, ?layout=, ?nav=
+      // and ?rail= override it
       (() => {
         const params = new URLSearchParams(location.search);
         const views = {
           theme: ["studio", "joy", "telemetry", "salmon"],
           layout: ["auto", "phone"],
           nav: ["side", "top"],
+          rail: ["compact", "expanded"],
         };
         for (const [key, allowed] of Object.entries(views)) {
           const value =
@@ -153,6 +160,17 @@
           </svg>
           <span class="tool-name">View</span>
         </button>
+        <!-- Rail only: widens it to icons with names, and back -->
+        <button
+          type="button"
+          class="rail-toggle"
+          data-toggle-rail
+          title="Expand the rail: icons with names"
+        >
+          <svg class="rail-chevron" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M9.5 6.5 15 12l-5.5 5.5" />
+          </svg>
+        </button>
       </div>
       <!-- One grid: a label column and the options' column, so every row's
            first option lines up -->
@@ -201,6 +219,23 @@
             title="Apps in the top bar; drag them, or Alt+arrows on one, to reorder"
           >
             Top bar
+          </button>
+        </div>
+        <span class="view-label" data-rail-only>Rail</span>
+        <div class="view-choices" data-rail-only>
+          <button
+            type="button"
+            data-pick-rail="compact"
+            title="Icons only; the names show as tooltips"
+          >
+            Compact
+          </button>
+          <button
+            type="button"
+            data-pick-rail="expanded"
+            title="Icons with their names"
+          >
+            Expanded
           </button>
         </div>
       </div>

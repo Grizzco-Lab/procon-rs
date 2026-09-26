@@ -195,8 +195,19 @@
   --nav-hover: #252922;
   --tip-bg: var(--sr-paper);
   --tip-ink: #1a1320;
+  --tip-shadow: 2px 3px 0 var(--sr-ink);
   --divider: #3f453a;
+  /* The rail: ink with the panel tile, stickers on it, the open one on an
+     orange tile with its drop, a lime mark on the edge */
+  --rail-bg: url("panel-tile.svg") 0 0 / 240px 240px, var(--sr-ink);
+  --rail-border: var(--sr-lime);
+  --rail-shadow: none;
+  --rail-radius: 16px;
+  --rail-hover: #252922;
   --rail-on: var(--sr-orange);
+  --rail-on-ring: inset 0 0 0 2px var(--sr-ink), 0 3px 0 var(--sr-ink);
+  --rail-mark: var(--sr-lime);
+  --rail-mark-glow: none;
 }
 
 [data-theme="salmon"] .app-nav {
@@ -239,46 +250,77 @@
 @media (min-width: 721px) {
   [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"]) .app-nav {
     border-right: 4px solid var(--sr-lime);
-    background:
-      url("panel-tile.svg") 0 0 / 240px 240px,
-      var(--sr-ink);
   }
 
+  /* Names as paper tags with an inked arrow */
   [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
     .app-nav
-    a:is(:hover, :focus-visible)
     .app-name,
   [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
-    .tool-button:is(:hover, :focus-visible)
+    .bar-tools
     .tool-name {
+    padding: 4px 11px;
     border: 2px solid var(--sr-ink);
-    box-shadow: 2px 3px 0 var(--sr-ink);
+    border-radius: 9px;
     font-family: var(--font-display);
+    font-size: 13.5px;
     font-weight: 400;
     letter-spacing: 0.02em;
   }
 
-  /* Stickers on the dock: the open one on an orange tile */
-  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"]) .app-nav a {
-    border-radius: 16px;
-  }
-
   [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
     .app-nav
-    a[aria-current="page"]::before {
-    left: -13px;
-    background: var(--sr-lime);
+    .app-name::before,
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
+    .bar-tools
+    .tool-name::before {
+    left: -7px;
+    width: 10px;
+    height: 10px;
+    border-top: 2px solid var(--sr-ink);
+    border-left: 2px solid var(--sr-ink);
   }
 
+  /* Stickers on the dock: the open one keeps its ink outline and drop */
   [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
     .app-nav
-    a:hover:not([aria-current]) {
-    background: #252922;
+    a[aria-current="page"] {
+    border-color: transparent;
   }
 
   [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
     .tool-button {
     border: 0;
+  }
+
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"])
+    .rail-toggle:hover {
+    color: var(--sr-lime);
+  }
+
+  /* The expanded rail's names in the display face, like the headings */
+  [data-theme="salmon"][data-nav="side"][data-rail="expanded"]:not(
+      [data-layout="phone"]
+    )
+    .app-nav
+    .app-name {
+    padding: 0;
+    border: 0;
+    font-size: 15px;
+    letter-spacing: 0.03em;
+  }
+
+  [data-theme="salmon"][data-nav="side"][data-rail="expanded"]:not(
+      [data-layout="phone"]
+    )
+    .bar-tools
+    .tool-name {
+    padding: 0;
+    border: 0;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0;
   }
 }
 
