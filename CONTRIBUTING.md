@@ -84,7 +84,7 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
 | `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, inbox, name tables, assets, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
-| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `vision.js`, `predictor.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
+| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `vision.js`, `predictor.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
 | `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy |
 | `doc/` | Setup and dashboard write-up with screenshots, published to GitHub Pages |
 
@@ -192,7 +192,28 @@ apps can adopt it key by key. The Studio's preview pauses and its views stop
 drawing while another app is shown. `web/controller3d.js` loads three.js from
 jsdelivr and extrudes the SVG view's outline; the SVG stays as the fallback. The
 input overlay (`drawInputHud` in `app.js`) is shared by the Studio's video and
-the Inkspector.
+the player's Minimal overlay.
+
+### The player
+
+`web/player.js` is the one video player of the Inkspector, Cuttlefish, Vision
+and Predictor, made from the Inkspector's: `new Player({screen, controls,
+scrubber, strip, table, ...})` builds the picture, the overlays, the transport
+and the scrubber into the app's elements, and `open(source, at)` shows a
+source. Two kinds of source sit behind the same interface: exact frames
+(`{frames, fps, frame(n)}`, the Inkspector's endpoint; drawn on a canvas,
+prefetched, played by a paced loop or by the segment's audio clock) and a
+`<video>` (`{video, fps}`; frames followed with `requestVideoFrameCallback`,
+a seek lands in the middle of the frame). Either may add `thumb(n)` for the
+neighbours strip, `labels(n)` (a promise of `[truth, prediction]`) for the
+overlays and the table, `sound` and `title`. The player owns the keys (Space,
+arrows, Shift for ten, Home/End, G; only while the app sets `enabled`, never
+in inputs, and the events are consumed so the page never scrolls), the marks
+on the scrubber (`setMarks`; ticks and ranges by kind, colored by
+`--mark-<kind>`; a click snaps to the nearest tick) and the strip (every frame,
+or every `seconds` on a grid). Apps draw their own layers by appending to the
+screen (the labeling mode's Sketch, Vision's boxes, Cuttlefish's danmaku) and
+follow the player through `onFrame`, `onSeek`, `onPlay` and `onMark`.
 
 `web/icons/` is the icon set, embedded whole (include_dir) and served at
 `/icons/`: `app-*`, `class-*` (named after `classes.json`) and `ui-*` SVGs,
@@ -210,7 +231,8 @@ Frames are decoded by ffmpeg on request (a seek, then a short window at 360p)
 and cached; labels come from `gameplay_data::align` at the requested delay; a
 segment's sound is served as WebM with byte ranges. `POST
 /api/inspect/delay` sets or removes a delay by hand in the calibration file.
-`web/inspect.js` keeps its state in the hash.
+`web/inspect.js` opens the segment in the player and keeps its state in the
+hash.
 
 The labeling mode (`src/objects.rs`, `web/label.js`) saves boxes frame by
 frame; the scrubber marks labeled frames on one canvas (`drawMarks`). Follow

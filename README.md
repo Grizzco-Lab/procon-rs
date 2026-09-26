@@ -126,6 +126,18 @@ Studio's preview pauses, and each app stops its own work while hidden.
 The path prefix, video input, quality, sound, game settings and replay file
 are saved in `config.state.json` next to the config, so they survive restarts.
 
+### The player
+
+The Inkspector, Cuttlefish, Vision and Predictor show video in the same
+player: ▶ Play, ‹ Frame and Frame ›, speed 0.25x to 2x, Sound (the segment's
+or the video's), the overlay (Full, Minimal or None, where there are
+controller labels), Go to… and the position (frame and time); a scrubber with
+marks (labeled frames, processed frames, comments; a click near a mark goes
+to it) and the neighbours strip, updated while paused. Keys everywhere: Space
+play/pause, ←/→ one frame (Shift: ten), Home/End, G go to a frame number or
+time (12.5s, 1:02.5); they never scroll the page. Recorded sessions show
+exact frames decoded by the studio; other videos play in the browser.
+
 ### Inkspector
 
 Checks recorded sessions frame by frame: whether the controller labels line up
@@ -134,12 +146,13 @@ with the picture, and a model's predictions against them.
 - **Sessions**: every session under `[inspect] root` (by default the recording
   prefix's folder) with its start, duration, segments, video size and rate,
   sound, reports, game settings and video delay.
-- **A segment**: the frame at 360p with its labels drawn over it (Overlay:
-  Full, Minimal or None), a scrubber, play/pause at 0.25x to 1x with the
-  segment's sound, the three frames on each side, and a table of their labels
-  (buttons, sticks, gyro degrees over the frame). Keys: Space play/pause, ←/→
-  one frame (Shift: ten), R a random frame where a button changes or the gyro
-  turns (Shift+R: any), G go to a frame number or time.
+- **A segment**: the frame at 360p in the player (see below) with its labels
+  drawn over it (Overlay: Full, Minimal or None; with a predictions file the
+  Full overlay shows the prediction against the truth), the segment's sound,
+  the three frames on each side, and a table of their labels (buttons,
+  sticks, gyro degrees over the frame; truth over prediction, mismatches in
+  red). R goes to a random frame where a button changes or the gyro turns
+  (Shift+R: any frame).
 - **Delay**: the `video_delay_ms` box starts at the session's delay from the
   calibration file (`[inspect] calibration`, AgentZero's `calibration.json`),
   shown with its source: set by hand, measured from the session (high or
@@ -233,9 +246,10 @@ While reviewing:
 - **Danmaku** (D) shows comments over the video as playback reaches them,
   with their drawings, for a few seconds: floating in the bottom-right corner
   or sliding across the picture;
-- **Neighbours**: thumbnails every 0.5 s (0.25–2 s) around the playhead,
-  updated while paused, with dots for the comments near each; a click seeks
-  there, a dot opens its comment;
+- **Neighbours**: the player's strip every 0.5 s (0.25–2 s) around the
+  playhead, updated while paused, with dots for the comments near each; a
+  click seeks there, a dot opens its comment; the comments are marks on the
+  scrubber too (hover one for its text, click to open it);
 - **Notes**, under the video: comments on the whole video, at no time
   (general notes, rants), which can be edited and deleted.
 
@@ -323,8 +337,10 @@ YOLOv8 in candle):
   at a time, on its own thread, with progress, the device, and per-frame
   decode, network and total times (mean and 95th percentile); Cancel keeps the
   frames done. The model loads once and is reused.
-- **Results**: the frames with their boxes (class color, score, track id), a
-  scrubber (←/→), a table per class, the tracks and their paths on screen.
+- **Results**: the segment in the player with the boxes (class color, score,
+  track id) over the processed frames, which are marks on the scrubber
+  (**‹ Boxes** / **Boxes ›**, P/N, jump between them), a table per class, the
+  tracks and their paths on screen.
   Only our classes are shown (those of `classes.json`, after the renames such
   as `person=player`), with their names and colors; the note says how many
   other boxes are hidden. **Experimental: show all COCO classes** shows the
@@ -364,9 +380,11 @@ it is for: labeling gameplay nobody recorded a controller for.
   `Predictions` next to the sessions' folder) as
   `<video>/<checkpoint>/pred.jsonl` and `run.json` (video, range, checkpoint,
   time taken).
-- **Prediction**: the video with the predicted inputs drawn over it (or the
-  truth), a small controller with the predicted buttons and sticks, and each
-  button's probability. Space plays, ←/→ step a frame (Shift: ten).
+- **Prediction**: the video in the player; its Full overlay shows the
+  prediction against the truth (predicted keys marked, mismatches edged in
+  red, both sticks and gyro bars) and its table lists the frames around,
+  truth over prediction, as in the Inkspector. A small controller shows the
+  predicted buttons and sticks, with each button's probability.
 - **Timeline**: 5 to 60 s around the playhead: a lane per button (truth in
   the lower half, the predicted probability above it, a mark when predicted
   pressed), the sticks, gyro pitch and yaw and the camera turn (truth
