@@ -5,11 +5,12 @@ report, timestamped, next to the console's video and sound.
 
 A Raspberry Pi 4 sits between the Pro Controller and the Switch as a USB proxy
 and streams the controller's reports over the network. A Linux PC with a
-capture card records them with the video, and its web dashboard has four apps:
+capture card records them with the video, and its web dashboard has five apps:
 **Studio**, to watch and record; **Inkspector**, to check recorded sessions
 frame by frame and label objects on them; **Cuttlefish**, to review videos with
-comments, drawings and an AI coach, and to manage its knowledge; and
-**Vision**, to detect and track objects in recorded sessions.
+comments, drawings and an AI coach, and to manage its knowledge; **Vision**,
+to detect and track objects in recorded sessions; and **Predictor**, to see
+what the inverse dynamics model reads off any video.
 
 > [!TIP]
 > **[See the setup guide and dashboard tour →](https://htmlpreview.github.io/?https://github.com/Grizzco-Lab/procon-rs/blob/main/doc/index.html)**
@@ -73,6 +74,10 @@ Everything runs from the PC.
    ./scripts/run.sh
    ```
 
+   It builds the studio first (`cargo run --release`): after an update of the
+   code that takes about 15–45 s, after a change of dependencies or a
+   toolchain update over a minute; the dashboard answers once it is built.
+
 3. Open `http://<pc>:8090`.
 
 Without a Pi, `cargo run --example fake_proxy [port]` streams a synthetic
@@ -80,9 +85,9 @@ controller; point `[proxy] address` at `localhost:7331`.
 
 ## The dashboard
 
-One page with four apps, switched without reloading: **Studio** (`#studio`),
-**Inkspector** (`#inspect`), **Cuttlefish** (`#cuttlefish`) and **Vision**
-(`#vision`). The app links sit in a left rail or in the top bar; the
+One page with five apps, switched without reloading: **Studio** (`#studio`),
+**Inkspector** (`#inspect`), **Cuttlefish** (`#cuttlefish`), **Vision**
+(`#vision`) and **Predictor** (`#predictor`). The app links sit in a left rail or in the top bar; the
 connection, controller, proxy latency and recording chips stay in the top bar
 in every app. The **View** menu picks the theme (Studio, Joy or
 Telemetry), the Phone layout (also used automatically on narrow screens) and
@@ -192,17 +197,56 @@ YOLOv8 in candle):
   frames done. The model loads once and is reused.
 - **Results**: the frames with their boxes (class color, score, track id), a
   scrubber (←/→), a table per class, the tracks and their paths on screen.
-  The last results of each segment are kept in `[vision] results` (default
-  `Vision` next to the sessions' folder) and shown again when reopened.
-- **Send to labels**: writes the results into the labels as model boxes,
-  renaming classes (`person=player`) and leaving out classes `classes.json`
-  does not have. Frames a person has labeled are never changed. A link opens
-  the frame in the Inkspector's Label mode.
+  Only our classes are shown (those of `classes.json`, after the renames such
+  as `person=player`), with their names and colors; the note says how many
+  other boxes are hidden. **Experimental: show all COCO classes** shows the
+  detector's own classes instead. The last results of each segment are kept
+  in `[vision] results` (default `Vision` next to the sessions' folder) and
+  shown again when reopened.
+- **Classes**, **Dataset** (the default): every class of `classes.json` with
+  its boxes drawn by people and by models across the annotations, each
+  labeled segment (a link opens it in the Label mode), and the frames labeled
+  so far against about 200, when a Salmon Run detector gets trained. **This
+  run**: the classes of the results on screen, and **Send to labels**, which
+  writes them into the labels as model boxes (renamed; classes `classes.json`
+  does not have are left out). Frames a person has labeled are never changed.
+  A link opens the frame in the Inkspector's Label mode.
 
 COCO models know nothing of Salmon Run (Salmonids come out as `bowl`, `boat`
-or nothing); the app is the workflow for our own weights. On a 16-core CPU a
-frame takes about 130 ms (n), 250 ms (s) and 470 ms (m); build with
-`--features cuda` for the GPU.
+or nothing), hence our classes only; the app is the workflow for our own
+weights. On a 16-core CPU a frame takes about 130 ms (n), 250 ms (s) and
+470 ms (m); build with `--features cuda` for the GPU.
+
+### Predictor
+
+Shows what AgentZero's inverse dynamics model (IDM) predicts from a video: the
+buttons, sticks, gyro and camera turn it reads off the picture. That is what
+it is for: labeling gameplay nobody recorded a controller for.
+
+- **Predict**: a recorded session's segment, a Cuttlefish review's video or a
+  video file on the PC, an optional range in seconds, and a checkpoint (every
+  `runs/*/best.pt` of AgentZero, newest first). **Run the IDM** starts
+  `uv run agentzero-predict` in the AgentZero folder (`[predictor]
+  agentzero`, default `../AgentZero`) as a background job with its progress,
+  output and Cancel. The model runs on the GPU; if it runs out of memory (a
+  training may be using it), the page says so. Videos other than sessions need
+  `agentzero-predict --video`; until AgentZero has it, the page says so and
+  only sessions run (**Recheck** reads the command's options again).
+- **Predictions**: every stored run, kept in `[predictor] results` (default
+  `Predictions` next to the sessions' folder) as
+  `<video>/<checkpoint>/pred.jsonl` and `run.json` (video, range, checkpoint,
+  time taken).
+- **Prediction**: the video with the predicted inputs drawn over it (or the
+  truth), a small controller with the predicted buttons and sticks, and each
+  button's probability. Space plays, ←/→ step a frame (Shift: ten).
+- **Timeline**: 5 to 60 s around the playhead: a lane per button (truth in
+  the lower half, the predicted probability above it, a mark when predicted
+  pressed), the sticks, gyro pitch and yaw and the camera turn (truth
+  filled, prediction as a line). Click to go there.
+- **Agreement**, for sessions: F1 per button and the correlation of each
+  stick axis, the gyro and the camera turn, over the frames in view or the
+  whole video. Plain videos show predictions only.
+- The URL keeps the view (`#predictor/key=<video>&ckpt=<checkpoint>&t=<s>`).
 
 ## Recordings
 
@@ -270,6 +314,7 @@ Both programs take `--config <path>`.
 | `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) and `annotations` (object labels, default `Annotations` next to the root); relative paths start at the config's folder |
 | `[cuttlefish]` | Optional: `reviews` (one folder per review with its video; default `Reviews` next to the root), `knowledge` (the knowledge store, default `$CUTTLEFISH_DATA` or `~/.local/share/cuttlefish`) and `model` |
 | `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model) and `confidence` (0.25) |
+| `[predictor]` | Optional: `agentzero` (the AgentZero folder, default `../AgentZero`) and `results` (stored predictions, default `Predictions` next to the root) |
 | `[logging]` | `level`: error, warn, info, debug or trace |
 
 `proxy.toml` (USB proxy, on the Pi):

@@ -61,3 +61,18 @@ decision lives).
 
 20. **Deleting documents**: the crate can't delete a document yet, so the
     Knowledge tab has no delete. Add it?
+
+## Predictor
+
+21. **Frame numbers of a range**: does `agentzero-predict --start-s` number
+    frames from the video's start or the range's? The page guesses from the
+    first frame (`frame_offset` in `run.json`); the contract should say.
+22. **Camera turn of the truth**: the IDM writes `camera_turn`, the recorded
+    labels have none, so its agreement shows "no truth". Compute it from the
+    gyro, stick and the session's sensitivities (in `gameplay-data`, the same
+    formula as AgentZero)?
+23. **3D controller**: `controller3d.js` drives one canvas (the Studio's); the
+    Predictor shows a copy of the flat drawing instead. Make the 3D view an
+    instance per canvas?
+24. **Runs per video**: one per video and checkpoint (a new range replaces
+    the old one). Keep several ranges?
