@@ -2620,3 +2620,611 @@ body {
       "status status";
   }
 }
+
+/* ============================================================ drawing
+ * The drawing layer (sketch.js) over a picture: the Cuttlefish app's
+ * comments and the Inkspector's object boxes. Shapes carry their own color.
+ */
+
+.sketch {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  touch-action: none;
+}
+
+.sketch.is-editable {
+  pointer-events: all;
+  cursor: crosshair;
+}
+
+.sketch.is-editable[data-tool="select"] {
+  cursor: default;
+}
+
+.sk-shape {
+  color: var(--sk-color);
+  filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.7));
+}
+
+.sk-shape > rect:not(.sk-tag-band),
+.sk-shape > ellipse,
+.sk-shape > line,
+.sk-shape > polyline {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* A faint fill, so a box can be grabbed anywhere inside */
+.sk-shape > rect:not(.sk-tag-band),
+.sk-shape > ellipse {
+  fill: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+.sk-shape > .sk-hit {
+  stroke: transparent;
+  stroke-width: 14;
+}
+
+.sk-shape[data-index] {
+  cursor: move;
+}
+
+.sk-shape.is-locked {
+  pointer-events: none;
+}
+
+.sk-shape.is-dashed > rect:not(.sk-tag-band),
+.sk-shape.is-dashed > ellipse {
+  stroke-dasharray: 7 5;
+}
+
+.sk-shape.is-faded {
+  opacity: 0.4;
+}
+
+.sk-shape.is-selected > rect:not(.sk-tag-band),
+.sk-shape.is-selected > ellipse,
+.sk-shape.is-selected > line:not(.sk-hit),
+.sk-shape.is-selected > polyline:not(.sk-hit) {
+  stroke-width: 3.5;
+}
+
+.sk-tag-band {
+  fill: currentColor;
+}
+
+.sk-tag {
+  fill: #0b0e11;
+  font:
+    700 11px Inter,
+    system-ui,
+    sans-serif;
+}
+
+.sk-handle {
+  fill: #ffffff;
+  stroke: #0b0e11;
+  stroke-width: 1.5;
+  cursor: nwse-resize;
+}
+
+/* ================================================== Inkspector labeling
+ * A Label toggle in the Frame panel: the overlays step aside and the frame
+ * takes boxes; the bar under the scrubber picks classes and shows counts.
+ */
+
+.screen.labeling .input-hud,
+.screen.labeling .full-hud,
+.screen.labeling .no-reports {
+  display: none;
+}
+
+.label-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.label-bar .panel-note {
+  margin: 0;
+}
+
+.label-classes,
+.label-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.label-class {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 4px;
+  border: 1px solid var(--btn-border);
+  border-radius: var(--radius-sm);
+  background: var(--btn-bg);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.label-class:hover {
+  background: var(--btn-hover);
+}
+
+.label-class[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 16%, var(--btn-bg));
+  color: var(--text);
+}
+
+.label-class kbd {
+  min-width: 20px;
+  padding: 0 3px;
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  font: 11px var(--font-num);
+  text-align: center;
+}
+
+.label-class i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.label-class .num {
+  color: var(--text-3);
+}
+
+.label-actions .btn {
+  height: 30px;
+}
+
+.label-status {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+/* ============================================================ cuttlefish
+ * The Cuttlefish app: a library (open a video, reviews) and the player
+ * (video with drawings and a timeline of comments, the comments beside).
+ */
+
+:root:not([data-app="cuttlefish"]) [data-app-only="cuttlefish"] {
+  display: none !important;
+}
+
+#cf-library,
+#cf-player {
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  align-items: start;
+}
+
+#cf-library {
+  max-width: 1360px;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  grid-template-areas: "open reviews";
+}
+
+#cf-player {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 1.4fr);
+  grid-template-areas: "video comments";
+}
+
+.p-cf-open {
+  grid-area: open;
+}
+.p-cf-reviews {
+  grid-area: reviews;
+}
+.p-cf-video {
+  grid-area: video;
+}
+.p-cf-comments {
+  grid-area: comments;
+}
+
+[data-theme="joy"] #cf-player,
+[data-theme="joy"] #cf-library {
+  max-width: 1360px;
+}
+
+[data-theme="joy"] #cf-player {
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+}
+
+[data-theme="telemetry"] #cf-library {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-areas: "open open open open open reviews reviews reviews reviews reviews reviews reviews";
+}
+
+[data-theme="telemetry"] #cf-player {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-areas: "video video video video video video video video comments comments comments comments";
+}
+
+[data-theme="telemetry"] .p-cf-open,
+[data-theme="telemetry"] .p-cf-video {
+  --panel-no: "01";
+}
+[data-theme="telemetry"] .p-cf-reviews,
+[data-theme="telemetry"] .p-cf-comments {
+  --panel-no: "02";
+}
+
+@media (max-width: 1100px) {
+  :root[data-theme] #cf-library,
+  :root[data-theme] #cf-player {
+    max-width: 900px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "open" "reviews";
+  }
+
+  :root[data-theme] #cf-player {
+    grid-template-areas: "video" "comments";
+  }
+}
+
+:root[data-layout="phone"][data-theme] #cf-library,
+:root[data-layout="phone"][data-theme] #cf-player {
+  max-width: 480px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "open" "reviews";
+}
+
+:root[data-layout="phone"][data-theme] #cf-player {
+  grid-template-areas: "video" "comments";
+}
+
+@media (max-width: 720px) {
+  :root[data-theme] #cf-library,
+  :root[data-theme] #cf-player {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "open" "reviews";
+  }
+
+  :root[data-theme] #cf-player {
+    grid-template-areas: "video" "comments";
+  }
+}
+
+.p-cf-video .panel-head,
+.p-cf-comments .panel-head {
+  flex-wrap: wrap;
+}
+
+.p-cf-video .btn {
+  height: 32px;
+}
+
+.cf-source {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.cf-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cf-row .select {
+  min-width: 0;
+}
+
+.cf-grow,
+.cf-source select.select {
+  flex: 1;
+  max-width: none;
+}
+
+.cf-time-input {
+  width: 84px;
+}
+
+.cf-kind {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.cf-downloads {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cf-download {
+  padding: 10px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.cf-download[data-state="done"] {
+  cursor: pointer;
+}
+
+.cf-download[data-state="failed"] {
+  --meter: var(--critical);
+}
+
+.cf-download-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.cf-download-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-screen video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.cf-screen-note {
+  position: absolute;
+  inset: auto 12px 12px;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: rgb(0 0 0 / 0.7);
+  color: #ffffff;
+  font-size: 13px;
+}
+
+/* Comments on the timeline: dots, and bars for those covering a range */
+.cf-markers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cf-marker {
+  position: absolute;
+  top: 2px;
+  width: 6px;
+  height: 18px;
+  margin-left: -3px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--panel);
+  cursor: pointer;
+  pointer-events: all;
+}
+
+.cf-marker.is-range {
+  min-width: 6px;
+  margin-left: 0;
+  opacity: 0.8;
+}
+
+.cf-marker.is-ai {
+  background: var(--s3);
+}
+
+.cf-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.cf-swatches {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0 4px;
+}
+
+.cf-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid var(--panel);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--btn-border);
+  cursor: pointer;
+}
+
+.cf-swatch[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--text);
+}
+
+.cf-add {
+  margin-left: auto;
+}
+
+.cf-ask {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in oklab, var(--s3) 45%, var(--panel-border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--s3) 8%, var(--panel));
+}
+
+.cf-ask-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--s3);
+}
+
+.cf-ask-head b {
+  color: var(--text);
+}
+
+.cf-question,
+.cf-edit {
+  width: 100%;
+  max-width: none;
+  height: auto;
+  padding: 6px 8px;
+  font: inherit;
+  resize: vertical;
+}
+
+.notice.is-info {
+  border-color: var(--panel-border);
+  background: var(--inset);
+  color: var(--text-2);
+}
+
+.notice.is-info::before {
+  content: "";
+}
+
+.cf-comments {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cf-comment {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  cursor: pointer;
+}
+
+.cf-comment.is-ai {
+  border-left-color: var(--s3);
+}
+
+.cf-comment.is-live {
+  background: color-mix(in oklab, var(--accent) 10%, var(--inset));
+}
+
+.cf-comment.is-active {
+  border-color: var(--accent);
+  cursor: default;
+}
+
+.cf-comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cf-time {
+  padding: 1px 8px;
+  border: 1px solid color-mix(in oklab, var(--accent) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.cf-author {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.cf-comment.is-ai .cf-author {
+  color: var(--s3);
+}
+
+.cf-meta {
+  margin-right: auto;
+}
+
+.cf-x {
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.cf-x:hover {
+  color: var(--critical);
+}
+
+.cf-text {
+  margin: 0;
+  font-size: 13.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cf-done {
+  height: 26px;
+  margin-left: auto;
+}
+
+/* The Cuttlefish chip names a video, which can be long */
+#cf-chip .chip-text {
+  max-width: 520px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cf-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.p-cf-reviews .panel-head h2 {
+  flex: none;
+}
+
+.p-cf-reviews .panel-head .panel-note {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+/* On narrow pages the chip gives up room rather than widen the page */
+#cf-chip {
+  max-width: 100%;
+  min-width: 0;
+}
+
+#cf-chip .chip-text {
+  min-width: 0;
+  max-width: min(520px, 70vw);
+}

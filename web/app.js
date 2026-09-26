@@ -85,9 +85,10 @@ markView();
 
 // ------------------------------------------------------------------ apps
 
-// One page, several apps: #studio (the default) and #inspect/<state>. Switching
-// only shows another section, so the socket, preview and capture keep running.
-const APPS = ["studio", "inspect"];
+// One page, several apps: #studio (the default), #inspect/<state> and
+// #cuttlefish/<state>. Switching only shows another section, so the socket,
+// preview and capture keep running.
+const APPS = ["studio", "inspect", "cuttlefish"];
 
 /** Show the app the hash names and tell it the rest of the hash */
 function routeApp() {

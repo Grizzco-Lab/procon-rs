@@ -584,6 +584,8 @@ async function show(n) {
   inspector.frame = clamp(n);
   const shown = inspector.frame;
   writeHash();
+  // For the labeling mode (label.js), which draws this frame's boxes
+  window.dispatchEvent(new CustomEvent("inspect-frame"));
   $("i-position").textContent =
     `frame ${shown} / ${info.frames - 1} · ${clock(shown / info.fps)}`;
   $("i-delay").value = inspector.delay;

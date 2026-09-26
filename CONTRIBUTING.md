@@ -71,8 +71,10 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/studio.rs` | Coordinator: sessions, `session.json`, dashboard commands, saved settings |
 | `src/web.rs` | Dashboard server (warp): page, WebSocket, command API, Inkspector API |
 | `src/inspect.rs` | Inkspector backend: sessions, frames, labels, delays |
+| `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes |
+| `src/cuttlefish.rs` | Cuttlefish app backend: review files, video bytes with ranges, yt-dlp downloads, AI endpoint (501 until connected) |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
-| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`), embedded into the binary |
+| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`), embedded into the binary |
 | `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy |
 | `doc/` | Setup and dashboard write-up with screenshots, published to GitHub Pages |
 

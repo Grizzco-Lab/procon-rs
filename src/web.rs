@@ -1,6 +1,7 @@
 //! Studio dashboard server: live controller view, video preview, recording controls
 //!
-//! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`, `/inspect.js`: the page, embedded from `web/`
+//! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`, `/inspect.js`,
+//!   `/sketch.js`, `/label.js`, `/cuttlefish.js`: the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
 //!   report, `{"type":"status"}` text twice a second, and the video preview
 //!   as binary fragmented-MP4 messages (an init segment, then one per frame)
@@ -8,7 +9,10 @@
 //!   with `{"recorder": ..., "replay": ...}` or `{"error": "..."}`
 //! - `GET /api/inspect/...`: the Inkspector app's data, see [`crate::inspect`];
 //!   errors are `400` with `{"error": "..."}`
+//! - `/api/cuttlefish/...`: the Cuttlefish app's reviews and videos, see
+//!   [`crate::cuttlefish`]
 
+use crate::cuttlefish::{self, Cuttlefish};
 use crate::dump::{Dumper, Frame};
 use crate::inspect::Inspector;
 use crate::motion::Orientation;
@@ -76,7 +80,13 @@ impl Dumper for LiveFeed {
 }
 
 /// Serve the dashboard on all interfaces
-pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, inspector: Arc<Inspector>, port: u16) {
+pub async fn serve(
+    feed: LiveFeed,
+    studio: Arc<Studio>,
+    inspector: Arc<Inspector>,
+    cuttlefish: Arc<Cuttlefish>,
+    port: u16,
+) {
     let status = watch::Sender::new(String::new());
     tokio::spawn(publish_status(Arc::clone(&studio), status.clone()));
 
@@ -102,7 +112,19 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, inspector: Arc<Inspector
         )
     });
 
+    // The drawing layer, the Inkspector's labeling mode and the Cuttlefish app
+    let scripts = warp::path!(String).and_then(|name: String| async move {
+        let body = match name.as_str() {
+            "sketch.js" => include_str!("../web/sketch.js"),
+            "label.js" => include_str!("../web/label.js"),
+            "cuttlefish.js" => include_str!("../web/cuttlefish.js"),
+            _ => return Err(warp::reject::not_found()),
+        };
+        Ok(asset(body, "text/javascript; charset=utf-8"))
+    });
+
     let delay_inspector = Arc::clone(&inspector);
+    let objects_inspector = Arc::clone(&inspector);
     // Inkspector data reads files and runs ffmpeg; keep that off the async workers
     let inspect = warp::path!("api" / "inspect" / String)
         .and(warp::query::<HashMap<String, String>>())
@@ -173,6 +195,34 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, inspector: Arc<Inspector
             }
         });
 
+    // A frame's object labels, from the Inkspector's labeling mode
+    let objects = warp::path!("api" / "inspect" / "objects")
+        .and(warp::post())
+        .and(warp::body::content_length_limit(1 << 20))
+        .and(warp::body::json())
+        .and_then(move |body: Value| {
+            let inspector = Arc::clone(&objects_inspector);
+            async move {
+                let result =
+                    tokio::task::spawn_blocking(move || inspector.save_objects(&body)).await;
+                let (status, reply) = match result {
+                    Ok(Ok(saved)) => (StatusCode::OK, saved),
+                    Ok(Err(e)) => (
+                        StatusCode::BAD_REQUEST,
+                        json!({ "error": format!("{e:#}") }),
+                    ),
+                    Err(e) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        json!({ "error": e.to_string() }),
+                    ),
+                };
+                Ok::<_, core::convert::Infallible>(warp::reply::with_status(
+                    warp::reply::json(&reply),
+                    status,
+                ))
+            }
+        });
+
     let video = studio.video.clone();
     let websocket = warp::path!("ws")
         .and(warp::ws())
@@ -212,11 +262,14 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, inspector: Arc<Inspector
                 .or(script)
                 .or(model)
                 .or(inspect_script)
+                .or(scripts)
                 .or(inspect),
         )
         .or(websocket)
         .or(api)
-        .or(delay);
+        .or(delay)
+        .or(objects)
+        .or(cuttlefish::routes(cuttlefish));
 
     log::info!("Dashboard on http://0.0.0.0:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;

@@ -60,6 +60,19 @@
           </svg>
           <span class="app-name">Inkspector</span>
         </a>
+        <a href="#cuttlefish" data-app="cuttlefish" title="Cuttlefish">
+          <!-- A cuttlefish: mantle with side fins, eyes, arms below -->
+          <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 13.5V9a5 5 0 0 1 10 0v4.5z" />
+            <path d="M7 8.5c-1.6.6-2.4 2.4-2 4.6M17 8.5c1.6.6 2.4 2.4 2 4.6" />
+            <path
+              d="M8.5 13.5v2.5c0 1.6-.9 2.8-2.2 3.5M12 13.5v7M15.5 13.5v2.5c0 1.6.9 2.8 2.2 3.5"
+            />
+            <circle class="app-icon-dot" cx="10" cy="10.2" r="1.1" />
+            <circle class="app-icon-dot" cx="14" cy="10.2" r="1.1" />
+          </svg>
+          <span class="app-name">Cuttlefish</span>
+        </a>
       </nav>
       <div class="status-strip">
         <span class="chip-group">
@@ -87,6 +100,12 @@
           </select>
           <span class="chip num" id="i-position" hidden></span>
           <span class="chip" id="i-delay-chip" data-level="off" hidden>
+            <span class="chip-dot"></span><span class="chip-text"></span>
+          </span>
+        </span>
+        <!-- Cuttlefish only: the open review and whether it is saved -->
+        <span class="chip-group" data-app-only="cuttlefish">
+          <span class="chip" id="cf-chip" data-level="off" hidden>
             <span class="chip-dot"></span><span class="chip-text"></span>
           </span>
         </span>
@@ -786,6 +805,15 @@
               <button type="button" class="btn" id="i-goto" title="G">
                 Go to…
               </button>
+              <button
+                type="button"
+                class="mode-toggle"
+                id="i-label"
+                title="Draw object boxes on frames (L)"
+                aria-pressed="false"
+              >
+                Label
+              </button>
             </div>
           </header>
           <!-- The frame, with its labels drawn by a copy of the video's input overlay -->
@@ -804,6 +832,8 @@
             <div class="scrubber-thumb" id="i-scrub-thumb"></div>
             <div class="scrubber-bubble" id="i-scrub-bubble" hidden></div>
           </div>
+          <!-- Labeling mode: classes with their counts, filled by label.js -->
+          <div class="label-bar" id="l-bar" hidden></div>
         </section>
 
         <section class="panel p-labels" aria-labelledby="h-labels">
@@ -896,8 +926,281 @@
       </main>
     </div>
 
+    <!-- Cuttlefish app: pick a video, then review it with comments and drawings -->
+    <div data-app-section="cuttlefish" hidden>
+      <main class="layout" id="cf-library" hidden>
+        <section class="panel p-cf-open" aria-labelledby="h-cf-open">
+          <header class="panel-head">
+            <h2 id="h-cf-open">Open a video</h2>
+            <span class="panel-note"
+              >saved as a review from its first comment</span
+            >
+          </header>
+          <form class="cf-source" id="cf-form-session">
+            <span class="readout-label">Recorded session</span>
+            <div class="cf-row">
+              <select
+                class="select"
+                id="cf-session"
+                aria-label="Session"
+              ></select>
+              <select
+                class="select"
+                id="cf-segment"
+                aria-label="Segment"
+              ></select>
+              <button type="submit" class="btn">Open</button>
+            </div>
+          </form>
+          <form class="cf-source" id="cf-form-file">
+            <label class="readout-label" for="cf-file"
+              >Video file on this machine</label
+            >
+            <div class="cf-row">
+              <input
+                class="select cf-grow"
+                id="cf-file"
+                type="text"
+                placeholder="/path/to/video.mp4"
+                required
+              />
+              <button type="submit" class="btn">Open</button>
+            </div>
+          </form>
+          <form class="cf-source" id="cf-form-youtube">
+            <label class="readout-label" for="cf-url">YouTube</label>
+            <div class="cf-row">
+              <input
+                class="select cf-grow"
+                id="cf-url"
+                type="url"
+                placeholder="https://www.youtube.com/watch?v=…"
+                required
+              />
+            </div>
+            <div class="cf-row">
+              <label class="check" for="cf-from"
+                >From
+                <input
+                  class="select num cf-time-input"
+                  id="cf-from"
+                  type="text"
+                  placeholder="1:30"
+              /></label>
+              <label class="check" for="cf-to"
+                >to
+                <input
+                  class="select num cf-time-input"
+                  id="cf-to"
+                  type="text"
+                  placeholder="2:45"
+              /></label>
+              <button type="submit" class="btn">Download and open</button>
+            </div>
+          </form>
+          <p class="notice" id="cf-open-error" hidden></p>
+          <ul class="cf-downloads" id="cf-downloads"></ul>
+        </section>
+
+        <section class="panel p-cf-reviews" aria-labelledby="h-cf-reviews">
+          <header class="panel-head">
+            <h2 id="h-cf-reviews">Reviews</h2>
+            <span class="panel-note" id="cf-reviews-note">Loading…</span>
+          </header>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Video</th>
+                  <th>Comments</th>
+                  <th>Changed</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="cf-reviews"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <main class="layout" id="cf-player" hidden>
+        <section class="panel p-cf-video" aria-labelledby="h-cf-video">
+          <header class="panel-head">
+            <div class="panel-title">
+              <button
+                type="button"
+                class="back-link"
+                id="cf-back"
+                title="Back to the reviews"
+              >
+                ← Reviews
+              </button>
+              <h2 id="h-cf-video">Review</h2>
+            </div>
+            <div class="controls">
+              <button
+                type="button"
+                class="btn btn-play"
+                id="cf-play"
+                title="Space"
+              >
+                ▶ Play
+              </button>
+              <button type="button" class="btn" id="cf-back-frame" title="←">
+                ‹ Frame
+              </button>
+              <button type="button" class="btn" id="cf-next-frame" title="→">
+                Frame ›
+              </button>
+              <select class="select" id="cf-speed" aria-label="Playback speed">
+                <option value="0.25">0.25×</option>
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="1.5">1.5×</option>
+                <option value="2">2×</option>
+              </select>
+              <span class="chip num" id="cf-time">0:00.000</span>
+            </div>
+          </header>
+          <!-- The video, with the comments' drawings over it -->
+          <div class="screen cf-screen" id="cf-screen">
+            <video id="cf-video" preload="auto" playsinline></video>
+            <p class="cf-screen-note" id="cf-video-note" hidden></p>
+          </div>
+          <div class="scrubber" id="cf-scrubber">
+            <div class="scrubber-track">
+              <div class="scrubber-fill" id="cf-fill"></div>
+            </div>
+            <div class="cf-markers" id="cf-markers"></div>
+            <div class="scrubber-thumb" id="cf-thumb"></div>
+            <div class="scrubber-bubble" id="cf-bubble" hidden></div>
+          </div>
+          <div class="cf-tools" role="toolbar" aria-label="Drawing">
+            <button
+              type="button"
+              class="mode-toggle"
+              data-tool="select"
+              title="V"
+            >
+              Select
+            </button>
+            <button
+              type="button"
+              class="mode-toggle"
+              data-tool="rect"
+              title="R"
+            >
+              Rectangle
+            </button>
+            <button
+              type="button"
+              class="mode-toggle"
+              data-tool="ellipse"
+              title="E"
+            >
+              Ellipse
+            </button>
+            <button
+              type="button"
+              class="mode-toggle"
+              data-tool="arrow"
+              title="A"
+            >
+              Arrow
+            </button>
+            <button
+              type="button"
+              class="mode-toggle"
+              data-tool="freehand"
+              title="F"
+            >
+              Freehand
+            </button>
+            <span class="cf-swatches" id="cf-swatches"></span>
+            <button
+              type="button"
+              class="mode-toggle"
+              id="cf-delete-shape"
+              title="Delete the selected shape (Del)"
+              disabled
+            >
+              Delete shape
+            </button>
+            <button type="button" class="btn cf-add" id="cf-add" title="C">
+              + Comment
+            </button>
+          </div>
+        </section>
+
+        <section class="panel p-cf-comments" aria-labelledby="h-cf-comments">
+          <header class="panel-head">
+            <h2 id="h-cf-comments">Comments</h2>
+            <span class="panel-note" id="cf-count"></span>
+          </header>
+          <form class="cf-ask" id="cf-ask">
+            <div class="cf-ask-head">
+              <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 13.5V9a5 5 0 0 1 10 0v4.5z" />
+                <path
+                  d="M7 8.5c-1.6.6-2.4 2.4-2 4.6M17 8.5c1.6.6 2.4 2.4 2 4.6"
+                />
+                <path
+                  d="M8.5 13.5v2.5c0 1.6-.9 2.8-2.2 3.5M12 13.5v7M15.5 13.5v2.5c0 1.6.9 2.8 2.2 3.5"
+                />
+                <circle class="app-icon-dot" cx="10" cy="10.2" r="1.1" />
+                <circle class="app-icon-dot" cx="14" cy="10.2" r="1.1" />
+              </svg>
+              <b>Ask Cuttlefish</b>
+              <span class="panel-note">a veteran's eye on your play</span>
+            </div>
+            <textarea
+              class="select cf-question"
+              id="cf-question"
+              rows="2"
+              placeholder="Optional question, e.g. why was I splatted here?"
+            ></textarea>
+            <div class="cf-row">
+              <button type="submit" class="btn" value="moment">
+                Comment on this moment
+              </button>
+              <button type="submit" class="btn" value="range">
+                Review range
+              </button>
+              <span class="cf-range"
+                ><input
+                  class="select num cf-time-input"
+                  id="cf-ask-from"
+                  placeholder="from"
+                  type="text"
+                  aria-label="Range start" />
+                –
+                <input
+                  class="select num cf-time-input"
+                  id="cf-ask-to"
+                  placeholder="to"
+                  type="text"
+                  aria-label="Range end"
+              /></span>
+            </div>
+            <p class="notice" id="cf-ai-note" hidden></p>
+          </form>
+          <ol class="cf-comments" id="cf-comments"></ol>
+          <p class="panel-note keys">
+            <kbd>Space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> one frame
+            (<kbd>Shift</kbd> one second) · <kbd>C</kbd> comment here ·
+            <kbd>V</kbd> <kbd>R</kbd> <kbd>E</kbd> <kbd>A</kbd>
+            <kbd>F</kbd> tools · <kbd>Del</kbd> delete shape · drawing on a
+            paused frame without a comment open starts one.
+          </p>
+        </section>
+      </main>
+    </div>
+
     <script src="app.js"></script>
+    <script src="sketch.js"></script>
     <script src="inspect.js"></script>
+    <script src="label.js"></script>
+    <script src="cuttlefish.js"></script>
     <script type="module" src="controller3d.js"></script>
   </body>
 </html>
