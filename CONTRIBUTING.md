@@ -79,7 +79,7 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
 | `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
-| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `vision.js`, `predictor.js`), embedded into the binary |
+| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `vision.js`, `predictor.js`, `icons/` icon set and gallery), embedded into the binary |
 | `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy |
 | `doc/` | Setup and dashboard write-up with screenshots, published to GitHub Pages |
 
@@ -170,6 +170,15 @@ drawing while another app is shown. `web/controller3d.js` loads three.js from
 jsdelivr and extrudes the SVG view's outline; the SVG stays as the fallback. The
 input overlay (`drawInputHud` in `app.js`) is shared by the Studio's video and
 the Inkspector.
+
+`web/icons/` is the icon set, embedded whole (include_dir) and served at
+`/icons/`: `app-*`, `class-*` (named after `classes.json`) and `ui-*` SVGs,
+drawn by hand on a 24×24 grid with 2 px round strokes in `currentColor` and
+one ink accent filled with `var(--icon-accent, currentColor)`. Each file's
+drawing is `<g id="i">`, so the page uses it as
+`<svg class="app-icon" viewBox="0 0 24 24"><use href="icons/app-studio.svg#i"/></svg>`
+and it takes the theme's colours. `/icons/` is a gallery of every icon on each
+theme. Our own doodles in the Salmon Run spirit; never Nintendo's artwork.
 
 ### Inkspector
 
