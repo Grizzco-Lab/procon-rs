@@ -1,6 +1,7 @@
 use anyhow::Context;
 use clap::Parser;
 use procon::config::Config;
+use procon::device;
 use procon::dump::{AsyncDumper, MultiDumper};
 use procon::gadget::ProConGadget;
 use procon::priority::set_high_priority;
@@ -57,6 +58,13 @@ fn main() -> anyhow::Result<()> {
 
     // Set high priority for main proxy thread
     set_high_priority(config.performance.enable_cpu_affinity);
+
+    // A controller left idle may have connected to the console over Bluetooth;
+    // a reset drops that, so the handshake that follows goes over USB
+    log::info!("Resetting the Pro Controller so it talks over USB");
+    if let Err(e) = device::reset() {
+        log::warn!("Could not reset the Pro Controller: {:#}", e);
+    }
 
     // Setup USB gadget programmatically
     let mut usb_gadget = ProConGadget::new();

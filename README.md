@@ -272,6 +272,10 @@ The codebase is organized into the following modules:
 - **"Failed to setup USB gadget"**: Ensure you're running with root privileges (`sudo`)
 - **"No USB device controller found"**: Verify your device supports USB gadget mode
 - **"Pro Controller not found"**: Check USB connection and device permissions
+- **"No controller input" although the console responds to the controller**:
+  the controller is talking to the console over Bluetooth (it does this once it
+  has been plugged into the console itself). The proxy resets it at start to
+  force USB; if it happens while running, replug it and restart the proxy
 - **High CPU usage**: Try enabling CPU affinity in the configuration
 - **Switch asleep**: the proxy logs "Switch stopped taking input" once and drops
   reports until it wakes. Home then signals USB remote wakeup (`src/wake.rs`

@@ -67,7 +67,7 @@ cargo clippy
 - Runs at high priority for minimal latency
 - Auto-reconnection on device failures
 
-**ProController (`src/device.rs`)**: The physical controller through hidapi; reconnects as long as it takes. Do not change its polling interval (`usbhid.jspoll`): on the Pi 4 it breaks the output endpoint and the Switch's handshake
+**ProController (`src/device.rs`)**: The physical controller through hidapi; reconnects as long as it takes. At proxy start `device::reset()` replugs it through sysfs (`authorized` 0/1): a controller the console knows over Bluetooth connects wirelessly when left idle, which stalls the USB handshake (Switch stops after `subcommand 03`); the reset drops that link. Do not change its polling interval (`usbhid.jspoll`): on the Pi 4 it breaks the output endpoint and the Switch's handshake
 
 **ProConGadget (`src/gadget.rs`)**: Handles automatic USB gadget setup and cleanup with Nintendo Pro Controller device IDs
 
