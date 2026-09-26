@@ -1,27 +1,43 @@
 extern crate alloc;
 
-pub mod audio;
+// Shared by the proxy and the studio
 pub mod config;
-pub mod cuttlefish;
 pub mod device;
 pub mod dump;
-pub mod follow;
 pub mod gadget;
-pub mod inspect;
 pub mod keystate;
-pub mod knowledge;
-pub mod motion;
-pub mod objects;
 pub mod parser;
-pub mod player;
-pub mod predictor;
 pub mod priority;
 pub mod proxy;
 pub mod recorder;
 pub mod replay;
 pub mod stream;
-pub mod studio;
-pub mod video;
-pub mod vision;
 pub mod wake;
+
+// The studio only (`studio` feature, on by default)
+#[cfg(feature = "studio")]
+pub mod audio;
+#[cfg(feature = "studio")]
+pub mod cuttlefish;
+#[cfg(feature = "studio")]
+pub mod follow;
+#[cfg(feature = "studio")]
+pub mod inspect;
+#[cfg(feature = "studio")]
+pub mod knowledge;
+#[cfg(feature = "studio")]
+pub mod motion;
+#[cfg(feature = "studio")]
+pub mod objects;
+#[cfg(feature = "studio")]
+pub mod player;
+#[cfg(feature = "studio")]
+pub mod predictor;
+#[cfg(feature = "studio")]
+pub mod studio;
+#[cfg(feature = "studio")]
+pub mod video;
+#[cfg(feature = "studio")]
+pub mod vision;
+#[cfg(feature = "studio")]
 pub mod web;

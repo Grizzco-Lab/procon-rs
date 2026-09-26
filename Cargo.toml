@@ -16,22 +16,28 @@ num_cpus = "1.17.0"
 toml = "0.9.5"
 clap = { version = "4.5.45", features = ["derive"] }
 usb-gadget = "0.7.5"
-tokio = { version = "1.47.1", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
-warp = { version = "0.4.1", features = ["websocket", "server"] }
-futures-util = "0.3.31"
+tokio = { version = "1.47.1", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"], optional = true }
+warp = { version = "0.4.1", features = ["websocket", "server"], optional = true }
+futures-util = { version = "0.3.31", optional = true }
 gameplay-data = { version = "0.1.0", path = "crates/gameplay-data" }
-cuttlefish = { version = "0.1.0", path = "crates/cuttlefish" }
-gameplay-vision = { version = "0.1.0", path = "crates/gameplay-vision" }
+cuttlefish = { version = "0.1.0", path = "crates/cuttlefish", optional = true }
+gameplay-vision = { version = "0.1.0", path = "crates/gameplay-vision", optional = true }
 include_dir = "0.7.4"
 ureq = { version = "3.4.2", default-features = false }
 
 [features]
+default = ["studio"]
+# The studio and its dashboard. The proxy binary is built without it
+# (`--no-default-features`), so the Pi build stays small and needs no C
+# cross compiler for the studio's model and web crates
+studio = ["dep:tokio", "dep:warp", "dep:futures-util", "dep:cuttlefish", "dep:gameplay-vision"]
 # The Vision app's detector on an NVIDIA GPU; needs the CUDA toolkit (nvcc)
-cuda = ["gameplay-vision/cuda"]
+cuda = ["studio", "gameplay-vision/cuda"]
 
 [[bin]]
 name = "procon"
 path = "src/bin/main.rs"
+required-features = ["studio"]
 
 [workspace]
 members = ["crates/*"]

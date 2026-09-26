@@ -19,7 +19,11 @@ cargo run --example fake_proxy [port]  # synthetic controller, no Pi needed (def
 
 The proxy is cross-compiled for `aarch64-unknown-linux-musl`: a static binary
 linked by Rust's bundled `rust-lld` (`.cargo/config.toml`), so no C cross
-toolchain or Pi sysroot is needed. `rust-toolchain.toml` adds the target.
+toolchain or Pi sysroot is needed. `rust-toolchain.toml` adds the target. The
+proxy is built with `--no-default-features`: the `studio` feature (on by
+default) holds the studio's crates (tokio, warp, the model and knowledge
+crates), which the proxy has no use for and which need a C compiler for the
+target.
 
 To work on the studio without hardware, run `fake_proxy` on a free port, point
 a copy of `config.toml` at it (`[proxy] address`, a different `[web] port`,

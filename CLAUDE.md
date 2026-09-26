@@ -73,5 +73,5 @@ Testing the studio: never touch a studio the user is running (port 8090 by defau
 **gameplay-data (`crates/gameplay-data`)**: `frame` (80-byte record), `controller` (`controller.bin` as columns), `session` (`session.json` model; old sessions lack fields), `align` (frame `n` at `start_unix_ms + n * 1000 / fps - video_delay_ms`; actions per frame), `labels` (JSON lines for truth and predictions), `calibration` (delay applied: manual > session with high/medium confidence > setup era), `python` (bindings).
 
 ## Target Platform
-- Proxy: `aarch64-unknown-linux-musl` (static ARM64 binary, linked by rust-lld; see `.cargo/config.toml`, `scripts/deploy.sh`), run as root on the Pi.
+- Proxy: `aarch64-unknown-linux-musl` (static ARM64 binary, linked by rust-lld; see `.cargo/config.toml`, `scripts/deploy.sh`), built with `--no-default-features` (the `studio` feature holds the studio-only crates), run as root on the Pi.
 - Studio: a Linux host with ffmpeg (NVENC by default), PulseAudio and a V4L2 capture card.
