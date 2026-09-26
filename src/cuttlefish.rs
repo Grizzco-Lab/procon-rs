@@ -15,7 +15,8 @@
 //!            "file": "video.mp4", "title": "…", "channel": "…", "upload_date": "2026-09-01"},
 //!  "comments": [{"id": "c1", "t_s": 12.5, "t_end_s": 14.0, "author": "user", "text": "Too far forward",
 //!                "shapes": [{"kind": "arrow", "points": [[0.2, 0.3], [0.5, 0.5]], "color": "#ff5c8a"}],
-//!                "created_ms": 1790000000000}]}
+//!                "created_ms": 1790000000000}],
+//!  "notes": [{"id": "n1", "author": "user", "text": "Too passive all game", "created_ms": 1790000000002}]}
 //! ```
 //!
 //! `ref` is the session folder and segment file (`<session>/<file>`), a file
@@ -26,12 +27,19 @@
 //! range, from the start of the downloaded range. Shape points are fractions
 //! (0–1) of the frame's width and height: two corners of a `rect` or
 //! `ellipse`, tail and head of an `arrow`, every point of a `freehand` line.
-//! `author` is `user`, or `Cuttlefish` for comments from the AI.
+//! `author` is `user`, or `Cuttlefish` for comments from the AI. `notes`
+//! are about the whole video, tied to no time or drawing; older reviews have
+//! none.
 //!
 //! Opening a YouTube range creates its review: `yt-dlp` downloads it into a
 //! new review folder on a thread of its own (the page polls the progress), and
 //! the review is written with the video's title, channel and upload date when
-//! it is done. A local file can be copied into its review folder.
+//! it is done. A YouTube review without them (such as one migrated from the
+//! older layout) gets them in the background the first time it is listed or
+//! opened in a run: `yt-dlp --skip-download` prints them, and they are
+//! written into `review.json`. A save from the page keeps them, even when
+//! the page loaded the review before they came. A local file can be copied
+//! into its review folder.
 //!
 //! Reviews of the older layout, `<reviews>/<id>.json`, are moved into folders
 //! at startup ([`Cuttlefish::migrate`]); a YouTube video still in the old
@@ -39,13 +47,15 @@
 //!
 //! Endpoints under `/api/cuttlefish/`:
 //!
-//! - `GET reviews`: every review, newest first; `GET`, `PUT`, `DELETE
+//! - `GET reviews`: every review, newest first, and `fetching`, the reviews
+//!   whose YouTube title is being looked up; `GET`, `PUT`, `DELETE
 //!   reviews/<id>` read, write and delete one (deleting removes its folder,
-//!   video included); `POST reviews/<id>/copy` copies a local file review's
-//!   video into its folder
+//!   video included; `PUT` answers with the video as saved); `POST
+//!   reviews/<id>/copy` copies a local file review's video into its folder
 //! - `GET video?kind=&ref=&start_s=&end_s=&file=&r=`: the video's bytes, with HTTP
 //!   ranges, `r` naming the review whose folder holds it; `GET meta?…`: its
-//!   frame rate, duration and size
+//!   frame rate, duration and size; `GET thumb?…&t_ms=`: a small JPEG of
+//!   the frame at that time, for the neighbours strip, cached in memory
 //! - `POST download` with `{"url", "start_s", "end_s"}` starts downloading a
 //!   YouTube range into a new review (or finds the review that has it);
 //!   answers with the download, whose `id` is the review's. `GET downloads`
@@ -66,7 +76,7 @@
 use crate::inspect::{Inspector, ffprobe};
 use crate::knowledge::{Knowledge, Status};
 use crate::objects::write_atomic;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use cuttlefish::llm::Settings;
@@ -101,6 +111,15 @@ const VIDEO_FILE: &str = "video.mp4";
 /// Marks the line with the video's title, channel and upload date in
 /// yt-dlp's output
 const META_MARK: &str = "cuttlefish-meta ";
+
+/// The fields of that line, as JSON values
+const META_FIELDS: &str = "%(title)j %(channel)j %(upload_date)j";
+
+/// Height of a thumbnail of the neighbours strip, in pixels
+const THUMB_HEIGHT: u32 = 144;
+
+/// Thumbnails kept in memory
+const THUMB_CACHE: usize = 600;
 
 /// Seconds before and after `t_s` a question about a moment covers
 const MOMENT_S: (f64, f64) = (4.0, 2.0);
@@ -146,6 +165,37 @@ impl VideoRef {
             && self.start_s == other.start_s
             && self.end_s == other.end_s
     }
+
+    /// A YouTube video whose title is not known yet
+    fn lacks_meta(&self) -> bool {
+        self.kind == VideoKind::Youtube && self.title.is_none()
+    }
+
+    /// Fill in the title, channel and upload date this one lacks; answers
+    /// whether anything changed
+    fn add_meta(&mut self, meta: VideoMeta) -> bool {
+        let mut changed = false;
+        for (field, value) in [
+            (&mut self.title, meta.title),
+            (&mut self.channel, meta.channel),
+            (&mut self.upload_date, meta.upload_date),
+        ] {
+            if field.is_none() && value.is_some() {
+                *field = value;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Title, channel and upload date, as far as they are known
+    fn meta(&self) -> VideoMeta {
+        VideoMeta {
+            title: self.title.clone(),
+            channel: self.channel.clone(),
+            upload_date: self.upload_date.clone(),
+        }
+    }
 }
 
 /// Where a review's video comes from
@@ -179,6 +229,20 @@ pub struct Comment {
     pub created_ms: u64,
 }
 
+/// A note on the whole video, tied to no time or drawing
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Note {
+    pub id: String,
+    /// `user`, or `Cuttlefish` for the AI
+    pub author: String,
+    pub text: String,
+    /// When it was written, in Unix ms
+    pub created_ms: u64,
+    /// When it was last changed, in Unix ms
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_ms: Option<u64>,
+}
+
 /// A shape drawn on a frame
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Shape {
@@ -205,6 +269,9 @@ pub struct Review {
     pub video: VideoRef,
     #[serde(default)]
     pub comments: Vec<Comment>,
+    /// Notes on the whole video; older reviews have none
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
     /// Any other keys, kept as they are
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -274,13 +341,32 @@ pub struct Download {
     pub message: String,
 }
 
+/// YouTube titles looked up for reviews that lack them
+#[derive(Default)]
+struct MetaLookups {
+    /// Reviews tried in this run, so each is asked about once
+    tried: BTreeSet<String>,
+    /// Reviews being looked up now
+    running: BTreeSet<String>,
+}
+
+/// Recent thumbnails by video file and time in ms, the oldest dropped first
+#[derive(Default)]
+struct Thumbs {
+    order: VecDeque<(PathBuf, u64)>,
+    images: HashMap<(PathBuf, u64), Vec<u8>>,
+}
+
 /// Reviews and the downloads under way
 pub struct Cuttlefish {
     /// Sessions are read from the Inkspector's root
     inspector: Arc<Inspector>,
     reviews: PathBuf,
     downloads: Arc<Mutex<BTreeMap<String, Download>>>,
-    writing: Mutex<()>,
+    /// Held while a review file is written
+    writing: Arc<Mutex<()>>,
+    lookups: Arc<Mutex<MetaLookups>>,
+    thumbs: Mutex<Thumbs>,
     /// The `cuttlefish` crate's store, shared by the reviewer and the
     /// knowledge view
     knowledge: Arc<Knowledge>,
@@ -292,6 +378,8 @@ struct Reply {
     body: Vec<u8>,
     content_type: &'static str,
     content_range: Option<String>,
+    /// Whether the browser may keep it
+    cacheable: bool,
 }
 
 impl Reply {
@@ -305,6 +393,7 @@ impl Reply {
             body: value.to_string().into_bytes(),
             content_type: "application/json",
             content_range: None,
+            cacheable: false,
         }
     }
 }
@@ -320,7 +409,9 @@ impl Cuttlefish {
             inspector,
             reviews,
             downloads: Arc::default(),
-            writing: Mutex::default(),
+            writing: Arc::default(),
+            lookups: Arc::default(),
+            thumbs: Mutex::default(),
             knowledge: Arc::new(Knowledge::new(knowledge, settings)),
         }
     }
@@ -368,6 +459,7 @@ impl Cuttlefish {
                 let review = read_review(&path)
                     .inspect_err(|e| log::warn!("Skipping review {id}: {:#}", e))
                     .ok()?;
+                self.look_up_meta(&id, &review.video);
                 Some((
                     modified_ms,
                     json!({
@@ -381,7 +473,8 @@ impl Cuttlefish {
             .collect();
         reviews.sort_by_key(|(modified_ms, _)| core::cmp::Reverse(*modified_ms));
         let reviews: Vec<Value> = reviews.into_iter().map(|(_, review)| review).collect();
-        Ok(json!({ "dir": self.reviews, "reviews": reviews }))
+        let fetching = self.lookups.lock().unwrap().running.clone();
+        Ok(json!({ "dir": self.reviews, "reviews": reviews, "fetching": fetching }))
     }
 
     /// One review
@@ -389,12 +482,59 @@ impl Cuttlefish {
         read_review(&self.review_path(id)?)
     }
 
-    /// Write a review into its folder, replacing the file atomically
-    pub fn save_review(&self, id: &str, review: &Review) -> Result<()> {
+    /// Write a review into its folder, replacing the file atomically; the
+    /// video's title, channel and date stay when the new version lacks them
+    /// (the page may have loaded it before they were looked up). Answers
+    /// with the review as written.
+    pub fn save_review(&self, id: &str, review: &Review) -> Result<Review> {
         review.validate()?;
         let path = self.review_path(id)?;
+        let mut review = review.clone();
         let _writing = self.writing.lock().unwrap();
-        write_atomic(&path, &serde_json::to_vec_pretty(review)?)
+        if let Ok(stored) = read_review(&path)
+            && stored.video.same(&review.video)
+        {
+            review.video.add_meta(stored.video.meta());
+        }
+        write_atomic(&path, &serde_json::to_vec_pretty(&review)?)?;
+        Ok(review)
+    }
+
+    /// Look up the title, channel and upload date of a YouTube review that
+    /// lacks them, on a thread of its own, once per run; they are written
+    /// into its `review.json`
+    fn look_up_meta(&self, id: &str, video: &VideoRef) {
+        if !video.lacks_meta() {
+            return;
+        }
+        let Ok(path) = self.review_path(id) else {
+            return;
+        };
+        {
+            let mut lookups = self.lookups.lock().unwrap();
+            if !lookups.tried.insert(id.to_string()) {
+                return;
+            }
+            lookups.running.insert(id.to_string());
+        }
+        let (id, url) = (id.to_string(), video.reference.clone());
+        let writing = Arc::clone(&self.writing);
+        let lookups = Arc::clone(&self.lookups);
+        std::thread::spawn(move || {
+            let result = ytdlp_meta(&url).and_then(|meta| {
+                let _writing = writing.lock().unwrap();
+                let mut review = read_review(&path)?;
+                if review.video.add_meta(meta) {
+                    write_atomic(&path, &serde_json::to_vec_pretty(&review)?)?;
+                }
+                Ok(review.video.title)
+            });
+            match result {
+                Ok(title) => log::info!("Review {id} is {:?}", title.unwrap_or_default()),
+                Err(e) => log::warn!("No title for review {id}: {:#}", e),
+            }
+            lookups.lock().unwrap().running.remove(&id);
+        });
     }
 
     /// Delete a review's folder, its video included
@@ -623,6 +763,38 @@ impl Cuttlefish {
                 _ => "video/mp4",
             },
             content_range: Some(format!("bytes {start}-{end}/{total}")),
+            cacheable: false,
+        })
+    }
+
+    /// A small JPEG of the frame at `t_ms` of a video, from the cache or
+    /// ffmpeg
+    fn thumb(&self, video: &VideoRef, review: Option<&str>, t_ms: u64) -> Result<Reply> {
+        let path = self.video_path(video, review)?;
+        let key = (path, t_ms);
+        let cached = self.thumbs.lock().unwrap().images.get(&key).cloned();
+        let body = match cached {
+            Some(body) => body,
+            None => {
+                let body = jpeg_thumb(&key.0, t_ms as f64 / 1000.0)?;
+                let mut thumbs = self.thumbs.lock().unwrap();
+                if thumbs.images.insert(key.clone(), body.clone()).is_none() {
+                    thumbs.order.push_back(key);
+                }
+                while thumbs.order.len() > THUMB_CACHE {
+                    if let Some(old) = thumbs.order.pop_front() {
+                        thumbs.images.remove(&old);
+                    }
+                }
+                body
+            }
+        };
+        Ok(Reply {
+            status: StatusCode::OK,
+            body,
+            content_type: "image/jpeg",
+            content_range: None,
+            cacheable: true,
         })
     }
 
@@ -720,6 +892,7 @@ impl Cuttlefish {
                         ..video
                     },
                     comments: Vec::new(),
+                    notes: Vec::new(),
                     extra: Map::new(),
                 };
                 write_atomic(&review_file, &serde_json::to_vec_pretty(&review)?)
@@ -820,6 +993,14 @@ impl Cuttlefish {
             None if path == "video" => self
                 .video(&video()?, query.get("r").map(String::as_str), range)
                 .map_err(bad),
+            None if path == "thumb" => {
+                let t_ms = query
+                    .get("t_ms")
+                    .and_then(|t| t.parse().ok())
+                    .ok_or_else(|| bad(anyhow::anyhow!("give t_ms")))?;
+                self.thumb(&video()?, query.get("r").map(String::as_str), t_ms)
+                    .map_err(bad)
+            }
             None if path == "meta" => Ok(Reply::json(
                 self.meta(&video()?, query.get("r").map(String::as_str))
                     .map_err(bad)?,
@@ -833,7 +1014,9 @@ impl Cuttlefish {
                         anyhow::anyhow!("no review {id}"),
                     ));
                 }
-                Ok(Reply::json(json!(read_review(&path).map_err(bad)?)))
+                let review = read_review(&path).map_err(bad)?;
+                self.look_up_meta(id, &review.video);
+                Ok(Reply::json(json!(review)))
             }
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
@@ -852,8 +1035,8 @@ impl Cuttlefish {
             (&Method::PUT, Some(("reviews", id))) => {
                 let review: Review = serde_json::from_slice(body)
                     .map_err(|e| bad(anyhow::anyhow!("not a review: {e}")))?;
-                self.save_review(id, &review).map_err(bad)?;
-                Ok(Reply::json(json!({ "id": id })))
+                let saved = self.save_review(id, &review).map_err(bad)?;
+                Ok(Reply::json(json!({ "id": id, "video": saved.video })))
             }
             (&Method::POST, Some(("reviews", rest))) if rest.ends_with("/copy") => {
                 let id = rest.trim_end_matches("/copy");
@@ -949,6 +1132,11 @@ async fn blocking(
     let builder = Response::builder()
         .status(reply.status)
         .header("content-type", reply.content_type);
+    let builder = if reply.cacheable {
+        builder.header("cache-control", "private, max-age=3600")
+    } else {
+        builder
+    };
     let builder = match reply.content_range {
         Some(range) => builder
             .header("accept-ranges", "bytes")
@@ -989,6 +1177,26 @@ fn jpeg_frames(path: &Path, start_s: f64, end_s: f64) -> Result<Vec<ai::Frame>> 
         .collect();
     ensure!(!frames.is_empty(), "no frames in that range");
     Ok(frames)
+}
+
+/// A JPEG of the frame at `t_s` of a video, [`THUMB_HEIGHT`] lines high
+fn jpeg_thumb(path: &Path, t_s: f64) -> Result<Vec<u8>> {
+    let output = Command::new("ffmpeg")
+        .args(["-v", "error", "-ss", &format!("{t_s:.3}"), "-i"])
+        .arg(path)
+        .args(["-an", "-sn", "-frames:v", "1", "-vf"])
+        .arg(format!("scale=-2:{THUMB_HEIGHT}"))
+        .args(["-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "6", "-"])
+        .stdin(Stdio::null())
+        .output()
+        .context("cannot run ffmpeg")?;
+    ensure!(
+        output.status.success(),
+        "ffmpeg: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    ensure!(!output.stdout.is_empty(), "no frame at {t_s:.3} s");
+    Ok(output.stdout)
 }
 
 /// The JPEG images in a stream of them, split at each start of image marker
@@ -1159,6 +1367,37 @@ fn parse_meta(line: &str) -> Option<VideoMeta> {
     })
 }
 
+/// A video's title, channel and upload date from yt-dlp, without
+/// downloading it
+fn ytdlp_meta(url: &str) -> Result<VideoMeta> {
+    let output = Command::new("yt-dlp")
+        .args([
+            "--skip-download",
+            "--no-playlist",
+            "--no-warnings",
+            "--print",
+        ])
+        .arg(format!("{META_MARK}{META_FIELDS}"))
+        .arg("--")
+        .arg(url)
+        .stdin(Stdio::null())
+        .output()
+        .context("cannot run yt-dlp")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        output.status.success(),
+        "yt-dlp failed: {}",
+        stderr
+            .lines()
+            .rfind(|l| l.starts_with("ERROR"))
+            .unwrap_or(stderr.trim())
+    );
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(parse_meta)
+        .context("yt-dlp printed nothing about the video")
+}
+
 /// Download a range with yt-dlp into `<dir>/video.mp4`, updating its
 /// progress in `downloads`; answers with the video's title, channel and date
 fn run_ytdlp(
@@ -1178,9 +1417,7 @@ fn run_ytdlp(
             "mp4",
         ])
         .args(["--no-simulate", "--print"])
-        .arg(format!(
-            "before_dl:{META_MARK}%(title)j %(channel)j %(upload_date)j"
-        ))
+        .arg(format!("before_dl:{META_MARK}{META_FIELDS}"))
         .arg("-o")
         .arg(dir.join("video.%(ext)s"));
     if let Some(section) = section(job.start_s, job.end_s) {
@@ -1503,6 +1740,75 @@ mod tests {
         assert!(source.exists());
         assert_eq!(cuttlefish.review("f").unwrap(), copied);
         assert!(cuttlefish.copy_into_review("f").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn notes_are_optional() {
+        // An older review has no notes, and is written back without them
+        let review: Review = serde_json::from_str(REVIEW).unwrap();
+        assert!(review.notes.is_empty());
+        assert!(
+            serde_json::to_value(&review)
+                .unwrap()
+                .get("notes")
+                .is_none()
+        );
+
+        let mut review = review;
+        review.notes.push(Note {
+            id: "n1".into(),
+            author: "user".into(),
+            text: "Too passive all game".into(),
+            created_ms: 1790000000002,
+            edited_ms: None,
+        });
+        let written = serde_json::to_value(&review).unwrap();
+        assert_eq!(
+            written["notes"],
+            json!([{"id": "n1", "author": "user", "text": "Too passive all game",
+                    "created_ms": 1790000000002_u64}])
+        );
+        let read: Review = serde_json::from_value(written).unwrap();
+        assert_eq!(read, review);
+    }
+
+    #[test]
+    fn saving_keeps_the_video_title() {
+        let (dir, cuttlefish) = scratch("meta");
+        let review: Review = serde_json::from_str(REVIEW).unwrap();
+        assert!(review.video.lacks_meta());
+        cuttlefish.save_review("y", &review).unwrap();
+
+        // The title comes while the page holds the review without it
+        let mut stored = cuttlefish.review("y").unwrap();
+        assert!(stored.video.add_meta(VideoMeta {
+            title: Some("Big Run".into()),
+            channel: Some("Azu".into()),
+            upload_date: None,
+        }));
+        assert!(!stored.video.add_meta(stored.video.meta()));
+        write_atomic(
+            &dir.join("reviews/y/review.json"),
+            &serde_json::to_vec(&stored).unwrap(),
+        )
+        .unwrap();
+
+        let mut edited = review.clone();
+        edited.comments.pop();
+        let saved = cuttlefish.save_review("y", &edited).unwrap();
+        assert_eq!(saved.video.title.as_deref(), Some("Big Run"));
+        assert_eq!(saved.video.channel.as_deref(), Some("Azu"));
+        assert!(!saved.video.lacks_meta());
+        let read = cuttlefish.review("y").unwrap();
+        assert_eq!(read, saved);
+        assert_eq!(read.comments.len(), 1);
+
+        // Another video does not inherit it
+        let mut other = edited.clone();
+        other.video.start_s = Some(1.0);
+        let saved = cuttlefish.save_review("y", &other).unwrap();
+        assert_eq!(saved.video.title, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
