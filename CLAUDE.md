@@ -19,6 +19,7 @@ Records Nintendo Switch gameplay for training datasets: Pro Controller input, ti
 - `procon` (`src/bin/main.rs`, config `config.toml`): the studio on the Linux host with the capture card. Web dashboard with two apps: Studio (live preview, controller view incl. 3D, recording with sound and game settings, replay, data, motion) and Inkspector (recorded sessions frame by frame: labels, delays, sound, overlays, predictions).
 - `crates/gameplay-data`: recording format, per-frame alignment, labels, calibration; Python bindings (`python` feature, maturin) used by the AgentZero training project (`../AgentZero`).
 - `crates/gameplay-vision`: object detection (YOLOv8 in candle, CPU; `cuda` feature) and SORT-like tracking on session video, the object label files shared with the labeling tool (`<annotations>/<session>/<segment>.objects.jsonl`, `classes.json`) and prelabeling; CLI `gameplay-vision` (`detect`, `track`, `prelabel`, `render`). Its README has the plan toward Salmon Run detection and 3D placement.
+- `crates/cuttlefish`: the AI reviewer's backend and CLI: source importers (polite crawler, MediaWiki, yt-dlp, Discord export or bot), chunks with multilingual-e5-small embeddings (candle), a flat vector index, a glossary, and `Reviewer` (retrieval + Anthropic Messages API with frames). Data folder outside the repo; keys only from `ANTHROPIC_API_KEY` / `DISCORD_BOT_TOKEN`. See its README.
 - `cargo run --example fake_proxy [port]` stands in for the proxy.
 
 ## Common Commands
