@@ -962,7 +962,8 @@
           <header class="panel-head">
             <h2 id="h-cf-open">Open a video</h2>
             <span class="panel-note"
-              >saved as a review from its first comment</span
+              >each review is a folder: notes, and the video when it lives
+              there</span
             >
           </header>
           <form class="cf-source" id="cf-form-session">
@@ -1089,6 +1090,15 @@
                 <option value="2">2×</option>
               </select>
               <span class="chip num" id="cf-time">0:00.000</span>
+              <button
+                type="button"
+                class="btn"
+                id="cf-copy"
+                title="Copy the video file into this review's folder, so the review keeps it"
+                hidden
+              >
+                Copy into review
+              </button>
             </div>
           </header>
           <!-- The video, with the comments' drawings over it -->

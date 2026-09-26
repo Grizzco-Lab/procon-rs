@@ -3208,6 +3208,12 @@ body {
   gap: 6px;
 }
 
+/* A review's video, channel and folder wrap, so Delete stays in view */
+.p-cf-reviews td:first-child {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .p-cf-reviews .panel-head h2 {
   flex: none;
 }

@@ -141,13 +141,10 @@ pub struct InspectConfig {
 /// The Cuttlefish app: video reviews with comments and drawings
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CuttlefishConfig {
-    /// Folder of review JSON files, relative to this config file; by
+    /// Folder of review folders (`<id>/review.json`, and the video when it
+    /// lives there), relative to this config file; by
     /// default `Reviews` next to the Inkspector's root
     pub reviews: Option<String>,
-    /// Folder for YouTube ranges downloaded with yt-dlp, relative to this
-    /// config file; by default `procon-cuttlefish` in the user's cache
-    /// folder (`$XDG_CACHE_HOME` or `~/.cache`)
-    pub cache: Option<String>,
     /// The `cuttlefish` crate's data folder (knowledge store, embedding
     /// model), relative to this config file; by default `$CUTTLEFISH_DATA`
     /// or `~/.local/share/cuttlefish`. The API key is never read from the

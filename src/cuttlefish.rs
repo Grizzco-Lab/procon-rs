@@ -2,36 +2,56 @@
 //!
 //! A review is one video (a recorded session's segment, a video file on this
 //! machine or a range of a YouTube video) with comments at its times, each
-//! with shapes drawn on the paused frame. Reviews are JSON files in the
-//! `[cuttlefish] reviews` folder, `<id>.json`:
+//! with shapes drawn on the paused frame: a notebook entry to flip through
+//! later. Each review is a folder in `[cuttlefish] reviews`:
+//!
+//! ```text
+//! <reviews>/<id>/review.json
+//! <reviews>/<id>/video.mp4     a YouTube range, or a local file copied in
+//! ```
 //!
 //! ```json
-//! {"video": {"kind": "youtube", "ref": "https://youtu.be/…", "start_s": 60, "end_s": 90},
+//! {"video": {"kind": "youtube", "ref": "https://youtu.be/…", "start_s": 60, "end_s": 90,
+//!            "file": "video.mp4", "title": "…", "channel": "…", "upload_date": "2026-09-01"},
 //!  "comments": [{"id": "c1", "t_s": 12.5, "t_end_s": 14.0, "author": "user", "text": "Too far forward",
 //!                "shapes": [{"kind": "arrow", "points": [[0.2, 0.3], [0.5, 0.5]], "color": "#ff5c8a"}],
 //!                "created_ms": 1790000000000}]}
 //! ```
 //!
 //! `ref` is the session folder and segment file (`<session>/<file>`), a file
-//! path, or the YouTube URL. Times are seconds into the video as played: for
-//! a YouTube range, from the start of the downloaded range. Shape points are
-//! fractions (0–1) of the frame's width and height: two corners of a `rect`
-//! or `ellipse`, tail and head of an `arrow`, every point of a `freehand`
-//! line. `author` is `user`, or `Cuttlefish` for comments from the AI.
+//! path, or the YouTube URL (with the range in `start_s`/`end_s`). `file`,
+//! when set, is the video inside the review folder (a plain file name), which
+//! is what plays; a session review always points at the recording, which is
+//! never copied. Times are seconds into the video as played: for a YouTube
+//! range, from the start of the downloaded range. Shape points are fractions
+//! (0–1) of the frame's width and height: two corners of a `rect` or
+//! `ellipse`, tail and head of an `arrow`, every point of a `freehand` line.
+//! `author` is `user`, or `Cuttlefish` for comments from the AI.
 //!
-//! YouTube ranges are downloaded with `yt-dlp` into the `[cuttlefish] cache`
-//! folder on a thread of their own; the page polls their progress.
+//! Opening a YouTube range creates its review: `yt-dlp` downloads it into a
+//! new review folder on a thread of its own (the page polls the progress), and
+//! the review is written with the video's title, channel and upload date when
+//! it is done. A local file can be copied into its review folder.
+//!
+//! Reviews of the older layout, `<reviews>/<id>.json`, are moved into folders
+//! at startup ([`Cuttlefish::migrate`]); a YouTube video still in the old
+//! download cache (`~/.cache/procon-cuttlefish/yt-<hash>.mp4`) moves along.
 //!
 //! Endpoints under `/api/cuttlefish/`:
 //!
 //! - `GET reviews`: every review, newest first; `GET`, `PUT`, `DELETE
-//!   reviews/<id>` read, write and delete one
-//! - `GET video?kind=&ref=&start_s=&end_s=`: the video's bytes, with HTTP
-//!   ranges; `GET meta?…`: its frame rate, duration and size
+//!   reviews/<id>` read, write and delete one (deleting removes its folder,
+//!   video included); `POST reviews/<id>/copy` copies a local file review's
+//!   video into its folder
+//! - `GET video?kind=&ref=&start_s=&end_s=&file=&r=`: the video's bytes, with HTTP
+//!   ranges, `r` naming the review whose folder holds it; `GET meta?…`: its
+//!   frame rate, duration and size
 //! - `POST download` with `{"url", "start_s", "end_s"}` starts downloading a
-//!   YouTube range (or finds it in the cache); `GET downloads` lists them
+//!   YouTube range into a new review (or finds the review that has it);
+//!   answers with the download, whose `id` is the review's. `GET downloads`
+//!   lists this run's downloads
 //! - `POST ai` with `{"video", "t_s", "t_end_s"?, "question", "review"?}`
-//!   asks the `cuttlefish` crate's [`Reviewer`] about the range (or a few
+//!   asks the `cuttlefish` crate's reviewer about the range (or a few
 //!   seconds around `t_s`): frames from ffmpeg, the review's comments near
 //!   it, knowledge from `[cuttlefish] knowledge`. Answers `{"comments":
 //!   [{"t_s", "t_end_s"?, "text", "shapes"}]}`, which the page adds as
@@ -72,6 +92,16 @@ const REVIEW_LIMIT: u64 = 16 << 20;
 /// Video file extensions served from paths on this machine
 const VIDEO_EXTENSIONS: [&str; 6] = ["mp4", "mkv", "webm", "mov", "m4v", "ogv"];
 
+/// A review's file in its folder
+const REVIEW_FILE: &str = "review.json";
+
+/// A downloaded YouTube range in its review folder
+const VIDEO_FILE: &str = "video.mp4";
+
+/// Marks the line with the video's title, channel and upload date in
+/// yt-dlp's output
+const META_MARK: &str = "cuttlefish-meta ";
+
 /// Seconds before and after `t_s` a question about a moment covers
 const MOMENT_S: (f64, f64) = (4.0, 2.0);
 
@@ -94,6 +124,28 @@ pub struct VideoRef {
     /// End of the YouTube range, in seconds
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_s: Option<f64>,
+    /// The video file in the review folder, which then plays
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Title of a YouTube video
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Its channel
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    /// Its upload date, `YYYY-MM-DD`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_date: Option<String>,
+}
+
+impl VideoRef {
+    /// The same video: kind, reference and range
+    fn same(&self, other: &VideoRef) -> bool {
+        self.kind == other.kind
+            && self.reference == other.reference
+            && self.start_s == other.start_s
+            && self.end_s == other.end_s
+    }
 }
 
 /// Where a review's video comes from
@@ -159,8 +211,11 @@ pub struct Review {
 }
 
 impl Review {
-    /// Check times and shapes are usable
+    /// Check times, shapes and the video file are usable
     pub fn validate(&self) -> Result<()> {
+        if let Some(file) = &self.video.file {
+            check_file_name(file)?;
+        }
         for comment in &self.comments {
             ensure!(
                 comment.t_s.is_finite() && comment.t_s >= 0.0,
@@ -204,10 +259,10 @@ pub enum DownloadState {
     Failed,
 }
 
-/// A YouTube range being downloaded, or in the cache
+/// A YouTube range being downloaded into its review
 #[derive(Clone, Debug, Serialize)]
 pub struct Download {
-    /// Cache file stem, from the URL and range
+    /// The review it goes into
     pub id: String,
     pub url: String,
     pub start_s: Option<f64>,
@@ -219,12 +274,11 @@ pub struct Download {
     pub message: String,
 }
 
-/// Reviews, the video cache and the downloads under way
+/// Reviews and the downloads under way
 pub struct Cuttlefish {
     /// Sessions are read from the Inkspector's root
     inspector: Arc<Inspector>,
     reviews: PathBuf,
-    cache: PathBuf,
     downloads: Arc<Mutex<BTreeMap<String, Download>>>,
     writing: Mutex<()>,
     /// The `cuttlefish` crate's store, shared by the reviewer and the
@@ -259,14 +313,12 @@ impl Cuttlefish {
     pub fn new(
         inspector: Arc<Inspector>,
         reviews: PathBuf,
-        cache: PathBuf,
         knowledge: PathBuf,
         settings: Settings,
     ) -> Self {
         Self {
             inspector,
             reviews,
-            cache,
             downloads: Arc::default(),
             writing: Mutex::default(),
             knowledge: Arc::new(Knowledge::new(knowledge, settings)),
@@ -275,17 +327,15 @@ impl Cuttlefish {
 
     // ------------------------------------------------------------ reviews
 
+    /// A review's folder
+    fn review_dir(&self, id: &str) -> Result<PathBuf> {
+        check_id(id)?;
+        Ok(self.reviews.join(id))
+    }
+
+    /// A review's `review.json`
     fn review_path(&self, id: &str) -> Result<PathBuf> {
-        ensure!(
-            !id.is_empty()
-                && id.len() <= 120
-                && !id.starts_with('.')
-                && id
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)),
-            "bad review id {id:?}"
-        );
-        Ok(self.reviews.join(format!("{id}.json")))
+        Ok(self.review_dir(id)?.join(REVIEW_FILE))
     }
 
     /// Every review: its id, video, comment count and last change, newest
@@ -303,13 +353,12 @@ impl Cuttlefish {
         let mut reviews: Vec<(u64, Value)> = entries
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| {
-                let path = entry.path();
-                let id = path.file_stem()?.to_str()?.to_string();
-                if path.extension()? != "json" || id.starts_with('.') {
+                let id = entry.file_name().to_str()?.to_string();
+                if check_id(&id).is_err() {
                     return None;
                 }
-                let modified_ms = entry
-                    .metadata()
+                let path = entry.path().join(REVIEW_FILE);
+                let modified_ms = std::fs::metadata(&path)
                     .ok()?
                     .modified()
                     .ok()?
@@ -340,7 +389,7 @@ impl Cuttlefish {
         read_review(&self.review_path(id)?)
     }
 
-    /// Write a review, replacing the file atomically
+    /// Write a review into its folder, replacing the file atomically
     pub fn save_review(&self, id: &str, review: &Review) -> Result<()> {
         review.validate()?;
         let path = self.review_path(id)?;
@@ -348,16 +397,140 @@ impl Cuttlefish {
         write_atomic(&path, &serde_json::to_vec_pretty(review)?)
     }
 
-    /// Delete a review's file
+    /// Delete a review's folder, its video included
     pub fn delete_review(&self, id: &str) -> Result<()> {
-        let path = self.review_path(id)?;
-        std::fs::remove_file(&path).with_context(|| format!("cannot delete {}", path.display()))
+        let dir = self.review_dir(id)?;
+        ensure!(dir.join(REVIEW_FILE).is_file(), "no review {id}");
+        std::fs::remove_dir_all(&dir).with_context(|| format!("cannot delete {}", dir.display()))
+    }
+
+    /// A new review id from the local time, unused in the reviews folder
+    fn new_id(&self) -> String {
+        let base = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+        let downloads = self.downloads.lock().unwrap();
+        (1..)
+            .map(|n| {
+                if n == 1 {
+                    base.clone()
+                } else {
+                    format!("{base}-{n}")
+                }
+            })
+            .find(|id| !self.reviews.join(id).exists() && !downloads.contains_key(id))
+            .unwrap()
+    }
+
+    /// The review of the same video whose folder holds it, if any
+    fn review_with_video(&self, video: &VideoRef) -> Option<(String, Review)> {
+        let entries = std::fs::read_dir(&self.reviews).ok()?;
+        entries.filter_map(|e| e.ok()).find_map(|entry| {
+            let id = entry.file_name().to_str()?.to_string();
+            let review = read_review(&entry.path().join(REVIEW_FILE)).ok()?;
+            let has_file = review
+                .video
+                .file
+                .as_ref()
+                .is_some_and(|f| entry.path().join(f).is_file());
+            (has_file && review.video.same(video)).then_some((id, review))
+        })
+    }
+
+    /// Copy a local file review's video into its folder as `video.<ext>`;
+    /// answers with the review as saved
+    pub fn copy_into_review(&self, id: &str) -> Result<Review> {
+        let mut review = self.review(id)?;
+        ensure!(
+            review.video.kind == VideoKind::File,
+            "only a video file on this machine is copied in"
+        );
+        ensure!(
+            review.video.file.is_none(),
+            "the video is in the review already"
+        );
+        let source = self.video_path(&review.video, None)?;
+        let extension = source
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("mp4")
+            .to_lowercase();
+        let file = format!("video.{extension}");
+        let target = self.review_dir(id)?.join(&file);
+        let mut partial = target.as_os_str().to_owned();
+        partial.push(".part");
+        std::fs::copy(&source, &partial)
+            .with_context(|| format!("cannot copy {}", source.display()))?;
+        std::fs::rename(&partial, &target)?;
+        review.video.file = Some(file);
+        self.save_review(id, &review)?;
+        Ok(review)
+    }
+
+    /// Move reviews of the older layout, `<reviews>/<id>.json`, into
+    /// folders, with their YouTube videos from the old download cache
+    /// `legacy_cache`; answers with the number moved
+    pub fn migrate(&self, legacy_cache: &Path) -> Result<usize> {
+        let entries = match std::fs::read_dir(&self.reviews) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(e).context("cannot list the reviews"),
+        };
+        let mut moved = 0;
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let Some(id) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".json"))
+                .filter(|id| check_id(id).is_ok())
+            else {
+                continue;
+            };
+            if !path.is_file() {
+                continue;
+            }
+            let dir = self.reviews.join(id);
+            if dir.join(REVIEW_FILE).exists() {
+                log::warn!("Not migrating {}: {id}/ exists", path.display());
+                continue;
+            }
+            let mut review = read_review(&path)?;
+            std::fs::create_dir_all(&dir)?;
+            if review.video.kind == VideoKind::Youtube && review.video.file.is_none() {
+                let video = &review.video;
+                let old = legacy_cache.join(format!(
+                    "{}.mp4",
+                    cache_id(&video.reference, video.start_s, video.end_s)
+                ));
+                if old.is_file() {
+                    move_file(&old, &dir.join(VIDEO_FILE))?;
+                    review.video.file = Some(VIDEO_FILE.to_string());
+                    log::info!("Moved {} into review {id}", old.display());
+                }
+            }
+            write_atomic(&dir.join(REVIEW_FILE), &serde_json::to_vec_pretty(&review)?)?;
+            std::fs::remove_file(&path)?;
+            moved += 1;
+        }
+        if moved > 0 {
+            log::info!(
+                "Moved {moved} reviews into folders in {}",
+                self.reviews.display()
+            );
+        }
+        Ok(moved)
     }
 
     // ------------------------------------------------------------- videos
 
-    /// The file a video reference plays
-    pub fn video_path(&self, video: &VideoRef) -> Result<PathBuf> {
+    /// The file a video reference plays: the one in the review folder of
+    /// `review` if it has one, else the session's segment or the file
+    pub fn video_path(&self, video: &VideoRef, review: Option<&str>) -> Result<PathBuf> {
+        if let (Some(file), Some(id)) = (&video.file, review.filter(|r| !r.is_empty())) {
+            check_file_name(file)?;
+            let path = self.review_dir(id)?.join(file);
+            ensure!(path.is_file(), "{file} is missing from the review {id}");
+            return Ok(path);
+        }
         match video.kind {
             VideoKind::Session => {
                 let (session, file) = match video.reference.split_once('/') {
@@ -401,16 +574,14 @@ impl Cuttlefish {
                 Ok(path)
             }
             VideoKind::Youtube => {
-                let id = cache_id(&video.reference, video.start_s, video.end_s);
-                self.cached(&id)
-                    .context("not downloaded yet; open it from the YouTube form")
+                bail!("the video is not downloaded into a review; open it from the YouTube form")
             }
         }
     }
 
     /// Frame rate, duration and size of a video
-    pub fn meta(&self, video: &VideoRef) -> Result<Value> {
-        let path = self.video_path(video)?;
+    pub fn meta(&self, video: &VideoRef, review: Option<&str>) -> Result<Value> {
+        let path = self.video_path(video, review)?;
         let probe = ffprobe(
             &path,
             "stream=width,height,r_frame_rate,avg_frame_rate:format=duration",
@@ -431,8 +602,8 @@ impl Cuttlefish {
     }
 
     /// Part of a video file: the range asked for, at most [`VIDEO_CHUNK`]
-    fn video(&self, video: &VideoRef, range: Option<&str>) -> Result<Reply> {
-        let path = self.video_path(video)?;
+    fn video(&self, video: &VideoRef, review: Option<&str>, range: Option<&str>) -> Result<Reply> {
+        let path = self.video_path(video, review)?;
         let mut file = std::fs::File::open(&path)
             .with_context(|| format!("cannot open {}", path.display()))?;
         let total = file.metadata()?.len();
@@ -457,20 +628,14 @@ impl Cuttlefish {
 
     // ---------------------------------------------------------- downloads
 
-    /// The finished download with this cache id, if any
-    fn cached(&self, id: &str) -> Option<PathBuf> {
-        let path = self.cache.join(format!("{id}.mp4"));
-        path.is_file().then_some(path)
-    }
-
-    /// Every download of this run, and finished ones asked for again
+    /// Every download of this run
     pub fn downloads(&self) -> Value {
         let downloads: Vec<Download> = self.downloads.lock().unwrap().values().cloned().collect();
-        json!({ "cache": self.cache, "downloads": downloads })
+        json!({ "reviews": self.reviews, "downloads": downloads })
     }
 
-    /// Start downloading a range of a YouTube video, unless it is cached or
-    /// already under way
+    /// Start downloading a range of a YouTube video into a new review,
+    /// unless a review has it already or it is under way
     pub fn download(
         &self,
         url: &str,
@@ -488,56 +653,95 @@ impl Cuttlefish {
         if let (Some(start), Some(end)) = (start_s, end_s) {
             ensure!(end > start, "the range ends before it starts");
         }
-        let id = cache_id(url, start_s, end_s);
-        let mut downloads = self.downloads.lock().unwrap();
-        if let Some(download) = downloads.get(&id)
-            && download.state == DownloadState::Running
-        {
-            return Ok(download.clone());
+        let video = VideoRef {
+            kind: VideoKind::Youtube,
+            reference: url.to_string(),
+            start_s,
+            end_s,
+            file: None,
+            title: None,
+            channel: None,
+            upload_date: None,
+        };
+        let running = self
+            .downloads
+            .lock()
+            .unwrap()
+            .values()
+            .find(|d| {
+                d.state == DownloadState::Running
+                    && d.url == url
+                    && d.start_s == start_s
+                    && d.end_s == end_s
+            })
+            .cloned();
+        if let Some(download) = running {
+            return Ok(download);
         }
-        let cached = self.cached(&id).is_some();
+        if let Some((id, _)) = self.review_with_video(&video) {
+            return Ok(Download {
+                id,
+                url: url.to_string(),
+                start_s,
+                end_s,
+                state: DownloadState::Done,
+                percent: Some(100.0),
+                message: "in a review already".to_string(),
+            });
+        }
+        let id = self.new_id();
+        let dir = self.review_dir(&id)?;
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("cannot create {}", dir.display()))?;
         let download = Download {
             id: id.clone(),
             url: url.to_string(),
             start_s,
             end_s,
-            state: if cached {
-                DownloadState::Done
-            } else {
-                DownloadState::Running
-            },
-            percent: cached.then_some(100.0),
-            message: if cached {
-                "in the cache"
-            } else {
-                "starting yt-dlp"
-            }
-            .to_string(),
+            state: DownloadState::Running,
+            percent: None,
+            message: "starting yt-dlp".to_string(),
         };
-        downloads.insert(id, download.clone());
-        if !cached {
-            let job = download.clone();
-            let cache = self.cache.clone();
-            let downloads = Arc::clone(&self.downloads);
-            std::thread::spawn(move || {
-                let result = run_ytdlp(&job, &cache, &downloads);
-                let mut downloads = downloads.lock().unwrap();
-                if let Some(download) = downloads.get_mut(&job.id) {
-                    match result {
-                        Ok(()) => {
-                            download.state = DownloadState::Done;
-                            download.percent = Some(100.0);
-                            download.message = "downloaded".to_string();
-                        }
-                        Err(e) => {
-                            log::warn!("Download of {} failed: {:#}", job.url, e);
-                            download.state = DownloadState::Failed;
-                            download.message = format!("{e:#}");
-                        }
+        self.downloads
+            .lock()
+            .unwrap()
+            .insert(id.clone(), download.clone());
+        let job = download.clone();
+        let downloads = Arc::clone(&self.downloads);
+        let review_file = dir.join(REVIEW_FILE);
+        std::thread::spawn(move || {
+            let result = run_ytdlp(&job, &dir, &downloads).and_then(|meta| {
+                let review = Review {
+                    video: VideoRef {
+                        file: Some(VIDEO_FILE.to_string()),
+                        title: meta.title,
+                        channel: meta.channel,
+                        upload_date: meta.upload_date,
+                        ..video
+                    },
+                    comments: Vec::new(),
+                    extra: Map::new(),
+                };
+                write_atomic(&review_file, &serde_json::to_vec_pretty(&review)?)
+            });
+            let mut downloads = downloads.lock().unwrap();
+            if let Some(download) = downloads.get_mut(&job.id) {
+                match result {
+                    Ok(()) => {
+                        download.state = DownloadState::Done;
+                        download.percent = Some(100.0);
+                        download.message = "downloaded".to_string();
+                    }
+                    Err(e) => {
+                        log::warn!("Download of {} failed: {:#}", job.url, e);
+                        // Nothing of the review was written yet
+                        let _ = std::fs::remove_dir_all(&dir);
+                        download.state = DownloadState::Failed;
+                        download.message = format!("{e:#}");
                     }
                 }
-            });
-        }
+            }
+        });
         Ok(download)
     }
 
@@ -560,7 +764,7 @@ impl Cuttlefish {
         if end_s <= start_s {
             return Err(anyhow::anyhow!("the range must end after it starts").into());
         }
-        let path = self.video_path(video)?;
+        let path = self.video_path(video, review)?;
         let comments = match review {
             Some(id) if !id.is_empty() => self.review(id)?.comments,
             _ => Vec::new(),
@@ -613,8 +817,13 @@ impl Cuttlefish {
         match path.split_once('/') {
             None if path == "reviews" => Ok(Reply::json(self.reviews().map_err(bad)?)),
             None if path == "downloads" => Ok(Reply::json(self.downloads())),
-            None if path == "video" => self.video(&video()?, range).map_err(bad),
-            None if path == "meta" => Ok(Reply::json(self.meta(&video()?).map_err(bad)?)),
+            None if path == "video" => self
+                .video(&video()?, query.get("r").map(String::as_str), range)
+                .map_err(bad),
+            None if path == "meta" => Ok(Reply::json(
+                self.meta(&video()?, query.get("r").map(String::as_str))
+                    .map_err(bad)?,
+            )),
             Some(("knowledge", rest)) => Ok(Reply::json(self.knowledge.get(rest, query)?)),
             Some(("reviews", id)) => {
                 let path = self.review_path(id).map_err(bad)?;
@@ -645,6 +854,10 @@ impl Cuttlefish {
                     .map_err(|e| bad(anyhow::anyhow!("not a review: {e}")))?;
                 self.save_review(id, &review).map_err(bad)?;
                 Ok(Reply::json(json!({ "id": id })))
+            }
+            (&Method::POST, Some(("reviews", rest))) if rest.ends_with("/copy") => {
+                let id = rest.trim_end_matches("/copy");
+                Ok(Reply::json(json!(self.copy_into_review(id).map_err(bad)?)))
             }
             (&Method::DELETE, Some(("reviews", id))) => {
                 self.delete_review(id).map_err(bad)?;
@@ -854,6 +1067,10 @@ fn video_query(query: &HashMap<String, String>) -> Result<VideoRef> {
         reference: text("ref").context("no ref given")?.to_string(),
         start_s: time("start_s")?,
         end_s: time("end_s")?,
+        file: text("file").map(String::from),
+        title: None,
+        channel: None,
+        upload_date: None,
     })
 }
 
@@ -874,7 +1091,8 @@ fn byte_range(range: Option<&str>, total: u64) -> Option<(u64, u64)> {
     (start <= end).then_some((start, end))
 }
 
-/// Cache file stem of a URL and range: FNV-1a of them, stable across runs
+/// File stem of a URL and range in the old download cache: FNV-1a of
+/// them, stable across runs; only for [`Cuttlefish::migrate`]
 fn cache_id(url: &str, start_s: Option<f64>, end_s: Option<f64>) -> String {
     let key = format!("{url}|{start_s:?}|{end_s:?}");
     let hash = key.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
@@ -908,14 +1126,46 @@ fn progress_percent(line: &str, span_s: Option<f64>) -> Option<f64> {
     Some((100.0 * seconds / span).clamp(0.0, 100.0))
 }
 
-/// Download a range with yt-dlp into `<cache>/<id>.mp4`, updating its
-/// progress in `downloads`
+/// What yt-dlp says about a video
+#[derive(Clone, Debug, Default, PartialEq)]
+struct VideoMeta {
+    title: Option<String>,
+    channel: Option<String>,
+    /// `YYYY-MM-DD`
+    upload_date: Option<String>,
+}
+
+/// The video's title, channel and upload date from the line yt-dlp prints
+/// for `--print "before_dl:cuttlefish-meta %(title)j %(channel)j
+/// %(upload_date)j"` (three JSON values; `null` or "NA" when unknown)
+fn parse_meta(line: &str) -> Option<VideoMeta> {
+    let rest = line.trim().strip_prefix(META_MARK)?;
+    let mut values = serde_json::Deserializer::from_str(rest)
+        .into_iter::<Value>()
+        .map(|v| {
+            v.ok()
+                .and_then(|v| v.as_str().map(String::from))
+                .filter(|s| !s.is_empty() && s != "NA")
+        });
+    let (title, channel, date) = (values.next()?, values.next()?, values.next()?);
+    let upload_date = date.map(|d| match (d.get(..4), d.get(4..6), d.get(6..8)) {
+        (Some(y), Some(m), Some(day)) if d.len() == 8 => format!("{y}-{m}-{day}"),
+        _ => d,
+    });
+    Some(VideoMeta {
+        title,
+        channel,
+        upload_date,
+    })
+}
+
+/// Download a range with yt-dlp into `<dir>/video.mp4`, updating its
+/// progress in `downloads`; answers with the video's title, channel and date
 fn run_ytdlp(
     job: &Download,
-    cache: &Path,
+    dir: &Path,
     downloads: &Mutex<BTreeMap<String, Download>>,
-) -> Result<()> {
-    std::fs::create_dir_all(cache).with_context(|| format!("cannot create {}", cache.display()))?;
+) -> Result<VideoMeta> {
     let mut command = Command::new("yt-dlp");
     command
         .args(["--newline", "--no-playlist", "--no-mtime", "--progress"])
@@ -927,8 +1177,12 @@ fn run_ytdlp(
             "--merge-output-format",
             "mp4",
         ])
+        .args(["--no-simulate", "--print"])
+        .arg(format!(
+            "before_dl:{META_MARK}%(title)j %(channel)j %(upload_date)j"
+        ))
         .arg("-o")
-        .arg(cache.join(format!("{}.%(ext)s", job.id)));
+        .arg(dir.join("video.%(ext)s"));
     if let Some(section) = section(job.start_s, job.end_s) {
         command.args(["--download-sections", &section]);
     }
@@ -944,9 +1198,14 @@ fn run_ytdlp(
         (start, Some(end)) => Some(end - start.unwrap_or(0.0)),
         _ => None,
     };
+    let meta = Mutex::new(VideoMeta::default());
     let update = |line: &str| {
         let line = line.trim();
         if line.is_empty() {
+            return;
+        }
+        if let Some(found) = parse_meta(line) {
+            *meta.lock().unwrap() = found;
             return;
         }
         let mut downloads = downloads.lock().unwrap();
@@ -983,10 +1242,49 @@ fn run_ytdlp(
         );
     }
     ensure!(
-        cache.join(format!("{}.mp4", job.id)).is_file(),
+        dir.join(VIDEO_FILE).is_file(),
         "yt-dlp did not write an MP4"
     );
+    Ok(meta.into_inner().unwrap())
+}
+
+/// Check a review id: a plain folder name
+fn check_id(id: &str) -> Result<()> {
+    ensure!(
+        !id.is_empty()
+            && id.len() <= 120
+            && !id.starts_with('.')
+            && id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)),
+        "bad review id {id:?}"
+    );
     Ok(())
+}
+
+/// Check a video file name in a review folder: a plain name, so the path
+/// stays inside the folder
+fn check_file_name(file: &str) -> Result<()> {
+    ensure!(
+        !file.is_empty()
+            && !file.starts_with('.')
+            && !file.contains(['/', '\\'])
+            && file != REVIEW_FILE,
+        "bad video file {file:?}: a file name in the review folder"
+    );
+    Ok(())
+}
+
+/// Move a file, copying it when it is on another filesystem
+fn move_file(from: &Path, to: &Path) -> Result<()> {
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    let mut partial = to.as_os_str().to_owned();
+    partial.push(".part");
+    std::fs::copy(from, &partial).with_context(|| format!("cannot copy {}", from.display()))?;
+    std::fs::rename(&partial, to)?;
+    std::fs::remove_file(from).with_context(|| format!("cannot remove {}", from.display()))
 }
 
 /// Call `f` with every line of `reader`, split at `\n` or `\r` (progress
@@ -1043,9 +1341,10 @@ mod tests {
         assert_eq!(written["video"]["ref"], "https://youtu.be/x");
     }
 
-    #[test]
-    fn reviews_are_saved_listed_and_deleted() {
-        let dir = std::env::temp_dir().join(format!("procon-reviews-{}", std::process::id()));
+    /// A Cuttlefish over a fresh folder of `name` under the temporary folder
+    fn scratch(name: &str) -> (PathBuf, Cuttlefish) {
+        let dir =
+            std::env::temp_dir().join(format!("procon-reviews-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let inspector = Arc::new(Inspector::new(
             Some(dir.join("sessions")),
@@ -1056,13 +1355,19 @@ mod tests {
         let cuttlefish = Cuttlefish::new(
             inspector,
             dir.join("reviews"),
-            dir.join("cache"),
             dir.join("knowledge"),
             Settings::default(),
         );
+        (dir, cuttlefish)
+    }
+
+    #[test]
+    fn reviews_are_folders() {
+        let (dir, cuttlefish) = scratch("folders");
         assert_eq!(cuttlefish.reviews().unwrap()["reviews"], json!([]));
         let review: Review = serde_json::from_str(REVIEW).unwrap();
         cuttlefish.save_review("r-1", &review).unwrap();
+        assert!(dir.join("reviews/r-1/review.json").is_file());
         assert_eq!(cuttlefish.review("r-1").unwrap(), review);
         let list = cuttlefish.reviews().unwrap();
         assert_eq!(list["reviews"][0]["id"], "r-1");
@@ -1073,9 +1378,152 @@ mod tests {
         bad.comments[0].t_end_s = Some(1.0);
         assert!(cuttlefish.save_review("r-2", &bad).is_err());
 
+        // A folder without review.json is not a review
+        std::fs::create_dir_all(dir.join("reviews/half")).unwrap();
+        assert_eq!(
+            cuttlefish.reviews().unwrap()["reviews"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(cuttlefish.delete_review("half").is_err());
+
+        // Deleting takes the folder, video and all
+        std::fs::write(dir.join("reviews/r-1/video.mp4"), b"video").unwrap();
         cuttlefish.delete_review("r-1").unwrap();
+        assert!(!dir.join("reviews/r-1").exists());
         assert!(cuttlefish.review("r-1").is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn video_files_stay_in_their_review_folder() {
+        for bad in [
+            "",
+            "../video.mp4",
+            "a/b.mp4",
+            "..",
+            ".hidden.mp4",
+            "review.json",
+            "a\\b",
+        ] {
+            assert!(check_file_name(bad).is_err(), "{bad:?}");
+        }
+        check_file_name("video.mp4").unwrap();
+
+        let (dir, cuttlefish) = scratch("paths");
+        let mut review: Review = serde_json::from_str(REVIEW).unwrap();
+        review.video.file = Some("../../etc/passwd".into());
+        assert!(cuttlefish.save_review("r", &review).is_err());
+        assert!(cuttlefish.video_path(&review.video, Some("r")).is_err());
+
+        review.video.file = Some("video.mp4".into());
+        cuttlefish.save_review("r", &review).unwrap();
+        // Missing, then there
+        assert!(cuttlefish.video_path(&review.video, Some("r")).is_err());
+        std::fs::write(dir.join("reviews/r/video.mp4"), b"video").unwrap();
+        assert_eq!(
+            cuttlefish.video_path(&review.video, Some("r")).unwrap(),
+            dir.join("reviews/r/video.mp4")
+        );
+        assert!(cuttlefish.video_path(&review.video, Some("../r")).is_err());
+        // A YouTube range without its file does not play
+        assert!(cuttlefish.video_path(&review.video, None).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn flat_reviews_move_into_folders() {
+        let (dir, cuttlefish) = scratch("migrate");
+        let reviews = dir.join("reviews");
+        let cache = dir.join("cache");
+        std::fs::create_dir_all(&reviews).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+        // A YouTube review whose video is in the old cache, and a session's
+        std::fs::write(reviews.join("2026-09-26_00-38-20.json"), REVIEW).unwrap();
+        let old = cache.join(format!(
+            "{}.mp4",
+            cache_id("https://youtu.be/x", Some(60.0), Some(90.5))
+        ));
+        std::fs::write(&old, b"video").unwrap();
+        let session = r#"{"video": {"kind": "session", "ref": "s/video-01.mkv"}, "comments": []}"#;
+        std::fs::write(reviews.join("s-1.json"), session).unwrap();
+        std::fs::write(reviews.join("notes.txt"), b"not a review").unwrap();
+
+        assert_eq!(cuttlefish.migrate(&cache).unwrap(), 2);
+        let moved = cuttlefish.review("2026-09-26_00-38-20").unwrap();
+        assert_eq!(moved.video.file.as_deref(), Some("video.mp4"));
+        assert_eq!(moved.comments.len(), 2);
+        assert!(!old.exists());
+        assert_eq!(
+            std::fs::read(reviews.join("2026-09-26_00-38-20/video.mp4")).unwrap(),
+            b"video"
+        );
+        let session = cuttlefish.review("s-1").unwrap();
+        assert_eq!(session.video.file, None);
+        assert!(!reviews.join("s-1.json").exists());
+        assert!(reviews.join("notes.txt").exists());
+        // Nothing left to move
+        assert_eq!(cuttlefish.migrate(&cache).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn old_cache_names_match() {
+        // The one video of the real data in the old cache
+        assert_eq!(
+            cache_id(
+                "https://www.youtube.com/watch?v=2W4CstCiuAE",
+                Some(296.0),
+                Some(356.0)
+            ),
+            "yt-04986bb8954dfa5e"
+        );
+    }
+
+    #[test]
+    fn local_files_are_copied_in() {
+        let (dir, cuttlefish) = scratch("copy");
+        let source = dir.join("clip.MKV");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&source, b"clip").unwrap();
+        let review: Review = serde_json::from_value(json!({
+            "video": {"kind": "file", "ref": source},
+            "comments": []
+        }))
+        .unwrap();
+        cuttlefish.save_review("f", &review).unwrap();
+        let copied = cuttlefish.copy_into_review("f").unwrap();
+        assert_eq!(copied.video.file.as_deref(), Some("video.mkv"));
+        assert_eq!(
+            std::fs::read(dir.join("reviews/f/video.mkv")).unwrap(),
+            b"clip"
+        );
+        assert!(source.exists());
+        assert_eq!(cuttlefish.review("f").unwrap(), copied);
+        assert!(cuttlefish.copy_into_review("f").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn video_meta_from_ytdlp() {
+        assert_eq!(
+            parse_meta(r#"cuttlefish-meta "Big Run \"tips\"" "Some Channel" "20260901""#),
+            Some(VideoMeta {
+                title: Some("Big Run \"tips\"".into()),
+                channel: Some("Some Channel".into()),
+                upload_date: Some("2026-09-01".into()),
+            })
+        );
+        assert_eq!(
+            parse_meta(r#"cuttlefish-meta "x" null "NA""#),
+            Some(VideoMeta {
+                title: Some("x".into()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(parse_meta("[download] 50%"), None);
     }
 
     #[test]

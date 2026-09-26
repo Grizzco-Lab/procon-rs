@@ -5,8 +5,9 @@
 // #cuttlefish/r=<review>&t=<s> (a saved review) or
 // #cuttlefish/kind=<kind>&ref=<ref>&start_s=&end_s= (a video not reviewed yet)
 // or #cuttlefish/view=knowledge (the knowledge view, see knowledge.js).
-// Reviews are saved as JSON through /api/cuttlefish/reviews/<id>; the format
-// is in src/cuttlefish.rs.
+// Reviews are saved as JSON through /api/cuttlefish/reviews/<id>, each in a
+// folder of its own with its YouTube (or copied) video; the format is in
+// src/cuttlefish.rs.
 "use strict";
 
 (() => {
@@ -91,11 +92,16 @@
     return `${minutes}:${rest.toFixed(1).padStart(4, "0")}`;
   }
 
-  /** The query naming a video, for the video and meta endpoints and the hash */
-  function videoQuery(v) {
+  /** The query naming a video, for the video and meta endpoints and the
+   * hash; with the review `id`, a video in its folder plays from there */
+  function videoQuery(v, id) {
     const query = new URLSearchParams({ kind: v.kind, ref: v.ref });
     if (v.start_s != null) query.set("start_s", v.start_s);
     if (v.end_s != null) query.set("end_s", v.end_s);
+    if (v.file && id) {
+      query.set("file", v.file);
+      query.set("r", id);
+    }
     return query;
   }
 
@@ -113,7 +119,7 @@
     (a.start_s ?? null) === (b.start_s ?? null) &&
     (a.end_s ?? null) === (b.end_s ?? null);
 
-  /** What a video is called in lists */
+  /** What a video is called in lists: a YouTube video by its title */
   function videoName(v) {
     if (v.kind === "file") return v.ref.split("/").pop();
     if (v.kind === "youtube") {
@@ -121,9 +127,17 @@
         v.start_s != null || v.end_s != null
           ? ` · ${shortTime(v.start_s ?? 0)}–${v.end_s != null ? shortTime(v.end_s) : "end"}`
           : "";
-      return `${v.ref.replace(/^https?:\/\/(www\.)?/, "")}${range}`;
+      const name = v.title ?? v.ref.replace(/^https?:\/\/(www\.)?/, "");
+      return `${name}${range}`;
     }
     return v.ref;
+  }
+
+  /** Channel and upload date of a YouTube video, and where its file is */
+  function videoDetails(v) {
+    const parts = [v.channel, v.upload_date];
+    if (v.file) parts.push(`${v.file} in the review`);
+    return parts.filter(Boolean).join(" · ");
   }
 
   const KINDS = { session: "Session", file: "File", youtube: "YouTube" };
@@ -218,13 +232,13 @@
     for (const review of data.reviews) {
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td><span class="cf-kind">${KINDS[review.video.kind] ?? review.video.kind}</span> ${escapeHtml(videoName(review.video))}<br><span class="panel-note">${escapeHtml(review.id)}</span></td>
+        <td><span class="cf-kind">${KINDS[review.video.kind] ?? review.video.kind}</span> ${escapeHtml(videoName(review.video))}<br><span class="panel-note">${escapeHtml([videoDetails(review.video), review.id].filter(Boolean).join(" · "))}</span></td>
         <td class="num">${review.comments}</td>
         <td>${escapeHtml(new Date(review.modified_ms).toLocaleString())}</td>
         <td><button type="button" class="mode-toggle" data-delete>Delete</button></td>`;
       tr.onclick = (event) => {
         if (event.target.closest("[data-delete]")) {
-          deleteReview(review.id);
+          deleteReview(review.id, review.video.file);
           return;
         }
         location.hash = `#cuttlefish/${new URLSearchParams({ r: review.id })}`;
@@ -233,14 +247,20 @@
     }
   }
 
-  async function deleteReview(id) {
-    if (!confirm(`Delete the review ${id}? Its file is removed.`)) return;
+  async function deleteReview(id, file) {
+    const video = file ? `, including the video ${file}` : "";
+    if (!confirm(`Delete the review ${id}? Its folder is removed${video}.`))
+      return;
     const response = await fetch(
       `/api/cuttlefish/reviews/${encodeURIComponent(id)}`,
-      { method: "DELETE" },
+      { method: "DELETE", body: "{}" },
     );
     if (!response.ok) alert((await response.json()).error);
     loadReviews();
+  }
+
+  function openReviewHash(id) {
+    location.hash = `#cuttlefish/${new URLSearchParams({ r: id })}`;
   }
 
   /** Open a video not reviewed yet */
@@ -292,10 +312,8 @@
     });
     const download = await response.json();
     if (!response.ok) return openError(download.error);
-    const v = { kind: "youtube", ref: download.url };
-    if (download.start_s != null) v.start_s = download.start_s;
-    if (download.end_s != null) v.end_s = download.end_s;
-    if (download.state === "done") return openVideoHash(v);
+    // The download is the new review (or the one that has the video)
+    if (download.state === "done") return openReviewHash(download.id);
     cf.waiting = download.id;
     pollDownloads();
   };
@@ -324,15 +342,7 @@
           <div class="cf-download-head"><span class="cf-download-url">${escapeHtml(d.url)}${range}</span><span class="num">${d.state === "running" ? `${percent.toFixed(0)}%` : d.state}</span></div>
           <div class="meter-track"><div class="meter-fill" style="width:${d.state === "done" ? 100 : percent}%"></div></div>
           <span class="panel-note ${d.state === "failed" ? "level-critical" : ""}">${escapeHtml(d.message)}</span>`;
-        if (d.state === "done") {
-          li.onclick = () =>
-            openVideoHash({
-              kind: "youtube",
-              ref: d.url,
-              ...(d.start_s != null && { start_s: d.start_s }),
-              ...(d.end_s != null && { end_s: d.end_s }),
-            });
-        }
+        if (d.state === "done") li.onclick = () => openReviewHash(d.id);
         return li;
       }),
     );
@@ -342,12 +352,7 @@
       openError(waiting.message);
     } else if (waiting?.state === "done") {
       cf.waiting = null;
-      return openVideoHash({
-        kind: "youtube",
-        ref: waiting.url,
-        ...(waiting.start_s != null && { start_s: waiting.start_s }),
-        ...(waiting.end_s != null && { end_s: waiting.end_s }),
-      });
+      return openReviewHash(waiting.id);
     }
     if (cf.shown && data.downloads.some((d) => d.state === "running")) {
       cf.pollTimer = setTimeout(pollDownloads, 1000);
@@ -369,7 +374,8 @@
     note.hidden = true;
     screen.style.aspectRatio = "";
     cf.fps = DEFAULT_FPS;
-    video.src = `/api/cuttlefish/video?${videoQuery(review.video)}`;
+    video.src = `/api/cuttlefish/video?${videoQuery(review.video, id)}`;
+    markCopy();
     video.playbackRate = parseFloat($("cf-speed").value);
     markSaved(id ? "saved" : "new");
     // A video opens paused, ready to draw on
@@ -380,7 +386,7 @@
     seek(t);
     try {
       const response = await fetch(
-        `/api/cuttlefish/meta?${videoQuery(review.video)}`,
+        `/api/cuttlefish/meta?${videoQuery(review.video, id)}`,
       );
       const meta = await response.json();
       if (!response.ok) throw new Error(meta.error);
@@ -394,6 +400,39 @@
       note.textContent = error.message;
     }
   }
+
+  /** "Copy into review": a saved review of a local file not copied yet */
+  function markCopy() {
+    const v = cf.review?.video;
+    $("cf-copy").hidden = !(cf.id && v?.kind === "file" && !v.file);
+  }
+
+  $("cf-copy").onclick = async () => {
+    const id = cf.id;
+    const button = $("cf-copy");
+    button.disabled = true;
+    button.textContent = "Copying…";
+    try {
+      const response = await fetch(
+        `/api/cuttlefish/reviews/${encodeURIComponent(id)}/copy`,
+        { method: "POST", body: "{}" },
+      );
+      const review = await response.json();
+      if (!response.ok) throw new Error(review.error);
+      if (cf.id !== id) return;
+      // Play the copy from the review folder, where it stays
+      cf.review.video = review.video;
+      const t = video.currentTime;
+      video.src = `/api/cuttlefish/video?${videoQuery(review.video, id)}`;
+      seek(t);
+    } catch (error) {
+      alert(`Not copied: ${error.message}`);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Copy into review";
+      markCopy();
+    }
+  };
 
   /** Stop the video when leaving it */
   function leavePlayer() {
@@ -802,6 +841,7 @@
         );
         if (!response.ok) throw new Error((await response.json()).error);
         if (cf.review === review && !cf.saveTimer) markSaved("saved");
+        if (cf.review === review) markCopy();
       } catch (error) {
         if (cf.review === review) markSaved("error", error.message);
       }

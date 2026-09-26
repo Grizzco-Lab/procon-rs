@@ -122,16 +122,6 @@ fn main() -> anyhow::Result<()> {
         .cuttlefish
         .reviews
         .map_or_else(|| beside("Reviews"), |dir| config_dir.join(dir));
-    let cache = config.cuttlefish.cache.map_or_else(
-        || {
-            std::env::var_os("XDG_CACHE_HOME")
-                .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
-                .unwrap_or_else(std::env::temp_dir)
-                .join("procon-cuttlefish")
-        },
-        |dir| config_dir.join(dir),
-    );
     let knowledge = config
         .cuttlefish
         .knowledge
@@ -145,10 +135,19 @@ fn main() -> anyhow::Result<()> {
     let cuttlefish = Arc::new(Cuttlefish::new(
         Arc::clone(&inspector),
         reviews,
-        cache,
         knowledge,
         settings,
     ));
+    // Reviews of the older layout move into folders, with their YouTube
+    // videos from the download cache of before
+    let legacy_cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("procon-cuttlefish");
+    if let Err(e) = cuttlefish.migrate(&legacy_cache) {
+        log::warn!("Could not move reviews into folders: {:#}", e);
+    }
 
     let vision = Arc::new(Vision::new(
         Arc::clone(&inspector),

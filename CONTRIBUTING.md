@@ -72,7 +72,7 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/web.rs` | Dashboard server (warp): page, WebSocket, command API, Inkspector API |
 | `src/inspect.rs` | Inkspector backend: sessions, frames, labels, delays |
 | `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes |
-| `src/cuttlefish.rs` | Cuttlefish app backend: review files, video bytes with ranges, yt-dlp downloads, "Ask Cuttlefish" with the shared knowledge store |
+| `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` and the video), video bytes with ranges, yt-dlp downloads into new reviews, migration of the older flat layout, "Ask Cuttlefish" with the shared knowledge store |
 | `src/knowledge.rs` | Cuttlefish's Knowledge tab: the store and embedder loaded once, search, ask, translate, glossary, import jobs |
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results, send to labels |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
@@ -166,7 +166,13 @@ segment's sound is served as WebM with byte ranges. `POST
 
 ### Cuttlefish and its knowledge
 
-`src/cuttlefish.rs` stores reviews and serves videos; `src/knowledge.rs` holds
+`src/cuttlefish.rs` keeps each review as a folder, `<reviews>/<id>/review.json`
+plus the video when it lives there (`video.file`): a YouTube range downloads
+into a new review folder, a local file can be copied in, and a session review
+points at its recording. The file name is checked to be a plain name, so a
+path never leaves its folder. `Cuttlefish::migrate` moves reviews of the
+older flat layout into folders at startup, with their YouTube videos from the
+old download cache. It also serves videos; `src/knowledge.rs` holds
 the `cuttlefish` crate's `Store` and `E5Embedder`, loaded once on first use and
 shared by "Ask Cuttlefish" (`cuttlefish::review::review` over the borrowed
 store, embedder and a client made per request), the Knowledge tab's search,

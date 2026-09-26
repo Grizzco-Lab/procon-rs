@@ -149,8 +149,16 @@ Labels come from `crates/gameplay-data`, the same code the training side uses.
 ### Cuttlefish
 
 Reviews a video (a recorded segment, a video file on the PC or a range of a
-YouTube video) with comments at its times and shapes drawn on the paused frame;
-reviews are saved in `[cuttlefish] reviews`. **Ask Cuttlefish** sends the
+YouTube video) with comments at its times and shapes drawn on the paused frame:
+a notebook of mistakes and lessons to flip through later. Each review is a
+folder in `[cuttlefish] reviews`, `<id>/review.json`, with its video when the
+video belongs to it: a YouTube range is downloaded straight into its review
+(with the video's title, channel and upload date, shown in the library), and a
+local file can be copied in with **Copy into review**. A recorded session is
+never copied; its review points at the recording. Deleting a review deletes its
+folder, video included, after a confirmation. Reviews saved before this layout
+(`<id>.json`) move into folders when the studio starts, and a YouTube video
+still in `~/.cache/procon-cuttlefish` moves into its review. **Ask Cuttlefish** sends the
 range's frames and nearby comments to Claude with knowledge from the store and
 adds its comments. The **Knowledge** tab (top bar) shows and fills that store
 (`crates/cuttlefish`, folder `[cuttlefish] knowledge`):
@@ -260,7 +268,7 @@ Both programs take `--config <path>`.
 | `[recording]` | Default path `prefix` until one is set on the dashboard |
 | `[video]` | First `input` (`"screen"`, `/dev/video0` or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
 | `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) and `annotations` (object labels, default `Annotations` next to the root); relative paths start at the config's folder |
-| `[cuttlefish]` | Optional: `reviews` (default `Reviews` next to the root), `cache` (YouTube downloads), `knowledge` (the knowledge store, default `$CUTTLEFISH_DATA` or `~/.local/share/cuttlefish`) and `model` |
+| `[cuttlefish]` | Optional: `reviews` (one folder per review with its video; default `Reviews` next to the root), `knowledge` (the knowledge store, default `$CUTTLEFISH_DATA` or `~/.local/share/cuttlefish`) and `model` |
 | `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model) and `confidence` (0.25) |
 | `[logging]` | `level`: error, warn, info, debug or trace |
 

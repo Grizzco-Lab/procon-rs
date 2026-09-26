@@ -45,10 +45,9 @@ preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerol
 # annotations = "/data/Annotations"
 
 [cuttlefish]
-# Review files (JSON); by default "Reviews" next to the Inkspector's root
+# Reviews, one folder each (review.json and its video); by default "Reviews"
+# next to the Inkspector's root
 # reviews = "/data/Reviews"
-# YouTube ranges downloaded with yt-dlp; by default ~/.cache/procon-cuttlefish
-# cache = "/data/cuttlefish-cache"
 # Knowledge store and embedding model of the cuttlefish crate; by default
 # $CUTTLEFISH_DATA or ~/.local/share/cuttlefish. "Ask Cuttlefish" needs
 # ANTHROPIC_API_KEY in the studio's environment (never put it in a file here)
