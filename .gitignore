@@ -8,3 +8,6 @@
 
 # Cuttlefish data folders (documents, index, models) if kept in the tree
 /cuttlefish-data
+
+# Local secrets for scripts/run.sh (prefer ~/.config/procon/env)
+/.env

@@ -200,6 +200,17 @@ review shows the conversation. The chat needs `ANTHROPIC_API_KEY` in the
 studio's environment (the only place it is read from); without it the chat
 says so and messages, comments and drawings are still saved.
 
+`./scripts/run.sh` loads secrets from an env file, so the key never goes on
+the command line or into a config file: `$PROCON_ENV` if set, else
+`~/.config/procon/env`, else a git-ignored `.env` in the repository. One
+`KEY=value` per line; variables already set in the shell win.
+
+```bash
+mkdir -p ~/.config/procon
+printf 'ANTHROPIC_API_KEY=%s\n' 'sk-ant-...' > ~/.config/procon/env
+chmod 600 ~/.config/procon/env
+```
+
 Each review is a folder in `[cuttlefish] reviews`, `<id>/review.json`, with
 its video when the video belongs to it: a YouTube range is downloaded straight
 into its review (with the video's title, channel and upload date, shown in the
