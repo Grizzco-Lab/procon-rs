@@ -1,8 +1,10 @@
 <!doctype html>
 <!--
-  Icon gallery: every icon at 16, 24 and 48 px on each theme's page, panel
-  and active-tab colours (from style.css). Served by the studio at /icons/;
-  the icons are referenced with <use>, so it needs http, not file://.
+  Gallery of the icons (web/icons/) and the Salmon Run artwork (web/art/):
+  the palette, every icon at several sizes and on each theme, the tint
+  variables, and the illustrations and background tiles. Served by the
+  studio at /icons/; the icons are referenced with <use>, so it needs http,
+  not file://.
 -->
 <html lang="en">
   <head>
@@ -10,126 +12,253 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ProCon Icons</title>
     <style>
+      @font-face {
+        font-family: "Lilita One";
+        src: url("../art/LilitaOne-Regular.ttf") format("truetype");
+        font-display: swap;
+      }
+      :root {
+        color-scheme: dark;
+        --ink: #0a0b09;
+        --paper: #f6f1e4;
+      }
       body {
         margin: 0;
         padding: 16px;
-        background: #0d0e10;
-        color: #eceef1;
+        background:
+          url("../art/splat-tile.svg") 0 0 / 320px 320px,
+          #11140f;
+        color: var(--paper);
         font:
-          13px/1.5 Inter,
+          14px/1.5 Inter,
           system-ui,
           sans-serif;
       }
+      h1,
+      h2 {
+        font-family: "Lilita One", system-ui, sans-serif;
+        font-weight: 400;
+      }
       h1 {
-        margin: 0 0 4px;
-        font-size: 20px;
+        margin: 0 0 6px;
+        font-size: 30px;
+        letter-spacing: 0.01em;
       }
       h2 {
-        margin: 24px 0 8px;
-        font-size: 15px;
+        display: inline-block;
+        margin: 28px 0 12px;
+        padding: 2px 14px;
+        border: 2px solid var(--ink);
+        border-radius: 999px;
+        background: var(--paper);
+        box-shadow: 2px 3px 0 var(--ink);
+        color: #1a1320;
+        font-size: 19px;
+        transform: rotate(-1.5deg);
       }
       p {
-        margin: 0 0 8px;
-        max-width: 72ch;
-        color: #a3a7b0;
+        margin: 0 0 10px;
+        max-width: 80ch;
+        color: #cfc8b4;
       }
       code {
         font-family: "JetBrains Mono", ui-monospace, monospace;
-        font-size: 12px;
+        font-size: 12.5px;
+        color: #ffc41f;
       }
-      .scroll {
-        overflow-x: auto;
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 12px;
       }
-      table {
-        border-collapse: collapse;
+      .card {
+        padding: 10px 12px;
+        border: 3px solid var(--ink);
+        border-top: 7px solid var(--band, #ff6a13);
+        border-bottom: 7px solid var(--band, #ff6a13);
+        border-radius: 14px;
+        background:
+          url("../art/panel-tile.svg") 0 0 / 240px 240px,
+          #1c1f1a;
       }
-      th {
-        padding: 4px 8px;
-        font-weight: 500;
-        font-size: 11px;
-        text-align: left;
-        white-space: nowrap;
-        color: #a3a7b0;
+      .card:nth-child(5n + 2) {
+        --band: #19c6a6;
       }
-      th.name {
-        position: sticky;
-        left: 0;
-        background: #0d0e10;
-        font-family: "JetBrains Mono", ui-monospace, monospace;
-        color: #eceef1;
+      .card:nth-child(5n + 3) {
+        --band: #ffc41f;
       }
-      td {
-        padding: 6px 10px;
-        white-space: nowrap;
+      .card:nth-child(5n + 4) {
+        --band: #ff3d9a;
       }
-      td svg {
-        vertical-align: middle;
-        margin-right: 6px;
+      .card:nth-child(5n + 5) {
+        --band: #9d7bff;
       }
-      /* Surfaces: [theme][surface] as color / background / accent */
-      .studio.bg {
-        background: #0d0e10;
-        color: #eceef1;
-        --icon-accent: #4d9bff;
+      .name {
+        font:
+          12px "JetBrains Mono",
+          ui-monospace,
+          monospace;
+        color: #cfc8b4;
       }
-      .studio.panel {
+      .sizes {
+        display: flex;
+        align-items: end;
+        gap: 10px;
+        margin: 6px 0;
+      }
+      .themes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .themes span {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+      }
+      /* Surfaces of each theme (style.css / art/salmon.css) */
+      .studio {
         background: #15161a;
-        color: #a3a7b0;
-        --icon-accent: #4d9bff;
       }
-      .studio.active {
-        background: #eceef1;
-        color: #0d0e10;
-        --icon-accent: #4d9bff;
-      }
-      .joy.bg {
-        background: #e9ebee;
-        color: #1f2124;
-        --icon-accent: #e60012;
-      }
-      .joy.panel {
+      .joy {
         background: #ffffff;
-        color: #5c6069;
-        --icon-accent: #e60012;
+        box-shadow: inset 0 0 0 1px #d8dbe0;
       }
-      .joy.active {
-        background: #1f2124;
-        color: #e9ebee;
-        --icon-accent: #e60012;
-      }
-      .telemetry.bg {
-        background: #07090b;
-        color: #d5dce3;
-        --icon-accent: #f5a524;
-      }
-      .telemetry.panel {
+      .telemetry {
         background: #0b0e11;
-        color: #8795a3;
-        --icon-accent: #f5a524;
       }
-      .telemetry.active {
-        background: #d5dce3;
-        color: #07090b;
-        --icon-accent: #f5a524;
+      .salmon {
+        background: #ff6a13;
+        --icon-halo: #0a0b09;
+      }
+      .sticker {
+        --icon-halo: #f6f1e4;
+      }
+      .mono {
+        --icon-line: #f6f1e4;
+        --icon-accent: #f6f1e4;
+      }
+      /* Palette */
+      .swatches {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 10px;
+      }
+      .swatch {
+        overflow: hidden;
+        border: 3px solid var(--ink);
+        border-radius: 12px;
+        background: #1c1f1a;
+      }
+      .swatch div {
+        height: 64px;
+        border-bottom: 3px solid var(--ink);
+      }
+      .swatch p {
+        margin: 0;
+        padding: 6px 8px;
+        font-size: 12.5px;
+        line-height: 1.35;
+      }
+      .swatch b {
+        display: block;
+        color: var(--paper);
+      }
+      /* Artwork */
+      .art {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .art figure {
+        margin: 0;
+        padding: 12px;
+        border: 3px solid var(--ink);
+        border-radius: 14px;
+        background: #1c1f1a;
+      }
+      .art figure.light {
+        background: var(--paper);
+      }
+      .art img {
+        display: block;
+        height: 200px;
+      }
+      .art figcaption {
+        margin-top: 6px;
+        font:
+          12px "JetBrains Mono",
+          ui-monospace,
+          monospace;
+        color: #a39d8a;
+      }
+      .tile {
+        width: 360px;
+        max-width: 80vw;
+        height: 240px;
       }
     </style>
   </head>
   <body>
-    <h1>ProCon Studio icons</h1>
+    <h1>ProCon Studio: icons and art</h1>
     <p>
-      Doodles on a 24&times;24 grid: 2 px round strokes in
-      <code>currentColor</code>, slightly wobbly outlines, and one ink accent
-      per icon filled with <code>var(--icon-accent, currentColor)</code>. Use
+      Stickers on a 24&times;24 grid in the spirit of Salmon Run: flat fills
+      from the palette below, a thick dark outline and chunky, goofy shapes. Use
       one with
       <code
         >&lt;svg class="app-icon"&gt;&lt;use
         href="icons/app-studio.svg#i"/&gt;&lt;/svg&gt;</code
-      >. Columns: each theme's page, panel and active-tab colours; class icons
-      also on their class colour as the accent.
+      >. Each icon carries its own colours; a theme tints them with
+      <code>--icon-line</code> (outlines and pupils),
+      <code>--icon-accent</code> (the one ink accent) and
+      <code>--icon-halo</code> (a sticker edge around the whole icon, none by
+      default).
     </p>
+
+    <h2>Palette</h2>
+    <p>
+      The Salmon Run theme (<code>art/salmon.css</code>, 4th entry in the View
+      menu). Body text on the cards: paper #f6f1e4 14.8:1, #cfc8b4 10:1, #a39d8a
+      6.1:1; dark ink on every band colour at least 5.3:1 (WCAG AA).
+    </p>
+    <div class="swatches" id="palette"></div>
+
     <div id="sections"></div>
+
+    <h2>Artwork</h2>
+    <p>
+      In <code>web/art/</code>, served at <code>/art/</code>. The theme uses the
+      sign, Vision and Predictor pieces as empty states, the magnifier and the
+      old reviewer as corner characters on the Inkspector's and Cuttlefish's
+      lists, and the tiles behind the page and inside the cards.
+    </p>
+    <div class="art" id="art"></div>
     <script src="inline.js"></script>
     <script>
+      const PALETTE = [
+        ["Workwear orange", "#ff6a13", "accent, active app, bands"],
+        ["Salmonid teal", "#19c6a6", "links, table heads, bands"],
+        ["Golden egg", "#ffc41f", "hazard stripes, bands"],
+        ["Player pink", "#ff3d9a", "ink splats, bands"],
+        ["Ink purple", "#9d7bff", "bands"],
+        ["Neon lime", "#c5f02a", "header rule, rail edge, pressed"],
+        ["Record red", "#ff3d5f", "recording"],
+        ["Paper", "#f6f1e4", "text, heading stickers"],
+        ["Text 2", "#cfc8b4", "secondary text"],
+        ["Text 3", "#a39d8a", "notes"],
+        ["Card", "#1c1f1a", "panels"],
+        ["Dock", "#11140f", "page"],
+        ["Ink", "#0a0b09", "outlines, top bar"],
+        ["Icon line", "#1a1320", "icon outlines"],
+      ];
+      document.getElementById("palette").innerHTML = PALETTE.map(
+        ([name, hex, use]) =>
+          `<div class="swatch"><div style="background:${hex}"></div>` +
+          `<p><b>${name}</b><code>${hex}</code><br>${use}</p></div>`,
+      ).join("");
+
       const GROUPS = {
         Apps: [
           "app-studio",
@@ -179,61 +308,53 @@
           "ui-language",
         ],
       };
-      // Class colours from the annotation classes, for the accent column
-      const CLASS_COLORS = {
-        smallfry: "#8bd450",
-        chum: "#4fb3ff",
-        cohock: "#2f6fdf",
-        steelhead: "#f5c518",
-        flyfish: "#ff8a3d",
-        scrapper: "#9aa3ad",
-        steel_eel: "#b86bff",
-        stinger: "#ff5c8a",
-        maws: "#20c7a8",
-        drizzler: "#6a8cff",
-        fish_stick: "#c9a26b",
-        flipper_flopper: "#3dd6d0",
-        big_shot: "#e0564a",
-        slammin_lid: "#7f8c3a",
-        golden_egg: "#ffd23f",
-        player: "#ff6fd8",
-        dead_player: "#a0a0ff",
-        basket: "#ffffff",
-        cohozuna: "#ff3b3b",
-        horrorboros: "#c0392b",
-        megalodontia: "#8e44ad",
-      };
-      const THEMES = ["studio", "joy", "telemetry"];
-      const SURFACES = ["bg", "panel", "active"];
       const icon = (name, px) =>
         `<svg width="${px}" height="${px}" viewBox="0 0 24 24"><use href="${name}.svg#i"/></svg>`;
-      const sizes = (name) => [16, 24, 48].map((px) => icon(name, px)).join("");
+      const THEMES = [
+        ["studio", "Studio panel"],
+        ["joy", "Joy panel"],
+        ["telemetry", "Telemetry panel"],
+        ["salmon", "Salmon Run active app"],
+        ["studio sticker", "--icon-halo: paper"],
+        ["telemetry mono", "--icon-line and --icon-accent: paper"],
+      ];
 
       let html = "";
       for (const [group, names] of Object.entries(GROUPS)) {
-        const classes = group === "Classes";
-        const head = THEMES.flatMap((t) =>
-          SURFACES.map((s) => `<th>${t} ${s}</th>`),
-        ).join("");
-        const rows = names
-          .map((name) => {
-            const cells = THEMES.flatMap((t) =>
-              SURFACES.map((s) => `<td class="${t} ${s}">${sizes(name)}</td>`),
-            ).join("");
-            const color = CLASS_COLORS[name.replace("class-", "")];
-            const own = classes
-              ? `<td class="studio bg" style="--icon-accent:${color}">${sizes(name)}</td>` +
-                `<td class="joy panel" style="--icon-accent:${color}">${sizes(name)}</td>`
-              : "";
-            return `<tr><th class="name">${name}</th>${cells}${own}</tr>`;
-          })
+        const cards = names
+          .map(
+            (name) =>
+              `<div class="card"><div class="name">${name}</div>` +
+              `<div class="sizes">${[20, 24, 48, 96].map((px) => icon(name, px)).join("")}</div>` +
+              `<div class="themes">${THEMES.map(([c, t]) => `<span class="${c}" title="${t}">${icon(name, 24)}</span>`).join("")}</div></div>`,
+          )
           .join("");
-        const ownHead = classes
-          ? "<th>studio, class colour</th><th>joy, class colour</th>"
-          : "";
-        html += `<h2>${group}</h2><div class="scroll"><table><tr><th class="name"></th>${head}${ownHead}</tr>${rows}</table></div>`;
+        html += `<h2>${group}</h2><div class="grid">${cards}</div>`;
       }
+      html = html.replace(
+        "<h2>Apps</h2>",
+        `<h2>Apps</h2><p>Last row, left to right: ${THEMES.map(([, t]) => t).join(", ")}.</p>`,
+      );
       document.getElementById("sections").innerHTML = html;
+
+      const ART = [
+        ["studio-sign", "Studio: the work sign (no video source)"],
+        ["inkspector", "Inkspector: magnifier over an ink splat"],
+        ["cuttlefish", "Cuttlefish: the old reviewer"],
+        ["vision", "Vision: a spotted Salmonid"],
+        ["predictor", "Predictor: the crystal ball"],
+        ["wordmark", "Wordmark (top bar)"],
+      ];
+      document.getElementById("art").innerHTML =
+        ART.map(
+          ([name, caption]) =>
+            `<figure><img src="../art/${name}.svg" alt=""${name === "wordmark" ? ' style="height:70px"' : ""}><figcaption>${caption}</figcaption></figure>` +
+            (name === "wordmark"
+              ? ""
+              : `<figure class="light"><img src="../art/${name}.svg" alt=""><figcaption>on paper</figcaption></figure>`),
+        ).join("") +
+        `<figure><div class="tile" style="background:url(../art/splat-tile.svg) 0 0/320px 320px,#11140f"></div><figcaption>splat-tile.svg (page)</figcaption></figure>` +
+        `<figure><div class="tile" style="background:url(../art/panel-tile.svg) 0 0/240px 240px,#1c1f1a"></div><figcaption>panel-tile.svg (cards)</figcaption></figure>`;
     </script>
   </body>
 </html>
