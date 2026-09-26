@@ -2,12 +2,12 @@
 //!
 //! The store (documents, chunk index, glossary) and the E5 embedder load
 //! once, on the first request that needs them, and serve everything that
-//! follows: searches, imports and the reviewer's retrieval ("Ask
-//! Cuttlefish" in the player, and the Ask box here). The model client is
-//! made per request with the key from `ANTHROPIC_API_KEY`, the only place
-//! the key is read from; it is never shown or logged, and the page only
-//! learns whether it is set. Searching, the glossary and imports work
-//! without it.
+//! follows: searches, imports and the chat's retrieval (the chat lives in
+//! the reviews, see [`crate::cuttlefish`]; this view manages the store).
+//! The model client is made per request with the key from
+//! `ANTHROPIC_API_KEY`, the only place the key is read from; it is never
+//! shown or logged, and the page only learns whether it is set. Searching,
+//! the glossary and imports work without it.
 //!
 //! Imports run one at a time on a thread of their own, with a log the page
 //! polls; web pages go through the crate's polite crawler (robots.txt, one
@@ -21,6 +21,8 @@
 //! - `GET stats`: documents per source kind, chunks, glossary, digest,
 //!   embedder, and whether `ANTHROPIC_API_KEY` and `DISCORD_BOT_TOKEN` are
 //!   set
+//! - `GET model`: the model's name and whether `ANTHROPIC_API_KEY` is set,
+//!   without loading the store (the chat asks before its first message)
 //! - `GET overview`: what the store holds (documents by source and format,
 //!   glossary terms by language, name tables, assets by folder), the inbox,
 //!   the last import reports, and the old data folder once moved aside
@@ -35,10 +37,6 @@
 //! - `GET inbox`: files waiting in the inbox; `POST upload?path=` with the
 //!   file as the body writes one there (at most [`MAX_UPLOAD`] bytes)
 //! - `GET reports`, `GET report?id=`: inbox import reports
-//! - `POST ask` with `{"question", "k"?}`: the model's answer with the
-//!   sources it cites; `501` without the key
-//! - `POST translate` with `{"text", "to"}`: the text in language `to`;
-//!   `501` without the key
 //! - `POST ingest` with an [`IngestRequest`] starts an import (`409` while
 //!   one runs); `GET jobs` lists this run's imports; `POST cancel` stops the
 //!   current one after its document
@@ -53,7 +51,7 @@ use cuttlefish::doc::Document;
 use cuttlefish::embed::{E5Embedder, Embedder};
 use cuttlefish::ingest::{self, Meta, Web};
 use cuttlefish::llm::{Client, Settings};
-use cuttlefish::review::{self, AiComment, ReviewRequest};
+use cuttlefish::review::{self, ChatReply, ChatRequest};
 use cuttlefish::store::{self, Store};
 use cuttlefish::{inbox, tables};
 use futures_util::StreamExt;
@@ -363,15 +361,23 @@ impl Knowledge {
         Client::from_env(self.settings.clone()).map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))
     }
 
-    /// Review a stretch of video with knowledge from the store
-    pub fn review(&self, request: &ReviewRequest) -> Result<Vec<AiComment>, Status> {
+    /// Answer a chat message with knowledge from the store
+    pub fn chat(&self, request: &ChatRequest) -> Result<ChatReply, Status> {
         let client = self.client()?;
         let loaded = self
             .loaded()
             .map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))?;
         let store = loaded.store.read().unwrap();
-        review::review(&store, &loaded.embedder, &client, K, request)
+        review::chat(&store, &loaded.embedder, &client, K, request)
             .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))
+    }
+
+    /// The model's name and whether its key is set, without the store
+    pub fn model(&self) -> Value {
+        json!({
+            "model": self.settings.model,
+            "anthropic_key": is_set("ANTHROPIC_API_KEY"),
+        })
     }
 
     /// Documents, chunks, glossary, digest, embedder and which keys are set
@@ -655,39 +661,6 @@ impl Knowledge {
         Ok(json!({ "terms": terms, "size": glossary.terms.len() }))
     }
 
-    /// The model's answer to a question, with the sources it cites
-    pub fn ask(&self, question: &str, k: usize) -> Result<Value, Status> {
-        let question = question.trim();
-        if question.is_empty() {
-            return Err(anyhow::anyhow!("ask something").into());
-        }
-        let client = self.client()?;
-        let loaded = self.loaded()?;
-        let store = loaded.store.read().unwrap();
-        let answer = review::ask(
-            &store,
-            &loaded.embedder,
-            &client,
-            k.clamp(1, MAX_K),
-            question,
-        )
-        .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))?;
-        Ok(json!(answer))
-    }
-
-    /// `text` in language `to`, with the glossary's names
-    pub fn translate(&self, text: &str, to: &str) -> Result<Value, Status> {
-        let (text, to) = (text.trim(), to.trim());
-        if text.is_empty() || to.is_empty() {
-            return Err(anyhow::anyhow!("give a text and a language").into());
-        }
-        let client = self.client()?;
-        let glossary = Store::load_glossary(&self.root)?;
-        let translated = review::translate(&client, &glossary, text, to)
-            .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))?;
-        Ok(json!({ "text": translated, "to": to }))
-    }
-
     /// This run's imports, newest first
     pub fn jobs(&self) -> Value {
         let jobs = self.jobs.lock().unwrap();
@@ -866,6 +839,7 @@ impl Knowledge {
         let k = || text("k").parse().unwrap_or(K);
         match path {
             "stats" => Ok(self.stats()?),
+            "model" => Ok(self.model()),
             "search" => Ok(self.search(text("q"), k())?),
             "documents" => Ok(self.documents()?),
             "overview" => Ok(self.overview()?),
@@ -888,16 +862,6 @@ impl Knowledge {
             serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("bad JSON: {e}").into())
         };
         match path {
-            "ask" => {
-                let body = json_body()?;
-                let k = body["k"].as_u64().map_or(K, |k| k as usize);
-                self.ask(body["question"].as_str().unwrap_or_default(), k)
-            }
-            "translate" => {
-                let body = json_body()?;
-                let text = |key: &str| body[key].as_str().unwrap_or_default().to_string();
-                self.translate(&text("text"), &text("to"))
-            }
             "ingest" => {
                 let request: IngestRequest =
                     serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("bad import: {e}"))?;

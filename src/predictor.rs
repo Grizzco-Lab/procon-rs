@@ -530,7 +530,10 @@ impl Predictor {
             Source::Review { id } => {
                 check_name(id)?;
                 let review = self.cuttlefish.review(id)?;
-                let video = &review.video;
+                let video = review
+                    .video
+                    .as_ref()
+                    .with_context(|| format!("the review {id} has no video"))?;
                 let path = self.cuttlefish.video_path(video, Some(id))?;
                 // A review of a session's recording has its controller data too
                 let session = (video.kind == VideoKind::Session && video.file.is_none())
