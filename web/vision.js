@@ -1,11 +1,12 @@
 // Vision app: detect and track objects in a recorded segment, review the
 // boxes frame by frame through our classes (classes.json; the COCO ones
 // behind a toggle), and send them to the labels as model boxes. The
-// classes panel opens on the labeled dataset. Runs
-// after app.js and inspect.js and uses their helpers ($, escapeHtml). Runs
-// go through /api/vision (see src/vision.rs); frames come from the
-// Inkspector's frame endpoint. State lives in the hash:
-// #vision/s=<session>&seg=<file>&n=<frame>.
+// classes panel opens on the labeled dataset. The segment plays in the
+// shared player (player.js: the Inkspector's frames, keys, scrubber with
+// the processed frames as marks, neighbours) with the boxes as a layer over
+// it. Runs after app.js and player.js and uses their helpers ($,
+// escapeHtml). Runs go through /api/vision (see src/vision.rs). State lives
+// in the hash: #vision/s=<session>&seg=<file>&n=<frame>.
 "use strict";
 
 (() => {
@@ -46,18 +47,27 @@
     job: null,
     /** Results of the selected segment: {run, frames, classes, tracks} */
     results: null,
-    /** Index into results.frames */
-    index: 0,
+    /** Session/segment of the results on screen */
+    loadedKey: null,
+    /** Session/segment open in the player */
+    playerKey: null,
     /** Frames in the selected segment, once known */
     frames: null,
     /** Track highlighted in the trail */
     track: null,
     pollTimer: null,
-    /** Playing the processed frames */
-    playing: false,
   };
 
-  const img = $("v-img");
+  /** The shared player: the segment's frames, the boxes drawn over them */
+  const player = new Player({
+    screen: $("v-screen"),
+    controls: $("v-player-controls"),
+    scrubber: $("v-scrubber"),
+    strip: $("v-strip"),
+    remember: "vision",
+    neighbours: { radius: 3 },
+    onFrame: drawFrame,
+  });
 
   function remembered(key, fallback) {
     try {
@@ -139,7 +149,7 @@
           .join("")
       : `<tr><td colspan="3" class="panel-note">Nothing labeled yet.</td></tr>`;
     $("v-dataset-dir").textContent = overview.dir;
-    if (vis.results) show(vis.index);
+    if (vis.results) drawFrame(player.frame);
   }
 
   /** The classes panel's two views: the dataset or the run on screen */
@@ -227,9 +237,9 @@
 
   const summaryOf = (name) => vis.sessions?.find((s) => s.name === name);
 
-  /** Frame n of the selected segment, from the Inkspector */
-  const frameUrl = (n) =>
-    `/api/inspect/frame?${new URLSearchParams({ ...selected(), n })}`;
+  /** Frame n of a segment, from the Inkspector */
+  const frameUrl = (s, seg, n) =>
+    `/api/inspect/frame?${new URLSearchParams({ s, seg, n })}`;
 
   function fillSegments() {
     const summary = summaryOf($("v-session").value);
@@ -438,13 +448,28 @@
 
   // --------------------------------------------------------- the results
 
-  /** Show the selected segment's last results */
-  function openSegment(frame) {
+  /** Open the selected segment in the player and show its last results */
+  async function openSegment(frame) {
     const { s, seg } = selected();
     remember("session", s);
     remember("segment", seg);
     if (!s || !seg) return;
-    loadFrameCount(s, seg);
+    await loadFrameCount(s, seg);
+    if (selected().seg !== seg || selected().s !== s) return;
+    const key = `${s}/${seg}`;
+    if (vis.playerKey !== key && vis.frames != null) {
+      vis.playerKey = key;
+      vis.track = null;
+      player.open(
+        {
+          frames: vis.frames,
+          fps: summaryOf(s)?.fps || 30,
+          frame: (n) => frameUrl(s, seg, n),
+          title: `${s} · ${seg}`,
+        },
+        frame ?? 0,
+      );
+    } else if (frame != null) player.go(frame);
     loadResults(s, seg, frame);
   }
 
@@ -465,10 +490,11 @@
     vis.loadedKey = `${s}/${seg}`;
     vis.track = null;
     const { run, frames } = results;
-    const scrub = $("v-scrub");
-    scrub.max = Math.max(0, frames.length - 1);
     $("v-empty").hidden = frames.length > 0;
-    img.hidden = !frames.length;
+    // The processed frames are marks on the scrubber
+    player.setMarks({
+      ticks: frames.map((line) => ({ n: line.frame, kind: "model" })),
+    });
     const hidden = Object.values(results.hidden ?? {}).reduce(
       (sum, n) => sum + n,
       0,
@@ -495,41 +521,54 @@
     renderJob();
     $("v-sent").hidden = true;
     $("v-sent").innerHTML = "";
-    const wanted = frame ?? frames[vis.index]?.frame ?? 0;
-    const index = frames.findIndex((f) => f.frame >= wanted);
-    show(index < 0 ? Math.max(0, frames.length - 1) : index);
+    // The processed frame at or after the wanted one, if any
+    const wanted = frame ?? player.frame;
+    const line =
+      frames.find((f) => f.frame >= wanted) ?? frames[frames.length - 1];
+    if (line && line.frame !== player.frame) player.go(line.frame);
+    else drawFrame(player.frame);
   }
 
-  /** Show processed frame `index` with its boxes */
-  function show(index) {
+  /** The results' line of frame n, if it was processed */
+  const lineAt = (n) => vis.results?.frames.find((f) => f.frame === n) ?? null;
+
+  /** The player shows frame n: its boxes, the trail, the hash */
+  function drawFrame(n) {
     const frames = vis.results?.frames ?? [];
-    if (!frames.length) {
-      $("v-boxes").replaceChildren();
-      $("v-frame-chip").textContent = "–";
-      $("v-frame-note").textContent = "";
-      drawTrail();
-      return;
-    }
-    vis.index = Math.max(0, Math.min(frames.length - 1, index));
-    const line = frames[vis.index];
+    const line = lineAt(n);
+    const index = frames.indexOf(line);
+    $("v-frame-chip").textContent = frames.length
+      ? line
+        ? `${index + 1}/${frames.length} processed`
+        : "not processed"
+      : "–";
+    const ms = line?.ms;
+    $("v-frame-note").textContent = line
+      ? `${line.boxes.length} boxes` +
+        (ms
+          ? ` · decode ${fmt(ms.decode)} · network ${fmt(ms.network)} ms`
+          : "")
+      : "";
+    drawBoxes(line?.boxes ?? []);
+    drawTrail(line);
     const { s, seg } = selected();
-    const src = frameUrl(line.frame);
-    if (img.getAttribute("src") !== src) img.src = src;
-    $("v-scrub").value = vis.index;
-    $("v-frame-chip").textContent =
-      `Frame ${line.frame} · ${vis.index + 1}/${frames.length}`;
-    const ms = line.ms;
-    $("v-frame-note").textContent =
-      `${line.boxes.length} boxes` +
-      (ms ? ` · decode ${fmt(ms.decode)} · network ${fmt(ms.network)} ms` : "");
-    drawBoxes(line.boxes);
-    drawTrail();
     history.replaceState(
       null,
       "",
-      `#vision/${new URLSearchParams({ s, seg, n: line.frame })}`,
+      `#vision/${new URLSearchParams({ s, seg, n })}`,
     );
     rememberView();
+  }
+
+  /** The processed frame before (-1) or after (+1) the current one */
+  function processed(direction) {
+    const frames = vis.results?.frames ?? [];
+    const n = player.frame;
+    const line =
+      direction < 0
+        ? [...frames].reverse().find((f) => f.frame < n)
+        : frames.find((f) => f.frame > n);
+    if (line) player.go(line.frame);
   }
 
   const svgNs = "http://www.w3.org/2000/svg";
@@ -616,17 +655,16 @@
       tr.onclick = () => {
         vis.track = vis.track === t.id ? null : t.id;
         renderTracks();
-        if (vis.track != null) {
-          show(vis.results.frames.findIndex((f) => f.frame >= t.first));
-        } else show(vis.index);
+        if (vis.track != null) player.go(t.first);
+        else drawFrame(player.frame);
       };
       body.append(tr);
     }
   }
 
   /** Every track's path on screen (box centers over time), the current
-   * frame's positions marked */
-  function drawTrail() {
+   * frame's positions marked when it was processed (`line`) */
+  function drawTrail(line) {
     const layer = $("v-trail");
     layer.replaceChildren(
       svg("rect", { class: "v-trail-bg", x: 0, y: 0, width: W, height: H }),
@@ -667,7 +705,6 @@
         }),
       );
     }
-    const line = frames[vis.index];
     for (const b of line?.boxes ?? []) {
       if (b.id == null) continue;
       const [x, y] = [(b.x + b.w / 2) * W, (b.y + b.h / 2) * H];
@@ -693,64 +730,15 @@
     }
   }
 
-  const step = (delta) => {
-    pause();
-    show(vis.index + delta);
-  };
-  $("v-prev").onclick = () => step(-1);
-  $("v-next").onclick = () => step(1);
-  $("v-scrub").oninput = (event) => {
-    pause();
-    show(Number(event.target.value));
-  };
-
-  // ------------------------------------------------------------ playback
-
-  /** Play the processed frames at the recording's pace (a frame every
-   * `step` frames), each shown once its picture has loaded */
-  async function play() {
-    const frames = vis.results?.frames ?? [];
-    if (vis.playing || frames.length < 2) return;
-    if (vis.index >= frames.length - 1) show(0);
-    vis.playing = true;
-    $("v-play").textContent = "Pause";
-    const fps = summaryOf(selected().s)?.fps || 30;
-    const results = vis.results;
-    while (vis.playing && vis.results === results) {
-      if (vis.index >= frames.length - 1) break;
-      const started = performance.now();
-      const between = frames[vis.index + 1].frame - frames[vis.index].frame;
-      show(vis.index + 1);
-      // Ask for the next pictures early; the server decodes them in windows
-      for (let k = 1; k <= 3; k++) {
-        const next = frames[vis.index + k];
-        if (next) new Image().src = frameUrl(next.frame);
-      }
-      await new Promise((resolve) => {
-        if (img.complete) resolve();
-        else img.addEventListener("load", resolve, { once: true });
-        img.addEventListener("error", resolve, { once: true });
-      });
-      const wait = (between * 1000) / fps - (performance.now() - started);
-      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-    }
-    pause();
-  }
-
-  function pause() {
-    vis.playing = false;
-    $("v-play").textContent = "Play";
-  }
-
-  const togglePlay = () => (vis.playing ? pause() : play());
-  $("v-play").onclick = togglePlay;
-  $("v-scores").onchange = () => show(vis.index);
-  $("v-tracked").onchange = () => show(vis.index);
+  $("v-prev").onclick = () => processed(-1);
+  $("v-next").onclick = () => processed(1);
+  $("v-scores").onchange = () => drawFrame(player.frame);
+  $("v-tracked").onchange = () => drawFrame(player.frame);
 
   /** Load the results again, through our classes or all of them */
   const reloadResults = () => {
     const { s, seg } = selected();
-    if (s && seg) loadResults(s, seg, vis.results?.frames[vis.index]?.frame);
+    if (s && seg) loadResults(s, seg);
   };
   $("v-all").onchange = reloadResults;
   $("v-map").onchange = () => {
@@ -758,22 +746,16 @@
     reloadResults();
   };
 
-  // Space plays, arrows step, as in the Inkspector; the page never scrolls
-  // for them. Text fields and checkboxes keep their keys; the scrubber
-  // takes these ones from the page.
+  // The player has Space and the arrows; N and P jump between processed
+  // frames
   document.addEventListener("keydown", (event) => {
     if (!vis.shown || !vis.results?.frames.length) return;
-    const target = event.target;
-    if (
-      target.matches?.(
-        "input:not([type=range]), select, textarea, [contenteditable]",
-      )
-    )
-      return;
+    const tag = event.target.tagName;
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key === " ") togglePlay();
-    else if (event.key === "ArrowLeft") step(event.shiftKey ? -10 : -1);
-    else if (event.key === "ArrowRight") step(event.shiftKey ? 10 : 1);
+    const key = event.key.toLowerCase();
+    if (key === "n") processed(1);
+    else if (key === "p") processed(-1);
     else return;
     event.preventDefault();
   });
@@ -792,7 +774,7 @@
       const dropped = Object.entries(sent.dropped)
         .map(([c, n]) => `${escapeHtml(c)} ${n}`)
         .join(", ");
-      const frame = vis.results?.frames[vis.index]?.frame ?? sent.first ?? 0;
+      const frame = lineAt(player.frame)?.frame ?? sent.first ?? 0;
       const link = `#inspect/${new URLSearchParams({ s, seg, n: frame, label: 1 })}`;
       out.innerHTML = `
         <p><b>${sent.boxes}</b> boxes written: ${sent.added} frames added, ${sent.replaced} replaced (model boxes only), ${sent.kept} kept (labeled by a person).</p>
@@ -838,25 +820,23 @@
     const now = selected();
     const loaded = vis.results && vis.loadedKey === `${now.s}/${now.seg}`;
     if (!loaded) openSegment(n);
-    else if (n != null) {
-      const index = vis.results.frames.findIndex((f) => f.frame >= n);
-      if (index >= 0 && index !== vis.index) show(index);
-    }
+    else if (n != null && n !== player.frame) player.go(n);
     poll();
   }
 
   window.addEventListener("app-route", (event) => {
     const { app, state } = event.detail;
     vis.shown = app === "vision";
+    player.enabled = vis.shown;
     if (vis.shown) route(state);
     else {
       clearTimeout(vis.pollTimer);
-      pause();
+      player.pause();
     }
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) pause();
+    if (document.hidden) player.pause();
     else if (vis.shown) poll();
   });
 

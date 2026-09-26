@@ -1,9 +1,11 @@
 // Predictor app: run AgentZero's inverse dynamics model (IDM) on a video
 // and watch what it predicts, frame by frame, next to the truth when the
-// video has a controller recording. Runs after app.js and inspect.js and
-// uses their helpers ($, escapeHtml, svgEl, drawInputHud, stickPercent).
-// Runs go through /api/predictor (see src/predictor.rs); the video plays
-// from /api/cuttlefish/video. State lives in the hash:
+// video has a controller recording: the shared player (player.js) shows the
+// video with the Full overlay and the labels table comparing the two, as in
+// the Inkspector; the timeline and the agreement panels follow it. Runs
+// after app.js and player.js and uses their helpers ($, escapeHtml,
+// stickPercent). Runs go through /api/predictor (see src/predictor.rs); the
+// video plays from /api/cuttlefish/video. State lives in the hash:
 // #predictor/key=<video>&ckpt=<checkpoint>&t=<seconds>.
 "use strict";
 
@@ -63,8 +65,6 @@
     runs: [],
     /** The run on screen */
     run: null,
-    /** Frame on screen */
-    frame: 0,
     /** Loaded labels: { start, pred: [], truth: [] | null } */
     chunk: null,
     loading: null,
@@ -75,7 +75,6 @@
     agreeAt: 0,
   };
 
-  const video = $("p-video");
   const canvas = $("p-timeline");
 
   function stick(raw) {
@@ -447,12 +446,7 @@
 
   // ------------------------------------------------------------ the viewer
 
-  /** The input overlay and a small controller, copied from the Studio */
-  const hud = $("input-hud").cloneNode(true);
-  hud.removeAttribute("id");
-  hud.dataset.keys = "";
-  $("p-screen").append(hud);
-
+  /** A small controller next to the video, copied from the Studio */
   const mini = $("procon").cloneNode(true);
   for (const el of [mini, ...mini.querySelectorAll("[id]")]) {
     if (!el.closest("defs")) el.removeAttribute("id");
@@ -468,6 +462,22 @@
     r: mini.querySelector('[data-btn="r_stick"]'),
   };
 
+  /** The shared player: the run's video with the overlays and labels table */
+  const player = new Player({
+    screen: $("p-screen"),
+    controls: $("p-player-controls"),
+    scrubber: $("p-scrubber"),
+    strip: $("p-strip"),
+    table: $("p-rows"),
+    predNote: $("p-pred-note"),
+    remember: "predictor",
+    neighbours: { radius: 3 },
+    onFrame,
+    onError(message) {
+      $("p-viewer-note").textContent = message;
+    },
+  });
+
   /** Open a stored run */
   function openRun(key, ckpt, t) {
     const run = pred.runs.find((r) => r.key === key && r.checkpoint === ckpt);
@@ -479,35 +489,51 @@
     pred.run = run;
     renderRuns();
     $("p-empty").hidden = true;
-    video.hidden = false;
     $("p-viewer-note").textContent =
       `${run.title} · ${run.checkpoint} · ${run.fps?.toFixed(2) ?? "?"} fps`;
     $("p-agree-mode").hidden = !run.session;
-    if (!same) {
-      pred.chunk = null;
-      pred.frame = -1;
-      video.src = `/api/cuttlefish/video?${new URLSearchParams(run.play)}`;
+    const n = Math.round(t * (run.fps || 30));
+    if (same) {
+      if (player.frame !== n) player.go(n);
+      return;
     }
-    const seek = () => {
-      if (Math.abs(video.currentTime - t) > 0.05) video.currentTime = t;
-      onFrame();
+    pred.chunk = null;
+    const thumb = (k) => {
+      const query = new URLSearchParams(run.play);
+      query.set("t_ms", Math.round((k * 1000) / player.fps));
+      return `/api/cuttlefish/thumb?${query}`;
     };
-    if (video.readyState >= 1) seek();
-    else video.addEventListener("loadedmetadata", seek, { once: true });
+    player.open(
+      {
+        video: `/api/cuttlefish/video?${new URLSearchParams(run.play)}`,
+        fps: run.fps || 30,
+        sound: true,
+        thumb,
+        labels,
+        title: `${run.title} · ${run.checkpoint}`,
+      },
+      n,
+    );
   }
 
-  const fps = () => pred.run?.fps || 30;
-  const frameAt = (seconds) => Math.max(0, Math.round(seconds * fps()));
-  const frameCount = () =>
-    Number.isFinite(video.duration) ? Math.floor(video.duration * fps()) : 0;
+  const fps = () => player.fps;
+  const frameCount = () => player.frames;
 
-  /** The labels of frame n, if loaded */
+  /** The labels of frame n, if loaded: [prediction, truth] */
   function labelsAt(n) {
     const chunk = pred.chunk;
     if (!chunk || n < chunk.start || n >= chunk.start + chunk.pred.length)
       return [undefined, undefined];
     const i = n - chunk.start;
     return [chunk.pred[i], chunk.truth?.[i]];
+  }
+
+  /** The player's labels: [truth, prediction]; nothing until the chunk is here */
+  async function labels(n) {
+    const [p, t] = labelsAt(n);
+    const loaded =
+      pred.chunk && n >= pred.chunk.start && n < pred.chunk.start + CHUNK;
+    return [t, loaded ? (p ?? null) : undefined];
   }
 
   /** Load the frames around n unless they are loaded */
@@ -535,14 +561,12 @@
       if (pred.loading === key) pred.loading = null;
     }
     draw();
+    player.refresh();
   }
 
-  /** The video shows another frame: follow it */
-  function onFrame(mediaTime) {
+  /** The player shows another frame: follow it */
+  function onFrame(n) {
     if (!pred.run) return;
-    const n = frameAt(mediaTime ?? video.currentTime);
-    if (n === pred.frame) return;
-    pred.frame = n;
     ensureChunk(n);
     draw();
     scheduleAgreement();
@@ -554,89 +578,22 @@
     rememberView();
   }
 
-  /** Follow every presented frame while playing */
-  function follow() {
-    if (!video.requestVideoFrameCallback) return;
-    video.requestVideoFrameCallback((_, meta) => {
-      onFrame(meta.mediaTime);
-      if (!video.paused && pred.shown) follow();
-    });
-  }
-
-  video.addEventListener("play", () => {
-    $("p-play").textContent = "Pause";
-    follow();
-  });
-  video.addEventListener("pause", () => {
-    $("p-play").textContent = "Play";
-    onFrame();
-  });
-  video.addEventListener("seeked", () => onFrame());
-  video.addEventListener("timeupdate", () => {
-    if (!video.requestVideoFrameCallback) onFrame();
-  });
-
-  $("p-play").onclick = () => (video.paused ? video.play() : video.pause());
-  const step = (delta) => {
-    video.pause();
-    const n = Math.max(0, pred.frame + delta);
-    video.currentTime = (n + 0.5) / fps();
-  };
-  $("p-prev").onclick = () => step(-1);
-  $("p-next").onclick = () => step(1);
   $("p-span").value = String(pred.span);
   $("p-span").onchange = (event) => {
     pred.span = Number(event.target.value);
-    ensureChunk(pred.frame);
+    ensureChunk(player.frame);
     draw();
     scheduleAgreement();
   };
-  $("p-overlay").value = remembered("overlay", "pred");
-  $("p-overlay").onchange = (event) => {
-    remember("overlay", event.target.value);
-    draw();
-  };
-
-  document.addEventListener("keydown", (event) => {
-    if (!pred.shown || !pred.run) return;
-    const tag = event.target.tagName;
-    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key === " ") $("p-play").click();
-    else if (event.key === "ArrowLeft") step(event.shiftKey ? -10 : -1);
-    else if (event.key === "ArrowRight") step(event.shiftKey ? 10 : 1);
-    else return;
-    event.preventDefault();
-  });
 
   // ---------------------------------------------------------- drawing
 
   function draw() {
     if (!pred.run || !pred.shown) return;
-    const n = pred.frame;
-    const [p, t] = labelsAt(n);
-    $("p-frame").textContent = `frame ${n} · ${clockText(n / fps())}`;
-    drawOverlay(p, t);
+    const [p, t] = labelsAt(player.frame);
     drawMini(p);
     drawProbs(p, t);
     drawTimeline();
-  }
-
-  /** The input overlay: the prediction or the truth */
-  function drawOverlay(p, t) {
-    const which = $("p-overlay").value;
-    const label = which === "truth" ? t : which === "pred" ? p : null;
-    const show = Boolean(label && label.valid !== false);
-    hud.toggleAttribute("hidden", !show);
-    hud.classList.toggle("p-hud-truth", which === "truth");
-    if (!show) return;
-    drawInputHud(hud, {
-      left: (label.left_stick ?? [2048, 2048]).map(stickPercent),
-      right: (label.right_stick ?? [2048, 2048]).map(stickPercent),
-      pressed: new Set(label.buttons ?? []),
-      yaw: (label.gyro_deg?.[2] ?? 0) * fps(),
-      pitch: (label.gyro_deg?.[1] ?? 0) * fps(),
-    });
   }
 
   /** The small controller: the predicted buttons and sticks */
@@ -696,7 +653,7 @@
     const chunk = pred.chunk;
     const width = canvas.clientWidth;
     if (!width) return;
-    const n0 = pred.frame;
+    const n0 = player.frame;
     const half = (pred.span * fps()) / 2;
     const first = Math.floor(n0 - half);
     const last = Math.ceil(n0 + half);
@@ -883,8 +840,7 @@
     const plot = Number(canvas.dataset.plot);
     const share = (event.clientX - rect.left - left) / plot;
     if (share < 0 || share > 1) return;
-    const n = Math.round(first + share * (last - first));
-    video.currentTime = (Math.max(0, n) + 0.5) / fps();
+    player.go(Math.round(first + share * (last - first)));
   });
 
   new ResizeObserver(() => draw()).observe(canvas);
@@ -911,8 +867,8 @@
     pred.agreeAt = performance.now();
     const all = $("p-agree-mode").value === "all";
     const half = Math.round((pred.span * fps()) / 2);
-    const start = all ? 0 : Math.max(0, pred.frame - half);
-    const stop = all ? Math.max(1, frameCount()) : pred.frame + half;
+    const start = all ? 0 : Math.max(0, player.frame - half);
+    const stop = all ? Math.max(1, frameCount()) : player.frame + half;
     let agreement;
     try {
       agreement = await api(
@@ -990,17 +946,18 @@
     const { app, state } = event.detail;
     const was = pred.shown;
     pred.shown = app === "predictor";
+    player.enabled = pred.shown;
     if (pred.shown) route(state);
     else if (was) {
       clearTimeout(pred.pollTimer);
       clearTimeout(pred.agreeTimer);
-      video.pause();
+      player.pause();
     }
   });
 
   document.addEventListener("visibilitychange", () => {
     if (!pred.shown) return;
-    if (document.hidden) video.pause();
+    if (document.hidden) player.pause();
     else poll();
   });
 

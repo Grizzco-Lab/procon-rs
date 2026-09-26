@@ -1,7 +1,10 @@
 // Cuttlefish app: chat with Cuttlefish (the AI), review a video with comments
 // at its times and drawings on its paused frames, and notes on the whole
-// video. Runs after i18n.js, app.js, sketch.js and inspect.js and uses their
-// helpers (t, $, Sketch, clock, escapeHtml). Its state lives in the hash:
+// video. The video plays in the shared player (player.js: transport, keys,
+// scrubber with the comments as marks, neighbours every half second), with
+// the drawings and the danmaku as layers over it. Runs after i18n.js,
+// app.js, sketch.js and player.js and uses their helpers (t, $, Sketch,
+// Player, clock, escapeHtml). Its state lives in the hash:
 // #cuttlefish (the library: the reviews, "open a video" and the chat bar,
 // whose first message starts a review without a video),
 // #cuttlefish/r=<review>&t=<s> (a saved review) or
@@ -40,8 +43,6 @@
   const DEFAULT_FPS = 30;
   /** Thumbnails on each side of the playhead in the neighbours strip */
   const STRIP_SIDE = 6;
-  /** Wait after the last seek before the strip updates, in ms */
-  const STRIP_DEBOUNCE_MS = 150;
   /** How often a missing YouTube title is asked about, in ms, and how many
    * times */
   const META_POLL_MS = 2500;
@@ -56,7 +57,6 @@
     f: "freehand",
   };
 
-  const video = $("cf-video");
   const screen = $("cf-screen");
   const danmakuLayer = $("cf-danmaku");
 
@@ -72,7 +72,6 @@
     review: null,
     /** Its folder name once saved */
     id: null,
-    fps: DEFAULT_FPS,
     /** Id of the comment being edited, whose drawings can change */
     active: null,
     /** Id of the note being edited */
@@ -112,20 +111,61 @@
     lastT: null,
   };
 
-  /** The neighbours strip */
-  const strip = {
-    /** Seconds between thumbnails */
-    spacing: parseFloat(remembered("spacing", "0.5")) || 0.5,
-    timer: null,
-    /** What the strip shows now, so an unchanged one is not drawn again */
-    key: "",
-  };
-
   const sketch = new Sketch(screen, {
     onChange: shapesChanged,
     onSelect: markTools,
     onDraw: startDrawing,
   });
+
+  /** The shared player; the drawing layer and the danmaku are over it */
+  const player = new Player({
+    screen,
+    controls: $("cf-player-controls"),
+    scrubber: $("cf-scrubber"),
+    strip: $("cf-strip"),
+    stripNote: $("cf-strip-note"),
+    remember: "cuttlefish",
+    neighbours: { radius: STRIP_SIDE, seconds: 0.5 },
+    onFrame(n) {
+      if (!cf.review) return;
+      const now = player.time();
+      drawShapes();
+      markLive(now);
+      followLinks(now);
+      if (player.playing) danmakuTick(now);
+      else writeHash();
+    },
+    onSeek() {
+      clearDanmaku();
+      danmaku.lastT = null;
+    },
+    onPlay(playing) {
+      if (playing) {
+        // Playing closes the open comment; a comment right at the start
+        // of playback shows too
+        cf.active = null;
+        drawComments();
+        sketch.setEditable(false);
+        danmaku.lastT = player.time() - 0.05;
+        danmakuLayer.classList.remove("is-paused");
+      } else {
+        sketch.setEditable(true);
+        danmakuLayer.classList.add("is-paused");
+        writeHash();
+      }
+    },
+    onMark(tick) {
+      openComment(tick.id);
+    },
+    onError(message) {
+      if (!cf.review) return;
+      const note = $("cf-video-note");
+      note.hidden = false;
+      note.textContent ||= message;
+    },
+  });
+
+  const playing = () => player.playing;
 
   function remembered(key, fallback) {
     try {
@@ -277,7 +317,7 @@
     chip.dataset.level = level;
     const label = chip.querySelector(".chip-text");
     const v = cf.review?.video;
-    const href = youtubeAt(v, video.currentTime || 0);
+    const href = youtubeAt(v, player.time());
     if (!text) return label.replaceChildren();
     const name = cf.review ? reviewName(cf.review) : "";
     label.innerHTML = href
@@ -644,7 +684,6 @@
     cf.active = null;
     cf.editingNote = null;
     cf.linkSecond = null;
-    strip.key = "";
     $("cf-library").hidden = true;
     $("cf-player").hidden = false;
     const withVideo = Boolean(review.video);
@@ -658,7 +697,6 @@
     note.hidden = true;
     note.textContent = "";
     screen.style.aspectRatio = "";
-    cf.fps = DEFAULT_FPS;
     clearDanmaku();
     markSaved(id ? "saved" : "new");
     drawChat();
@@ -668,9 +706,9 @@
       pollDownloads();
       return;
     }
-    video.src = `/api/cuttlefish/video?${videoQuery(review.video, id)}`;
+    // The frame rate is assumed until the metadata comes; the time holds
+    player.open(videoSource(review.video, id), Math.round(at * DEFAULT_FPS));
     markCopy();
-    video.playbackRate = parseFloat($("cf-speed").value);
     drawInfo();
     drawNotes();
     // A video opens paused, ready to draw on
@@ -678,7 +716,6 @@
     drawComments();
     drawMarkers();
     writeHash(at);
-    seek(at);
     lookForMeta(review, id, META_POLLS);
     try {
       const response = await fetch(
@@ -687,7 +724,8 @@
       const meta = await response.json();
       if (!response.ok) throw new Error(meta.error);
       if (cf.review !== review) return;
-      cf.fps = meta.fps || DEFAULT_FPS;
+      player.setFps(meta.fps || DEFAULT_FPS);
+      drawMarkers();
       // The layer covers the picture exactly, so its fractions are the frame's
       if (meta.width && meta.height)
         screen.style.aspectRatio = `${meta.width} / ${meta.height}`;
@@ -695,6 +733,21 @@
       note.hidden = false;
       note.textContent = error.message;
     }
+  }
+
+  /** A video as the player's source: played and thumbnailed by the studio */
+  function videoSource(v, id) {
+    const query = videoQuery(v, id);
+    return {
+      video: `/api/cuttlefish/video?${query}`,
+      fps: player.fps,
+      sound: true,
+      thumb(n) {
+        const q = new URLSearchParams(query);
+        q.set("t_ms", Math.round((n * 1000) / player.fps));
+        return `/api/cuttlefish/thumb?${q}`;
+      },
+    };
   }
 
   /** Take the title, channel and date the server has for the video */
@@ -737,7 +790,7 @@
     const box = $("cf-info");
     const v = cf.review?.video;
     if (!v) return box.replaceChildren();
-    const href = youtubeAt(v, video.currentTime || 0);
+    const href = youtubeAt(v, player.time());
     const name = escapeHtml(videoName(v));
     const title = href
       ? `<a class="cf-yt cf-info-title" href="${escapeHtml(href)}" target="_blank" rel="noopener" title="${escapeHtml(t("cf.youtube.open"))}">${name} ↗</a>`
@@ -777,10 +830,8 @@
       if (cf.id !== id) return;
       // Play the copy from the review folder, where it stays
       cf.review.video = review.video;
-      const at = video.currentTime;
-      video.src = `/api/cuttlefish/video?${videoQuery(review.video, id)}`;
-      seek(at);
-      strip.key = "";
+      player.open(videoSource(review.video, id), player.frame);
+      drawMarkers();
     } catch (error) {
       alert(t("cf.copy.failed", { error: error.message }));
     } finally {
@@ -793,13 +844,8 @@
   /** Stop the video when leaving it */
   function leavePlayer() {
     flushSave();
-    video.pause();
+    player.close();
     clearTimeout(cf.metaTimer);
-    clearTimeout(strip.timer);
-    if (cf.review) {
-      video.removeAttribute("src");
-      video.load();
-    }
     cf.review = null;
     cf.id = null;
     cf.active = null;
@@ -808,7 +854,7 @@
     sketch.set([]);
   }
 
-  function writeHash(at = video.currentTime) {
+  function writeHash(at = player.time()) {
     if (!cf.review) return;
     const params = cf.id
       ? new URLSearchParams({ r: cf.id })
@@ -819,92 +865,10 @@
     rememberView(hash);
   }
 
+  /** Pause at a time in seconds */
   function seek(at) {
-    const duration = video.duration || Infinity;
-    video.currentTime = Math.max(0, Math.min(duration, at));
-    drawTime();
+    player.seek(at);
   }
-
-  const playing = () => !video.paused && !video.ended;
-
-  function toggle() {
-    if (playing()) video.pause();
-    else {
-      cf.active = null;
-      drawComments();
-      video.play().catch(() => {});
-    }
-  }
-
-  function step(seconds) {
-    video.pause();
-    seek(video.currentTime + seconds);
-  }
-
-  /** Time, scrubber and drawings of the current time */
-  function drawTime() {
-    const now = video.currentTime;
-    const duration = video.duration || 0;
-    $("cf-time").textContent = `${clock(now)} / ${clock(duration)}`;
-    const percent = duration ? (100 * now) / duration : 0;
-    $("cf-fill").style.width = `${percent}%`;
-    $("cf-thumb").style.left = `${percent}%`;
-    drawShapes();
-    markLive(now);
-    followLinks(now);
-  }
-
-  // While playing, follow every painted frame
-  function follow() {
-    if (!playing()) return;
-    drawTime();
-    danmakuTick(video.currentTime);
-    requestAnimationFrame(follow);
-  }
-
-  function markPlay() {
-    $("cf-play").textContent = playing() ? t("cf.pause") : t("cf.play");
-  }
-
-  video.addEventListener("play", () => {
-    markPlay();
-    sketch.setEditable(false);
-    // A comment right at the start of playback shows too
-    danmaku.lastT = video.currentTime - 0.05;
-    danmakuLayer.classList.remove("is-paused");
-    requestAnimationFrame(follow);
-  });
-  video.addEventListener("pause", () => {
-    markPlay();
-    sketch.setEditable(true);
-    danmakuLayer.classList.add("is-paused");
-    drawTime();
-    writeHash();
-    drawStrip();
-  });
-  video.addEventListener("seeking", () => {
-    clearDanmaku();
-    danmaku.lastT = null;
-  });
-  video.addEventListener("seeked", () => {
-    drawTime();
-    if (playing()) danmaku.lastT = video.currentTime - 0.05;
-    else {
-      writeHash();
-      drawStrip();
-    }
-  });
-  video.addEventListener("loadedmetadata", () => {
-    drawTime();
-    drawMarkers();
-    drawStrip();
-  });
-  video.addEventListener("error", () => {
-    if (!cf.review) return;
-    const note = $("cf-video-note");
-    note.hidden = false;
-    note.textContent ||= t("cf.video.cannotPlay");
-  });
 
   // ----------------------------------------------------------- drawings
 
@@ -925,7 +889,7 @@
    * those of the comments playback is passing */
   function drawShapes() {
     if (!cf.review || sketch.drag) return;
-    const now = video.currentTime;
+    const now = player.time();
     const active = activeComment();
     const shapes = [];
     for (const comment of cf.review.comments) {
@@ -1097,110 +1061,10 @@
 
   // ----------------------------------------------------- neighbours strip
 
-  /** Update the strip soon, once seeking settles; never while playing */
-  function drawStrip() {
-    clearTimeout(strip.timer);
-    if (!cf.review || playing()) return;
-    strip.timer = setTimeout(renderStrip, STRIP_DEBOUNCE_MS);
-  }
-
-  /** Thumbnails every `strip.spacing` seconds around the playhead, on a
-   * grid so a nearby pause asks for the same (cached) pictures */
-  function renderStrip() {
-    const box = $("cf-strip");
-    const duration = video.duration;
-    if (!cf.review?.video || !duration || playing()) return;
-    const spacing = strip.spacing;
-    const center = Math.round(video.currentTime / spacing) * spacing;
-    const query = videoQuery(cf.review.video, cf.id);
-    const comments = cf.review.comments;
-    const key = [
-      query,
-      center,
-      spacing,
-      ...comments.map((c) => `${c.id}@${c.t_s}`),
-      i18nLang(),
-    ].join("|");
-    $("cf-strip-note").textContent = t("cf.strip.span", {
-      span: shortSpan(STRIP_SIDE * spacing),
-    });
-    if (key === strip.key) return markStrip();
-    strip.key = key;
-    const figures = [];
-    for (let k = -STRIP_SIDE; k <= STRIP_SIDE; k++) {
-      const at = Math.round((center + k * spacing) * 1000) / 1000;
-      const figure = document.createElement("figure");
-      figure.dataset.t = at;
-      if (at < 0 || at > duration) {
-        figure.className = "is-empty";
-        figures.push(figure);
-        continue;
-      }
-      const near = comments
-        .filter((c) => c.t_s >= at - spacing / 2 && c.t_s < at + spacing / 2)
-        .sort((a, b) => a.t_s - b.t_s);
-      const marks = near
-        .slice(0, 3)
-        .map(
-          (c) =>
-            `<button type="button" class="cf-strip-mark${c.author !== "user" ? " is-ai" : ""}" data-comment="${escapeHtml(c.id)}" title="${escapeHtml(`${clock(c.t_s)} ${c.text || drawingsText(c.shapes.length)}`)}"></button>`,
-        )
-        .join("");
-      const more =
-        near.length > 3
-          ? `<span class="cf-strip-more">+${near.length - 3}</span>`
-          : "";
-      const q = new URLSearchParams(query);
-      q.set("t_ms", Math.round(at * 1000));
-      figure.innerHTML = `<img src="/api/cuttlefish/thumb?${q}" alt="" loading="lazy"><figcaption><span class="num">${shortTime(at)}</span><span class="cf-strip-marks">${marks}${more}</span></figcaption>`;
-      figure.querySelector("img").onerror = () =>
-        figure.classList.add("is-missing");
-      if (near.length) figure.classList.add("has-comments");
-      figures.push(figure);
-    }
-    box.replaceChildren(...figures);
-    markStrip();
-  }
-
-  /** Mark the thumbnail nearest the playhead and keep it in view */
-  function markStrip() {
-    const box = $("cf-strip");
-    const now = video.currentTime;
-    let current = null;
-    let best = Infinity;
-    for (const figure of box.children) {
-      const gap = Math.abs(parseFloat(figure.dataset.t) - now);
-      figure.classList.remove("current");
-      if (!figure.classList.contains("is-empty") && gap < best) {
-        best = gap;
-        current = figure;
-      }
-    }
-    if (!current) return;
-    current.classList.add("current");
-    if (box.scrollWidth > box.clientWidth) {
-      box.scrollLeft =
-        current.offsetLeft - (box.clientWidth - current.offsetWidth) / 2;
-    }
-  }
-
-  /** Seconds as "3 s" or "1.5 s" */
-  const shortSpan = (seconds) =>
-    `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)} s`;
-
-  $("cf-strip").addEventListener("click", (event) => {
-    const mark = event.target.closest("[data-comment]");
-    if (mark) return openComment(mark.dataset.comment);
-    const figure = event.target.closest("figure");
-    if (!figure || figure.classList.contains("is-empty")) return;
-    video.pause();
-    seek(parseFloat(figure.dataset.t));
-  });
-  $("cf-spacing").value = String(strip.spacing);
+  // The strip is the player's; the spacing is chosen here
+  $("cf-spacing").value = String(player.spacing);
   $("cf-spacing").onchange = () => {
-    strip.spacing = parseFloat($("cf-spacing").value) || 0.5;
-    remember("spacing", String(strip.spacing));
-    drawStrip();
+    player.setSpacing(parseFloat($("cf-spacing").value) || 0.5);
   };
 
   // ------------------------------------------------------------ comments
@@ -1208,10 +1072,10 @@
   /** A comment by the user at the current time, opened for editing */
   function addComment(focus = true) {
     if (!cf.review?.video) return;
-    video.pause();
+    player.pause();
     const comment = {
       id: newId("c"),
-      t_s: Math.round(video.currentTime * 1000) / 1000,
+      t_s: Math.round(player.time() * 1000) / 1000,
       author: "user",
       text: "",
       shapes: [],
@@ -1228,16 +1092,14 @@
     drawComments();
     drawMarkers();
     drawShapes();
-    drawStrip();
     scheduleSave();
   }
 
   /** Open a comment: pause at its time and make its drawings editable */
   function openComment(id) {
-    const comment = cf.review.comments.find((c) => c.id === id);
+    const comment = cf.review?.comments.find((c) => c.id === id);
     if (!comment) return;
     cf.active = id;
-    video.pause();
     seek(comment.t_s);
     drawComments();
   }
@@ -1314,7 +1176,7 @@
         return li;
       }),
     );
-    markLive(video.currentTime);
+    markLive(player.time());
   }
 
   /** Mark the comments playback is passing */
@@ -1331,7 +1193,7 @@
     const id = li.dataset.id;
     const comment = cf.review.comments.find((c) => c.id === id);
     const act = event.target.closest("[data-act]")?.dataset.act;
-    const now = Math.round(video.currentTime * 1000) / 1000;
+    const now = Math.round(player.time() * 1000) / 1000;
     if (act === "delete") return deleteComment(id);
     if (act === "close") return closeComment();
     if (act === "end") {
@@ -1356,31 +1218,28 @@
     scheduleSave();
   });
 
-  /** Comment dots and ranges on the timeline */
+  /** The comments as marks on the player's scrubber and strip: ticks at
+   * their times (the AI's in its color), bands over ranges */
   function drawMarkers() {
-    const box = $("cf-markers");
-    const duration = video.duration;
-    if (!cf.review || !duration) return box.replaceChildren();
-    box.replaceChildren(
-      ...cf.review.comments.map((comment) => {
-        const marker = document.createElement("button");
-        marker.type = "button";
-        marker.className = "cf-marker";
-        if (comment.author !== "user") marker.classList.add("is-ai");
-        const left = (100 * comment.t_s) / duration;
-        marker.style.left = `${left}%`;
-        if (comment.t_end_s != null) {
-          marker.classList.add("is-range");
-          marker.style.width = `${(100 * (comment.t_end_s - comment.t_s)) / duration}%`;
-        }
-        marker.title = `${timeText(comment)} ${comment.text}`;
-        marker.addEventListener("pointerdown", (event) =>
-          event.stopPropagation(),
-        );
-        marker.onclick = () => openComment(comment.id);
-        return marker;
-      }),
-    );
+    if (!cf.review) return player.setMarks({});
+    const at = (seconds) => Math.round(seconds * player.fps);
+    const kind = (comment) => (comment.author === "user" ? "comment" : "ai");
+    const comments = cf.review.comments;
+    player.setMarks({
+      ticks: comments.map((comment) => ({
+        n: at(comment.t_s),
+        kind: kind(comment),
+        id: comment.id,
+        title: `${timeText(comment)} ${comment.text || drawingsText(comment.shapes.length)}`,
+      })),
+      ranges: comments
+        .filter((comment) => comment.t_end_s != null)
+        .map((comment) => ({
+          a: at(comment.t_s),
+          b: at(comment.t_end_s),
+          kind: kind(comment),
+        })),
+    });
   }
 
   // --------------------------------------------------------------- notes
@@ -1722,7 +1581,6 @@
   $("cf-chat").addEventListener("click", (event) => {
     const seekTo = event.target.closest("[data-seek]");
     if (seekTo && cf.review?.video) {
-      video.pause();
       seek(parseFloat(seekTo.dataset.seek));
       return;
     }
@@ -1755,7 +1613,7 @@
   function videoContext() {
     if (!cf.review?.video) return null;
     const ctx = $("cf-ctx").value;
-    const now = Math.round(video.currentTime * 1000) / 1000;
+    const now = Math.round(player.time() * 1000) / 1000;
     if (ctx === "none") return null;
     if (ctx !== "range") return { t_s: now };
     const active = activeComment();
@@ -1888,12 +1746,6 @@
 
   // ------------------------------------------------------------- controls
 
-  $("cf-play").onclick = toggle;
-  $("cf-back-frame").onclick = () => step(-1 / cf.fps);
-  $("cf-next-frame").onclick = () => step(1 / cf.fps);
-  $("cf-speed").onchange = () => {
-    video.playbackRate = parseFloat($("cf-speed").value);
-  };
   $("cf-add").onclick = () => addComment();
   $("cf-delete-shape").onclick = () => sketch.removeSelected();
   $("cf-back").onclick = () => {
@@ -1923,43 +1775,8 @@
   markTools();
   markDanmaku();
 
-  // Scrubbing the timeline pauses and seeks
-  (() => {
-    const scrubber = $("cf-scrubber");
-    const bubble = $("cf-bubble");
-    let dragging = false;
-    const timeAt = (event) => {
-      const box = scrubber.getBoundingClientRect();
-      const x = Math.max(
-        0,
-        Math.min(1, (event.clientX - box.left) / box.width),
-      );
-      return x * (video.duration || 0);
-    };
-    const preview = (event) => {
-      const at = timeAt(event);
-      bubble.hidden = false;
-      bubble.style.left = `${(100 * at) / (video.duration || 1)}%`;
-      bubble.textContent = clock(at);
-      seek(at);
-    };
-    scrubber.addEventListener("pointerdown", (event) => {
-      if (!cf.review || !video.duration) return;
-      dragging = true;
-      scrubber.setPointerCapture(event.pointerId);
-      video.pause();
-      preview(event);
-    });
-    scrubber.addEventListener("pointermove", (event) => {
-      if (dragging) preview(event);
-    });
-    scrubber.addEventListener("pointerup", () => {
-      dragging = false;
-      bubble.hidden = true;
-    });
-  })();
-
-  // Keys act only while a review with a video is open
+  // Keys act only while a review with a video is open; the player has the
+  // transport's (Space, arrows, Home, End, G)
   document.addEventListener("keydown", (event) => {
     if (!cf.shown || !cf.review?.video) return;
     const tag = event.target.tagName;
@@ -1969,10 +1786,7 @@
     }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const key = event.key.toLowerCase();
-    if (event.key === " ") toggle();
-    else if (event.key === "ArrowLeft") step(event.shiftKey ? -1 : -1 / cf.fps);
-    else if (event.key === "ArrowRight") step(event.shiftKey ? 1 : 1 / cf.fps);
-    else if (key === "c") addComment();
+    if (key === "c") addComment();
     else if (key === "d") $("cf-danmaku-toggle").click();
     else if (TOOLS[key]) setTool(TOOLS[key]);
     else if (key === "delete" || key === "backspace") sketch.removeSelected();
@@ -1988,7 +1802,6 @@
     drawReviews();
     drawSwatches();
     markTools();
-    markPlay();
     drawChips($("cf-entry-chips"), $("cf-entry-text"));
     rotatePlaceholders();
     markKey();
@@ -1998,8 +1811,7 @@
     drawComments();
     drawNotes();
     drawChat();
-    strip.key = "";
-    renderStrip();
+    drawMarkers();
   });
 
   // ---------------------------------------------------------------- routing
@@ -2049,7 +1861,7 @@
   window.addEventListener("app-route", (event) => {
     const { app, state } = event.detail;
     if (cf.shown && app !== "cuttlefish") {
-      video.pause();
+      player.pause();
       flushSave();
       clearTimeout(cf.pollTimer);
       clearTimeout(cf.listTimer);
@@ -2057,6 +1869,7 @@
       clearInterval(chat.placeholderTimer);
     }
     cf.shown = app === "cuttlefish";
+    player.enabled = cf.shown;
     if (cf.shown) {
       startPlaceholders();
       route(state);

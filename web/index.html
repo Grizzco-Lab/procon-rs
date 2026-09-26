@@ -90,9 +90,8 @@
       <!-- Status: passive indicators (a dot and a word, details on hover),
            the open app's first, then the studio's own -->
       <div class="status-strip" role="group" aria-label="Status">
-        <!-- Inkspector only: where in the session and its delay -->
+        <!-- Inkspector only: the session's delay -->
         <span class="chip-group" data-app-only="inspect">
-          <span class="chip num" id="i-position" hidden></span>
           <span class="chip" id="i-delay-chip" data-level="off" hidden>
             <span class="chip-dot"></span><span class="chip-text"></span>
           </span>
@@ -852,33 +851,8 @@
               <h2 id="h-frame">Frame</h2>
             </div>
             <div class="controls">
-              <button
-                type="button"
-                class="btn btn-play"
-                id="i-play"
-                title="Space"
-              >
-                ▶ Play
-              </button>
-              <select class="select" id="i-speed" aria-label="Playback speed">
-                <option value="0.25">0.25×</option>
-                <option value="0.5">0.5×</option>
-                <option value="1" selected>1×</option>
-              </select>
-              <button
-                type="button"
-                class="mode-toggle"
-                id="i-sound"
-                title="Play the segment's sound with the frames"
-                hidden
-              >
-                Sound
-              </button>
-              <select class="select" id="i-overlay" aria-label="Overlay">
-                <option value="full">Overlay: Full</option>
-                <option value="minimal">Overlay: Minimal</option>
-                <option value="none">Overlay: None</option>
-              </select>
+              <!-- The shared player's transport (player.js), then the app's own -->
+              <span class="player-controls" id="i-player-controls"></span>
               <button type="button" class="btn" id="i-random-active" title="R">
                 Random active
               </button>
@@ -889,9 +863,6 @@
                 title="Shift+R"
               >
                 Random
-              </button>
-              <button type="button" class="btn" id="i-goto" title="G">
-                Go to…
               </button>
               <button
                 type="button"
@@ -904,24 +875,10 @@
               </button>
             </div>
           </header>
-          <!-- The frame, with its labels drawn by a copy of the video's input overlay -->
-          <div class="screen" id="i-screen">
-            <canvas id="i-frame" width="640" height="360"></canvas>
-            <!-- The segment's sound; while it plays, it sets the frame -->
-            <audio id="i-audio" preload="auto"></audio>
-            <span class="no-reports" id="i-no-reports" hidden
-              >No controller report</span
-            >
-          </div>
-          <div class="scrubber" id="i-scrubber">
-            <div class="scrubber-track">
-              <div class="scrubber-fill" id="i-scrub-fill"></div>
-              <!-- Labeled frames, drawn by inspect.js from label.js's list -->
-              <canvas class="scrubber-marks" id="i-scrub-marks"></canvas>
-            </div>
-            <div class="scrubber-thumb" id="i-scrub-thumb"></div>
-            <div class="scrubber-bubble" id="i-scrub-bubble" hidden></div>
-          </div>
+          <!-- The frame with its overlays, and the scrubber with the labeled
+               frames as marks: both filled by the shared player -->
+          <div class="screen" id="i-screen"></div>
+          <div class="scrubber" id="i-scrubber"></div>
           <!-- Labeling mode: classes with their counts, actions and Follow, filled by label.js -->
           <div class="label-bar" id="l-bar" hidden>
             <div class="label-classes">
@@ -1041,9 +998,10 @@
           </label>
           <p class="panel-note keys">
             <kbd>Space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> one frame ·
-            <kbd>Shift</kbd> ten · <kbd>R</kbd> random active frame (a button
-            changes or the gyro turns) · <kbd>Shift</kbd>+<kbd>R</kbd> random ·
-            <kbd>G</kbd> go to a frame or time (12.5s, 1:02.5).
+            <kbd>Shift</kbd> ten · <kbd>Home</kbd> <kbd>End</kbd> first/last ·
+            <kbd>R</kbd> random active frame (a button changes or the gyro
+            turns) · <kbd>Shift</kbd>+<kbd>R</kbd> random · <kbd>G</kbd> go to a
+            frame or time (12.5s, 1:02.5).
             <span id="i-pred-note" hidden
               >Cells show truth over <span class="pred">prediction</span>; red
               ones differ (buttons at all, sticks by more than
@@ -1056,7 +1014,7 @@
         <section class="panel p-strip" aria-labelledby="h-strip">
           <header class="panel-head">
             <h2 id="h-strip">Neighbours</h2>
-            <span class="panel-note">updated while paused</span>
+            <span class="panel-note" id="i-strip-note"></span>
           </header>
           <div class="strip" id="i-strip"></div>
         </section>
@@ -1291,46 +1249,8 @@
               <h2 id="h-cf-video" data-i18n="cf.review">Review</h2>
             </div>
             <div class="controls">
-              <button
-                type="button"
-                class="btn btn-play"
-                id="cf-play"
-                title="Space"
-                data-i18n="cf.play"
-              >
-                ▶ Play
-              </button>
-              <button
-                type="button"
-                class="btn"
-                id="cf-back-frame"
-                title="←"
-                data-i18n="cf.frameBack"
-              >
-                ‹ Frame
-              </button>
-              <button
-                type="button"
-                class="btn"
-                id="cf-next-frame"
-                title="→"
-                data-i18n="cf.frameNext"
-              >
-                Frame ›
-              </button>
-              <select
-                class="select"
-                id="cf-speed"
-                aria-label="Playback speed"
-                data-i18n-aria-label="cf.speed"
-              >
-                <option value="0.25">0.25×</option>
-                <option value="0.5">0.5×</option>
-                <option value="1" selected>1×</option>
-                <option value="1.5">1.5×</option>
-                <option value="2">2×</option>
-              </select>
-              <span class="chip num" id="cf-time">0:00.000</span>
+              <!-- The shared player's transport (player.js), then the app's own -->
+              <span class="player-controls" id="cf-player-controls"></span>
               <button
                 type="button"
                 class="btn"
@@ -1346,20 +1266,13 @@
           </header>
           <!-- The video's title, channel and date, linked to YouTube -->
           <p class="cf-info" id="cf-info"></p>
-          <!-- The video, with danmaku and the comments' drawings over it -->
+          <!-- The video (the shared player's), with danmaku and the comments'
+               drawings over it; the comments are marks on the scrubber -->
           <div class="screen cf-screen" id="cf-screen">
-            <video id="cf-video" preload="auto" playsinline></video>
             <div class="cf-danmaku" id="cf-danmaku" aria-hidden="true"></div>
             <p class="cf-screen-note" id="cf-video-note" hidden></p>
           </div>
-          <div class="scrubber" id="cf-scrubber">
-            <div class="scrubber-track">
-              <div class="scrubber-fill" id="cf-fill"></div>
-            </div>
-            <div class="cf-markers" id="cf-markers"></div>
-            <div class="scrubber-thumb" id="cf-thumb"></div>
-            <div class="scrubber-bubble" id="cf-bubble" hidden></div>
-          </div>
+          <div class="scrubber" id="cf-scrubber"></div>
           <div
             class="cf-tools"
             role="toolbar"
@@ -1459,7 +1372,7 @@
               </option>
             </select>
           </div>
-          <!-- Neighbours: thumbnails around the playhead, updated while paused -->
+          <!-- Neighbours: the player's strip, every half second by default -->
           <div class="cf-strip-head">
             <span class="readout-label" data-i18n="cf.strip">Neighbours</span>
             <span class="panel-note" id="cf-strip-note"></span>
@@ -1473,7 +1386,7 @@
               </select></label
             >
           </div>
-          <div class="cf-strip" id="cf-strip"></div>
+          <div class="strip" id="cf-strip"></div>
         </section>
 
         <!-- Notes on the whole video, tied to no time -->
@@ -2295,9 +2208,29 @@
           <header class="panel-head">
             <h2 id="h-v-frame">Results</h2>
             <span class="panel-note" id="v-results-note"></span>
+            <div class="controls">
+              <!-- The shared player's transport (player.js), then the processed frames -->
+              <span class="player-controls" id="v-player-controls"></span>
+              <button
+                type="button"
+                class="btn"
+                id="v-prev"
+                title="Previous processed frame (P)"
+              >
+                ‹ Boxes
+              </button>
+              <button
+                type="button"
+                class="btn"
+                id="v-next"
+                title="Next processed frame (N)"
+              >
+                Boxes ›
+              </button>
+            </div>
           </header>
-          <div class="screen v-screen">
-            <img id="v-img" alt="" hidden />
+          <!-- The segment's frames (the shared player's), the boxes over them -->
+          <div class="screen v-screen" id="v-screen">
             <svg
               class="v-boxes"
               id="v-boxes"
@@ -2309,32 +2242,13 @@
               No results for this segment yet: run a detection.
             </p>
           </div>
+          <!-- Processed frames are marks on the scrubber -->
+          <div class="scrubber" id="v-scrubber"></div>
           <div class="v-steps">
-            <button type="button" class="btn btn-small" id="v-prev" title="←">
-              ‹
-            </button>
-            <button
-              type="button"
-              class="btn btn-small"
-              id="v-play"
-              title="Space"
-            >
-              Play
-            </button>
-            <input
-              class="v-scrub"
-              id="v-scrub"
-              type="range"
-              min="0"
-              max="0"
-              value="0"
-              aria-label="Processed frame"
-            />
-            <button type="button" class="btn btn-small" id="v-next" title="→">
-              ›
-            </button>
             <span class="chip num" id="v-frame-chip">–</span>
+            <span class="panel-note" id="v-frame-note"></span>
           </div>
+          <div class="strip" id="v-strip"></div>
           <div class="cf-row">
             <label class="check"
               ><input type="checkbox" id="v-scores" checked /> Scores</label
@@ -2348,7 +2262,6 @@
               ><input type="checkbox" id="v-all" /> Experimental: show all COCO
               classes</label
             >
-            <span class="panel-note" id="v-frame-note"></span>
           </div>
         </section>
 
@@ -2488,34 +2401,49 @@
           <header class="panel-head">
             <h2 id="h-p-video">Prediction</h2>
             <span class="panel-note" id="p-viewer-note"></span>
+            <div class="controls">
+              <!-- The shared player's transport (player.js) -->
+              <span class="player-controls" id="p-player-controls"></span>
+            </div>
           </header>
+          <!-- The video (the shared player's) with the Full overlay comparing
+               truth and prediction, as in the Inkspector -->
           <div class="screen" id="p-screen">
-            <video id="p-video" preload="auto" playsinline muted hidden></video>
             <p class="v-empty" id="p-empty">
               Pick a stored prediction, or run one.
             </p>
           </div>
-          <div class="v-steps">
-            <button type="button" class="btn btn-small" id="p-prev" title="←">
-              ‹
-            </button>
-            <button type="button" class="btn btn-small" id="p-play">
-              Play
-            </button>
-            <button type="button" class="btn btn-small" id="p-next" title="→">
-              ›
-            </button>
-            <span class="chip num" id="p-frame">–</span>
-            <select class="select" id="p-overlay" aria-label="Overlay">
-              <option value="pred">Overlay: prediction</option>
-              <option value="truth">Overlay: truth</option>
-              <option value="off">No overlay</option>
-            </select>
-          </div>
+          <div class="scrubber" id="p-scrubber"></div>
           <div class="p-p-controller">
             <div class="p-mini" id="p-mini"></div>
             <div class="p-probs" id="p-probs"></div>
           </div>
+          <!-- The frames around the current one, truth over prediction -->
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Frame</th>
+                  <th>Valid</th>
+                  <th>Buttons</th>
+                  <th>Left stick</th>
+                  <th>Right stick</th>
+                  <th>Gyro °</th>
+                </tr>
+              </thead>
+              <tbody id="p-rows"></tbody>
+            </table>
+          </div>
+          <p class="panel-note keys">
+            <kbd>Space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> one frame ·
+            <kbd>Shift</kbd> ten · <kbd>G</kbd> go to a frame or time.
+            <span id="p-pred-note" hidden
+              >Cells show truth over <span class="pred">prediction</span>; red
+              ones differ (buttons at all, sticks by more than 256, gyro by more
+              than 0.5°).</span
+            >
+          </p>
+          <div class="strip" id="p-strip"></div>
         </section>
 
         <section class="panel p-p-timeline" aria-labelledby="h-p-timeline">
@@ -2688,6 +2616,7 @@
     <script src="i18n-zh.js"></script>
     <script src="app.js"></script>
     <script src="sketch.js"></script>
+    <script src="player.js"></script>
     <script src="inspect.js"></script>
     <script src="label.js"></script>
     <script src="cuttlefish.js"></script>

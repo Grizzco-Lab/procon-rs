@@ -332,7 +332,7 @@
     remember("label", String(on));
     toggleButton.setAttribute("aria-pressed", String(on));
     screen.classList.toggle("labeling", on);
-    scrubber.classList.toggle("is-labeling", on);
+    scrubber.classList.toggle("is-faint", !on);
     sketch.setEditable(on);
     if (!on) {
       sketch.set([]);
@@ -711,6 +711,6 @@
 
   toggleButton.setAttribute("aria-pressed", String(labels.on));
   screen.classList.toggle("labeling", labels.on);
-  scrubber.classList.toggle("is-labeling", labels.on);
+  scrubber.classList.toggle("is-faint", !labels.on);
   sketch.setEditable(labels.on);
 })();

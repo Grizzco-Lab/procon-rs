@@ -128,12 +128,13 @@ pub async fn serve(
         )
     });
 
-    // The drawing layer, the Inkspector's labeling mode, the Cuttlefish app
-    // with its knowledge view, the Vision app, the Predictor and the page's
-    // dictionaries
+    // The drawing layer, the shared video player, the Inkspector's labeling
+    // mode, the Cuttlefish app with its knowledge view, the Vision app, the
+    // Predictor and the page's dictionaries
     let scripts = warp::path!(String).and_then(|name: String| async move {
         let body = match name.as_str() {
             "sketch.js" => include_str!("../web/sketch.js"),
+            "player.js" => include_str!("../web/player.js"),
             "label.js" => include_str!("../web/label.js"),
             "cuttlefish.js" => include_str!("../web/cuttlefish.js"),
             "knowledge.js" => include_str!("../web/knowledge.js"),

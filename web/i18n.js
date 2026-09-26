@@ -24,6 +24,28 @@ const I18N = {
     "view.language": "Language",
     "view.switchTo": "Switch to {lang}",
 
+    // The shared video player (player.js)
+    "player.play": "▶ Play",
+    "player.pause": "❚❚ Pause",
+    "player.frameBack": "‹ Frame",
+    "player.frameNext": "Frame ›",
+    "player.speed": "Playback speed",
+    "player.sound": "Sound",
+    "player.soundTitle": "Play the sound with the frames",
+    "player.overlay": "Overlay",
+    "player.overlay.full": "Overlay: Full",
+    "player.overlay.minimal": "Overlay: Minimal",
+    "player.overlay.none": "Overlay: None",
+    "player.goto": "Go to…",
+    "player.gotoAsk": "Frame number, or time as 12.5s or 1:02.5",
+    "player.frame": "frame",
+    "player.prediction": "prediction",
+    "player.noReports": "No controller report",
+    "player.cannotPlay": "This browser cannot play the video",
+    "player.strip.frames": "±{n} frames, updated while paused",
+    "player.strip.seconds":
+      "±{span} s around the playhead, updated while paused",
+
     // Cuttlefish: the views
     "cf.name": "Cuttlefish",
     "cf.tab.reviews": "Reviews",
@@ -80,17 +102,11 @@ const I18N = {
     "cf.back": "← Reviews",
     "cf.backTitle": "Back to the reviews",
     "cf.review": "Review",
-    "cf.play": "▶ Play",
-    "cf.pause": "❚❚ Pause",
-    "cf.frameBack": "‹ Frame",
-    "cf.frameNext": "Frame ›",
-    "cf.speed": "Playback speed",
     "cf.copy": "Copy into review",
     "cf.copyTitle":
       "Copy the video file into this review's folder, so the review keeps it",
     "cf.copy.running": "Copying…",
     "cf.copy.failed": "Not copied: {error}",
-    "cf.video.cannotPlay": "This browser cannot play the video",
     "cf.tools": "Drawing",
     "cf.tool.select": "Select",
     "cf.tool.rect": "Rectangle",
@@ -108,7 +124,6 @@ const I18N = {
     "cf.danmakuSlide": "Slide across",
     "cf.strip": "Neighbours",
     "cf.strip.every": "every",
-    "cf.strip.span": "±{span} around the playhead, updated while paused",
 
     // Comments
     "cf.comments": "Comments",

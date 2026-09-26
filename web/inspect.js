@@ -1,50 +1,14 @@
 // Inkspector app: pick a recorded session, then check its controller labels
-// against the video frame by frame. Runs next to app.js and uses its helpers
-// ($, root, drawInputHud, stickPercent); its state lives in the hash as
-// #inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>&pred=<path> (and label=1
-// to open in the labeling mode).
+// against the video frame by frame in the shared player (player.js: exact
+// frames from the studio, overlays, neighbours, keys, labels table). Runs
+// next to app.js and uses its helpers ($, root); its state lives in the hash
+// as #inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>&pred=<path> (and
+// label=1 to open in the labeling mode).
 
-/** Stick difference (raw 12-bit units) that counts as a mismatch */
-const STICK_TOLERANCE = 256;
-/** Gyro difference (degrees over the frame) that counts as a mismatch */
-const GYRO_TOLERANCE = 0.5;
-/** Neighbours shown on each side of the current frame */
-const RADIUS = 3;
-/** Frames requested ahead of the current one while playing */
-const PREFETCH = 45;
 /** Frames per labels request */
 const LABEL_CHUNK = 64;
-/** Wait after the last scrubber move before seeking, in ms */
-const SCRUB_DEBOUNCE_MS = 120;
 /** Chip level for each source of a session's delay */
 const LEVELS = { manual: "good", session: "good", setup: "warning" };
-/** Angular rate that fills a gyro bar of the full overlay, in °/s */
-const FULL_GYRO_DPS = 300;
-/** Button labels of the full overlay, in the order of the label names */
-const FULL_KEYS = [
-  ["y", "Y"],
-  ["x", "X"],
-  ["b", "B"],
-  ["a", "A"],
-  ["sr_right", "SR_R"],
-  ["sl_right", "SL_R"],
-  ["r", "R"],
-  ["zr", "ZR"],
-  ["minus", "Minus"],
-  ["plus", "Plus"],
-  ["r_stick", "RStick"],
-  ["l_stick", "LStick"],
-  ["home", "Home"],
-  ["capture", "Capture"],
-  ["down", "Down"],
-  ["up", "Up"],
-  ["right", "Right"],
-  ["left", "Left"],
-  ["sr_left", "SR_L"],
-  ["sl_left", "SL_L"],
-  ["l", "L"],
-  ["zl", "ZL"],
-];
 
 /** Read a remembered Inkspector choice */
 function remembered(key, fallback) {
@@ -70,23 +34,13 @@ const inspector = {
   sessions: null,
   /** Info of the open segment, or null in the picker */
   info: null,
+  /** The frame on screen, as the player reports it */
   frame: 0,
   delay: 0,
   /** Predictions file, "" for none */
   pred: "",
-  playing: false,
-  /** Loaded frame images by frame number */
-  images: new Map(),
   /** Label chunks (promises of {truth, predictions}) by chunk index */
   labelChunks: new Map(),
-  /** The input overlay drawn over the frame, a copy of the video's */
-  hud: null,
-  /** The full overlay: every button, both sticks, gyro bars with values */
-  full: null,
-  /** Overlay style: full, minimal (the video's) or none */
-  overlay: remembered("overlay", "full"),
-  /** Play the segment's sound, which then sets the frame */
-  sound: remembered("sound", "true") === "true",
   /**
    * Labeled frames marked on the scrubber, set by label.js: sorted frame
    * numbers labeled by a person (`user`) and holding only model boxes
@@ -95,27 +49,27 @@ const inspector = {
   marks: { user: [], model: [], range: null },
 };
 
-/** A click this close (in CSS pixels) to a mark goes to its frame */
-const MARK_SNAP_PX = 6;
-
-const audio = $("i-audio");
-
-const canvas = $("i-frame");
-const context = canvas.getContext("2d");
+/** The player in the Frame panel (app.js has `player`, the preview); label.js draws its boxes over its screen */
+const framePlayer = new Player({
+  screen: $("i-screen"),
+  controls: $("i-player-controls"),
+  scrubber: $("i-scrubber"),
+  strip: $("i-strip"),
+  stripNote: $("i-strip-note"),
+  table: $("i-rows"),
+  predNote: $("i-pred-note"),
+  remember: "inspect",
+  neighbours: { radius: 3 },
+  onFrame(n) {
+    inspector.frame = n;
+    writeHash();
+    $("i-delay").value = inspector.delay;
+    // For the labeling mode (label.js), which draws this frame's boxes
+    window.dispatchEvent(new CustomEvent("inspect-frame"));
+  },
+});
 
 // ----------------------------------------------------------------- helpers
-
-function escapeHtml(text) {
-  return String(text).replace(
-    /[&<>"]/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
-  );
-}
-
-function clock(seconds) {
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}:${(seconds - 60 * minutes).toFixed(3).padStart(6, "0")}`;
-}
 
 function duration(ms) {
   const s = Math.round(ms / 1000);
@@ -198,6 +152,7 @@ function hashOf(session, segment, extra = {}) {
 
 function writeHash() {
   const { info, frame, delay, pred } = inspector;
+  if (!info) return;
   const hash = hashOf(info.session, info.segment, { n: frame, delay, pred });
   history.replaceState(null, "", hash);
   rememberView(hash);
@@ -252,13 +207,12 @@ async function loadSessions() {
 }
 
 function showPicker() {
-  pause();
+  framePlayer.close();
   inspector.resume = false;
   rememberView("#inspect");
   inspector.info = null;
   $("inspect-viewer").hidden = true;
   $("inspect-picker").hidden = false;
-  $("i-position").hidden = true;
   $("i-delay-chip").hidden = true;
   $("i-session").value = "";
 }
@@ -267,38 +221,42 @@ function showPicker() {
 
 /** Load a segment's info and show it at the hash's frame and delay */
 async function showSegment(session, segment, state) {
-  pause();
+  framePlayer.close();
   $("inspect-picker").hidden = true;
   $("inspect-viewer").hidden = false;
   $("i-session").value = session;
-  const chip = $("i-position");
-  chip.hidden = false;
-  chip.textContent = `Loading ${session}…`;
+  framePlayer.status(`Loading ${session}…`);
   const query = new URLSearchParams({ s: session });
   if (segment) query.set("seg", segment);
   const response = await fetch(`/api/inspect/info?${query}`);
   const info = await response.json();
   if (!response.ok) {
-    chip.textContent = info.error;
+    framePlayer.status(info.error);
     return;
   }
   inspector.info = info;
-  // A new segment: forget the previous one's sound
-  audio.removeAttribute("src");
-  delete audio.dataset.source;
-  inspector.images = new Map();
   inspector.labelChunks = new Map();
   // Marks come with the new segment's labels (label.js)
   inspector.marks = { user: [], model: [], range: null };
-  drawMarks();
   inspector.delay = state.has("delay")
     ? parseFloat(state.get("delay")) || 0
     : info.video_delay_ms;
   inspector.pred = state.get("pred") ?? "";
   $("i-pred").value = inspector.pred;
   drawSession();
-  markSound();
-  show(parseInt(state.get("n")) || 0);
+  framePlayer.open(
+    {
+      frames: info.frames,
+      fps: info.fps,
+      frame: (n) => api("frame", { n }),
+      audio: info.sound ? api("audio") : null,
+      sound: info.sound,
+      labels,
+      title: `${info.session} · ${info.segment}`,
+    },
+    parseInt(state.get("n")) || 0,
+  );
+  drawMarks();
 }
 
 function drawSession() {
@@ -360,38 +318,6 @@ function drawSession() {
     `1 frame = ${(1000 / info.fps).toFixed(1)} ms`;
 }
 
-function clamp(n) {
-  return Math.max(0, Math.min(inspector.info.frames - 1, n));
-}
-
-function frameUrl(n) {
-  return api("frame", { n });
-}
-
-/** The frame's image, loading it once */
-function image(n) {
-  const { images } = inspector;
-  if (!images.has(n)) {
-    const img = new Image();
-    img.loaded = new Promise((resolve) => {
-      img.onload = () => resolve(true);
-      img.onerror = () => resolve(false);
-    });
-    img.src = frameUrl(n);
-    images.set(n, img);
-  }
-  return images.get(n);
-}
-
-/** Request the next frames and forget those far away */
-function prefetch(n) {
-  const { images, info } = inspector;
-  for (let k = n; k < Math.min(info.frames, n + PREFETCH); k++) image(k);
-  for (const k of images.keys()) {
-    if (k < n - 2 * RADIUS || k > n + 2 * PREFETCH) images.delete(k);
-  }
-}
-
 /** Labels of frame n as [truth, prediction or undefined] */
 async function labels(n) {
   const { labelChunks, delay, pred } = inspector;
@@ -423,438 +349,23 @@ function resetLabels() {
   inspector.labelChunks = new Map();
 }
 
-function stick(v) {
-  return v ? `${v[0].toFixed(0)}, ${v[1].toFixed(0)}` : "";
-}
-
-function gyro(v) {
-  return v ? v.map((x) => x.toFixed(2)).join(", ") : "";
-}
-
-function summaryText(label) {
-  if (!label.valid) return "no reports";
-  const buttons = label.buttons.join(" ") || "–";
-  return `${buttons}<br>L ${stick(label.left_stick)}<br>R ${stick(label.right_stick)}<br>g ${gyro(label.gyro_deg)}`;
-}
-
-/** Whether truth and prediction differ in one column */
-function differs(key, truth, pred) {
-  if (!pred || !truth.valid) return false;
-  const a = truth[key];
-  const b = pred[key];
-  if (b == null) return false;
-  if (key === "buttons") return [...a].sort().join() !== [...b].sort().join();
-  if (key === "valid") return a !== b;
-  const tolerance = key === "gyro_deg" ? GYRO_TOLERANCE : STICK_TOLERANCE;
-  return a.some((x, i) => Math.abs(x - b[i]) > tolerance);
-}
-
-function cell(key, truth, pred, format) {
-  const td = document.createElement("td");
-  if (differs(key, truth, pred)) td.className = "mismatch";
-  td.innerHTML = format(truth[key]);
-  if (pred !== undefined) {
-    const value = pred && pred[key] != null ? format(pred[key]) : "–";
-    td.innerHTML += `<div class="pred">${value}</div>`;
-  }
-  return td;
-}
-
-function drawScrubber(n) {
-  const { frames } = inspector.info;
-  const percent = frames > 1 ? (100 * n) / (frames - 1) : 0;
-  $("i-scrub-fill").style.width = `${percent}%`;
-  $("i-scrub-thumb").style.left = `${percent}%`;
-}
-
-/**
- * Draw the labeled frames on the scrubber, once per change: a range being
- * followed as a band, frames with only model boxes as short ticks and
- * frames a person labeled as full-height ticks on top
- */
+/** Hand the labeled frames (label.js's list) to the player's scrubber */
 function drawMarks() {
-  const marks = $("i-scrub-marks");
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.round(marks.clientWidth * dpr);
-  const height = Math.round(marks.clientHeight * dpr);
-  if (marks.width !== width || marks.height !== height) {
-    marks.width = width;
-    marks.height = height;
-  }
-  const g = marks.getContext("2d");
-  g.clearRect(0, 0, width, height);
-  const frames = inspector.info?.frames ?? 0;
-  if (!frames || !width) return;
-  const style = getComputedStyle(marks);
-  const x = (n) => (frames > 1 ? (n / (frames - 1)) * (width - 1) : 0);
-  const tick = Math.max(2 * dpr, width / frames);
   const { user, model, range } = inspector.marks;
-  if (range) {
-    g.fillStyle = style.getPropertyValue("--mark-range");
-    const [a, b] = [Math.min(...range), Math.max(...range)];
-    g.fillRect(x(a), 0, Math.max(tick, x(b) - x(a)), height);
-  }
-  g.fillStyle = style.getPropertyValue("--mark-model");
-  for (const n of model)
-    g.fillRect(x(n) - tick / 2, height * 0.45, tick, height);
-  g.fillStyle = style.getPropertyValue("--mark-user");
-  for (const n of user) g.fillRect(x(n) - tick / 2, 0, tick, height);
-}
-
-/** The marked frame nearest to frame n, if within `px` CSS pixels of it */
-function nearestMark(n, px) {
-  const { frames } = inspector.info;
-  const perFrame = $("i-scrubber").clientWidth / Math.max(1, frames - 1);
-  let best = null;
-  for (const k of [...inspector.marks.user, ...inspector.marks.model]) {
-    if (best == null || Math.abs(k - n) < Math.abs(best - n)) best = k;
-  }
-  return best != null && Math.abs(best - n) * perFrame <= px ? best : null;
-}
-
-/** Draw a frame's true actions over it, as the video's input overlay does */
-function drawLabel(label) {
-  const { hud, full, overlay } = inspector;
-  hud.toggleAttribute("hidden", overlay !== "minimal" || !label.valid);
-  full.toggleAttribute("hidden", overlay !== "full");
-  $("i-no-reports").hidden = label.valid || overlay === "full";
-  if (overlay === "full") return drawFullOverlay(label);
-  if (overlay !== "minimal" || !label.valid) return;
-  const fps = inspector.info.fps;
-  drawInputHud(hud, {
-    left: label.left_stick.map(stickPercent),
-    right: label.right_stick.map(stickPercent),
-    pressed: new Set(label.buttons),
-    yaw: label.gyro_deg[2] * fps,
-    pitch: label.gyro_deg[1] * fps,
+  framePlayer.setMarks({
+    ticks: [
+      ...user.map((n) => ({ n, kind: "user" })),
+      ...model.map((n) => ({ n, kind: "model", short: true })),
+    ],
+    ranges: range ? [{ a: range[0], b: range[1], kind: "range" }] : [],
   });
-}
-
-/**
- * Build the full overlay (the style of AgentZero's agentzero-overlay): a
- * title band on top, and below the frame both sticks, a grid of every
- * button and bars of the yaw and pitch turned over the frame
- */
-function buildFullOverlay() {
-  const svg = svgEl("svg", {
-    class: "full-hud",
-    viewBox: "0 0 640 360",
-    "aria-hidden": "true",
-  });
-  const text = (attrs, content = "") =>
-    Object.assign(svgEl("text", attrs), { textContent: content });
-  svg.append(
-    svgEl("rect", { class: "full-band", width: 640, height: 38 }),
-    text({ class: "full-title", x: 8, y: 16, "data-full": "title" }),
-    text({ class: "full-alert", x: 8, y: 31, "data-full": "alert" }),
-    svgEl("rect", { class: "full-band", y: 250, width: 640, height: 110 }),
-  );
-  for (const [side, cx] of [
-    ["l", 50],
-    ["r", 590],
-  ]) {
-    svg.append(
-      svgEl("circle", { class: "full-ring", cx, cy: 305, r: 40 }),
-      svgEl("circle", {
-        class: "full-dot",
-        cx,
-        cy: 305,
-        r: 5,
-        "data-full": `stick-${side}`,
-      }),
-    );
-  }
-  const columns = FULL_KEYS.length / 2;
-  const box = 440 / columns;
-  FULL_KEYS.forEach(([name, label], i) => {
-    const x = 100 + (i % columns) * box;
-    const y = 256 + Math.floor(i / columns) * 26;
-    const key = svgEl("g", { class: "full-key", "data-full-key": name });
-    key.append(
-      svgEl("rect", { x: x + 1, y, width: box - 2, height: 22 }),
-      text({ x: x + box / 2, y: y + 15, "text-anchor": "middle" }, label),
-    );
-    svg.append(key);
-  });
-  [
-    ["yaw", "yaw (gyro z)", 318],
-    ["pitch", "pitch (gyro y)", 338],
-  ].forEach(([name, label, y]) => {
-    svg.append(
-      svgEl("rect", { class: "full-track", x: 100, y, width: 440, height: 12 }),
-      svgEl("rect", {
-        class: "full-bar",
-        x: 320,
-        y,
-        width: 0,
-        height: 12,
-        "data-full": name,
-      }),
-      svgEl("line", { class: "full-mid", x1: 320, x2: 320, y1: y, y2: y + 12 }),
-      text({
-        class: "full-value",
-        x: 104,
-        y: y + 10,
-        "data-full": `${name}-text`,
-        "data-label": label,
-      }),
-    );
-  });
-  return svg;
-}
-
-/** Draw a frame's label on the full overlay */
-function drawFullOverlay(label) {
-  const { full, info, frame } = inspector;
-  const part = (name) => full.querySelector(`[data-full="${name}"]`);
-  part("title").textContent =
-    `${info.session} · ${info.segment}  frame ${frame}  ${(frame / info.fps).toFixed(3)} s`;
-  part("alert").textContent = label.valid ? "" : "NO REPORTS";
-  const pressed = new Set(label.valid ? label.buttons : []);
-  for (const key of full.querySelectorAll("[data-full-key]")) {
-    key.classList.toggle("on", pressed.has(key.dataset.fullKey));
-  }
-  for (const [side, stick] of [
-    ["l", label.left_stick],
-    ["r", label.right_stick],
-  ]) {
-    const [x, y] = label.valid ? stick.map(stickPercent) : [0, 0];
-    const dot = part(`stick-${side}`);
-    const cx = side === "l" ? 50 : 590;
-    dot.setAttribute("cx", (cx + (x / 100) * 40).toFixed(1));
-    dot.setAttribute("cy", (305 - (y / 100) * 40).toFixed(1));
-  }
-  // Rotation over the frame; a full bar is FULL_GYRO_DPS
-  const fullDeg = FULL_GYRO_DPS / info.fps;
-  for (const [name, degrees] of [
-    ["yaw", label.valid ? label.gyro_deg[2] : 0],
-    ["pitch", label.valid ? label.gyro_deg[1] : 0],
-  ]) {
-    const end = 320 + Math.max(-1, Math.min(1, degrees / fullDeg)) * 220;
-    const bar = part(name);
-    bar.setAttribute("x", Math.min(320, end).toFixed(1));
-    bar.setAttribute("width", Math.abs(end - 320).toFixed(1));
-    const value = part(`${name}-text`);
-    const sign = degrees < 0 ? "−" : "+";
-    value.textContent = `${value.dataset.label} ${sign}${Math.abs(degrees).toFixed(2)}°`;
-  }
-}
-
-/** Show frame n: picture, labels, position; the strip only if paused */
-async function show(n) {
-  const { info } = inspector;
-  inspector.frame = clamp(n);
-  const shown = inspector.frame;
-  writeHash();
-  // For the labeling mode (label.js), which draws this frame's boxes
-  window.dispatchEvent(new CustomEvent("inspect-frame"));
-  $("i-position").textContent =
-    `frame ${shown} / ${info.frames - 1} · ${clock(shown / info.fps)}`;
-  $("i-delay").value = inspector.delay;
-  drawScrubber(shown);
-  prefetch(shown);
-  if (!inspector.playing) drawStrip();
-
-  const still = () => shown === inspector.frame && info === inspector.info;
-  const img = image(shown);
-  let rows;
-  try {
-    rows = await Promise.all(
-      Array.from({ length: 2 * RADIUS + 1 }, (_, i) => shown - RADIUS + i)
-        .filter((k) => k >= 0 && k < info.frames)
-        .map(labels),
-    );
-  } catch (error) {
-    $("i-rows").innerHTML =
-      `<tr><td colspan="6" class="level-critical">${escapeHtml(error.message)}</td></tr>`;
-    return;
-  }
-  if ((await img.loaded) && still()) {
-    context.drawImage(img, 0, 0, canvas.width, canvas.height);
-  }
-  if (!still()) return;
-  drawTable(rows);
-  const current = rows.find(([truth]) => truth.frame === shown);
-  if (current) drawLabel(current[0]);
-}
-
-function drawStrip() {
-  const strip = $("i-strip");
-  const { frame, info } = inspector;
-  strip.replaceChildren();
-  for (let n = frame - RADIUS; n <= frame + RADIUS; n++) {
-    const figure = document.createElement("figure");
-    if (n >= 0 && n < info.frames) {
-      figure.innerHTML = `<img src="${frameUrl(n)}" alt="frame ${n}"><figcaption id="i-cap-${n}">${n}</figcaption>`;
-      figure.onclick = () => go(n);
-    }
-    if (n === frame) figure.className = "current";
-    strip.append(figure);
-  }
-}
-
-function drawTable(rows) {
-  const body = $("i-rows");
-  body.replaceChildren();
-  for (const [truth, pred] of rows) {
-    const caption = $(`i-cap-${truth.frame}`);
-    if (caption) caption.innerHTML = `${truth.frame}: ${summaryText(truth)}`;
-    const tr = document.createElement("tr");
-    if (truth.frame === inspector.frame) tr.className = "current";
-    tr.onclick = () => go(truth.frame);
-    const number = document.createElement("td");
-    number.textContent = truth.frame;
-    tr.append(
-      number,
-      cell("valid", truth, pred, (v) => (v == null ? "" : v ? "yes" : "no")),
-      cell("buttons", truth, pred, (v) => (v ? v.join(" ") || "–" : "")),
-      cell("left_stick", truth, pred, stick),
-      cell("right_stick", truth, pred, stick),
-      cell("gyro_deg", truth, pred, gyro),
-    );
-    body.append(tr);
-  }
-  $("i-pred-note").hidden = !rows.some(([, pred]) => pred !== undefined);
 }
 
 /** Jump to frame n, pausing playback */
 function go(n) {
   if (!inspector.info) return;
-  pause();
-  show(n);
+  framePlayer.go(n);
 }
-
-// ---------------------------------------------------------------- playback
-
-function play() {
-  const { info } = inspector;
-  if (inspector.playing || !info || inspector.frame >= info.frames - 1) return;
-  inspector.playing = true;
-  $("i-play").textContent = "❚❚ Pause";
-  if (info.sound && inspector.sound) return playWithSound(info);
-  let due = performance.now();
-  const step = async () => {
-    if (!inspector.playing || info !== inspector.info) return;
-    if (inspector.frame >= info.frames - 1) return toggle();
-    const next = inspector.frame + 1;
-    // Wait for the frame rather than skip it: timing stays checkable
-    await image(next).loaded;
-    if (!inspector.playing || info !== inspector.info) return;
-    show(next);
-    const interval = 1000 / (info.fps * parseFloat($("i-speed").value));
-    due = Math.max(due + interval, performance.now() - interval);
-    setTimeout(step, Math.max(0, due - performance.now()));
-  };
-  step();
-}
-
-/**
- * Play the segment's sound from the current frame and let its clock set
- * the frame: frame n is at n / fps in the file, sound included. Frames not
- * decoded in time are skipped, so picture and sound stay together.
- */
-async function playWithSound(info) {
-  const source = api("audio");
-  if (audio.dataset.source !== source) {
-    audio.dataset.source = source;
-    audio.src = source;
-  }
-  audio.playbackRate = parseFloat($("i-speed").value);
-  audio.preservesPitch = true;
-  audio.currentTime = inspector.frame / info.fps;
-  try {
-    await audio.play();
-  } catch (error) {
-    // No sound after all (autoplay refused, decoding failed): play silently
-    console.warn("Inspector sound:", error);
-    inspector.sound = false;
-    markSound();
-    inspector.playing = false;
-    return play();
-  }
-  const follow = () => {
-    if (!inspector.playing || info !== inspector.info) return;
-    if (audio.ended) return toggle();
-    const n = Math.min(
-      info.frames - 1,
-      Math.floor(audio.currentTime * info.fps + 1e-6),
-    );
-    if (n !== inspector.frame) show(n);
-    requestAnimationFrame(follow);
-  };
-  requestAnimationFrame(follow);
-}
-
-function pause() {
-  if (!inspector.playing) return;
-  inspector.playing = false;
-  audio.pause();
-  $("i-play").textContent = "▶ Play";
-}
-
-/** Show whether sound is on, for segments that have it */
-function markSound() {
-  const button = $("i-sound");
-  button.hidden = !inspector.info?.sound;
-  button.setAttribute("aria-pressed", String(inspector.sound));
-}
-
-function toggle() {
-  if (!inspector.playing) return play();
-  pause();
-  show(inspector.frame);
-}
-
-// ---------------------------------------------------------------- scrubber
-
-(() => {
-  const scrubber = $("i-scrubber");
-  const bubble = $("i-scrub-bubble");
-  let timer = null;
-  let dragging = false;
-  /** Where the pointer went down, to tell a click from a drag */
-  let downX = 0;
-  const frameAt = (event) => {
-    const box = scrubber.getBoundingClientRect();
-    const x = (event.clientX - box.left) / box.width;
-    return clamp(
-      Math.round(Math.max(0, Math.min(1, x)) * (inspector.info.frames - 1)),
-    );
-  };
-  const preview = (n) => {
-    const { frames, fps } = inspector.info;
-    drawScrubber(n);
-    bubble.hidden = false;
-    bubble.style.left = `${(100 * n) / Math.max(1, frames - 1)}%`;
-    bubble.textContent = `${n} · ${clock(n / fps)}`;
-  };
-  scrubber.addEventListener("pointerdown", (event) => {
-    if (!inspector.info) return;
-    dragging = true;
-    downX = event.clientX;
-    scrubber.setPointerCapture(event.pointerId);
-    pause();
-    preview(frameAt(event));
-  });
-  scrubber.addEventListener("pointermove", (event) => {
-    if (!dragging) return;
-    const n = frameAt(event);
-    preview(n);
-    clearTimeout(timer);
-    timer = setTimeout(() => show(n), SCRUB_DEBOUNCE_MS);
-  });
-  scrubber.addEventListener("pointerup", (event) => {
-    if (!dragging) return;
-    dragging = false;
-    clearTimeout(timer);
-    bubble.hidden = true;
-    // A click (not a drag) next to a labeled frame goes to that frame
-    const n = frameAt(event);
-    const click = Math.abs(event.clientX - downX) < 4;
-    show((click ? nearestMark(n, MARK_SNAP_PX) : null) ?? n);
-  });
-  new ResizeObserver(drawMarks).observe(scrubber);
-})();
 
 // ----------------------------------------------------------------- actions
 
@@ -867,32 +378,15 @@ async function random(active) {
   go((await (await fetch(url)).json()).frame);
 }
 
-/** Ask for a frame number or a time (12.5s, 1:02.5) and go there */
-function goTo() {
-  if (!inspector.info) return;
-  const text = prompt("Frame number, or time as 12.5s or 1:02.5");
-  if (!text) return;
-  const value = text.trim();
-  if (/^\d+$/.test(value)) return go(parseInt(value));
-  const parts = value.replace(/s$/, "").split(":").map(parseFloat);
-  if (parts.some(isNaN)) return;
-  const seconds = parts.reduce((total, part) => total * 60 + part, 0);
-  go(Math.round(seconds * inspector.info.fps));
-}
-
-// Keys act only while the Inkspector shows a segment
+// Keys act only while the Inkspector shows a segment; the player has the
+// transport's (Space, arrows, Home, End, G)
 document.addEventListener("keydown", (event) => {
   const tag = event.target.tagName;
   if (!inspector.shown || !inspector.info) return;
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
   if (event.ctrlKey || event.metaKey || event.altKey) return;
-  const step = event.shiftKey ? 10 : 1;
-  if (event.key === " ") toggle();
-  else if (event.key === "ArrowLeft") go(inspector.frame - step);
-  else if (event.key === "ArrowRight") go(inspector.frame + step);
-  else if (event.key.toLowerCase() === "r") random(!event.shiftKey);
-  else if (event.key.toLowerCase() === "g") goTo();
-  else return;
+  if (event.key.toLowerCase() !== "r") return;
+  random(!event.shiftKey);
   event.preventDefault();
 });
 
@@ -925,7 +419,7 @@ async function saveDelay(remove) {
   if (remove && calibration.applied) {
     inspector.delay = calibration.applied.video_delay_ms;
     resetLabels();
-    show(inspector.frame);
+    framePlayer.refresh();
   }
   drawSession();
 }
@@ -936,10 +430,8 @@ $("i-pred").addEventListener("change", () => {
   resetLabels();
   go(inspector.frame);
 });
-$("i-play").onclick = toggle;
 $("i-random-active").onclick = () => random(true);
 $("i-random-any").onclick = () => random(false);
-$("i-goto").onclick = goTo;
 $("i-session").onchange = (event) => {
   const name = event.target.value;
   const summary = inspector.sessions.find((s) => s.name === name);
@@ -950,34 +442,6 @@ $("i-segment").onchange = (event) => {
 };
 $("i-stick-tol").textContent = STICK_TOLERANCE;
 $("i-gyro-tol").textContent = GYRO_TOLERANCE;
-
-// The video's input overlay, copied over the inspected frame
-inspector.hud = $("input-hud").cloneNode(true);
-inspector.hud.removeAttribute("id");
-inspector.hud.dataset.keys = "";
-$("i-screen").append(inspector.hud);
-inspector.full = buildFullOverlay();
-$("i-screen").append(inspector.full);
-
-$("i-overlay").value = inspector.overlay;
-$("i-overlay").addEventListener("change", (event) => {
-  inspector.overlay = event.target.value;
-  remember("overlay", inspector.overlay);
-  if (inspector.info) show(inspector.frame);
-});
-$("i-sound").addEventListener("click", () => {
-  inspector.sound = !inspector.sound;
-  remember("sound", String(inspector.sound));
-  markSound();
-  // Restart playback on the other clock
-  if (inspector.playing) {
-    pause();
-    play();
-  }
-});
-$("i-speed").addEventListener("change", () => {
-  audio.playbackRate = parseFloat($("i-speed").value);
-});
 
 /** Show what the hash names: a segment, or the picker */
 async function routeInspector(state) {
@@ -1005,7 +469,7 @@ async function routeInspector(state) {
   // Back from another app: carry on playing if it was
   if (inspector.resume) {
     inspector.resume = false;
-    play();
+    framePlayer.play();
   }
 }
 
@@ -1013,10 +477,11 @@ window.addEventListener("app-route", (event) => {
   const { app, state } = event.detail;
   if (inspector.shown && app !== "inspect") {
     // Leaving: remember whether it was playing, to resume on return
-    inspector.resume = inspector.playing;
-    pause();
+    inspector.resume = framePlayer.playing;
+    framePlayer.pause();
   }
   inspector.shown = app === "inspect";
+  framePlayer.enabled = inspector.shown;
   if (inspector.shown) routeInspector(state);
 });
 $("i-back").onclick = () => {
