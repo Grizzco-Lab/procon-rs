@@ -74,12 +74,12 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes, Follow's write rules |
 | `src/follow.rs` | Follow: boxes carried over the next frames by AgentZero's SAM 2 tracker, proxied from a thread; starts the tracker |
 | `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` and the video), video bytes with ranges, yt-dlp downloads into new reviews, migration of the older flat layout, "Ask Cuttlefish" with the shared knowledge store |
-| `src/knowledge.rs` | Cuttlefish's Knowledge tab: the store and embedder loaded once, search, ask, translate, glossary, import jobs |
+| `src/knowledge.rs` | Cuttlefish's Knowledge tab: the store and embedder loaded once, search, ask, translate, glossary, import jobs, inbox uploads, overview, assets and thumbnails, document deletion |
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results through our classes, dataset overview, send to labels |
 | `src/predictor.rs` | Predictor app backend: `agentzero-predict` runs as a child process, stored predictions, windows of predictions and truth, agreement numbers |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
-| `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
+| `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, inbox, name tables, assets, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
 | `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `vision.js`, `predictor.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
 | `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy |
 | `doc/` | Setup and dashboard write-up with screenshots, published to GitHub Pages |
@@ -226,9 +226,35 @@ shared by "Ask Cuttlefish" (`cuttlefish::review::review` over the borrowed
 store, embedder and a client made per request), the Knowledge tab's search,
 questions and translations, and imports. Imports use `cuttlefish::ingest`
 (the same code as the CLI) with a `Sink` that writes the job's log; one runs
-at a time, and the index is written every ten documents and at the end. The
+at a time, and the index is written every fifty documents and at the end (it
+may live in a synced folder, where each write uploads it whole). The
 API key is read only from `ANTHROPIC_API_KEY`; the page learns only whether it
 is set.
+
+The knowledge folder defaults to `Knowledge` next to the Inkspector's root and
+may be synced: `cuttlefish::store` writes every file through a temporary file
+and a rename, takes no locks, skips unreadable or conflict-copy files, drops
+index entries of documents that are gone, rebuilds an index that does not read
+and embeds documents it lacks (`Store::catch_up`, when the store loads). The
+model, thumbnails and unpacked archives live in `cuttlefish::store::cache_dir`
+(`~/.cache/cuttlefish`). At startup `cuttlefish::store::migrate` copies the old
+`~/.local/share/cuttlefish` (`$XDG_DATA_HOME`) over, verifies the copy (same
+document ids and index size, every raw and model file) and only then renames the
+old folder to `*.migrated-<date>.safe-to-delete`; the overview lists such folders.
+
+The inbox (`cuttlefish::inbox`) is `<knowledge>/inbox/`. `POST
+knowledge/upload?path=` streams a file into it (a bounded channel to a blocking
+writer, `.name.upload` then renamed; hidden or `..` paths refused, 4 GB at
+most); `routes` in `src/knowledge.rs` serves that and `GET thumb` before the JSON
+routes of `src/cuttlefish.rs`. The import walks the inbox (no hidden folders,
+no `node_modules`/build output), classifies each file (`inbox::classify`),
+unpacks archives with `bsdtar` into the cache, and routes prose to documents
+(key `inbox/<path>`, `Document::path`), structured files by family
+(`tables::path_language`: `locales/*/x.json`) to `terms/<id>.json`
+(`tables::build`), images to `assets.json` (`assets::link` to glossary terms by
+file name). `inbox.json` remembers size, time and FNV hash per path for
+dedup; `reports/` keeps the last thirty reports. `Store::load_glossary` merges
+the tables into `glossary.toml` (or the seed) with `Glossary::merge`.
 
 ### Vision
 

@@ -14,8 +14,11 @@ cargo build --release -p cuttlefish
 alias cuttlefish=target/release/cuttlefish
 
 # Data lives outside the repo: --data, $CUTTLEFISH_DATA or ~/.local/share/cuttlefish
-export CUTTLEFISH_DATA=~/cuttlefish-data
+# (the studio uses "Knowledge" next to its sessions; point the CLI at the same)
+export CUTTLEFISH_DATA=/home/cjr/DropboxRemote/SalmonRun/Knowledge
 export CUTTLEFISH_CONTACT=you@example.org   # put in the crawler's User-Agent
+
+cuttlefish ingest inbox                    # everything dropped into <data>/inbox/
 
 cuttlefish ingest file fundamentals.pdf --source guide --license "by permission of the authors"
 cuttlefish ingest url https://example.org/guide --source guide
@@ -27,7 +30,9 @@ DISCORD_BOT_TOKEN=... cuttlefish ingest discord-bot --channel 123456789012345678
 
 cuttlefish search "バクダンの処理"          # top-k chunks with sources; any language
 cuttlefish glossary "Steelhead"            # a term's names and definition
-cuttlefish stats
+cuttlefish stats                           # documents, terms per language, tables, assets
+cuttlefish docs                            # every document with its id
+cuttlefish delete 4d7e4072ed28b64e         # a document and its chunks
 cuttlefish eval eval.example.toml          # retrieval check, no key needed
 
 export ANTHROPIC_API_KEY=...               # only ever from the environment
@@ -37,7 +42,9 @@ cuttlefish eval eval.example.toml --answer
 ```
 
 The first command that embeds downloads the embedding model (about 470 MB)
-into `<data>/models/`. `--model` / `$CUTTLEFISH_MODEL` picks the model
+into `~/.cache/cuttlefish/models/` (`$CUTTLEFISH_CACHE`, else
+`$XDG_CACHE_HOME/cuttlefish`), on this machine rather than in a synced data
+folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
 (default `claude-opus-5-5`), `--effort` its effort (default `high`).
 `RUST_LOG=debug` shows more.
 
@@ -45,18 +52,92 @@ into `<data>/models/`. `--model` / `$CUTTLEFISH_MODEL` picks the model
 
 ```text
 <data>/
+  inbox/             drop anything here (see "The inbox")
+  inbox.json         what each inbox file gave, with its size, time and hash
   glossary.toml      your glossary; the crate's glossary.toml seed until you add one
+  terms/<id>.json    name tables imported from the inbox, merged into the glossary
+  assets.json        images and icons from the inbox
+  reports/<t>.json   one report per inbox import (the last 30)
   digest.md          curated fundamentals, sent with every request (optional)
   raw/<kind>/        pages, subtitles, exports as received
-  docs/<id>.json     processed documents with source, url, title, language,
-                     license, attribution, fetch time, weight and text
+  docs/<id>.json     processed documents with source, url or inbox path, title,
+                     language, license, attribution, fetch time, weight and text
   index/             meta.json, entries.jsonl, vectors.f32
-  models/            embedding model files
+~/.cache/cuttlefish/ models/, thumbs/, unpack/: on this machine only
 ```
 
 Ingesting the same url again replaces its document (`--refresh` refetches
 pages already stored). `cuttlefish reindex` re-embeds everything after a
-change of embedder or chunk sizes.
+change of embedder or chunk sizes; `cuttlefish delete <id>` removes a document.
+
+The data folder can be a synced folder (Dropbox, rclone mount). Every file is
+written whole (temporary file, then rename) and nothing is locked. Files that
+do not read (half-synced, `(conflicted copy)`) are skipped with a warning.
+Documents are the truth: opening the store drops chunks of documents that are
+gone, rebuilds an index that does not read, and embeds documents that arrived
+from another machine. The index is rewritten every 50 documents of an import
+and at its end. The folder's parent must exist, so an unmounted synced folder
+is not silently replaced.
+
+A data folder of the older layout (`$XDG_DATA_HOME/cuttlefish`, usually
+`~/.local/share/cuttlefish`) is copied over by `store::migrate` (the studio
+at startup, the CLI on each run): its model into the cache, its documents,
+index, raw files, glossary and digest into the data folder if that holds none.
+Once the copy checks out (same document ids and index size, every raw and model
+file with its size) the old folder is renamed to
+`cuttlefish.migrated-<date>.safe-to-delete`; nothing is deleted.
+
+## The inbox
+
+`<data>/inbox/` takes anything: files, folders, zip or tar archives, source
+repositories. `cuttlefish ingest inbox` (or **Import inbox** in the studio,
+which can also upload into it) looks at each file by name and first bytes:
+
+| File | Taken as |
+|---|---|
+| md, txt, rst, org, adoc, html, pdf, docx, srt, vtt | a document (chunked, embedded), keyed by its inbox path |
+| DiscordChatExporter JSON | its conversations |
+| json, yaml, toml, csv, tsv, po, properties | a name table if it holds the same keys in several languages; never embedded |
+| png, jpg, gif, webp, svg, bmp, ico, avif | an asset |
+| zip, tar(.gz/.xz/.bz2/.zst), 7z | unpacked with `bsdtar` into the cache, contents taken the same way |
+| code, media, office files other than docx, fonts, binaries, unknown | skipped, with the reason |
+
+Hidden files and folders (`.git`, partial uploads) and `node_modules`,
+`target`, `build`, `dist`, `vendor` and the like are never entered; lock files
+and license/changelog files are skipped. So a source tree gives its README and
+docs as documents and its locale and string files as name tables.
+
+**Name tables** (`tables.rs`). Structured files are flattened into key paths.
+The language of a string comes from the file's path (`locales/ja/weapons.json`,
+`JPja.json`, `strings_ko.po`; files differing only by it are read together as
+one table, `locales/*/weapons.json`) or from a key (`en`, `name_ja`,
+`Japanese`, a CSV column `Chinese (Simplified)`); Nintendo region codes
+(`USen`, `EUfr`, `CNzh`, `TWzh`, ...) are known. A key with names in two
+languages or more becomes a term with those names and its origin
+(`from = ["inbox/<file>#<key>"]`). Only names are kept (one line, at most 60
+characters, no markup or placeholders, 3+ characters if ASCII); in a table of
+more than 500 terms, only keys containing "name" (a game's whole interface
+text otherwise floods the glossary with "OK" and "Back"). Tables are stored per
+file or family in `terms/` and merged into the glossary: a term sharing a name
+with an existing one adds its languages to it (the seed's Steelhead gains
+French and Chinese), others are added as new terms.
+
+**Assets** (`assets.rs`). Each image gets an entry in `assets.json`: path,
+size, dimensions from its header, a name from the file name and its folder,
+and the glossary term its file name names (the whole name or its end, matched
+against term ids, names and imported keys: `Wst_Shooter_Normal_00.png` is the
+term whose key is `Shooter_Normal_00`). Thumbnails are made by ffmpeg on
+request into the cache; small icons and SVGs are served as they are. Images
+are not embedded; an image embedder (CLIP, SigLIP) could make them searchable
+by content later.
+
+**Dedup.** `inbox.json` remembers each file's size, time and content hash. An
+unchanged file is not read again (an unchanged archive is not unpacked), a
+changed file replaces its document or table, a file with the content of
+another is skipped as a copy, and files gone from the inbox are reported
+(their documents stay). A deleted document stays deleted until its file
+changes or the import runs with `--refresh`. Every import writes a report:
+what was taken as what, skipped and why, failed, gone.
 
 ## Sources and their terms
 
@@ -119,8 +200,8 @@ and reviews) instead of a `Reviewer`: `review::review(&store, &embedder,
 a `Client::from_env` made per request. Imports go through `ingest` (`web`,
 `youtube`, `files`, `discord_export`, `discord_bot`), which hand documents to
 an `ingest::Sink` (the CLI prints; the studio logs into its import job) and
-stop when `Sink::cancelled` says so. Its Knowledge tab shows all of this; the
-crate has no way to delete a document yet.
+stop when `Sink::cancelled` says so. Its Knowledge tab shows all of this, and
+`inbox::import` does the inbox with the same kind of sink.
 
 `AiComment` serializes as:
 

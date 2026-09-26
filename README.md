@@ -211,14 +211,53 @@ folder `[cuttlefish] knowledge`):
   in any language, without a key;
 - **Ask** and **Translate**: need `ANTHROPIC_API_KEY` in the studio's
   environment (the only place it is read from);
-- **Import**: web pages, a sitemap or a MediaWiki category (robots.txt obeyed,
-  one request per site every few seconds), YouTube subtitles, files on the PC
-  (markdown, text, HTML, PDF), a Discord export or a Discord bot; one import at
-  a time, with its log and a Cancel button;
-- the documents, and a glossary lookup.
+- **Import**: the **Inbox** (below), web pages, a sitemap or a MediaWiki
+  category (robots.txt obeyed, one request per site every few seconds),
+  YouTube subtitles, files on the PC (markdown, text, HTML, PDF, Word, subtitles),
+  a Discord export or a Discord bot; one import at a time, with its log and a
+  Cancel button;
+- the documents (each can be deleted), a glossary lookup, **What the store
+  holds** (documents by source and format, glossary terms by language and the
+  name tables they came from, assets by folder, the last imports with their
+  reports) and **Assets**, a browser of the imported images and icons with
+  the names of the weapon or boss they show.
 
-The embedding model (about 470 MB) is downloaded into the knowledge folder the
-first time the store opens.
+**Where to put things.** The knowledge folder is `Knowledge` next to the
+Inkspector's root (with the data on Dropbox,
+`/home/cjr/DropboxRemote/SalmonRun/Knowledge`), or `[cuttlefish] knowledge`.
+Drop anything into its `inbox/` folder, as it is: guides, whole projects or
+git repositories, zip files, spreadsheets, icon folders. Or use the Inbox in
+the Import panel: drag files or folders onto it or pick them, optionally into
+a named folder of the inbox (up to 4 GB a file). Then press **Import inbox**
+(or run `cuttlefish ingest inbox`). Files stay in the inbox; nothing is moved
+or deleted.
+
+**How it is digested.** Each file is looked at by its name and first bytes:
+
+| What you drop | What it becomes |
+|---|---|
+| Guides and notes: markdown, text, HTML, PDF, Word `.docx`, subtitles `.srt`/`.vtt` | Documents, split into chunks and embedded for search and the AI |
+| Name tables: JSON, YAML, TOML, CSV, TSV, `.po`, `.properties`, locale folders (`locales/ja/…`, `USen.json`, `JPja.json`, …) | Glossary terms: the same key in several languages (weapon, stage, boss names) with the language codes, where each came from, and joined to the glossary's own terms when a name matches. Never embedded. Huge interface-text dumps keep only keys that name things |
+| Source code, a git repository, a zip of one | The code is skipped; its README, docs and string and locale files are read as above. `node_modules`, build output, `.git` and binaries are never entered |
+| Images and icons (PNG, JPEG, GIF, WebP, SVG, …) | Assets: size, a thumbnail, a name from the file name, and the glossary term it shows when the file name says (`Wst_Shooter_Normal_00.png` → Splattershot) |
+| Zip and tar archives | Unpacked (in the local cache) and taken the same way |
+| DiscordChatExporter JSON | Its conversations |
+| Anything else (video, Excel, fonts, programs, unknown formats) | Skipped, with the reason in the report |
+
+Every import writes a report (taken as what, skipped and why, failed, gone
+from the inbox). Files are remembered by content: importing again does
+nothing for unchanged files, a changed file replaces its document or table,
+and a copy of a file already there is skipped.
+
+The knowledge folder may be synced (Dropbox, rclone): the store writes whole
+files through a rename, locks nothing, and skips files that arrive half-synced
+or as conflict copies; documents synced in from another machine are embedded
+when the store next loads. The embedding model (about 470 MB), thumbnails and
+unpacked archives stay on this machine, in `~/.cache/cuttlefish`. The store of
+before, `~/.local/share/cuttlefish`, is copied over once when the studio starts;
+when the copy checks out, the old folder is renamed to
+`cuttlefish.migrated-<date>.safe-to-delete` (the Knowledge tab says so) and can
+be deleted.
 
 ### Vision
 
@@ -348,7 +387,7 @@ Both programs take `--config <path>`.
 | `[recording]` | Default path `prefix` until one is set on the dashboard |
 | `[video]` | First `input` (`"screen"`, `/dev/video0` or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
 | `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) `annotations` (object labels, default `Annotations` next to the root), `tracker` (Follow's tracker, default `http://127.0.0.1:7340`), `tracker_command` and `tracker_dir` (what Start tracker runs, default `uv run agentzero-track-serve --port <port>` in `../AgentZero`); relative paths start at the config's folder |
-| `[cuttlefish]` | Optional: `reviews` (one folder per review with its video; default `Reviews` next to the root), `knowledge` (the knowledge store, default `$CUTTLEFISH_DATA` or `~/.local/share/cuttlefish`) and `model` |
+| `[cuttlefish]` | Optional: `reviews` (one folder per review with its video; default `Reviews` next to the root), `knowledge` (the knowledge store with its `inbox/`, default `Knowledge` next to the root) and `model` |
 | `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model) and `confidence` (0.25) |
 | `[predictor]` | Optional: `agentzero` (the AgentZero folder, default `../AgentZero`) and `results` (stored predictions, default `Predictions` next to the root) |
 | `[logging]` | `level`: error, warn, info, debug or trace |
