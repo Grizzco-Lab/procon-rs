@@ -1662,6 +1662,14 @@
               <button
                 type="button"
                 class="mode-toggle"
+                data-kind="inbox"
+                data-i18n="k.kind.inbox"
+              >
+                Inbox
+              </button>
+              <button
+                type="button"
+                class="mode-toggle"
                 data-kind="web"
                 data-i18n="k.kind.web"
               >
@@ -1715,6 +1723,48 @@
               >
                 Discord bot
               </button>
+            </div>
+            <div class="k-inbox" data-for="inbox">
+              <p class="panel-note">
+                Drop anything here: guides, name tables, whole projects, icons,
+                zip files. Prose becomes searchable documents, names in several
+                languages go into the glossary, images into the assets. Files
+                can also be put straight into
+                <span class="path" id="k-inbox-folder">the inbox folder</span>.
+              </p>
+              <div class="k-drop" id="k-drop">
+                <span>Drop files or folders here, or</span>
+                <button type="button" class="btn btn-small" id="k-pick-files">
+                  Choose files
+                </button>
+                <button type="button" class="btn btn-small" id="k-pick-folder">
+                  Choose a folder
+                </button>
+                <input type="file" id="k-files" multiple hidden />
+                <input type="file" id="k-folder" webkitdirectory hidden />
+              </div>
+              <label class="field">
+                <span class="readout-label"
+                  >Into a folder of the inbox (optional)</span
+                >
+                <input
+                  class="select"
+                  id="k-into"
+                  type="text"
+                  placeholder="splat3-data"
+                />
+              </label>
+              <div class="k-upload meter" id="k-upload" hidden>
+                <div class="cf-download-head">
+                  <span class="cf-download-url" id="k-upload-what"></span
+                  ><span class="num" id="k-upload-count"></span>
+                </div>
+                <div class="meter-track">
+                  <div class="meter-fill" id="k-upload-fill"></div>
+                </div>
+                <pre class="k-log" id="k-upload-log"></pre>
+              </div>
+              <p class="panel-note" id="k-inbox-status"></p>
             </div>
             <label class="field" data-for="web">
               <span class="readout-label" data-i18n="k.f.urls"
@@ -1881,7 +1931,7 @@
               >
             </div>
             <div class="cf-row">
-              <button type="submit" class="btn btn-small" data-i18n="k.import">
+              <button type="submit" class="btn btn-small" id="k-import-go">
                 Import
               </button>
             </div>
@@ -1912,6 +1962,7 @@
                   <th data-i18n="k.chunks">Chunks</th>
                   <th data-i18n="k.th.license">License</th>
                   <th data-i18n="k.th.fetched">Fetched</th>
+                  <th aria-label="Delete" data-i18n-aria-label="k.delete"></th>
                 </tr>
               </thead>
               <tbody id="k-docs"></tbody>
@@ -1941,6 +1992,34 @@
             </button>
           </form>
           <ul class="k-terms" id="k-glossary"></ul>
+        </section>
+
+        <section class="panel p-k-overview" aria-labelledby="h-k-overview">
+          <header class="panel-head">
+            <h2 id="h-k-overview">What the store holds</h2>
+          </header>
+          <div class="k-overview" id="k-overview"></div>
+          <div class="k-report" id="k-report" hidden></div>
+        </section>
+
+        <section class="panel p-k-assets" aria-labelledby="h-k-assets">
+          <header class="panel-head">
+            <h2 id="h-k-assets">Assets</h2>
+            <span class="panel-note" id="k-assets-note"></span>
+          </header>
+          <div class="cf-row">
+            <input
+              class="select cf-grow"
+              id="k-asset-q"
+              type="search"
+              placeholder="Name, path or term: Splattershot, バクダン…"
+              aria-label="Filter assets"
+            />
+            <select class="select" id="k-asset-folder" aria-label="Folder">
+              <option value="">All folders</option>
+            </select>
+          </div>
+          <ul class="k-assets" id="k-assets"></ul>
         </section>
       </main>
     </div>

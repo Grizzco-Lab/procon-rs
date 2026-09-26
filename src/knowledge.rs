@@ -11,16 +11,30 @@
 //!
 //! Imports run one at a time on a thread of their own, with a log the page
 //! polls; web pages go through the crate's polite crawler (robots.txt, one
-//! request per site every few seconds).
+//! request per site every few seconds). The inbox (`<knowledge>/inbox/`,
+//! see `cuttlefish::inbox`) takes files dropped there by hand or uploaded
+//! from the page, and its import sorts them into documents, glossary terms
+//! and the asset catalogue, with a report.
 //!
 //! Endpoints under `/api/cuttlefish/knowledge/`:
 //!
 //! - `GET stats`: documents per source kind, chunks, glossary, digest,
 //!   embedder, and whether `ANTHROPIC_API_KEY` and `DISCORD_BOT_TOKEN` are
 //!   set
+//! - `GET overview`: what the store holds (documents by source and format,
+//!   glossary terms by language, name tables, assets by folder), the inbox,
+//!   the last import reports, and the old data folder once moved aside
+//!   (`cuttlefish::store::migrate`); read from the files, without the model
 //! - `GET search?q=&k=`: the `k` best chunks with their sources and scores
 //! - `GET documents`: every document's metadata (no text)
+//! - `POST delete` with `{"ids": [...]}`: deletes documents and their
+//!   chunks
 //! - `GET glossary?q=`: the term named `q`, or the terms mentioned in it
+//! - `GET assets?q=&folder=`: images and icons of the catalogue, with the
+//!   names of their glossary terms; `GET thumb?id=` one's thumbnail
+//! - `GET inbox`: files waiting in the inbox; `POST upload?path=` with the
+//!   file as the body writes one there (at most [`MAX_UPLOAD`] bytes)
+//! - `GET reports`, `GET report?id=`: inbox import reports
 //! - `POST ask` with `{"question", "k"?}`: the model's answer with the
 //!   sources it cites; `501` without the key
 //! - `POST translate` with `{"text", "to"}`: the text in language `to`;
@@ -28,25 +42,32 @@
 //! - `POST ingest` with an [`IngestRequest`] starts an import (`409` while
 //!   one runs); `GET jobs` lists this run's imports; `POST cancel` stops the
 //!   current one after its document
-//!
-//! The crate has no way to delete a document yet, so neither has the page.
 
+use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
+use cuttlefish::assets::{self, Catalogue};
 use cuttlefish::discord::Bot;
 use cuttlefish::doc::Document;
 use cuttlefish::embed::{E5Embedder, Embedder};
 use cuttlefish::ingest::{self, Meta, Web};
 use cuttlefish::llm::{Client, Settings};
 use cuttlefish::review::{self, AiComment, ReviewRequest};
-use cuttlefish::store::Store;
+use cuttlefish::store::{self, Store};
+use cuttlefish::{inbox, tables};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
-use warp::http::StatusCode;
+use std::time::SystemTime;
+use warp::filters::BoxedFilter;
+use warp::http::{Response, StatusCode};
+use warp::hyper::body::Buf;
+use warp::{Filter, Stream};
 
 /// Knowledge excerpts retrieved per question
 const K: usize = 8;
@@ -57,8 +78,18 @@ const MAX_K: usize = 50;
 /// Log lines kept per import
 const LOG_LINES: usize = 200;
 
-/// Imported documents between two writes of the index
-const SAVE_EVERY: usize = 10;
+/// Imported documents between two writes of the index (each write
+/// replaces the whole index in a synced folder)
+const SAVE_EVERY: usize = 50;
+
+/// Largest file uploaded into the inbox from the page
+pub const MAX_UPLOAD: u64 = 4 << 30;
+
+/// Most assets listed at once
+const MAX_ASSETS: usize = 300;
+
+/// Import reports listed in the overview
+const REPORTS_SHOWN: usize = 5;
 
 /// An error with the status it answers with
 pub struct Status(pub StatusCode, pub anyhow::Error);
@@ -85,6 +116,8 @@ fn is_set(name: &str) -> bool {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Source {
+    /// Everything in the inbox
+    Inbox,
     /// Web pages, a sitemap or MediaWiki categories
     Web(Web),
     /// A YouTube video, playlist or channel's transcripts
@@ -162,6 +195,7 @@ impl IngestRequest {
             Ok(names.join(", "))
         };
         match &mut self.source {
+            Source::Inbox => Ok("Inbox".to_string()),
             Source::Web(web) => {
                 trim(&mut web.urls);
                 trim(&mut web.categories);
@@ -242,6 +276,23 @@ pub struct IngestJob {
     pub error: Option<String>,
     pub started_ms: u64,
     pub finished_ms: Option<u64>,
+    /// An inbox import's report id (see `GET report`) and summary
+    pub report: Option<String>,
+    pub summary: Option<String>,
+}
+
+/// A document's format for the overview: the extension of its file, `web`
+/// for pages, videos and messages with an address, else `other`
+fn format_of(d: &Document) -> String {
+    match (&d.path, &d.url) {
+        (Some(path), _) => path
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_lowercase())
+            .filter(|ext| !ext.contains('/'))
+            .unwrap_or_else(|| "file".to_string()),
+        (None, Some(_)) => "web".to_string(),
+        (None, None) => "other".to_string(),
+    }
 }
 
 /// Unix time in ms
@@ -255,36 +306,49 @@ fn now_ms() -> u64 {
 pub struct Knowledge {
     /// The crate's data folder
     root: PathBuf,
+    /// This machine's cache (embedding model, thumbnails, unpacked
+    /// archives)
+    cache: PathBuf,
     /// Model settings for questions, reviews and translations
     settings: Settings,
     loaded: Mutex<Option<Arc<Loaded>>>,
     jobs: Mutex<Vec<IngestJob>>,
     cancel: AtomicBool,
+    /// The asset catalogue as last read, with its file's time
+    catalogue: Mutex<Option<(SystemTime, Arc<Catalogue>)>>,
 }
 
 impl Knowledge {
     pub fn new(root: PathBuf, settings: Settings) -> Self {
         Self {
             root,
+            cache: store::cache_dir(),
             settings,
             loaded: Mutex::default(),
             jobs: Mutex::default(),
             cancel: AtomicBool::new(false),
+            catalogue: Mutex::default(),
         }
     }
 
     /// The store and embedder, loaded on first use (the first time ever,
-    /// the embedding model is downloaded into the data folder); an error is
-    /// tried again on the next call
+    /// the embedding model is downloaded into the local cache); documents
+    /// synced in from elsewhere are embedded then. An error is tried again
+    /// on the next call.
     pub fn loaded(&self) -> Result<Arc<Loaded>> {
         let mut loaded = self.loaded.lock().unwrap();
         if let Some(loaded) = &*loaded {
             return Ok(Arc::clone(loaded));
         }
         log::info!("Loading the knowledge store in {}", self.root.display());
-        let embedder = E5Embedder::load(&Store::models_dir(&self.root))
-            .context("cannot load the embedding model")?;
-        let store = Store::open(&self.root, &embedder)?;
+        let embedder =
+            E5Embedder::load(&store::models_dir()).context("cannot load the embedding model")?;
+        let mut store = Store::open(&self.root, &embedder)?;
+        let caught_up = store.catch_up(&embedder)?;
+        if caught_up > 0 {
+            log::info!("Embedded {caught_up} documents the index lacked");
+            store.save()?;
+        }
         let opened = Arc::new(Loaded {
             store: RwLock::new(store),
             embedder,
@@ -362,6 +426,8 @@ impl Knowledge {
                     "source": d.source,
                     "title": d.title,
                     "url": d.url,
+                    "path": d.path,
+                    "format": format_of(d),
                     "language": d.language,
                     "license": d.license,
                     "attribution": d.attribution,
@@ -373,6 +439,207 @@ impl Knowledge {
             })
             .collect();
         Ok(json!({ "documents": documents }))
+    }
+
+    /// Deletes documents and their chunks, and writes the index
+    pub fn delete(&self, ids: &[String]) -> Result<Value> {
+        ensure!(!ids.is_empty(), "no documents given");
+        let loaded = self.loaded()?;
+        let mut store = loaded.store.write().unwrap();
+        let mut deleted = Vec::new();
+        for id in ids {
+            if store.delete(id)? {
+                deleted.push(id.clone());
+            }
+        }
+        store.save()?;
+        log::info!("Deleted {} documents", deleted.len());
+        Ok(json!({ "deleted": deleted }))
+    }
+
+    /// What the store holds, read from its files (the model need not be
+    /// loaded): documents by source and format, glossary terms by language,
+    /// name tables, assets by folder, the inbox and the last imports
+    pub fn overview(&self) -> Result<Value> {
+        let docs = store::read_documents(&self.root)?;
+        let mut sources: BTreeMap<String, usize> = BTreeMap::new();
+        let mut formats: BTreeMap<String, usize> = BTreeMap::new();
+        for d in &docs {
+            let source = serde_json::to_value(d.source)?;
+            *sources
+                .entry(source.as_str().unwrap_or_default().to_string())
+                .or_default() += 1;
+            *formats.entry(format_of(d)).or_default() += 1;
+        }
+        let glossary = Store::load_glossary(&self.root)?;
+        let tables: Vec<Value> = tables::load_all(&self.root)
+            .iter()
+            .map(|t| {
+                json!({
+                    "source": t.source,
+                    "terms": t.terms.len(),
+                    "languages": t.languages,
+                    "files": t.files.len(),
+                    "note": t.note,
+                })
+            })
+            .collect();
+        let catalogue = self.catalogue();
+        let reports: Vec<Value> = inbox::reports(&self.root, REPORTS_SHOWN)
+            .iter()
+            .map(|r| {
+                json!({
+                    "id": r.id,
+                    "started": r.started,
+                    "files": r.files,
+                    "summary": r.summary(),
+                })
+            })
+            .collect();
+        Ok(json!({
+            "data": self.root,
+            "documents": {
+                "total": docs.len(),
+                "sources": sources,
+                "formats": formats,
+            },
+            "glossary": {
+                "terms": glossary.terms.len(),
+                "imported": glossary.terms.iter().filter(|t| !t.from.is_empty()).count(),
+                "languages": glossary.languages(),
+                "tables": tables,
+            },
+            "assets": {
+                "total": catalogue.assets.len(),
+                "linked": catalogue.assets.iter().filter(|a| a.term.is_some()).count(),
+                "folders": catalogue.folders(),
+            },
+            "inbox": inbox::pending(&self.root),
+            "reports": reports,
+            "moved_aside": store::moved_aside(&store::legacy_root()),
+        }))
+    }
+
+    /// The asset catalogue, read again when its file changed
+    fn catalogue(&self) -> Arc<Catalogue> {
+        let time = std::fs::metadata(self.root.join("assets.json"))
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut cached = self.catalogue.lock().unwrap();
+        match &*cached {
+            Some((t, c)) if *t == time => Arc::clone(c),
+            _ => {
+                let c = Arc::new(Catalogue::load(&self.root));
+                *cached = Some((time, Arc::clone(&c)));
+                c
+            }
+        }
+    }
+
+    /// Images and icons whose name, path or term matches `query`, in
+    /// `folder` (and below) when given, with their term's names
+    pub fn assets(&self, query: &str, folder: &str) -> Result<Value> {
+        let catalogue = self.catalogue();
+        let glossary = Store::load_glossary(&self.root)?;
+        let query = query.trim().to_lowercase();
+        let mut shown = Vec::new();
+        let mut matching = 0;
+        for a in &catalogue.assets {
+            if !folder.is_empty()
+                && a.folder != folder
+                && !a.folder.starts_with(&format!("{folder}/"))
+            {
+                continue;
+            }
+            let term = a.term.as_deref().and_then(|id| glossary.lookup(id));
+            let names = term.map(|t| &t.forms);
+            if !query.is_empty() {
+                let hay = format!(
+                    "{} {} {}",
+                    a.path,
+                    a.term.as_deref().unwrap_or_default(),
+                    names
+                        .map(|n| n.values().flatten().cloned().collect::<Vec<_>>().join(" "))
+                        .unwrap_or_default()
+                )
+                .to_lowercase();
+                if !hay.contains(&query) {
+                    continue;
+                }
+            }
+            matching += 1;
+            if shown.len() < MAX_ASSETS {
+                shown.push(json!({
+                    "id": a.id,
+                    "path": a.path,
+                    "name": a.name,
+                    "folder": a.folder,
+                    "format": a.format,
+                    "bytes": a.bytes,
+                    "width": a.width,
+                    "height": a.height,
+                    "term": a.term,
+                    "names": names,
+                }));
+            }
+        }
+        Ok(json!({
+            "total": catalogue.assets.len(),
+            "matching": matching,
+            "assets": shown,
+            "folders": catalogue.folders(),
+        }))
+    }
+
+    /// An asset's thumbnail and its media type
+    pub fn thumbnail(&self, id: &str) -> Result<(Vec<u8>, &'static str), Status> {
+        let catalogue = self.catalogue();
+        let asset = catalogue
+            .assets
+            .iter()
+            .find(|a| a.id == id)
+            .ok_or_else(|| Status(StatusCode::NOT_FOUND, anyhow::anyhow!("no asset {id}")))?;
+        Ok(assets::thumbnail(
+            &self.root.join(inbox::INBOX),
+            &self.cache,
+            asset,
+        )?)
+    }
+
+    /// Writes an upload into the inbox from its chunks (`None` at the end;
+    /// without it, the upload was broken off and nothing is kept); returns
+    /// the bytes written
+    fn write_upload(
+        &self,
+        rel: &str,
+        mut chunks: tokio::sync::mpsc::Receiver<Option<Vec<u8>>>,
+    ) -> Result<u64> {
+        let target = inbox::upload_path(&self.root, rel)?;
+        let dir = target.parent().context("no folder")?;
+        std::fs::create_dir_all(dir)?;
+        let name = target.file_name().unwrap_or_default().to_string_lossy();
+        let part = dir.join(format!(".{name}.upload"));
+        let written = (|| -> Result<u64> {
+            let mut file = std::fs::File::create(&part)?;
+            let mut bytes = 0;
+            loop {
+                match chunks.blocking_recv() {
+                    Some(Some(chunk)) => {
+                        file.write_all(&chunk)?;
+                        bytes += chunk.len() as u64;
+                    }
+                    Some(None) => break,
+                    None => anyhow::bail!("the upload was broken off"),
+                }
+            }
+            file.sync_all()?;
+            std::fs::rename(&part, &target)?;
+            Ok(bytes)
+        })();
+        if written.is_err() {
+            let _ = std::fs::remove_file(&part);
+        }
+        written
     }
 
     /// The term named `query`, or else the terms a text mentions; read from
@@ -448,6 +715,8 @@ impl Knowledge {
             error: None,
             started_ms: now_ms(),
             finished_ms: None,
+            report: None,
+            summary: None,
         };
         jobs.push(job.clone());
         drop(jobs);
@@ -509,6 +778,17 @@ impl Knowledge {
         };
         let meta = &request.meta;
         let result = match &request.source {
+            Source::Inbox => {
+                let result = inbox::import(&mut sink, &self.root, &self.cache, meta);
+                loaded.store.write().unwrap().reload_glossary()?;
+                result.map(|report| {
+                    self.update(id, |job| {
+                        job.report = Some(report.id.clone());
+                        job.summary = Some(report.summary());
+                    });
+                    report.count("document")
+                })
+            }
             Source::Web(web) => ingest::web(&mut sink, web, meta),
             Source::Youtube { url, max } => {
                 ingest::youtube(&mut sink, url, ingest::SUB_LANGS, max.unwrap_or(50), meta)
@@ -588,7 +868,12 @@ impl Knowledge {
             "stats" => Ok(self.stats()?),
             "search" => Ok(self.search(text("q"), k())?),
             "documents" => Ok(self.documents()?),
+            "overview" => Ok(self.overview()?),
             "glossary" => Ok(self.glossary(text("q"))?),
+            "assets" => Ok(self.assets(text("q"), text("folder"))?),
+            "inbox" => Ok(json!(inbox::pending(&self.root))),
+            "reports" => Ok(json!({ "reports": inbox::reports(&self.root, REPORTS_SHOWN) })),
+            "report" => Ok(json!(inbox::report(&self.root, text("id"))?)),
             "jobs" => Ok(self.jobs()),
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
@@ -622,12 +907,130 @@ impl Knowledge {
                 self.cancel();
                 Ok(self.jobs())
             }
+            "delete" => {
+                let body = json_body()?;
+                let ids: Vec<String> = serde_json::from_value(body["ids"].clone())
+                    .map_err(|e| anyhow::anyhow!("bad ids: {e}"))?;
+                Ok(self.delete(&ids)?)
+            }
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
                 anyhow::anyhow!("no endpoint POST knowledge/{path}"),
             )),
         }
     }
+}
+
+/// A JSON error answer
+fn error_response(status: StatusCode, e: &anyhow::Error) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .body(
+            json!({ "error": format!("{e:#}") })
+                .to_string()
+                .into_bytes(),
+        )
+        .unwrap()
+}
+
+/// Streams an upload's body to the writer thread
+async fn upload(
+    knowledge: Arc<Knowledge>,
+    rel: String,
+    mut body: impl Stream<Item = Result<impl Buf, warp::Error>> + Unpin,
+) -> Response<Vec<u8>> {
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let path = rel.clone();
+    let writer = tokio::task::spawn_blocking(move || knowledge.write_upload(&path, rx));
+    let mut complete = true;
+    while let Some(chunk) = body.next().await {
+        let sent = match chunk {
+            Ok(mut buf) => {
+                tx.send(Some(buf.copy_to_bytes(buf.remaining()).to_vec()))
+                    .await
+            }
+            Err(_) => {
+                complete = false;
+                break;
+            }
+        };
+        if sent.is_err() {
+            // The writer stopped; its error is the answer
+            break;
+        }
+    }
+    if complete {
+        let _ = tx.send(None).await;
+    }
+    drop(tx);
+    match writer.await {
+        Ok(Ok(bytes)) => {
+            log::info!("Uploaded {rel} into the inbox ({bytes} bytes)");
+            Response::builder()
+                .header("content-type", "application/json")
+                .body(
+                    json!({ "path": rel, "bytes": bytes })
+                        .to_string()
+                        .into_bytes(),
+                )
+                .unwrap()
+        }
+        Ok(Err(e)) => error_response(StatusCode::BAD_REQUEST, &e),
+        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &anyhow::anyhow!("{e}")),
+    }
+}
+
+/// Routes that do not answer JSON from whole bodies: `POST upload?path=`
+/// (streamed into the inbox) and `GET thumb?id=` (an image)
+pub fn routes(knowledge: Arc<Knowledge>) -> BoxedFilter<(Response<Vec<u8>>,)> {
+    let base = || {
+        warp::path("api")
+            .and(warp::path("cuttlefish"))
+            .and(warp::path("knowledge"))
+    };
+    let uploader = Arc::clone(&knowledge);
+    let upload = warp::post()
+        .and(base())
+        .and(warp::path("upload"))
+        .and(warp::path::end())
+        .and(warp::query::<HashMap<String, String>>())
+        .and(warp::body::content_length_limit(MAX_UPLOAD))
+        .and(warp::body::stream())
+        .then(move |query: HashMap<String, String>, body| {
+            let knowledge = Arc::clone(&uploader);
+            let rel = query.get("path").cloned().unwrap_or_default();
+            async move { upload(knowledge, rel, Box::pin(body)).await }
+        });
+    let thumb = warp::get()
+        .and(base())
+        .and(warp::path("thumb"))
+        .and(warp::path::end())
+        .and(warp::query::<HashMap<String, String>>())
+        .then(move |query: HashMap<String, String>| {
+            let knowledge = Arc::clone(&knowledge);
+            async move {
+                let id = query.get("id").cloned().unwrap_or_default();
+                let made = tokio::task::spawn_blocking(move || knowledge.thumbnail(&id)).await;
+                match made {
+                    Ok(Ok((bytes, media_type))) => Response::builder()
+                        .header("content-type", media_type)
+                        .header("cache-control", "private, max-age=86400")
+                        // An SVG opened on its own runs no scripts
+                        .header(
+                            "content-security-policy",
+                            "default-src 'none'; style-src 'unsafe-inline'",
+                        )
+                        .body(bytes)
+                        .unwrap(),
+                    Ok(Err(Status(status, e))) => error_response(status, &e),
+                    Err(e) => {
+                        error_response(StatusCode::INTERNAL_SERVER_ERROR, &anyhow::anyhow!("{e}"))
+                    }
+                }
+            }
+        });
+    upload.or(thumb).unify().boxed()
 }
 
 #[cfg(test)]
@@ -744,6 +1147,8 @@ mod tests {
             error: None,
             started_ms: 0,
             finished_ms: None,
+            report: None,
+            summary: None,
         });
         let knowledge = Arc::new(knowledge);
         let started = knowledge

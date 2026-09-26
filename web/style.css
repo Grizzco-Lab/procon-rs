@@ -3771,7 +3771,8 @@ body {
     "stats search"
     "ask search"
     "import docs"
-    "glossary docs";
+    "glossary docs"
+    "overview assets";
 }
 
 .p-k-stats {
@@ -3792,6 +3793,12 @@ body {
 .p-k-glossary {
   grid-area: glossary;
 }
+.p-k-overview {
+  grid-area: overview;
+}
+.p-k-assets {
+  grid-area: assets;
+}
 
 [data-theme="joy"] #cf-knowledge {
   max-width: 1360px;
@@ -3804,7 +3811,8 @@ body {
     "stats stats stats stats stats search search search search search search search"
     "ask ask ask ask ask search search search search search search search"
     "import import import import import docs docs docs docs docs docs docs"
-    "glossary glossary glossary glossary glossary docs docs docs docs docs docs docs";
+    "glossary glossary glossary glossary glossary docs docs docs docs docs docs docs"
+    "overview overview overview overview overview assets assets assets assets assets assets assets";
 }
 
 [data-theme="telemetry"] .p-k-stats {
@@ -3825,25 +3833,31 @@ body {
 [data-theme="telemetry"] .p-k-glossary {
   --panel-no: "06";
 }
+[data-theme="telemetry"] .p-k-overview {
+  --panel-no: "07";
+}
+[data-theme="telemetry"] .p-k-assets {
+  --panel-no: "08";
+}
 
 @media (max-width: 1100px) {
   :root[data-theme] #cf-knowledge {
     max-width: 900px;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary";
+    grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary" "overview" "assets";
   }
 }
 
 :root[data-layout="phone"][data-theme] #cf-knowledge {
   max-width: 480px;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary";
+  grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary" "overview" "assets";
 }
 
 @media (max-width: 720px) {
   :root[data-theme] #cf-knowledge {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary";
+    grid-template-areas: "stats" "search" "ask" "import" "docs" "glossary" "overview" "assets";
   }
 }
 
@@ -4005,6 +4019,167 @@ body {
 .k-form b {
   color: var(--text-3);
   font-weight: 600;
+}
+
+/* Inbox: drop zone, upload progress */
+.k-inbox {
+  display: grid;
+  gap: 8px;
+}
+
+.k-drop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 18px 12px;
+  border: 2px dashed var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  color: var(--text-2);
+  font-size: 13px;
+  text-align: center;
+}
+
+.k-drop.is-over {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.k-upload {
+  display: grid;
+  gap: 6px;
+}
+
+.k-upload .meter-fill {
+  transition: width 0.2s;
+}
+
+/* Overview and import reports */
+.k-overview,
+.k-report {
+  display: grid;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.k-report {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.k-report[hidden] {
+  display: none;
+}
+
+.k-report-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.k-report-head button {
+  margin-left: auto;
+}
+
+.k-report ul,
+.k-tables,
+.k-reports,
+.k-notes {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.k-reports {
+  padding-left: 0;
+  list-style: none;
+}
+
+.k-report summary {
+  cursor: pointer;
+}
+
+.k-report .path,
+.k-overview .path {
+  overflow-wrap: anywhere;
+}
+
+.k-ov-block {
+  display: grid;
+  gap: 6px;
+}
+
+.k-ov-block h3,
+.k-report h3 {
+  margin: 0;
+}
+
+.k-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.k-count b {
+  color: var(--text);
+}
+
+/* Asset browser */
+.k-assets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px;
+  max-height: 640px;
+  margin: 10px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.k-asset {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  font-size: 12px;
+}
+
+.k-asset-img {
+  display: grid;
+  place-items: center;
+  height: 96px;
+  border-radius: 4px;
+  background: repeating-conic-gradient(
+      var(--inset-border) 0 25%,
+      transparent 0 50%
+    )
+    0 0 / 12px 12px;
+}
+
+.k-asset-img img {
+  max-width: 100%;
+  max-height: 96px;
+  object-fit: contain;
+}
+
+.k-asset-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.k-asset .k-forms {
+  font-size: 12px;
 }
 
 /* ============================================================ vision

@@ -177,9 +177,17 @@ fn main() -> anyhow::Result<()> {
     let knowledge = config
         .cuttlefish
         .knowledge
-        .map_or_else(cuttlefish::store::Store::default_root, |dir| {
-            config_dir.join(dir)
-        });
+        .map_or_else(|| beside("Knowledge"), |dir| config_dir.join(dir));
+    // The knowledge store of before (~/.local/share/cuttlefish) is copied
+    // over once, its embedding model into the local cache; once the copy
+    // checks out, the old folder is renamed to *.safe-to-delete
+    if let Err(e) = cuttlefish::store::migrate(
+        &cuttlefish::store::legacy_root(),
+        &knowledge,
+        &cuttlefish::store::models_dir(),
+    ) {
+        log::warn!("Could not copy the older knowledge store: {:#}", e);
+    }
     let mut settings = cuttlefish::llm::Settings::default();
     if let Some(model) = config.cuttlefish.model {
         settings.model = model;

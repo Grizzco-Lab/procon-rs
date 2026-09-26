@@ -1,6 +1,8 @@
 // Cuttlefish's knowledge view (#cuttlefish/view=knowledge): what the store
-// holds, search, questions and translations, imports and the glossary,
-// through /api/cuttlefish/knowledge/... (see src/knowledge.rs). Runs after
+// holds, search, questions and translations, imports (uploads into the
+// inbox and its import report included), documents, the glossary and the
+// asset browser, through /api/cuttlefish/knowledge/... (see
+// src/knowledge.rs). Runs after
 // cuttlefish.js, which hides its library and player for this view, and uses
 // the helpers of i18n.js, app.js and inspect.js (t, $, escapeHtml).
 "use strict";
@@ -29,6 +31,8 @@
     /** Import form's kind */
     kind: "web",
     pollTimer: null,
+    /** The uploads so far, one after another */
+    uploads: Promise.resolve(),
     /** Whether an import was running at the last look */
     wasRunning: false,
   };
@@ -239,6 +243,8 @@
     for (const el of $("k-import-form").querySelectorAll("[data-for]")) {
       el.hidden = !el.dataset.for.split(" ").includes(kind);
     }
+    $("k-import-go").textContent = kind === "inbox" ? "Import inbox" : "Import";
+    if (kind === "inbox" && k.shown) loadInbox();
   }
 
   $("k-kinds").addEventListener("click", (event) => {
@@ -260,6 +266,7 @@
       delay_s: number("k-delay"),
     };
     const request = {
+      inbox: { kind: "inbox" },
       web: { kind: "web", urls: lines("k-urls"), ...web },
       sitemap: { kind: "web", sitemap: $("k-sitemap").value.trim(), ...web },
       wiki: {
@@ -339,8 +346,10 @@
           <div class="cf-download-head"><span class="cf-download-url">${escapeHtml(job.what)}</span><span class="num">${escapeHtml(state)} · ${escapeHtml(t("k.job.added", { n: job.added }))}</span></div>
           <div class="meter-track"><div class="meter-fill" style="width:${percent}%"></div></div>
           ${job.error ? `<span class="panel-note level-critical">${escapeHtml(job.error)}</span>` : ""}
+          ${job.summary ? `<span class="panel-note">${escapeHtml(job.summary)}</span>` : ""}
           <pre class="k-log">${log}</pre>
-          ${job.state === "running" ? `<button type="button" class="mode-toggle" data-cancel>${escapeHtml(t("k.cancel"))}</button>` : ""}`;
+          ${job.state === "running" ? `<button type="button" class="mode-toggle" data-cancel>${escapeHtml(t("k.cancel"))}</button>` : ""}
+          ${job.report ? `<button type="button" class="mode-toggle" data-report="${escapeHtml(job.report)}">${escapeHtml(t("k.report.show"))}</button>` : ""}`;
         return li;
       }),
     );
@@ -352,15 +361,395 @@
     if (k.wasRunning && !running) {
       loadStats();
       loadDocuments();
+      loadOverview();
+      loadAssets();
+      loadInbox();
     }
     k.wasRunning = running;
   }
 
   $("k-jobs").addEventListener("click", async (event) => {
+    const report = event.target.closest("[data-report]");
+    if (report) return showReport(report.dataset.report);
     if (!event.target.closest("[data-cancel]")) return;
     await api("cancel", {});
     pollJobs();
   });
+
+  // ---------------------------------------------------------------- inbox
+
+  /** Largest file uploaded (as the server's MAX_UPLOAD) */
+  const MAX_UPLOAD = 4 * 2 ** 30;
+  /** Folders not uploaded: dependencies and build output (the import
+   * skips them too), and hidden ones such as .git */
+  const SKIP_DIRS = new Set([
+    "node_modules",
+    "bower_components",
+    "target",
+    "build",
+    "dist",
+    "out",
+    "bin",
+    "obj",
+    "__pycache__",
+    "venv",
+    "vendor",
+    "coverage",
+    "Pods",
+    "DerivedData",
+  ]);
+
+  /** Bytes as KB, MB or GB */
+  function size(bytes) {
+    const units = ["B", "KB", "MB", "GB"];
+    let i = 0;
+    while (bytes >= 1024 && i < units.length - 1) {
+      bytes /= 1024;
+      i++;
+    }
+    return `${bytes.toFixed(i && bytes < 10 ? 1 : 0)} ${units[i]}`;
+  }
+
+  async function loadInbox() {
+    let pending;
+    try {
+      pending = await api("inbox");
+    } catch (error) {
+      $("k-inbox-status").textContent = error.message;
+      return;
+    }
+    $("k-inbox-folder").textContent = pending.folder;
+    $("k-inbox-status").textContent = pending.files
+      ? `The inbox holds ${pending.files} files (${size(pending.bytes)}); ${pending.new ? `${pending.new} new or changed since the last import` : "all imported"}.`
+      : "The inbox is empty.";
+  }
+
+  /** Every file of a dropped folder, with its path */
+  async function entryFiles(entry, path, out) {
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) =>
+        entry.file(resolve, reject),
+      );
+      out.push({ file, path: `${path}${file.name}` });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      // readEntries answers in batches until it answers none
+      for (;;) {
+        const batch = await new Promise((resolve, reject) =>
+          reader.readEntries(resolve, reject),
+        );
+        if (!batch.length) break;
+        for (const child of batch) {
+          await entryFiles(child, `${path}${entry.name}/`, out);
+        }
+      }
+    }
+  }
+
+  /** Uploads files ({file, path}) one after another into the inbox */
+  async function upload(files) {
+    const into = $("k-into")
+      .value.trim()
+      .replace(/^\/+|\/+$/g, "");
+    const skipped = [];
+    const queue = files.filter(({ file, path }) => {
+      const parts = path.split("/");
+      const hidden = parts.some((p) => p.startsWith("."));
+      const dependency = parts.slice(0, -1).some((p) => SKIP_DIRS.has(p));
+      if (hidden || dependency || file.size > MAX_UPLOAD) {
+        skipped.push(path);
+        return false;
+      }
+      return true;
+    });
+    const total = queue.reduce((sum, { file }) => sum + file.size, 0);
+    const box = $("k-upload");
+    const log = $("k-upload-log");
+    box.hidden = false;
+    log.textContent = skipped.length
+      ? `${skipped.length} hidden, dependency or too large files left out\n`
+      : "";
+    let sent = 0;
+    let failed = 0;
+    const show = (done, current) => {
+      $("k-upload-what").textContent = current ?? "Uploaded";
+      $("k-upload-count").textContent =
+        `${done}/${queue.length} files · ${size(sent)} of ${size(total)}`;
+      $("k-upload-fill").style.width = `${total ? (100 * sent) / total : 100}%`;
+    };
+    for (const [i, { file, path }] of queue.entries()) {
+      const target = into ? `${into}/${path}` : path;
+      show(i, target);
+      const before = sent;
+      try {
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open(
+            "POST",
+            `/api/cuttlefish/knowledge/upload?${new URLSearchParams({ path: target })}`,
+          );
+          xhr.upload.onprogress = (event) => {
+            sent = before + event.loaded;
+            show(i, target);
+          };
+          xhr.onload = () =>
+            xhr.status === 200
+              ? resolve()
+              : reject(
+                  new Error(
+                    (() => {
+                      try {
+                        return JSON.parse(xhr.responseText).error;
+                      } catch {
+                        return xhr.statusText;
+                      }
+                    })(),
+                  ),
+                );
+          xhr.onerror = () => reject(new Error("connection lost"));
+          xhr.send(file);
+        });
+      } catch (error) {
+        failed++;
+        log.textContent += `failed ${target}: ${error.message}\n`;
+      }
+      sent = before + file.size;
+    }
+    show(queue.length);
+    log.textContent += `${queue.length - failed} files uploaded${failed ? `, ${failed} failed` : ""}. Import the inbox to digest them.\n`;
+    loadInbox();
+  }
+
+  /** Uploads after the ones already started */
+  function queueUpload(files) {
+    k.uploads = k.uploads.then(() => upload(files));
+  }
+
+  $("k-pick-files").onclick = () => $("k-files").click();
+  $("k-pick-folder").onclick = () => $("k-folder").click();
+  for (const id of ["k-files", "k-folder"]) {
+    $(id).onchange = (event) => {
+      const files = [...event.target.files].map((file) => ({
+        file,
+        path: file.webkitRelativePath || file.name,
+      }));
+      event.target.value = "";
+      if (files.length) queueUpload(files);
+    };
+  }
+
+  const drop = $("k-drop");
+  drop.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    drop.classList.add("is-over");
+  });
+  drop.addEventListener("dragleave", () => drop.classList.remove("is-over"));
+  drop.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    drop.classList.remove("is-over");
+    // Entries must be taken before the first await
+    const entries = [...event.dataTransfer.items]
+      .map((item) => item.webkitGetAsEntry?.())
+      .filter(Boolean);
+    const files = [];
+    if (entries.length) {
+      for (const entry of entries) await entryFiles(entry, "", files);
+    } else {
+      for (const file of event.dataTransfer.files) {
+        files.push({ file, path: file.name });
+      }
+    }
+    if (files.length) queueUpload(files);
+  });
+
+  // -------------------------------------------------------------- reports
+
+  /** A report of an inbox import, as HTML */
+  function reportHtml(report) {
+    const byKind = {};
+    for (const t of report.taken) (byKind[t.kind] ??= []).push(t);
+    const names = {
+      document: "Documents",
+      discord: "Discord exports",
+      glossary: "Name tables → glossary",
+      asset: "Images and icons",
+    };
+    const list = (items) =>
+      `<ul>${items.map((t) => `<li><span class="path">${escapeHtml(t.path)}</span> <span class="panel-note">${escapeHtml(t.detail)}</span></li>`).join("")}</ul>`;
+    const taken = Object.entries(byKind)
+      .map(
+        ([kind, items]) =>
+          `<details${items.length <= 12 ? " open" : ""}><summary><b>${escapeHtml(names[kind] ?? kind)}</b> ${items.length}</summary>${list(items)}</details>`,
+      )
+      .join("");
+    const skipped = report.skipped
+      .map(
+        (s) =>
+          `<details><summary>${escapeHtml(s.reason)} <span class="num">${s.count}</span></summary><ul>${s.examples.map((e) => `<li class="path">${escapeHtml(e)}</li>`).join("")}${s.count > s.examples.length ? `<li class="panel-note">and ${s.count - s.examples.length} more</li>` : ""}</ul></details>`,
+      )
+      .join("");
+    const failed = report.failed.length
+      ? `<details open><summary class="level-critical"><b>Failed</b> ${report.failed.length}</summary>${list(report.failed)}</details>`
+      : "";
+    const gone = report.gone.length
+      ? `<details><summary>Gone from the inbox ${report.gone.length}</summary><ul>${report.gone.map((g) => `<li class="path">${escapeHtml(g)}</li>`).join("")}</ul></details>`
+      : "";
+    const notes = report.notes.length
+      ? `<ul class="k-notes">${report.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>`
+      : "";
+    return `
+      <div class="k-report-head"><b>Import of ${escapeHtml(new Date(report.started).toLocaleString())}</b>
+        <span class="panel-note">${report.files} files looked at, ${report.unchanged} unchanged${report.cancelled ? ", cancelled" : ""}</span>
+        <button type="button" class="mode-toggle" data-close-report>Close</button></div>
+      ${taken || `<p class="panel-note">Nothing new taken.</p>`}
+      ${failed}
+      ${skipped ? `<h3 class="readout-label">Skipped</h3>${skipped}` : ""}
+      ${gone}${notes}`;
+  }
+
+  async function showReport(id) {
+    const box = $("k-report");
+    try {
+      box.innerHTML = reportHtml(
+        await api(`report?${new URLSearchParams({ id })}`),
+      );
+    } catch (error) {
+      box.innerHTML = `<p class="notice">${escapeHtml(error.message)}</p>`;
+    }
+    box.hidden = false;
+    box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  $("k-report").addEventListener("click", (event) => {
+    if (event.target.closest("[data-close-report]"))
+      $("k-report").hidden = true;
+  });
+
+  // ------------------------------------------------------------- overview
+
+  /** `name count` chips from an object of counts, largest first */
+  function counts(object, name = (key) => key) {
+    const entries = Object.entries(object).sort((a, b) => b[1] - a[1]);
+    return entries.length
+      ? entries
+          .map(
+            ([key, n]) =>
+              `<span class="k-count">${escapeHtml(name(key))} <b class="num">${n}</b></span>`,
+          )
+          .join("")
+      : `<span class="panel-note">none</span>`;
+  }
+
+  async function loadOverview() {
+    let o;
+    try {
+      o = await api("overview");
+    } catch (error) {
+      $("k-overview").innerHTML =
+        `<p class="notice">${escapeHtml(error.message)}</p>`;
+      return;
+    }
+    const tables = o.glossary.tables
+      .map(
+        (t) =>
+          `<li><span class="path">${escapeHtml(t.source)}</span> <b class="num">${t.terms}</b> terms · ${escapeHtml(t.languages.join(", "))}<br /><span class="panel-note">${escapeHtml(t.note)}</span></li>`,
+      )
+      .join("");
+    const folders = Object.fromEntries(
+      Object.entries(o.assets.folders).map(([f, n]) => [f || "(inbox)", n]),
+    );
+    const reports = o.reports
+      .map(
+        (r) =>
+          `<li><button type="button" class="mode-toggle" data-report="${escapeHtml(r.id)}">${escapeHtml(new Date(r.started).toLocaleString())}</button> <span class="panel-note">${escapeHtml(r.summary)}</span></li>`,
+      )
+      .join("");
+    const aside = o.moved_aside
+      .map(
+        (path) =>
+          `<p class="notice is-info">The old knowledge folder was copied here and moved aside to <span class="path">${escapeHtml(path)}</span>. Everything in it is in this folder and the local model cache now; it is safe to delete.</p>`,
+      )
+      .join("");
+    $("k-overview").innerHTML = `${aside}
+      <div class="k-ov-block"><h3 class="readout-label">Documents <b class="num">${o.documents.total}</b></h3>
+        <div class="k-counts">${counts(o.documents.sources, sourceName)}</div>
+        <div class="k-counts">${counts(o.documents.formats)}</div></div>
+      <div class="k-ov-block"><h3 class="readout-label">Glossary <b class="num">${o.glossary.terms}</b> terms, ${o.glossary.imported} with imported names</h3>
+        <div class="k-counts">${counts(o.glossary.languages)}</div>
+        ${tables ? `<ul class="k-tables">${tables}</ul>` : `<p class="panel-note">No name tables imported yet.</p>`}</div>
+      <div class="k-ov-block"><h3 class="readout-label">Assets <b class="num">${o.assets.total}</b>, ${o.assets.linked} linked to a term</h3>
+        <div class="k-counts">${counts(folders)}</div></div>
+      <div class="k-ov-block"><h3 class="readout-label">Inbox</h3>
+        <p class="panel-note">${o.inbox.files} files (${size(o.inbox.bytes)}), ${o.inbox.new} new or changed · <span class="path">${escapeHtml(o.inbox.folder)}</span></p></div>
+      <div class="k-ov-block"><h3 class="readout-label">Last imports of the inbox</h3>
+        ${reports ? `<ul class="k-reports">${reports}</ul>` : `<p class="panel-note">None yet.</p>`}</div>`;
+  }
+
+  $("k-overview").addEventListener("click", (event) => {
+    const report = event.target.closest("[data-report]");
+    if (report) showReport(report.dataset.report);
+  });
+
+  // --------------------------------------------------------------- assets
+
+  async function loadAssets() {
+    const q = $("k-asset-q").value.trim();
+    const folder = $("k-asset-folder").value;
+    let data;
+    try {
+      data = await api(`assets?${new URLSearchParams({ q, folder })}`);
+    } catch (error) {
+      $("k-assets-note").textContent = error.message;
+      return;
+    }
+    const select = $("k-asset-folder");
+    const options = Object.entries(data.folders)
+      .map(
+        ([f, n]) =>
+          `<option value="${escapeHtml(f)}">${escapeHtml(f || "(inbox)")} · ${n}</option>`,
+      )
+      .join("");
+    select.innerHTML = `<option value="">All folders</option>${options}`;
+    select.value = folder;
+    $("k-assets-note").textContent = data.total
+      ? `${data.matching} of ${data.total}${data.matching > data.assets.length ? `, first ${data.assets.length} shown` : ""}`
+      : "";
+    const list = $("k-assets");
+    if (!data.total) {
+      list.innerHTML = `<li class="panel-note">No images yet: drop icons or image folders into the inbox and import it.</li>`;
+      return;
+    }
+    list.replaceChildren(
+      ...data.assets.map((a) => {
+        const li = document.createElement("li");
+        li.className = "k-asset";
+        li.title = a.path;
+        const names = a.names
+          ? Object.entries(a.names)
+              .filter(([lang]) => ["en", "ja", "zh"].includes(lang))
+              .map(
+                ([lang, n]) =>
+                  `<span class="k-form"><b>${escapeHtml(lang)}</b> ${escapeHtml(n[0])}</span>`,
+              )
+              .join("")
+          : "";
+        const dims = a.width ? `${a.width}×${a.height} · ` : "";
+        li.innerHTML = `
+          <div class="k-asset-img"><img loading="lazy" alt="" src="/api/cuttlefish/knowledge/thumb?${new URLSearchParams({ id: a.id, v: a.bytes })}" /></div>
+          <span class="k-asset-name">${escapeHtml(a.name)}</span>
+          ${a.term ? `<span class="cf-kind">${escapeHtml(a.term)}</span><div class="k-forms">${names}</div>` : ""}
+          <span class="panel-note">${dims}${escapeHtml(a.format)} · ${size(a.bytes)}</span>`;
+        return li;
+      }),
+    );
+  }
+
+  let assetTimer = null;
+  $("k-asset-q").oninput = () => {
+    clearTimeout(assetTimer);
+    assetTimer = setTimeout(loadAssets, 250);
+  };
+  $("k-asset-folder").onchange = loadAssets;
 
   // ------------------------------------------------------------ documents
 
@@ -379,7 +768,7 @@
     const shown = k.documents.filter(
       (d) =>
         !filter ||
-        `${d.title} ${d.url ?? ""} ${d.source} ${d.license ?? ""}`
+        `${d.title} ${d.url ?? ""} ${d.path ?? ""} ${d.source} ${d.license ?? ""}`
           .toLowerCase()
           .includes(filter),
     );
@@ -387,11 +776,12 @@
       ...shown.map((d) => {
         const tr = document.createElement("tr");
         tr.innerHTML = `
-          <td>${titleLink(d.title, d.url)}${d.language ? ` <span class="panel-note">${escapeHtml(d.language)}</span>` : ""}</td>
+          <td>${titleLink(d.title, d.url)}${d.language ? ` <span class="panel-note">${escapeHtml(d.language)}</span>` : ""}${d.path ? `<br /><span class="panel-note path">${escapeHtml(d.path)}</span>` : ""}</td>
           <td><span class="cf-kind">${escapeHtml(sourceName(d.source))}</span></td>
           <td class="num">${d.chunks}</td>
           <td>${escapeHtml(d.license ?? "–")}</td>
-          <td>${escapeHtml(new Date(d.fetched_at).toLocaleDateString(i18nLocale()))}</td>`;
+          <td>${escapeHtml(new Date(d.fetched_at).toLocaleDateString(i18nLocale()))}</td>
+          <td><button type="button" class="mode-toggle" data-delete="${escapeHtml(d.id)}">${escapeHtml(t("k.delete"))}</button></td>`;
         return tr;
       }),
     );
@@ -401,6 +791,31 @@
   }
 
   $("k-filter").oninput = drawDocuments;
+
+  $("k-docs").addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-delete]");
+    if (!button) return;
+    const doc = k.documents.find((d) => d.id === button.dataset.delete);
+    const from = doc?.path
+      ? ` Its file stays in the inbox; it comes back only if the file changes or is imported with "Again if stored".`
+      : "";
+    if (
+      !doc ||
+      !confirm(`Delete "${doc.title}" and its ${doc.chunks} chunks?${from}`)
+    )
+      return;
+    button.disabled = true;
+    try {
+      await api("delete", { ids: [doc.id] });
+    } catch (error) {
+      button.disabled = false;
+      $("k-docs-note").textContent = error.message;
+      return;
+    }
+    loadDocuments();
+    loadStats();
+    loadOverview();
+  });
 
   // ------------------------------------------------------------- glossary
 
@@ -440,6 +855,9 @@
   function show() {
     loadStats();
     loadDocuments();
+    loadOverview();
+    loadAssets();
+    loadInbox();
     pollJobs();
   }
 
@@ -468,8 +886,17 @@
   window.addEventListener("lang-change", () => {
     drawStats();
     if (k.documents.length) drawDocuments();
-    if (k.shown) pollJobs();
+    $("k-import-go").textContent = t(
+      k.kind === "inbox" ? "k.inbox.import" : "k.import",
+    );
+    if (k.shown) {
+      pollJobs();
+      loadOverview();
+      loadAssets();
+      loadInbox();
+      if (k.report) drawReport();
+    }
   });
 
-  setKind(remembered("kind", "web"));
+  setKind(remembered("kind", "inbox"));
 })();

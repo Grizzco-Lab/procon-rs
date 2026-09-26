@@ -157,10 +157,11 @@ pub struct CuttlefishConfig {
     /// lives there), relative to this config file; by
     /// default `Reviews` next to the Inkspector's root
     pub reviews: Option<String>,
-    /// The `cuttlefish` crate's data folder (knowledge store, embedding
-    /// model), relative to this config file; by default `$CUTTLEFISH_DATA`
-    /// or `~/.local/share/cuttlefish`. The API key is never read from the
-    /// config, only from `ANTHROPIC_API_KEY`.
+    /// The `cuttlefish` crate's data folder (documents, index, glossary,
+    /// inbox, assets), relative to this config file; by default `Knowledge`
+    /// next to the Inkspector's root. It may be a synced folder; the
+    /// embedding model stays in `~/.cache/cuttlefish`. The API key is never
+    /// read from the config, only from `ANTHROPIC_API_KEY`.
     pub knowledge: Option<String>,
     /// Model answering "Ask Cuttlefish"; by default the crate's
     pub model: Option<String>,

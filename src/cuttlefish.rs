@@ -1091,6 +1091,8 @@ impl Cuttlefish {
 /// async workers
 pub fn routes(cuttlefish: Arc<Cuttlefish>) -> BoxedFilter<(Response<Vec<u8>>,)> {
     let base = || warp::path("api").and(warp::path("cuttlefish"));
+    // Uploads and thumbnails first: they stream or answer images
+    let knowledge = crate::knowledge::routes(Arc::clone(&cuttlefish.knowledge));
     let reader = Arc::clone(&cuttlefish);
     let get = warp::get()
         .and(base())
@@ -1114,7 +1116,7 @@ pub fn routes(cuttlefish: Arc<Cuttlefish>) -> BoxedFilter<(Response<Vec<u8>>,)> 
                 blocking(move || cuttlefish.change(&method, tail.as_str(), &body))
             },
         );
-    get.or(change).unify().boxed()
+    knowledge.or(get).unify().or(change).unify().boxed()
 }
 
 /// Run `answer` on a blocking thread and turn it into a response
