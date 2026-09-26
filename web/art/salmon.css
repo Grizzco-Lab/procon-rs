@@ -1,0 +1,491 @@
+/*
+ * D: Salmon Run
+ *
+ * After Splatoon 3's Salmon Run: a dock at dusk worked by a salvage crew.
+ * Charcoal cards with a thick outline and a colour band top and bottom,
+ * sticker-pill headings, chunky pill buttons, faint ink splats, hazard
+ * stripes and a chunky display face (Lilita One, OFL, bundled here).
+ * Everything is static: no filters or animations over the live video.
+ *
+ * Loaded after style.css; every rule is scoped to [data-theme="salmon"].
+ */
+
+@font-face {
+  font-family: "Lilita One";
+  src: url("LilitaOne-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+
+[data-theme="salmon"] {
+  color-scheme: dark;
+
+  /* Ink and workwear */
+  --sr-ink: #0a0b09;
+  --sr-paper: #f6f1e4;
+  --sr-orange: #ff6a13;
+  --sr-teal: #19c6a6;
+  --sr-gold: #ffc41f;
+  --sr-pink: #ff3d9a;
+  --sr-purple: #9d7bff;
+  --sr-lime: #c5f02a;
+  --sr-hazard: repeating-linear-gradient(
+    -45deg,
+    var(--sr-gold) 0 8px,
+    #1a1320 8px 16px
+  );
+  --font-display: "Lilita One", "Arial Black", system-ui, sans-serif;
+
+  --bg: #11140f;
+  --panel: #1c1f1a;
+  --panel-border: #343a30;
+  --panel-shadow: 0 4px 0 var(--sr-ink);
+  --inset: #252922;
+  --inset-border: #3f453a;
+  --screen: #070807;
+  --text: #f6f1e4;
+  --text-2: #cfc8b4;
+  --text-3: #a39d8a;
+  --accent: #ff6a13;
+  --accent-ink: #1a1320;
+  --rec: #ff3d5f;
+  --btn-bg: #2a2e27;
+  --btn-border: var(--sr-ink);
+  --btn-hover: #353a31;
+  --radius: 18px;
+  --radius-sm: 11px;
+  --fill: #19c6a6;
+  --s1: #19c6a6;
+  --s2: #ff8a3d;
+  --s3: #ffc41f;
+  --grid: #2a2e27;
+  --axis: #454b40;
+
+  /* Icons: sticker edge in paper, real palette */
+  --icon-halo: var(--sr-paper);
+}
+
+[data-theme="salmon"] body {
+  background:
+    url("splat-tile.svg") 0 0 / 320px 320px,
+    var(--bg);
+}
+
+[data-theme="salmon"] a {
+  color: var(--sr-teal);
+}
+
+/* --------------------------------------------------------- top bar */
+
+[data-theme="salmon"] .topbar {
+  border-bottom: 0;
+  background: var(--sr-ink);
+  box-shadow: inset 0 -4px 0 var(--sr-lime);
+  padding-bottom: 14px;
+}
+
+/* Recording: the rule turns into a hazard stripe */
+[data-theme="salmon"] body[data-rec="recording"] .topbar {
+  box-shadow: none;
+  background:
+    repeating-linear-gradient(-45deg, var(--rec) 0 8px, #1a1320 8px 16px)
+      bottom / 100% 5px no-repeat,
+    var(--sr-ink);
+}
+
+/* The wordmark stands in for the name; the text stays for screen readers */
+[data-theme="salmon"] .brand-name {
+  flex: none;
+  width: 170px;
+  height: 38px;
+  overflow: hidden;
+  background: url("wordmark.svg") left center / contain no-repeat;
+  color: transparent;
+  font-size: 0;
+}
+
+[data-theme="salmon"] .brand-mark {
+  border: 2px solid var(--sr-paper);
+  border-radius: 10px;
+  transform: rotate(-6deg);
+}
+
+[data-theme="salmon"] .chip {
+  border: 2px solid #2f342b;
+  background: #161914;
+  font-weight: 600;
+}
+
+[data-theme="salmon"] .view-button,
+[data-theme="salmon"] .select,
+[data-theme="salmon"]
+  input:not([type="checkbox"], [type="radio"], [type="range"]) {
+  border: 2px solid var(--sr-ink);
+}
+
+/* --------------------------------------------------------- layouts
+ * The Studio theme's grids: video and controller on top, docks under.
+ * Wide screens only, so the narrow and phone layouts in style.css apply.
+ */
+
+@media (min-width: 1101px) {
+  [data-theme="salmon"]:not([data-layout="phone"]) .layout {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    grid-template-areas:
+      "video video video video controller controller controller controller"
+      "recorder recorder replay replay stats stats motion motion";
+  }
+
+  [data-theme="salmon"]:not([data-layout="phone"]) #inspect-viewer {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-areas:
+      "frame labels"
+      "strip session";
+  }
+}
+
+[data-theme="salmon"] .p-controller .stage {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  min-height: 0;
+  padding: 3% 5%;
+  border: 3px solid var(--sr-ink);
+  border-radius: var(--radius-sm);
+  background:
+    radial-gradient(circle at 50% 45%, #2a3a33, transparent 65%),
+    url("panel-tile.svg") 0 0 / 240px 240px,
+    var(--screen);
+}
+
+[data-theme="salmon"] .p-controller .procon {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+}
+
+/* ------------------------------------------------------- app rail */
+
+[data-theme="salmon"] .app-nav a {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+[data-theme="salmon"] .app-nav a[aria-current="page"] {
+  border-color: var(--sr-ink);
+  background: var(--sr-orange);
+  color: var(--accent-ink);
+  box-shadow: 0 3px 0 var(--sr-ink);
+}
+
+[data-theme="salmon"] .app-nav a[aria-current="page"] .app-icon {
+  --icon-halo: var(--sr-ink);
+}
+
+@media (min-width: 721px) {
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"]) .app-nav {
+    border-right: 4px solid var(--sr-lime);
+    background:
+      url("panel-tile.svg") 0 0 / 240px 240px,
+      var(--sr-ink);
+  }
+
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"]) .app-nav a {
+    height: 44px;
+    padding: 0 8px;
+  }
+
+  [data-theme="salmon"][data-nav="side"]:not([data-layout="phone"]) .app-icon {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+/* ---------------------------------------------------------- cards
+ * A thick outline, a colour band top and bottom, faint splats inside.
+ * The band colour goes round the cards so neighbours differ.
+ */
+
+[data-theme="salmon"] .panel {
+  --band: var(--sr-orange);
+  border: 3px solid var(--sr-ink);
+  border-top: 9px solid var(--band);
+  border-bottom: 9px solid var(--band);
+  background:
+    url("panel-tile.svg") 0 0 / 240px 240px,
+    var(--panel);
+  box-shadow:
+    0 0 0 2px var(--sr-ink),
+    var(--panel-shadow);
+}
+
+[data-theme="salmon"] .panel:nth-of-type(6n + 2) {
+  --band: var(--sr-teal);
+}
+[data-theme="salmon"] .panel:nth-of-type(6n + 3) {
+  --band: var(--sr-gold);
+}
+[data-theme="salmon"] .panel:nth-of-type(6n + 4) {
+  --band: var(--sr-pink);
+}
+[data-theme="salmon"] .panel:nth-of-type(6n + 5) {
+  --band: var(--sr-purple);
+}
+[data-theme="salmon"] .panel:nth-of-type(6n + 6) {
+  --band: var(--sr-lime);
+}
+
+/* Headings as tilted paper stickers with an ink dot in the band colour */
+[data-theme="salmon"] .panel-head h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 12px 2px 8px;
+  border: 2px solid var(--sr-ink);
+  border-radius: 999px;
+  background: var(--sr-paper);
+  box-shadow: 2px 3px 0 var(--sr-ink);
+  color: #1a1320;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  text-transform: none;
+  transform: rotate(-1.5deg);
+  white-space: nowrap;
+}
+
+[data-theme="salmon"] .panel-head h2::before {
+  content: "";
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border: 2px solid #1a1320;
+  border-radius: 50% 50% 50% 12%;
+  background: var(--band);
+}
+
+[data-theme="salmon"] .panel-note {
+  color: var(--text-3);
+}
+
+/* -------------------------------------------------------- controls */
+
+[data-theme="salmon"] .btn {
+  border: 2px solid var(--sr-ink);
+  border-radius: 999px;
+  box-shadow: 0 3px 0 var(--sr-ink);
+  font-weight: 700;
+}
+
+[data-theme="salmon"] .btn:active:not(:disabled) {
+  box-shadow: 0 1px 0 var(--sr-ink);
+  transform: translateY(2px);
+}
+
+[data-theme="salmon"] .btn-record {
+  border-color: var(--sr-ink);
+  background: var(--rec);
+  color: #1a1320;
+}
+
+[data-theme="salmon"] .mode-toggle {
+  border: 2px solid #3f453a;
+  font-weight: 600;
+}
+
+[data-theme="salmon"] .mode-toggle[aria-pressed="true"] {
+  border-color: var(--sr-ink);
+}
+
+[data-theme="salmon"] .theme-picker button[aria-pressed="true"] {
+  border-color: var(--sr-ink);
+}
+
+[data-theme="salmon"] .rec-clock {
+  color: var(--sr-paper);
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-shadow: 3px 3px 0 var(--sr-orange);
+}
+
+[data-theme="salmon"] body[data-rec="idle"] .rec-clock {
+  color: var(--text-3);
+  text-shadow: 3px 3px 0 var(--sr-ink);
+}
+
+[data-theme="salmon"] .tile-value {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+[data-theme="salmon"] .meter-track {
+  border: 2px solid var(--sr-ink);
+}
+
+[data-theme="salmon"] .meter-fill {
+  background: var(--sr-hazard);
+}
+
+[data-theme="salmon"] .data-table th {
+  color: var(--sr-teal);
+}
+
+[data-theme="salmon"] .data-table tr.current {
+  background: color-mix(in oklab, var(--sr-orange) 22%, var(--panel));
+}
+
+/* ------------------------------------------------------ controller
+ * Grips in workwear orange and teal on a charcoal face
+ */
+
+[data-theme="salmon"] .procon {
+  --pc-face-hi: #3a3f36;
+  --pc-face-lo: #22261f;
+  --pc-grip-l-hi: #ff8a3d;
+  --pc-grip-l-lo: #d9500a;
+  --pc-grip-r-hi: #3fdcbe;
+  --pc-grip-r-lo: #0e9a82;
+  --pc-well-hi: #171a15;
+  --pc-well-lo: #0c0e0b;
+  --pc-btn-hi: #4b5146;
+  --pc-btn-lo: #23271f;
+  --pc-cap-hi: #555b50;
+  --pc-cap-lo: #2a2e27;
+  --pc-edge: rgba(0, 0, 0, 0.35);
+  --pc-outline: #0a0b09;
+  --pc-ink: #f6f1e4;
+  --pc-label: #a39d8a;
+  --pc-seam: rgba(0, 0, 0, 0.4);
+  --pc-side-l: #ff6a13;
+  --pc-side-r: #19c6a6;
+  --pc-press: #c5f02a;
+  --pc-press-ink: #1a1320;
+  --pc-halo: rgba(197, 240, 42, 0.4);
+  filter: none;
+}
+
+[data-theme="salmon"] .pc-bumper[data-btn="l"] {
+  stroke: var(--pc-side-l);
+}
+
+[data-theme="salmon"] .pc-bumper[data-btn="r"] {
+  stroke: var(--pc-side-r);
+}
+
+[data-theme="salmon"] .pc-bumper.on,
+[data-theme="salmon"] .pc-trigger.on {
+  stroke: var(--pc-press);
+}
+
+/* ---------------------------------------------------- video frame */
+
+[data-theme="salmon"] .screen {
+  border: 3px solid var(--sr-ink);
+}
+
+/* ---------------------------------------------- empty-state artwork */
+
+[data-theme="salmon"] .no-signal svg {
+  display: none;
+}
+
+[data-theme="salmon"] .no-signal::before,
+[data-theme="salmon"] #v-empty::before,
+[data-theme="salmon"] #p-empty::before {
+  content: "";
+  display: block;
+  margin: 0 auto 10px;
+  background: center / contain no-repeat;
+}
+
+[data-theme="salmon"] .no-signal::before {
+  width: min(300px, 60vw);
+  aspect-ratio: 360 / 240;
+  background-image: url("studio-sign.svg");
+}
+
+/* The screen is 16:9: leave room for the caption on narrow ones */
+[data-theme="salmon"][data-layout="phone"] .no-signal::before {
+  width: 160px;
+  margin-bottom: 2px;
+}
+
+@media (max-width: 720px) {
+  [data-theme="salmon"] .no-signal::before {
+    width: 160px;
+    margin-bottom: 2px;
+  }
+}
+
+[data-theme="salmon"] #v-empty::before {
+  width: min(230px, 50vw);
+  aspect-ratio: 300 / 228;
+  background-image: url("vision.svg");
+}
+
+[data-theme="salmon"] #p-empty::before {
+  width: min(210px, 50vw);
+  aspect-ratio: 260 / 240;
+  background-image: url("predictor.svg");
+}
+
+[data-theme="salmon"] .no-signal p,
+[data-theme="salmon"] .v-empty {
+  font-family: var(--font-display);
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+}
+
+/*
+ * A character keeps each list page company in the corner, behind the
+ * cards: the magnifier for the Inkspector's sessions, the old reviewer for
+ * Cuttlefish's library
+ */
+[data-theme="salmon"] #inspect-picker,
+[data-theme="salmon"] #cf-library {
+  position: relative;
+}
+
+[data-theme="salmon"] #inspect-picker > *,
+[data-theme="salmon"] #cf-library > * {
+  position: relative;
+  z-index: 1;
+}
+
+[data-theme="salmon"] #inspect-picker::after,
+[data-theme="salmon"] #cf-library::after {
+  content: "";
+  position: fixed;
+  right: 20px;
+  bottom: 12px;
+  z-index: 0;
+  width: 280px;
+  height: 280px;
+  background: right bottom / contain no-repeat;
+  pointer-events: none;
+}
+
+[data-theme="salmon"] #inspect-picker::after {
+  background-image: url("inkspector.svg");
+}
+
+[data-theme="salmon"] #cf-library::after {
+  background-image: url("cuttlefish.svg");
+}
+
+@media (max-width: 720px) {
+  [data-theme="salmon"] #inspect-picker::after,
+  [data-theme="salmon"] #cf-library::after {
+    width: 150px;
+    height: 150px;
+    opacity: 0.9;
+  }
+}

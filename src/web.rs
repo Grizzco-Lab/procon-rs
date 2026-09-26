@@ -146,27 +146,10 @@ pub async fn serve(
         Ok(asset(body, "text/javascript; charset=utf-8"))
     });
 
-    // The icon set and its gallery (`/icons/`)
-    let icons =
-        warp::path("icons")
-            .and(warp::path::tail())
-            .and_then(|tail: warp::path::Tail| async move {
-                let name = match tail.as_str() {
-                    "" => "index.html",
-                    name => name,
-                };
-                let file = ICONS.get_file(name).ok_or_else(warp::reject::not_found)?;
-                let content_type = match name.rsplit_once('.') {
-                    Some((_, "svg")) => "image/svg+xml",
-                    Some((_, "js")) => "text/javascript; charset=utf-8",
-                    _ => "text/html; charset=utf-8",
-                };
-                Ok::<_, warp::Rejection>(warp::reply::with_header(
-                    file.contents(),
-                    "content-type",
-                    content_type,
-                ))
-            });
+    // The icon set with its gallery (`/icons/`), and the artwork, theme and
+    // font of the Salmon Run theme (`/art/`)
+    let icons = embedded_dir("icons", &ICONS);
+    let art = embedded_dir("art", &ART);
 
     let delay_inspector = Arc::clone(&inspector);
     let objects_inspector = Arc::clone(&inspector);
@@ -309,6 +292,7 @@ pub async fn serve(
                 .or(inspect_script)
                 .or(scripts)
                 .or(icons)
+                .or(art)
                 .or(inspect),
         )
         .or(websocket)
@@ -395,6 +379,39 @@ async fn forbidden(rejection: warp::Rejection) -> Result<impl warp::Reply, warp:
 
 /// The icon set (`web/icons/`): SVGs and the gallery page
 static ICONS: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/icons");
+
+/// Artwork for the Salmon Run theme (`web/art/`): illustrations, background
+/// tiles, the theme's stylesheet and its font
+static ART: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/art");
+
+/// Serve an embedded folder under `/<prefix>/`; the bare folder is its `index.html`
+fn embedded_dir(
+    prefix: &'static str,
+    dir: &'static include_dir::Dir<'static>,
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path(prefix)
+        .and(warp::path::tail())
+        .and_then(move |tail: warp::path::Tail| async move {
+            let name = match tail.as_str() {
+                "" => "index.html",
+                name => name,
+            };
+            let file = dir.get_file(name).ok_or_else(warp::reject::not_found)?;
+            let content_type = match name.rsplit_once('.') {
+                Some((_, "svg")) => "image/svg+xml",
+                Some((_, "js")) => "text/javascript; charset=utf-8",
+                Some((_, "css")) => "text/css; charset=utf-8",
+                Some((_, "ttf")) => "font/ttf",
+                Some((_, "txt")) => "text/plain; charset=utf-8",
+                _ => "text/html; charset=utf-8",
+            };
+            Ok::<_, warp::Rejection>(warp::reply::with_header(
+                file.contents(),
+                "content-type",
+                content_type,
+            ))
+        })
+}
 
 /// Reply with an embedded static file
 fn asset(body: &'static str, content_type: &'static str) -> impl warp::Reply {

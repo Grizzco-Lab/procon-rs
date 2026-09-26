@@ -11,13 +11,14 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=M+PLUS+Rounded+1c:wght@500;700;800&family=Nunito:wght@500;600;700&display=swap"
     />
     <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="art/salmon.css" />
     <script>
       // Apply the saved view before first paint; ?theme=, ?layout= and ?nav=
       // override it
       (() => {
         const params = new URLSearchParams(location.search);
         const views = {
-          theme: ["studio", "joy", "telemetry"],
+          theme: ["studio", "joy", "telemetry", "salmon"],
           layout: ["auto", "phone"],
           nav: ["side", "top"],
         };
@@ -142,6 +143,7 @@
           <button type="button" data-pick="studio">Studio</button>
           <button type="button" data-pick="joy">Joy</button>
           <button type="button" data-pick="telemetry">Telemetry</button>
+          <button type="button" data-pick="salmon">Salmon Run</button>
         </div>
         <span class="theme-picker-label">Layout</span>
         <div class="view-choices">
