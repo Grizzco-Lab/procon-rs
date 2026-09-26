@@ -6,15 +6,14 @@
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
-use core::time::Duration;
-use cuttlefish::crawl::{Fetcher, MediaWiki, sitemap_locs};
-use cuttlefish::doc::{Document, SourceKind, doc_id, guess_language};
+use cuttlefish::discord;
+use cuttlefish::doc::Document;
 use cuttlefish::embed::E5Embedder;
 use cuttlefish::eval::EvalSet;
+use cuttlefish::ingest::{self, Meta};
 use cuttlefish::llm::{Client, Settings};
 use cuttlefish::review::{Reviewer, translate};
 use cuttlefish::store::Store;
-use cuttlefish::{discord, file, html, youtube};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -104,44 +103,6 @@ impl ModelArgs {
     }
 }
 
-/// Metadata overrides for imported documents
-#[derive(Args)]
-struct Meta {
-    /// Kind of source (sets the default weight)
-    #[arg(long, value_enum)]
-    source: Option<SourceKind>,
-    /// License or terms of use to record
-    #[arg(long)]
-    license: Option<String>,
-    /// Language code of the text
-    #[arg(long)]
-    lang: Option<String>,
-    /// Retrieval weight (default: by source kind)
-    #[arg(long)]
-    weight: Option<f32>,
-    /// Import again even if already stored
-    #[arg(long)]
-    refresh: bool,
-}
-
-impl Meta {
-    fn apply(&self, doc: &mut Document) {
-        if let Some(s) = self.source {
-            doc.source = s;
-            doc.weight = s.default_weight();
-        }
-        if let Some(l) = &self.license {
-            doc.license = Some(l.clone());
-        }
-        if let Some(l) = &self.lang {
-            doc.language = Some(l.clone());
-        }
-        if let Some(w) = self.weight {
-            doc.weight = w;
-        }
-    }
-}
-
 #[derive(Subcommand)]
 enum Ingest {
     /// Web pages: urls, a list file, a sitemap, or MediaWiki categories
@@ -174,7 +135,7 @@ enum Ingest {
         /// Video, playlist or channel url
         url: String,
         /// Subtitle languages (yt-dlp --sub-langs)
-        #[arg(long, default_value = "en,ja,zh-Hans,zh-Hant,es,fr,ru,en-orig,ja-orig")]
+        #[arg(long, default_value = ingest::SUB_LANGS)]
         sub_langs: String,
         /// At most this many videos
         #[arg(long, default_value_t = 50)]
@@ -233,29 +194,37 @@ impl Sink {
         })
     }
 
-    fn has(&self, key: &str) -> bool {
-        self.store
-            .root()
-            .join("docs")
-            .join(format!("{}.json", doc_id(key)))
-            .exists()
-    }
-
-    fn add(&mut self, mut doc: Document, meta: &Meta) -> Result<()> {
-        meta.apply(&mut doc);
-        let n = self.store.add(&doc, &self.embedder)?;
-        println!("+ {} ({n} chunks)", doc.title);
-        self.added += 1;
-        if self.added.is_multiple_of(10) {
-            self.store.save()?;
-        }
-        Ok(())
-    }
-
     fn finish(self) -> Result<()> {
         self.store.save()?;
         println!("{} documents added", self.added);
         Ok(())
+    }
+}
+
+impl ingest::Sink for Sink {
+    fn has(&self, key: &str) -> bool {
+        self.store.has(key)
+    }
+
+    fn add(&mut self, doc: &Document) -> Result<usize> {
+        let n = self.store.add(doc, &self.embedder)?;
+        self.added += 1;
+        if self.added.is_multiple_of(10) {
+            self.store.save()?;
+        }
+        Ok(n)
+    }
+
+    fn raw_dir(&self, kind: &str) -> PathBuf {
+        self.store.raw_dir(kind)
+    }
+
+    fn note(&mut self, line: &str) {
+        if line.starts_with("skipped") {
+            log::warn!("{line}");
+        } else {
+            println!("{line}");
+        }
     }
 }
 
@@ -415,36 +384,6 @@ fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
             delay_s,
             meta,
         } => {
-            let mut fetcher = Fetcher::new(Duration::from_secs_f32(delay_s.max(1.0)));
-            let mut sink = Sink::open(data)?;
-            if let Some(api) = mediawiki {
-                let wiki = MediaWiki { api };
-                let info = wiki.site_info(&mut fetcher)?;
-                let mut titles = Vec::new();
-                for c in &category {
-                    titles.extend(wiki.category(&mut fetcher, c)?);
-                }
-                titles.truncate(max_pages);
-                for title in titles {
-                    let url = info.page_url(&title);
-                    if !meta.refresh && sink.has(&url) {
-                        continue;
-                    }
-                    let page = match wiki.page(&mut fetcher, &title) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            log::warn!("{title}: {e:#}");
-                            continue;
-                        }
-                    };
-                    save_raw(&sink.store.raw_dir("wiki"), &url, "html", &page.html)?;
-                    let text = html::fragment_text(&page.html);
-                    let mut doc = Document::new(SourceKind::Wiki, &url, page.title, text);
-                    doc.url = Some(url);
-                    doc.license = info.license.clone();
-                    sink.add(doc, &meta)?;
-                }
-            }
             let mut all = urls;
             if let Some(list) = list {
                 let text = std::fs::read_to_string(&list)
@@ -456,40 +395,16 @@ fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
                         .map(String::from),
                 );
             }
-            if let Some(sitemap) = sitemap {
-                let mut queue = vec![sitemap];
-                while let Some(s) = queue.pop() {
-                    if all.len() >= max_pages {
-                        break;
-                    }
-                    let (pages, nested) = sitemap_locs(&fetcher.get(&s)?);
-                    all.extend(pages);
-                    queue.extend(nested);
-                }
-            }
-            all.truncate(max_pages);
-            for url in all {
-                if !meta.refresh && sink.has(&url) {
-                    continue;
-                }
-                let body = match fetcher.get(&url) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        log::warn!("{e:#}");
-                        continue;
-                    }
-                };
-                save_raw(&sink.store.raw_dir("web"), &url, "html", &body)?;
-                let page = html::convert(&body);
-                let title = page.title.clone().unwrap_or_else(|| url.clone());
-                let mut doc = Document::new(SourceKind::Web, &url, title, page.text);
-                doc.url = Some(url);
-                doc.license = page.license;
-                doc.language = page
-                    .language
-                    .or_else(|| guess_language(&doc.text).map(String::from));
-                sink.add(doc, &meta)?;
-            }
+            let web = ingest::Web {
+                urls: all,
+                sitemap,
+                mediawiki,
+                categories: category,
+                max_pages,
+                delay_s,
+            };
+            let mut sink = Sink::open(data)?;
+            ingest::web(&mut sink, &web, &meta)?;
             sink.finish()
         }
         Ingest::Youtube {
@@ -499,35 +414,12 @@ fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
             meta,
         } => {
             let mut sink = Sink::open(data)?;
-            let raw = sink.store.raw_dir("youtube");
-            let mut ids = youtube::list_ids(&url)?;
-            ids.truncate(max);
-            for id in ids {
-                let key = format!("https://www.youtube.com/watch?v={id}");
-                if !meta.refresh && sink.has(&key) {
-                    continue;
-                }
-                match youtube::fetch(&id, &raw, &sub_langs) {
-                    Ok(doc) => sink.add(doc, &meta)?,
-                    Err(e) => log::warn!("{e:#}"),
-                }
-            }
+            ingest::youtube(&mut sink, &url, &sub_langs, max, &meta)?;
             sink.finish()
         }
         Ingest::DiscordExport { files, whole, meta } => {
             let mut sink = Sink::open(data)?;
-            let raw = sink.store.raw_dir("discord");
-            std::fs::create_dir_all(&raw)?;
-            for f in files {
-                let json = std::fs::read_to_string(&f)
-                    .with_context(|| format!("reading {}", f.display()))?;
-                let (channel, messages) =
-                    discord::parse_export(&json).with_context(|| format!("in {}", f.display()))?;
-                std::fs::write(raw.join(f.file_name().context("not a file")?), &json)?;
-                for doc in discord::to_documents(&channel, &messages, whole) {
-                    sink.add(doc, &meta)?;
-                }
-            }
+            ingest::discord_export(&mut sink, &files, whole, &meta)?;
             sink.finish()
         }
         Ingest::DiscordBot {
@@ -537,26 +429,7 @@ fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
         } => {
             let bot = discord::Bot::from_env()?;
             let mut sink = Sink::open(data)?;
-            let raw = sink.store.raw_dir("discord");
-            std::fs::create_dir_all(&raw)?;
-            for id in channel {
-                let ch = bot.channel(&id)?;
-                // (channel, whole conversation)
-                let mut targets = vec![(ch.clone(), false)];
-                if !no_threads {
-                    for t in bot.threads(&ch)? {
-                        targets.push((bot.channel(&t)?, true));
-                    }
-                }
-                for (c, whole) in targets {
-                    let messages = bot.messages(&c.id)?;
-                    let raw_json = serde_json::to_vec_pretty(&(&c, &messages))?;
-                    std::fs::write(raw.join(format!("bot-{}.json", c.id)), raw_json)?;
-                    for doc in discord::to_documents(&c, &messages, whole) {
-                        sink.add(doc, &meta)?;
-                    }
-                }
-            }
+            ingest::discord_bot(&mut sink, &bot, &channel, !no_threads, &meta)?;
             sink.finish()
         }
         Ingest::File { paths, url, meta } => {
@@ -564,21 +437,8 @@ fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
                 bail!("no files given");
             }
             let mut sink = Sink::open(data)?;
-            for p in paths {
-                let mut doc = file::load(&p, meta.source.unwrap_or(SourceKind::File))?;
-                if url.is_some() {
-                    doc.url = url.clone();
-                }
-                sink.add(doc, &meta)?;
-            }
+            ingest::files(&mut sink, &paths, url.as_deref(), &meta)?;
             sink.finish()
         }
     }
-}
-
-/// Keeps what was downloaded, named by the document id
-fn save_raw(dir: &Path, key: &str, ext: &str, body: &str) -> Result<()> {
-    std::fs::create_dir_all(dir)?;
-    std::fs::write(dir.join(format!("{}.{ext}", doc_id(key))), body)?;
-    Ok(())
 }

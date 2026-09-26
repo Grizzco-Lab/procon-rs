@@ -502,33 +502,26 @@ impl Reviewer {
         &self.store
     }
 
-    fn retrieve(&self, query: &str) -> Result<(Vec<Hit>, Vec<&Term>)> {
-        let hits = self.store.search(query, self.k, self.embedder.as_ref())?;
-        let terms = self.store.glossary().find_in(query);
-        Ok((hits, terms))
-    }
-
-    fn system(&self) -> String {
-        system_prompt(self.store.digest().as_deref())
-    }
-
     /// Reviews a stretch of video
     pub fn review(&self, req: &ReviewRequest) -> Result<Vec<AiComment>> {
-        let (hits, terms) = self.retrieve(&review_query(req))?;
-        let prompt = review_prompt(&self.system(), req, &hits, &terms);
-        let reply = self.client.send(&prompt)?;
-        parse_comments(&reply.text, req, &hits)
+        review(
+            &self.store,
+            self.embedder.as_ref(),
+            &self.client,
+            self.k,
+            req,
+        )
     }
 
     /// Answers a question from the knowledge store
     pub fn ask(&self, question: &str) -> Result<Answer> {
-        let (hits, terms) = self.retrieve(question)?;
-        let prompt = ask_prompt(&self.system(), question, &hits, &terms);
-        let reply = self.client.send(&prompt)?;
-        Ok(Answer {
-            sources: cited(&reply.text, &hits),
-            text: reply.text,
-        })
+        ask(
+            &self.store,
+            self.embedder.as_ref(),
+            &self.client,
+            self.k,
+            question,
+        )
     }
 
     /// Translates text into `target` (`en`, `ja`, `zh`, `es`, `ru`, `fr`,
@@ -536,6 +529,54 @@ impl Reviewer {
     pub fn translate(&self, text: &str, target: &str) -> Result<String> {
         translate(&self.client, self.store.glossary(), text, target)
     }
+}
+
+/// The `k` best chunks for a query, and the glossary terms it mentions
+fn retrieve<'a>(
+    store: &'a Store,
+    embedder: &dyn Embedder,
+    k: usize,
+    query: &str,
+) -> Result<(Vec<Hit>, Vec<&'a Term>)> {
+    let hits = store.search(query, k, embedder)?;
+    let terms = store.glossary().find_in(query);
+    Ok((hits, terms))
+}
+
+/// Reviews a stretch of video with `k` knowledge excerpts: the parts of a
+/// [`Reviewer`] lent separately, so one store and embedder can serve
+/// searches and imports too
+pub fn review(
+    store: &Store,
+    embedder: &dyn Embedder,
+    client: &Client,
+    k: usize,
+    req: &ReviewRequest,
+) -> Result<Vec<AiComment>> {
+    let (hits, terms) = retrieve(store, embedder, k, &review_query(req))?;
+    let system = system_prompt(store.digest().as_deref());
+    let prompt = review_prompt(&system, req, &hits, &terms);
+    let reply = client.send(&prompt)?;
+    parse_comments(&reply.text, req, &hits)
+}
+
+/// Answers a question from the knowledge store with `k` excerpts (see
+/// [`review`])
+pub fn ask(
+    store: &Store,
+    embedder: &dyn Embedder,
+    client: &Client,
+    k: usize,
+    question: &str,
+) -> Result<Answer> {
+    let (hits, terms) = retrieve(store, embedder, k, question)?;
+    let system = system_prompt(store.digest().as_deref());
+    let prompt = ask_prompt(&system, question, &hits, &terms);
+    let reply = client.send(&prompt)?;
+    Ok(Answer {
+        sources: cited(&reply.text, &hits),
+        text: reply.text,
+    })
 }
 
 /// Translates text into `target` with the glossary's names, without a

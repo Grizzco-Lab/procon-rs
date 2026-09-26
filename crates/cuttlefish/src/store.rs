@@ -91,6 +91,14 @@ impl Store {
         &self.root
     }
 
+    /// Whether the document of this url or path is stored
+    pub fn has(&self, key: &str) -> bool {
+        self.root
+            .join("docs")
+            .join(alloc::format!("{}.json", crate::doc::doc_id(key)))
+            .exists()
+    }
+
     /// Folder for raw downloads of one kind (`web`, `youtube`, `discord`)
     pub fn raw_dir(&self, kind: &str) -> PathBuf {
         self.root.join("raw").join(kind)

@@ -15,7 +15,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 use gameplay_vision::detect::{self, Detector, Timing, Weights};
 use gameplay_vision::frames::{FrameRange, FrameReader, Segment};
-use gameplay_vision::labels::{self, FrameObjects, ObjectBox};
+use gameplay_vision::labels::{self, FrameObjects};
 use gameplay_vision::render;
 use gameplay_vision::track::{self, TrackerConfig};
 use std::collections::BTreeMap;
@@ -422,25 +422,7 @@ fn prelabel(
             classes.len()
         );
     }
-    let known = |c: &str| classes.iter().any(|k| k.name == c);
-    let mut dropped: BTreeMap<String, usize> = BTreeMap::new();
-    for frame in &mut frames {
-        frame.boxes = core::mem::take(&mut frame.boxes)
-            .into_iter()
-            .filter_map(|mut b: ObjectBox| {
-                if let Some((_, to)) = maps.iter().find(|(from, _)| *from == b.class) {
-                    b.class = to.clone();
-                }
-                b.by = labels::Source::Model;
-                if known(&b.class) {
-                    Some(b)
-                } else {
-                    *dropped.entry(b.class).or_default() += 1;
-                    None
-                }
-            })
-            .collect();
-    }
+    let dropped = labels::map_classes(&mut frames, maps, |c| classes.iter().any(|k| k.name == c));
     if !dropped.is_empty() {
         let list: Vec<String> = dropped.iter().map(|(c, n)| format!("{c} {n}")).collect();
         println!(

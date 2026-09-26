@@ -299,9 +299,88 @@ pub fn merge_model_boxes(
     (frames.into_values().collect(), stats)
 }
 
+/// Class renames from text such as `person=player, sports ball=golden_egg`:
+/// pairs separated by commas or new lines, each `from=to`
+pub fn parse_class_map(text: &str) -> Result<Vec<(String, String)>> {
+    text.split([',', '\n'])
+        .map(str::trim)
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (from, to) = pair
+                .split_once('=')
+                .with_context(|| alloc::format!("expected from=to, got {pair:?}"))?;
+            let (from, to) = (from.trim(), to.trim());
+            anyhow::ensure!(
+                !from.is_empty() && !to.is_empty(),
+                "expected from=to, got {pair:?}"
+            );
+            Ok((from.to_string(), to.to_string()))
+        })
+        .collect()
+}
+
+/// Prepare a model's boxes for the labels: rename classes by `maps`
+/// (`from`, `to`), mark every box as the model's and drop boxes whose class
+/// `known` does not accept. Returns the dropped boxes per class.
+pub fn map_classes(
+    frames: &mut [FrameObjects],
+    maps: &[(String, String)],
+    known: impl Fn(&str) -> bool,
+) -> alloc::collections::BTreeMap<String, usize> {
+    let mut dropped = alloc::collections::BTreeMap::new();
+    for frame in frames {
+        frame.boxes = core::mem::take(&mut frame.boxes)
+            .into_iter()
+            .filter_map(|mut b| {
+                if let Some((_, to)) = maps.iter().find(|(from, _)| *from == b.class) {
+                    b.class = to.clone();
+                }
+                b.by = Source::Model;
+                if known(&b.class) {
+                    Some(b)
+                } else {
+                    *dropped.entry(b.class).or_default() += 1;
+                    None
+                }
+            })
+            .collect();
+    }
+    dropped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn class_maps() {
+        let maps = parse_class_map("person=player, sports ball = golden_egg\n\n").unwrap();
+        assert_eq!(
+            maps,
+            [
+                ("person".to_string(), "player".to_string()),
+                ("sports ball".to_string(), "golden_egg".to_string())
+            ]
+        );
+        assert!(parse_class_map("").unwrap().is_empty());
+        assert!(parse_class_map("person").is_err());
+        assert!(parse_class_map("=player").is_err());
+
+        let model = |class| ObjectBox::model(class, [0.5, 0.5, 0.1, 0.1], 0.9);
+        let mut frames = vec![
+            FrameObjects::new(1, vec![model("person"), model("clock"), model("clock")]),
+            FrameObjects::new(2, vec![user_box("sports ball")]),
+        ];
+        let dropped = map_classes(&mut frames, &maps, |c| c == "player" || c == "golden_egg");
+        assert_eq!(
+            dropped.into_iter().collect::<Vec<_>>(),
+            [("clock".to_string(), 2)]
+        );
+        assert_eq!(frames[0].boxes.len(), 1);
+        assert_eq!(frames[0].boxes[0].class, "player");
+        assert_eq!(frames[1].boxes[0].class, "golden_egg");
+        assert_eq!(frames[1].boxes[0].by, Source::Model);
+    }
 
     fn user_box(class: &str) -> ObjectBox {
         ObjectBox {

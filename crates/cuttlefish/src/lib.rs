@@ -5,7 +5,7 @@
 //! [`crawl`] and [`html`], YouTube transcripts through [`youtube`], Discord
 //! conversations through [`discord`], local files through [`mod@file`]), split
 //! into chunks ([`chunk`]), embedded ([`embed`]) and indexed ([`index`]) in a
-//! data folder ([`store`]). A [`glossary`] maps jargon across languages.
+//! data folder ([`store`]); [`ingest`] runs the importers. A [`glossary`] maps jargon across languages.
 //! [`review::Reviewer`] retrieves what is relevant to a moment or question
 //! and asks the model through the Anthropic Messages API ([`llm`]).
 //!
@@ -23,6 +23,7 @@ pub mod file;
 pub mod glossary;
 pub mod html;
 pub mod index;
+pub mod ingest;
 pub mod llm;
 pub mod review;
 pub mod store;
