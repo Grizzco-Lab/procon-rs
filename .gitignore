@@ -5,3 +5,6 @@
 # Claude Code: personal settings and agents' temporary worktrees
 /.claude/settings.local.json
 /.claude/worktrees/
+
+# Cuttlefish data folders (documents, index, models) if kept in the tree
+/cuttlefish-data

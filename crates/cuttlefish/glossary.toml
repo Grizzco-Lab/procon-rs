@@ -1,0 +1,250 @@
+# Cuttlefish glossary seed: Salmon Run terms across languages.
+#
+# Each [[term]] has an `id`, a short English `definition` and `forms`: the
+# names used per language code (en, ja, zh, es, ru, fr, ...), official name
+# first, then community slang. Retrieval matches any form in queries and
+# comments; translation uses the target language's first form.
+#
+# This seed only has English and Japanese names. Copy it to
+# <data>/glossary.toml, check it and add the other languages there (the file
+# in the data folder replaces this one).
+
+[[term]]
+id = "salmon-run"
+definition = "The co-op PvE mode: four players collect Golden Eggs over three waves (plus an optional Xtrawave)."
+forms = { en = ["Salmon Run", "Salmon Run Next Wave", "SR"], ja = ["サーモンラン", "サーモンラン NEXT WAVE", "サモラン"] }
+
+[[term]]
+id = "golden-egg"
+definition = "Egg dropped by Boss Salmonids; delivering enough to the basket clears the wave."
+forms = { en = ["Golden Egg", "gold egg"], ja = ["金イクラ"] }
+
+[[term]]
+id = "power-egg"
+definition = "Orange eggs from any Salmonid; only count toward the score and pay."
+forms = { en = ["Power Egg"], ja = ["イクラ"] }
+
+[[term]]
+id = "egg-basket"
+definition = "The goal where Golden Eggs are delivered."
+forms = { en = ["Egg Basket", "basket"], ja = ["イクラコンテナ", "コンテナ"] }
+
+[[term]]
+id = "hazard-level"
+definition = "Difficulty percentage of a job, up to 333%."
+forms = { en = ["Hazard Level"], ja = ["キケン度"] }
+
+[[term]]
+id = "eggsecutive-vp"
+definition = "Highest rank; its points go up to 999."
+forms = { en = ["Eggsecutive VP", "EVP"], ja = ["でんせつ"] }
+
+[[term]]
+id = "evp-999"
+definition = "Eggsecutive VP at the maximum of 999 points."
+forms = { en = ["EVP 999", "max rank"], ja = ["カンスト"] }
+
+[[term]]
+id = "xtrawave"
+definition = "Fourth wave against a King Salmonid once the meter is full."
+forms = { en = ["Xtrawave", "XTRAWAVE"], ja = ["EX-WAVE"] }
+
+[[term]]
+id = "big-run"
+definition = "Limited-time event where Salmonids attack a PvP stage."
+forms = { en = ["Big Run"], ja = ["ビッグラン"] }
+
+[[term]]
+id = "eggstra-work"
+definition = "Limited-time contest: five waves with a fixed weapon set, scored by Golden Eggs."
+forms = { en = ["Eggstra Work"], ja = ["バイトチームコンテスト", "チームコンテスト"] }
+
+[[term]]
+id = "grizzco"
+definition = "The company (Mr. Grizz) that runs Salmon Run jobs."
+forms = { en = ["Grizzco"], ja = ["クマサン商会"] }
+
+[[term]]
+id = "high-tide"
+definition = "Water level with a smaller shore area."
+forms = { en = ["High Tide"], ja = ["満潮"] }
+
+[[term]]
+id = "normal-tide"
+definition = "The regular water level."
+forms = { en = ["Normal Tide", "mid tide"], ja = ["通常"] }
+
+[[term]]
+id = "low-tide"
+definition = "Water level exposing the lower shore; the basket moves down."
+forms = { en = ["Low Tide"], ja = ["干潮"] }
+
+[[term]]
+id = "steelhead"
+definition = "Boss that grows a bomb on its head and throws it; shoot the bomb to detonate it on the boss."
+forms = { en = ["Steelhead"], ja = ["バクダン"] }
+
+[[term]]
+id = "flyfish"
+definition = "Boss with two missile pods; throw a bomb into each open pod."
+forms = { en = ["Flyfish"], ja = ["カタパッド"] }
+
+[[term]]
+id = "steel-eel"
+definition = "Boss that chases one player leaving ink; shoot the driver at the tail."
+forms = { en = ["Steel Eel"], ja = ["ヘビ"] }
+
+[[term]]
+id = "scrapper"
+definition = "Armored boss; hit it from the front to stun it, then shoot the exposed back."
+forms = { en = ["Scrapper"], ja = ["テッパン"] }
+
+[[term]]
+id = "stinger"
+definition = "Tower of pots that snipes from the shore; shoot the pots off from the side."
+forms = { en = ["Stinger"], ja = ["タワー"] }
+
+[[term]]
+id = "maws"
+definition = "Boss that attacks from under the ink; drop a bomb on its marker."
+forms = { en = ["Maws"], ja = ["モグラ"] }
+
+[[term]]
+id = "drizzler"
+definition = "Boss with an umbrella that launches a rain torpedo; shoot the torpedo back."
+forms = { en = ["Drizzler"], ja = ["コウモリ"] }
+
+[[term]]
+id = "fish-stick"
+definition = "Boss that plants a pillar and inks around it; players climb the pillar to kill it."
+forms = { en = ["Fish Stick"], ja = ["ハシラ"] }
+
+[[term]]
+id = "flipper-flopper"
+definition = "Boss that dives at a marked circle; ink the circle to make it land stunned."
+forms = { en = ["Flipper-Flopper"], ja = ["ダイバー"] }
+
+[[term]]
+id = "big-shot"
+definition = "Boss with a cannon on the shore; players can use the cannon after killing it."
+forms = { en = ["Big Shot"], ja = ["テッキュウ"] }
+
+[[term]]
+id = "slammin-lid"
+definition = "Flying lid carrying small Salmonids; attack from below, then from above once it lands."
+forms = { en = ["Slammin' Lid"], ja = ["ナベブタ"] }
+
+[[term]]
+id = "smallfry"
+definition = "Small, fast lesser Salmonid."
+forms = { en = ["Smallfry"], ja = ["コジャケ"] }
+
+[[term]]
+id = "chum"
+definition = "Regular lesser Salmonid with a frying pan."
+forms = { en = ["Chum"], ja = ["シャケ"] }
+
+[[term]]
+id = "cohock"
+definition = "Large lesser Salmonid with high health."
+forms = { en = ["Cohock"], ja = ["ドスコイ"] }
+
+[[term]]
+id = "goldie"
+definition = "Golden Salmonid that drops Golden Eggs when hit."
+forms = { en = ["Goldie"], ja = ["キンシャケ"] }
+
+[[term]]
+id = "griller"
+definition = "Known-occurrence boss that chases one player; hit its tail to stun it."
+forms = { en = ["Griller"], ja = ["グリル"] }
+
+[[term]]
+id = "mudmouth"
+definition = "Known-occurrence spawner; the golden one drops many Golden Eggs."
+forms = { en = ["Mudmouth"], ja = ["ドロシャケ"] }
+
+[[term]]
+id = "cohozuna"
+definition = "King Salmonid: a giant Cohock."
+forms = { en = ["Cohozuna"], ja = ["ヨコヅナ"] }
+
+[[term]]
+id = "horrorboros"
+definition = "King Salmonid: a flying dragon; hit the weak points on its back."
+forms = { en = ["Horrorboros"], ja = ["タツ"] }
+
+[[term]]
+id = "megalodontia"
+definition = "King Salmonid: a giant shark that bites from below."
+forms = { en = ["Megalodontia"], ja = ["ジョー"] }
+
+[[term]]
+id = "rush"
+definition = "Known occurrence (night): Glowflies lure Chum toward one player at a time."
+forms = { en = ["Rush", "Glowflies"], ja = ["ラッシュ"] }
+
+[[term]]
+id = "fog"
+definition = "Known occurrence: fog hides Salmonids; Goldies appear."
+forms = { en = ["Fog"], ja = ["霧"] }
+
+[[term]]
+id = "goldie-seeking"
+definition = "Known occurrence (night): ink the gushers to find the one with the Goldie."
+forms = { en = ["Goldie Seeking"], ja = ["キンシャケ探し"] }
+
+[[term]]
+id = "the-mothership"
+definition = "Known occurrence: a flying ship steals eggs from the basket."
+forms = { en = ["The Mothership", "Mothership"], ja = ["ハコビヤ", "ハコビヤ襲来"] }
+
+[[term]]
+id = "cohock-charge"
+definition = "Known occurrence (low tide): Cohocks swarm; the egg cannon helps."
+forms = { en = ["Cohock Charge"], ja = ["ドスコイ大量発生"] }
+
+[[term]]
+id = "giant-tornado"
+definition = "Known occurrence: eggs fall from a tornado in boxes."
+forms = { en = ["Giant Tornado"], ja = ["巨大タツマキ"] }
+
+[[term]]
+id = "mudmouth-eruptions"
+definition = "Known occurrence: Mudmouths spawn around the stage."
+forms = { en = ["Mudmouth Eruptions"], ja = ["ドロシャケ噴出"] }
+
+[[term]]
+id = "spawning-grounds"
+definition = "Salmon Run stage."
+forms = { en = ["Spawning Grounds"], ja = ["シェケナダム"] }
+
+[[term]]
+id = "marooners-bay"
+definition = "Salmon Run stage."
+forms = { en = ["Marooner's Bay"], ja = ["難破船ドン・ブラコ"] }
+
+[[term]]
+id = "gone-fission-hydroplant"
+definition = "Salmon Run stage."
+forms = { en = ["Gone Fission Hydroplant"], ja = ["ムニ・エール海洋発電所"] }
+
+[[term]]
+id = "sockeye-station"
+definition = "Salmon Run stage."
+forms = { en = ["Sockeye Station"], ja = ["アラマキ砦"] }
+
+[[term]]
+id = "jammin-salmon-junction"
+definition = "Salmon Run stage."
+forms = { en = ["Jammin' Salmon Junction"], ja = ["すじこジャンクション跡"] }
+
+[[term]]
+id = "salmonid-smokeyard"
+definition = "Salmon Run stage."
+forms = { en = ["Salmonid Smokeyard"], ja = ["トキシラズいぶし工房"] }
+
+[[term]]
+id = "bonerattle-arena"
+definition = "Salmon Run stage."
+forms = { en = ["Bonerattle Arena"], ja = ["どんぴこ闘技場"] }

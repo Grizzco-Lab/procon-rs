@@ -1,0 +1,30 @@
+# Example evaluation set for `cuttlefish eval`. Copy it next to your data,
+# replace the questions with ones your sources answer (from #vod-review
+# threads and the guides), and run it after every change to sources, chunking
+# or prompts:
+#
+#   cuttlefish eval eval.example.toml            # retrieval only, no key
+#   cuttlefish eval eval.example.toml --answer   # also the model's answers
+#
+# expect_sources: substrings of a title, heading or url that should be among
+# the top-k chunks. expect_points: phrases a good answer contains.
+
+[[case]]
+question = "How do you take out a Flyfish?"
+expect_sources = ["Flyfish"]
+expect_points = ["bomb", "pod"]
+
+[[case]]
+question = "What is the fastest way to deal with a Steelhead?"
+expect_sources = ["Steelhead"]
+expect_points = ["bomb"]
+
+[[case]]
+question = "干潮のときコンテナはどこにある？"
+expect_sources = ["Tide"]
+expect_points = ["干潮"]
+
+[[case]]
+question = "When should I use my special during a wave?"
+expect_sources = ["Special"]
+expect_points = ["special"]

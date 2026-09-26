@@ -1,0 +1,26 @@
+[package]
+name = "cuttlefish"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
+env_logger = "0.11.11"
+log = "0.4.34"
+scraper = "0.27.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+texting_robots = "0.2.2"
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
+toml = "1.1.6"
+ureq = { version = "3.4.2", features = ["json"] }
+
+[features]
+# Embeddings on an NVIDIA GPU (needs the CUDA toolkit)
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
