@@ -1,3 +1,7 @@
 /target
 /recordings
 *.state.json
+
+# Claude Code: personal settings and agents' temporary worktrees
+/.claude/settings.local.json
+/.claude/worktrees/
