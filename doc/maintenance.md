@@ -22,8 +22,9 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
   `.p-controller`, which shrank the Studio's 3D view. Give each app's styles a
   prefix or scope them under the app's section, and add a check for duplicate
   class names between apps.
-- **One video player.** In progress: a shared `web/player.js` taken from the
-  Inkspector (neighbours, shortcuts, Full/Minimal/None overlay) for every app.
+- **Retake doc/index.html screenshots.** The shared player (`web/player.js`,
+  `8834637`) moved the Inkspector's frame chip into the player's controls,
+  and the shell, rail, themes and Cuttlefish have changed since.
 - **Translate the shell.** App names, status words and the View menu stay
   English in Chinese mode; only Cuttlefish and Knowledge are translated.
 - **Layout regression checks.** A scripted headless-Chrome pass that measures
