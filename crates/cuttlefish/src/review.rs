@@ -492,7 +492,7 @@ impl Reviewer {
     /// from `ANTHROPIC_API_KEY`
     pub fn open(data: &Path, settings: Settings) -> Result<Self> {
         let client = Client::from_env(settings)?;
-        let embedder = crate::embed::E5Embedder::load(&Store::models_dir(data))?;
+        let embedder = crate::embed::E5Embedder::load(&crate::store::models_dir())?;
         let store = Store::open(data, &embedder)?;
         Ok(Self::new(store, Box::new(embedder), client))
     }

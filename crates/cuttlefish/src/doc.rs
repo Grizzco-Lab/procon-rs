@@ -50,6 +50,10 @@ pub struct Document {
     /// Where it can be read
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// The file it came from, relative to the data folder
+    /// (`inbox/guides/eggs.pdf`), for documents of the inbox
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     /// Title shown with citations
     pub title: String,
     /// Language code (`en`, `ja`, `zh`, `es`, `ru`, `fr`, ...), when known
@@ -77,6 +81,7 @@ impl Document {
             id: doc_id(key),
             source,
             url: None,
+            path: None,
             title,
             language: guess_language(&text).map(String::from),
             license: None,

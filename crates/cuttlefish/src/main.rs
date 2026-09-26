@@ -13,7 +13,8 @@ use cuttlefish::eval::EvalSet;
 use cuttlefish::ingest::{self, Meta};
 use cuttlefish::llm::{Client, Settings};
 use cuttlefish::review::{Reviewer, translate};
-use cuttlefish::store::Store;
+use cuttlefish::store::{self, Store};
+use cuttlefish::{assets, inbox, tables};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -77,8 +78,17 @@ enum Command {
         #[command(flatten)]
         model: ModelArgs,
     },
-    /// Documents per source and chunks in the index
+    /// What the store holds: documents per source, chunks, glossary terms
+    /// per language, name tables, assets, the last inbox import
     Stats,
+    /// List the documents (id, source, title, file or url)
+    Docs,
+    /// Delete documents and their chunks by id (see `docs`)
+    Delete {
+        /// Document ids
+        #[arg(required = true)]
+        ids: Vec<String>,
+    },
     /// Re-chunk and re-embed every stored document
     Reindex,
 }
@@ -105,6 +115,12 @@ impl ModelArgs {
 
 #[derive(Subcommand)]
 enum Ingest {
+    /// Everything in <data>/inbox/: prose becomes documents, name tables
+    /// glossary terms, images the asset catalogue (see the README)
+    Inbox {
+        #[command(flatten)]
+        meta: Meta,
+    },
     /// Web pages: urls, a list file, a sitemap, or MediaWiki categories
     Url {
         /// Page urls
@@ -183,10 +199,29 @@ struct Sink {
     added: usize,
 }
 
+/// Opens the store: brings the data folder of the older layout over (by
+/// copying), loads the embedder and, with `catch_up`, embeds documents the
+/// index lacks (synced in from elsewhere)
+fn open(data: &Path, catch_up: bool) -> Result<(Store, E5Embedder)> {
+    let models = store::models_dir();
+    if let Err(e) = store::migrate(&store::legacy_root(), data, &models) {
+        log::warn!("could not copy the older data folder: {e:#}");
+    }
+    let embedder = E5Embedder::load(&models)?;
+    let mut store = Store::open(data, &embedder)?;
+    if catch_up {
+        let n = store.catch_up(&embedder)?;
+        if n > 0 {
+            println!("{n} documents synced in from elsewhere embedded");
+            store.save()?;
+        }
+    }
+    Ok((store, embedder))
+}
+
 impl Sink {
     fn open(data: &Path) -> Result<Self> {
-        let embedder = E5Embedder::load(&Store::models_dir(data))?;
-        let store = Store::open(data, &embedder)?;
+        let (store, embedder) = open(data, true)?;
         Ok(Sink {
             store,
             embedder,
@@ -235,8 +270,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Ingest(i) => ingest(&data, i),
         Command::Search { query, k } => {
-            let embedder = E5Embedder::load(&Store::models_dir(&data))?;
-            let store = Store::open(&data, &embedder)?;
+            let (store, embedder) = open(&data, true)?;
             let hits = store.search(&query, k, &embedder)?;
             if hits.is_empty() {
                 println!("nothing found (is the store empty? see `cuttlefish stats`)");
@@ -314,8 +348,7 @@ fn main() -> Result<()> {
             } else {
                 None
             };
-            let embedder = E5Embedder::load(&Store::models_dir(&data))?;
-            let store = Store::open(&data, &embedder)?;
+            let (store, embedder) = open(&data, true)?;
             let (mut found, mut points, mut expected) = (0, 0, 0);
             for case in &set.cases {
                 let hits = store.search(&case.question, k, &embedder)?;
@@ -343,8 +376,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Stats => {
-            let embedder = E5Embedder::load(&Store::models_dir(&data))?;
-            let store = Store::open(&data, &embedder)?;
+            let (store, _) = open(&data, true)?;
             let (counts, chunks) = store.stats()?;
             println!("data folder: {}", data.display());
             for (kind, n) in counts {
@@ -355,15 +387,53 @@ fn main() -> Result<()> {
                 );
             }
             println!("{chunks:>6} chunks in the index");
+            let glossary = store.glossary();
+            println!("{:>6} glossary terms", glossary.terms.len());
+            for (lang, n) in glossary.languages() {
+                println!("{n:>10} with a name in {lang}");
+            }
+            for t in tables::load_all(&data) {
+                println!("{:>6} terms from {}", t.terms.len(), t.source);
+            }
+            let catalogue = assets::Catalogue::load(&data);
+            println!("{:>6} images and icons", catalogue.assets.len());
+            for (folder, n) in catalogue.folders() {
+                println!("{n:>10} in {folder}");
+            }
+            if let Some(r) = inbox::reports(&data, 1).first() {
+                println!("last inbox import {}: {}", r.id, r.summary());
+            }
             Ok(())
+        }
+        Command::Docs => {
+            for d in store::read_documents(&data)? {
+                println!(
+                    "{} {:<18} {}  {}",
+                    d.id,
+                    serde_json::to_value(d.source)?.as_str().unwrap_or_default(),
+                    d.title,
+                    d.path.or(d.url).unwrap_or_default()
+                );
+            }
+            Ok(())
+        }
+        Command::Delete { ids } => {
+            let (mut store, _) = open(&data, false)?;
+            for id in &ids {
+                if store.delete(id)? {
+                    println!("deleted {id}");
+                } else {
+                    println!("no document {id}");
+                }
+            }
+            store.save()
         }
         Command::Reindex => {
             let index = data.join("index");
             if index.exists() {
                 std::fs::remove_dir_all(&index)?;
             }
-            let embedder = E5Embedder::load(&Store::models_dir(&data))?;
-            let mut store = Store::open(&data, &embedder)?;
+            let (mut store, embedder) = open(&data, false)?;
             let n = store.reindex(&embedder)?;
             store.save()?;
             println!("{n} chunks indexed");
@@ -372,8 +442,39 @@ fn main() -> Result<()> {
     }
 }
 
+/// Prints an inbox import's report
+fn print_report(r: &inbox::Report) {
+    for t in &r.taken {
+        println!("+ {:<9} {}: {}", t.kind, t.path, t.detail);
+    }
+    for s in &r.skipped {
+        println!(
+            "- skipped {} ({}), e.g. {}",
+            s.reason,
+            s.count,
+            s.examples.join(", ")
+        );
+    }
+    for f in &r.failed {
+        println!("! failed {}: {}", f.path, f.detail);
+    }
+    for g in &r.gone {
+        println!("  gone from the inbox: {g}");
+    }
+    for n in &r.notes {
+        println!("  {n}");
+    }
+    println!("{}", r.summary());
+}
+
 fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
     match cmd {
+        Ingest::Inbox { meta } => {
+            let mut sink = Sink::open(data)?;
+            let report = inbox::import(&mut sink, data, &store::cache_dir(), &meta)?;
+            print_report(&report);
+            sink.finish()
+        }
         Ingest::Url {
             urls,
             list,

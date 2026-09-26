@@ -10,11 +10,12 @@
 //! little-endian `f32`, in entry order).
 
 use crate::doc::SourceKind;
+use crate::store::write_atomic;
 use alloc::string::String;
 use alloc::vec::Vec;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, Write};
+use std::io::BufRead;
 use std::path::Path;
 
 /// A chunk with what a citation needs from its document
@@ -161,16 +162,6 @@ impl FlatIndex {
         let bytes: Vec<u8> = self.vectors.iter().flat_map(|v| v.to_le_bytes()).collect();
         write_atomic(&dir.join("vectors.f32"), &bytes)
     }
-}
-
-/// Writes through a temporary file so a crash never leaves half a file
-fn write_atomic(path: &Path, data: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("tmp");
-    let mut f = std::fs::File::create(&tmp)?;
-    f.write_all(data)?;
-    f.sync_all()?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
 }
 
 impl VectorIndex for FlatIndex {

@@ -6,6 +6,9 @@
 //! conversations through [`discord`], local files through [`mod@file`]), split
 //! into chunks ([`chunk`]), embedded ([`embed`]) and indexed ([`index`]) in a
 //! data folder ([`store`]); [`ingest`] runs the importers. A [`glossary`] maps jargon across languages.
+//! The [`inbox`] takes anything dropped into the data folder: prose becomes
+//! documents, multilingual name tables become glossary terms ([`tables`]),
+//! images an asset catalogue ([`assets`]).
 //! [`review::Reviewer`] retrieves what is relevant to a moment or question
 //! and asks the model through the Anthropic Messages API ([`llm`]).
 //!
@@ -13,6 +16,7 @@
 
 extern crate alloc;
 
+pub mod assets;
 pub mod chunk;
 pub mod crawl;
 pub mod discord;
@@ -22,9 +26,11 @@ pub mod eval;
 pub mod file;
 pub mod glossary;
 pub mod html;
+pub mod inbox;
 pub mod index;
 pub mod ingest;
 pub mod llm;
 pub mod review;
 pub mod store;
+pub mod tables;
 pub mod youtube;

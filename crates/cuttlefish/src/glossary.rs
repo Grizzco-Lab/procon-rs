@@ -14,6 +14,10 @@
 //! forms ([`Glossary::expand`]), so a Japanese question also matches English
 //! notes; prompts list the matched terms ([`Glossary::prompt_lines`]) so the
 //! model uses the community's names.
+//!
+//! Name tables imported from the inbox ([`crate::tables`]) add terms without
+//! definitions, each with where it came from ([`Term::from`]);
+//! [`Glossary::merge`] folds them into the terms that share a name.
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -30,10 +34,14 @@ pub const SEED: &str = include_str!("../glossary.toml");
 pub struct Term {
     /// Stable id (`steelhead`)
     pub id: String,
-    /// Short English definition
+    /// Short English definition; empty for imported names
+    #[serde(default)]
     pub definition: String,
     /// Names per language code, official name first
     pub forms: BTreeMap<String, Vec<String>>,
+    /// Where imported names came from: `<file>#<key>`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub from: Vec<String>,
 }
 
 impl Term {
@@ -142,6 +150,70 @@ impl Glossary {
         out
     }
 
+    /// Adds imported terms: a term sharing a name (ignoring case) with one
+    /// already here adds its names and origin to it; others are appended,
+    /// with their id made unique
+    pub fn merge(&mut self, terms: &[Term]) {
+        // Lowercase name or id to the index of its term
+        let mut names: BTreeMap<String, usize> = BTreeMap::new();
+        let key = |s: &str| s.trim().to_lowercase();
+        for (i, t) in self.terms.iter().enumerate() {
+            names.entry(key(&t.id)).or_insert(i);
+            for f in t.forms.values().flatten() {
+                names.entry(key(f)).or_insert(i);
+            }
+        }
+        for t in terms {
+            let found = t.forms.values().flatten().find_map(|f| names.get(&key(f)));
+            let i = match found {
+                Some(&i) => i,
+                None => {
+                    let mut new = Term {
+                        forms: BTreeMap::new(),
+                        from: Vec::new(),
+                        ..t.clone()
+                    };
+                    let mut n = 1;
+                    while names.contains_key(&key(&new.id)) {
+                        n += 1;
+                        new.id = alloc::format!("{}-{n}", t.id);
+                    }
+                    names.insert(key(&new.id), self.terms.len());
+                    self.terms.push(new);
+                    self.terms.len() - 1
+                }
+            };
+            let term = &mut self.terms[i];
+            for (lang, forms) in &t.forms {
+                let list = term.forms.entry(lang.clone()).or_default();
+                for f in forms {
+                    if !list.iter().any(|g| key(g) == key(f)) {
+                        list.push(f.clone());
+                    }
+                    names.entry(key(f)).or_insert(i);
+                }
+            }
+            for f in &t.from {
+                if !term.from.contains(f) {
+                    term.from.push(f.clone());
+                }
+            }
+        }
+    }
+
+    /// Number of terms with a name in each language
+    pub fn languages(&self) -> BTreeMap<String, usize> {
+        let mut counts = BTreeMap::new();
+        for t in &self.terms {
+            for (lang, forms) in &t.forms {
+                if !forms.is_empty() {
+                    *counts.entry(lang.clone()).or_default() += 1;
+                }
+            }
+        }
+        counts
+    }
+
     /// One line per term for a prompt: its names and definition, with the
     /// `lang` name first when given
     pub fn prompt_lines(terms: &[&Term], lang: Option<&str>) -> String {
@@ -156,12 +228,12 @@ impl Glossary {
                     names.push(alloc::format!("{l}: {}", forms.join(", ")));
                 }
             }
-            out.push_str(&alloc::format!(
-                "- {} ({}): {}\n",
-                t.id,
-                names.join("; "),
-                t.definition
-            ));
+            out.push_str(&alloc::format!("- {} ({})", t.id, names.join("; ")));
+            if !t.definition.is_empty() {
+                out.push_str(": ");
+                out.push_str(&t.definition);
+            }
+            out.push('\n');
         }
         out
     }
@@ -213,6 +285,40 @@ mod tests {
         let g = Glossary::seed();
         let q = g.expand("バクダンの処理");
         assert!(q.contains("Steelhead"), "{q}");
+    }
+
+    #[test]
+    fn merges_imported_names() {
+        let mut g = Glossary::seed();
+        let size = g.terms.len();
+        let imported: Glossary = Glossary::parse(
+            r#"
+            [[term]]
+            id = "steelhead"
+            forms = { en = ["Steelhead"], zh = ["Bomb Salmon"], fr = ["Tête-de-pneu"] }
+            from = ["inbox/names.csv#SakelienBomber"]
+            [[term]]
+            id = "maws"
+            forms = { de = ["Maws DE"] }
+            [[term]]
+            id = "maws"
+            forms = { en = ["Something else"] }
+            "#,
+        )
+        .unwrap();
+        g.merge(&imported.terms);
+        let steelhead = g.lookup("Tête-de-pneu").unwrap();
+        assert_eq!(steelhead.id, "steelhead");
+        assert_eq!(steelhead.name("ja"), Some("バクダン"));
+        assert_eq!(steelhead.from, ["inbox/names.csv#SakelienBomber"]);
+        assert!(!steelhead.definition.is_empty());
+        // No shared name: a new term, with an id of its own
+        assert_eq!(g.terms.len(), size + 2);
+        assert_eq!(g.lookup("Maws DE").unwrap().id, "maws-2");
+        assert_eq!(g.lookup("Something else").unwrap().id, "maws-3");
+        assert!(g.languages()["fr"] >= 1);
+        let line = Glossary::prompt_lines(&[g.lookup("maws-2").unwrap()], None);
+        assert_eq!(line, "- maws-2 (de: Maws DE)\n");
     }
 
     #[test]

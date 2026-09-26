@@ -157,12 +157,12 @@ pub fn vtt_to_text(vtt: &str) -> String {
     out
 }
 
-/// `hh:mm:ss.mmm` or `mm:ss.mmm` to whole seconds
+/// `hh:mm:ss.mmm` or `mm:ss.mmm` to whole seconds (SubRip's `,` works too)
 fn parse_time(s: &str) -> Option<u64> {
     let s = s.split_whitespace().next()?;
     let mut secs = 0f64;
     for part in s.split(':') {
-        secs = secs * 60.0 + part.parse::<f64>().ok()?;
+        secs = secs * 60.0 + part.replace(',', ".").parse::<f64>().ok()?;
     }
     Some(secs as u64)
 }
@@ -208,5 +208,6 @@ mod tests {
     fn parses_times() {
         assert_eq!(parse_time("01:02:03.500"), Some(3723));
         assert_eq!(parse_time("02:03.000"), Some(123));
+        assert_eq!(parse_time("00:01:05,250"), Some(65));
     }
 }
