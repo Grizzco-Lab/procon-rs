@@ -7,7 +7,7 @@ the project does and how to run it, see the [README](README.md).
 
 ```bash
 cargo build --release                  # both binaries for this machine
-cargo test --workspace                 # procon and gameplay-data unit tests
+cargo test --workspace                 # procon, gameplay-data and gameplay-vision unit tests
 cargo clippy --workspace
 cargo fmt
 
@@ -74,6 +74,7 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes |
 | `src/cuttlefish.rs` | Cuttlefish app backend: review files, video bytes with ranges, yt-dlp downloads, AI endpoint (501 until connected) |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
+| `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
 | `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`), embedded into the binary |
 | `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy |
 | `doc/` | Setup and dashboard write-up with screenshots, published to GitHub Pages |

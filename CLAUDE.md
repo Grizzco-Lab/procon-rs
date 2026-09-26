@@ -18,13 +18,14 @@ Records Nintendo Switch gameplay for training datasets: Pro Controller input, ti
 - `procon-proxy` (`src/bin/procon-proxy.rs`, config `proxy.toml`): USB proxy on a Raspberry Pi 4 between the Pro Controller and the Switch (USB gadget); streams timestamped frames over TCP (`[stream] port`, 7331) and takes replayed actions (`[replay] port`, 7332); resets the controller at start.
 - `procon` (`src/bin/main.rs`, config `config.toml`): the studio on the Linux host with the capture card. Web dashboard with two apps: Studio (live preview, controller view incl. 3D, recording with sound and game settings, replay, data, motion) and Inkspector (recorded sessions frame by frame: labels, delays, sound, overlays, predictions).
 - `crates/gameplay-data`: recording format, per-frame alignment, labels, calibration; Python bindings (`python` feature, maturin) used by the AgentZero training project (`../AgentZero`).
+- `crates/gameplay-vision`: object detection (YOLOv8 in candle, CPU; `cuda` feature) and SORT-like tracking on session video, the object label files shared with the labeling tool (`<annotations>/<session>/<segment>.objects.jsonl`, `classes.json`) and prelabeling; CLI `gameplay-vision` (`detect`, `track`, `prelabel`, `render`). Its README has the plan toward Salmon Run detection and 3D placement.
 - `cargo run --example fake_proxy [port]` stands in for the proxy.
 
 ## Common Commands
 
 ```bash
 cargo build --release                 # both binaries
-cargo test --workspace                # procon + gameplay-data unit tests
+cargo test --workspace                # procon, gameplay-data, gameplay-vision unit tests
 cargo clippy --workspace
 cargo fmt                             # Rust; `prettier --write` for web/*.html and doc/index.html
 ./scripts/run.sh                      # studio with config.toml
