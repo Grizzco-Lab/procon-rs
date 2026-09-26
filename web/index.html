@@ -862,12 +862,70 @@
           <div class="scrubber" id="i-scrubber">
             <div class="scrubber-track">
               <div class="scrubber-fill" id="i-scrub-fill"></div>
+              <!-- Labeled frames, drawn by inspect.js from label.js's list -->
+              <canvas class="scrubber-marks" id="i-scrub-marks"></canvas>
             </div>
             <div class="scrubber-thumb" id="i-scrub-thumb"></div>
             <div class="scrubber-bubble" id="i-scrub-bubble" hidden></div>
           </div>
-          <!-- Labeling mode: classes with their counts, filled by label.js -->
-          <div class="label-bar" id="l-bar" hidden></div>
+          <!-- Labeling mode: classes with their counts, actions and Follow, filled by label.js -->
+          <div class="label-bar" id="l-bar" hidden>
+            <div class="label-classes">
+              <input
+                type="search"
+                class="select label-find"
+                id="l-find"
+                placeholder="Find class  /"
+                aria-label="Find a class: type, then Enter"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <span class="label-chips" id="l-chips"></span>
+            </div>
+            <div class="label-actions" id="l-actions"></div>
+            <div class="label-follow" id="l-follow">
+              <button
+                type="button"
+                class="btn btn-play"
+                id="l-follow-run"
+                title="Follow the selected box, or every box of this frame, over the next frames (F)"
+              >
+                Follow
+              </button>
+              <select
+                class="select"
+                id="l-follow-count"
+                aria-label="How far to follow"
+              >
+                <option value="0.5">0.5 s</option>
+                <option value="1">1 s</option>
+                <option value="2" selected>2 s</option>
+                <option value="3">3 s</option>
+                <option value="5">5 s</option>
+                <option value="10">10 s</option>
+              </select>
+              <select
+                class="select"
+                id="l-follow-direction"
+                aria-label="Which way to follow"
+              >
+                <option value="forward">Forward</option>
+                <option value="backward">Backward</option>
+                <option value="both">Both ways</option>
+              </select>
+              <button type="button" class="btn" id="l-follow-cancel" hidden>
+                Cancel
+              </button>
+              <button type="button" class="btn" id="l-follow-start" hidden>
+                Start tracker
+              </button>
+              <span class="follow-progress" id="l-follow-progress" hidden
+                ><i></i
+              ></span>
+              <span class="label-follow-status" id="l-follow-status"></span>
+            </div>
+            <p class="panel-note" id="l-note"></p>
+          </div>
         </section>
 
         <section class="panel p-labels" aria-labelledby="h-labels">

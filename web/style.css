@@ -2787,6 +2787,8 @@ body {
   width: 10px;
   height: 10px;
   border-radius: 2px;
+  /* White classes (the egg basket) stay visible on light themes */
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--text) 30%, transparent);
 }
 
 .label-class .num {
@@ -2801,6 +2803,98 @@ body {
   margin-left: auto;
   color: var(--text-2);
   font-size: 12.5px;
+}
+
+.label-chips {
+  display: contents;
+}
+
+.label-class[hidden] {
+  display: none;
+}
+
+/* The class Enter would pick */
+.label-class[data-first] {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.label-find {
+  width: 150px;
+  max-width: none;
+  height: 28px;
+}
+
+.label-follow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.label-follow .btn {
+  height: 30px;
+}
+
+.label-follow .btn-play {
+  min-width: 0;
+}
+
+.label-follow .select {
+  max-width: none;
+  height: 30px;
+}
+
+.label-follow-status {
+  flex: 1 1 240px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.label-follow-status code {
+  font: 12px var(--font-num);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* How far a Follow has got */
+.follow-progress {
+  width: 90px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--inset);
+  overflow: hidden;
+}
+
+.follow-progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.follow-progress[hidden] {
+  display: none;
+}
+
+/* Labeled frames on the scrubber: labeled by a person (full ticks), holding
+ * only model boxes (short ticks), and a Follow's range (a band). Fainter
+ * outside the labeling mode. */
+.scrubber-marks {
+  --mark-user: var(--good);
+  --mark-model: var(--warning);
+  --mark-range: color-mix(in oklab, var(--accent) 30%, transparent);
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.scrubber.is-labeling .scrubber-marks {
+  opacity: 1;
 }
 
 /* ============================================================ cuttlefish

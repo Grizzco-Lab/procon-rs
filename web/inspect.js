@@ -87,7 +87,16 @@ const inspector = {
   overlay: remembered("overlay", "full"),
   /** Play the segment's sound, which then sets the frame */
   sound: remembered("sound", "true") === "true",
+  /**
+   * Labeled frames marked on the scrubber, set by label.js: sorted frame
+   * numbers labeled by a person (`user`) and holding only model boxes
+   * (`model`), and a range being followed ([first, last] or null)
+   */
+  marks: { user: [], model: [], range: null },
 };
+
+/** A click this close (in CSS pixels) to a mark goes to its frame */
+const MARK_SNAP_PX = 6;
 
 const audio = $("i-audio");
 
@@ -279,6 +288,9 @@ async function showSegment(session, segment, state) {
   delete audio.dataset.source;
   inspector.images = new Map();
   inspector.labelChunks = new Map();
+  // Marks come with the new segment's labels (label.js)
+  inspector.marks = { user: [], model: [], range: null };
+  drawMarks();
   inspector.delay = state.has("delay")
     ? parseFloat(state.get("delay")) || 0
     : info.video_delay_ms;
@@ -449,6 +461,51 @@ function drawScrubber(n) {
   const percent = frames > 1 ? (100 * n) / (frames - 1) : 0;
   $("i-scrub-fill").style.width = `${percent}%`;
   $("i-scrub-thumb").style.left = `${percent}%`;
+}
+
+/**
+ * Draw the labeled frames on the scrubber, once per change: a range being
+ * followed as a band, frames with only model boxes as short ticks and
+ * frames a person labeled as full-height ticks on top
+ */
+function drawMarks() {
+  const marks = $("i-scrub-marks");
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.round(marks.clientWidth * dpr);
+  const height = Math.round(marks.clientHeight * dpr);
+  if (marks.width !== width || marks.height !== height) {
+    marks.width = width;
+    marks.height = height;
+  }
+  const g = marks.getContext("2d");
+  g.clearRect(0, 0, width, height);
+  const frames = inspector.info?.frames ?? 0;
+  if (!frames || !width) return;
+  const style = getComputedStyle(marks);
+  const x = (n) => (frames > 1 ? (n / (frames - 1)) * (width - 1) : 0);
+  const tick = Math.max(2 * dpr, width / frames);
+  const { user, model, range } = inspector.marks;
+  if (range) {
+    g.fillStyle = style.getPropertyValue("--mark-range");
+    const [a, b] = [Math.min(...range), Math.max(...range)];
+    g.fillRect(x(a), 0, Math.max(tick, x(b) - x(a)), height);
+  }
+  g.fillStyle = style.getPropertyValue("--mark-model");
+  for (const n of model)
+    g.fillRect(x(n) - tick / 2, height * 0.45, tick, height);
+  g.fillStyle = style.getPropertyValue("--mark-user");
+  for (const n of user) g.fillRect(x(n) - tick / 2, 0, tick, height);
+}
+
+/** The marked frame nearest to frame n, if within `px` CSS pixels of it */
+function nearestMark(n, px) {
+  const { frames } = inspector.info;
+  const perFrame = $("i-scrubber").clientWidth / Math.max(1, frames - 1);
+  let best = null;
+  for (const k of [...inspector.marks.user, ...inspector.marks.model]) {
+    if (best == null || Math.abs(k - n) < Math.abs(best - n)) best = k;
+  }
+  return best != null && Math.abs(best - n) * perFrame <= px ? best : null;
 }
 
 /** Draw a frame's true actions over it, as the video's input overlay does */
@@ -751,6 +808,8 @@ function toggle() {
   const bubble = $("i-scrub-bubble");
   let timer = null;
   let dragging = false;
+  /** Where the pointer went down, to tell a click from a drag */
+  let downX = 0;
   const frameAt = (event) => {
     const box = scrubber.getBoundingClientRect();
     const x = (event.clientX - box.left) / box.width;
@@ -768,6 +827,7 @@ function toggle() {
   scrubber.addEventListener("pointerdown", (event) => {
     if (!inspector.info) return;
     dragging = true;
+    downX = event.clientX;
     scrubber.setPointerCapture(event.pointerId);
     pause();
     preview(frameAt(event));
@@ -784,8 +844,12 @@ function toggle() {
     dragging = false;
     clearTimeout(timer);
     bubble.hidden = true;
-    show(frameAt(event));
+    // A click (not a drag) next to a labeled frame goes to that frame
+    const n = frameAt(event);
+    const click = Math.abs(event.clientX - downX) < 4;
+    show((click ? nearestMark(n, MARK_SNAP_PX) : null) ?? n);
   });
+  new ResizeObserver(drawMarks).observe(scrubber);
 })();
 
 // ----------------------------------------------------------------- actions
