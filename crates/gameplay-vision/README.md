@@ -3,7 +3,9 @@
 Object detection and tracking on recorded Salmon Run sessions: the first step
 toward placing enemies on the stage in 3D. A library and a CLI,
 `gameplay-vision`, built on [candle](https://github.com/huggingface/candle)
-0.11, running on the CPU by default.
+0.11, running on the CPU by default. The studio's **Vision** app runs the same
+detection, tracking and prelabeling from the dashboard (see the main README);
+the CLI stays for scripts and batch work.
 
 ```bash
 cargo build --release -p gameplay-vision

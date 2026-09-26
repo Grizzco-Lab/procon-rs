@@ -112,6 +112,16 @@ let ja = reviewer.translate("...", "ja")?;
 ```
 
 `review` blocks (seconds to a minute); call it from a blocking task.
+
+The studio keeps one `Store` and `E5Embedder` for everything (search, imports
+and reviews) instead of a `Reviewer`: `review::review(&store, &embedder,
+&client, k, &request)` and `review::ask(...)` take the parts separately, with
+a `Client::from_env` made per request. Imports go through `ingest` (`web`,
+`youtube`, `files`, `discord_export`, `discord_bot`), which hand documents to
+an `ingest::Sink` (the CLI prints; the studio logs into its import job) and
+stop when `Sink::cancelled` says so. Its Knowledge tab shows all of this; the
+crate has no way to delete a document yet.
+
 `AiComment` serializes as:
 
 ```json

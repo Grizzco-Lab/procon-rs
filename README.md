@@ -5,9 +5,11 @@ report, timestamped, next to the console's video and sound.
 
 A Raspberry Pi 4 sits between the Pro Controller and the Switch as a USB proxy
 and streams the controller's reports over the network. A Linux PC with a
-capture card records them with the video, and its web dashboard has two apps:
-**Studio**, to watch and record, and **Inkspector**, to check recorded
-sessions frame by frame.
+capture card records them with the video, and its web dashboard has four apps:
+**Studio**, to watch and record; **Inkspector**, to check recorded sessions
+frame by frame and label objects on them; **Cuttlefish**, to review videos with
+comments, drawings and an AI coach, and to manage its knowledge; and
+**Vision**, to detect and track objects in recorded sessions.
 
 > [!TIP]
 > **[See the setup guide and dashboard tour →](https://htmlpreview.github.io/?https://github.com/Grizzco-Lab/procon-rs/blob/main/doc/index.html)**
@@ -78,14 +80,15 @@ controller; point `[proxy] address` at `localhost:7331`.
 
 ## The dashboard
 
-One page with two apps, switched without reloading: **Studio** (`#studio`) and
-**Inkspector** (`#inspect`). The app links sit in a left rail or in the top
-bar; the connection, controller, proxy latency and recording chips stay in the
-top bar in both apps. The **View** menu picks the theme (Studio, Joy or
+One page with four apps, switched without reloading: **Studio** (`#studio`),
+**Inkspector** (`#inspect`), **Cuttlefish** (`#cuttlefish`) and **Vision**
+(`#vision`). The app links sit in a left rail or in the top bar; the
+connection, controller, proxy latency and recording chips stay in the top bar
+in every app. The **View** menu picks the theme (Studio, Joy or
 Telemetry), the Phone layout (also used automatically on narrow screens) and
 where the app links go (Side rail or Top bar); the choices are remembered per
-browser. Capture and recording carry on while the Inkspector is shown; only the
-Studio's preview pauses.
+browser. Capture and recording carry on while another app is shown; only the
+Studio's preview pauses, and each app stops its own work while hidden.
 
 ### Studio
 
@@ -135,9 +138,63 @@ with the picture, and a model's predictions against them.
   computed one.
 - **Predictions**: a labels `.jsonl` path on the PC shows a model's labels
   under the truth, differences in red.
+- **Label** (L): draw boxes around objects on the frame, class by class, for
+  training a detector. Boxes are saved per frame in `[inspect] annotations`
+  (default `Annotations` next to the sessions' folder); the model's boxes
+  (from Vision) are dashed until accepted or corrected.
 - The URL keeps the view (`#inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>`).
 
 Labels come from `crates/gameplay-data`, the same code the training side uses.
+
+### Cuttlefish
+
+Reviews a video (a recorded segment, a video file on the PC or a range of a
+YouTube video) with comments at its times and shapes drawn on the paused frame;
+reviews are saved in `[cuttlefish] reviews`. **Ask Cuttlefish** sends the
+range's frames and nearby comments to Claude with knowledge from the store and
+adds its comments. The **Knowledge** tab (top bar) shows and fills that store
+(`crates/cuttlefish`, folder `[cuttlefish] knowledge`):
+
+- what it holds: documents per kind of source, chunks, glossary, digest, and
+  whether `ANTHROPIC_API_KEY` and `DISCORD_BOT_TOKEN` are set (never their
+  values);
+- **Search**: the nearest chunks with their source, link, license and score,
+  in any language, without a key;
+- **Ask** and **Translate**: need `ANTHROPIC_API_KEY` in the studio's
+  environment (the only place it is read from);
+- **Import**: web pages, a sitemap or a MediaWiki category (robots.txt obeyed,
+  one request per site every few seconds), YouTube subtitles, files on the PC
+  (markdown, text, HTML, PDF), a Discord export or a Discord bot; one import at
+  a time, with its log and a Cancel button;
+- the documents, and a glossary lookup.
+
+The embedding model (about 470 MB) is downloaded into the knowledge folder the
+first time the store opens.
+
+### Vision
+
+Detects and tracks objects in a recorded segment (`crates/gameplay-vision`,
+YOLOv8 in candle):
+
+- **Detect**: a session, segment and range (first frame, every n-th frame,
+  count; 300 frames every 2nd by default), the pretrained COCO model in size
+  n, s or m or your own weights (`[vision] weights`), with tracking. One run
+  at a time, on its own thread, with progress, the device, and per-frame
+  decode, network and total times (mean and 95th percentile); Cancel keeps the
+  frames done. The model loads once and is reused.
+- **Results**: the frames with their boxes (class color, score, track id), a
+  scrubber (←/→), a table per class, the tracks and their paths on screen.
+  The last results of each segment are kept in `[vision] results` (default
+  `Vision` next to the sessions' folder) and shown again when reopened.
+- **Send to labels**: writes the results into the labels as model boxes,
+  renaming classes (`person=player`) and leaving out classes `classes.json`
+  does not have. Frames a person has labeled are never changed. A link opens
+  the frame in the Inkspector's Label mode.
+
+COCO models know nothing of Salmon Run (Salmonids come out as `bowl`, `boat`
+or nothing); the app is the workflow for our own weights. On a 16-core CPU a
+frame takes about 130 ms (n), 250 ms (s) and 470 ms (m); build with
+`--features cuda` for the GPU.
 
 ## Recordings
 
@@ -202,7 +259,9 @@ Both programs take `--config <path>`.
 | `[web]` | Dashboard `port` |
 | `[recording]` | Default path `prefix` until one is set on the dashboard |
 | `[video]` | First `input` (`"screen"`, `/dev/video0` or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
-| `[inspect]` | Optional: the Inkspector's `root` (folder of session folders) and `calibration` (default `../AgentZero/calibration.json`); relative paths start at the config's folder |
+| `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) and `annotations` (object labels, default `Annotations` next to the root); relative paths start at the config's folder |
+| `[cuttlefish]` | Optional: `reviews` (default `Reviews` next to the root), `cache` (YouTube downloads), `knowledge` (the knowledge store, default `$CUTTLEFISH_DATA` or `~/.local/share/cuttlefish`) and `model` |
+| `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model) and `confidence` (0.25) |
 | `[logging]` | `level`: error, warn, info, debug or trace |
 
 `proxy.toml` (USB proxy, on the Pi):
