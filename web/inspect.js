@@ -120,9 +120,18 @@ function started(summary) {
   return isNaN(date) ? summary.name : date.toLocaleString();
 }
 
+/** A calibrated delay the loader applies: high or medium confidence only */
+function usable(calibration) {
+  return (
+    calibration?.video_delay_ms != null &&
+    ["high", "medium"].includes(calibration.confidence)
+  );
+}
+
 function delayText(calibration) {
-  if (!calibration || calibration.video_delay_ms == null)
-    return "not calibrated";
+  if (!calibration) return "not calibrated";
+  // A low-confidence number is a guess the loader ignores; don't show it as a delay
+  if (!usable(calibration)) return "uncertain";
   return `${Math.round(calibration.video_delay_ms)} ms · ${calibration.confidence}`;
 }
 
@@ -290,12 +299,16 @@ function drawSession() {
     ),
     tile(
       "Calibrated delay",
-      calibration?.video_delay_ms != null
+      usable(calibration)
         ? `${Math.round(calibration.video_delay_ms)} ms`
         : "–",
-      calibration
-        ? `${calibration.confidence} · spread ${calibration.spread_ms ?? "–"} ms`
-        : "not calibrated",
+      !calibration
+        ? "not calibrated"
+        : usable(calibration)
+          ? `${calibration.confidence} · spread ${calibration.spread_ms ?? "–"} ms`
+          : calibration.video_delay_ms != null
+            ? `uncertain: ${Math.round(calibration.video_delay_ms)} ms guessed, not used`
+            : "uncertain: too little aiming to measure",
     ),
     tile("Reports", summary.controller_reports ?? "–", summary.name),
     tile(

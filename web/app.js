@@ -109,6 +109,9 @@ function routeApp() {
   );
 }
 
+/** The Studio app is on screen, so its live views are worth drawing */
+const studioShown = () => root.dataset.app === "studio" && !document.hidden;
+
 window.addEventListener("hashchange", routeApp);
 // Every app's script has run by then
 document.addEventListener("DOMContentLoaded", routeApp);
@@ -489,7 +492,10 @@ function updateClock(now) {
   if (clock.textContent !== text) clock.textContent = text;
 
   const chip = $("chip-rec");
-  chip.dataset.state = recorder.state;
+  // Only on change: the chip is on screen in every app, and rewriting it on
+  // every animation frame makes the browser repaint it every frame
+  if (chip.dataset.state !== recorder.state)
+    chip.dataset.state = recorder.state;
   const chipText =
     recorder.state === "idle"
       ? "Not recording"
@@ -782,7 +788,11 @@ function pump() {
     ) {
       player.el.currentTime = end - 0.02;
     }
-    if (player.el.paused) player.el.play().catch(() => {});
+    // Decoding the preview while nobody sees it costs a CPU core in browsers
+    // without hardware decoding; keep buffering, and jump to live on return
+    if (!studioShown()) {
+      if (!player.el.paused) player.el.pause();
+    } else if (player.el.paused) player.el.play().catch(() => {});
     if (end - ranges.start(0) > 30) {
       buffer.remove(0, end - 10);
       return;
@@ -1209,14 +1219,17 @@ function connect() {
 
 // Render at display rate no matter how fast reports arrive
 function frame(now) {
-  if (latestState) {
-    renderState(latestState, latestOrientation);
-    latestState = null;
+  // The Studio's views only while it is shown; the newest state waits for it
+  if (studioShown()) {
+    if (latestState) {
+      renderState(latestState, latestOrientation);
+      latestState = null;
+    }
+    drawChart(now);
+    updateReplayClock(now);
+    renderHud(now);
   }
-  drawChart(now);
   updateClock(now);
-  updateReplayClock(now);
-  renderHud(now);
   requestAnimationFrame(frame);
 }
 

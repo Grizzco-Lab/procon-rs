@@ -509,7 +509,9 @@ new MutationObserver(build).observe(document.documentElement, {
   attributeFilter: ["data-theme"],
 });
 renderer.setAnimationLoop(() => {
-  if (!canvas.hidden) renderer.render(scene, camera);
+  // Not while another app is shown: its section is hidden, not the canvas
+  if (!canvas.hidden && canvas.checkVisibility())
+    renderer.render(scene, camera);
 });
 
 window.procon3d = { update };
