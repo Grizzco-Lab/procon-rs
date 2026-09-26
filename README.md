@@ -88,7 +88,7 @@ as it predicts them.
 ## Dashboard
 
 One page with two apps, switched without reloading (the preview, capture and
-recording keep running): **Studio** (`#studio`, below) and **Inspector**
+recording keep running): **Studio** (`#studio`, below) and **Inkspector**
 (`#inspect`). The app links sit in a left rail that widens on hover, or in the
 top bar (**View → Nav: Side / Top**; phones always use the top bar). The
 status chips stay in the top bar in both apps.
@@ -117,7 +117,7 @@ status chips stay in the top bar in both apps.
 The path prefix and video input are saved in `config.state.json` next to the
 config, so they survive restarts.
 
-### Inspector
+### Inkspector
 
 Checks recorded sessions frame by frame: whether the controller labels line up
 with the picture, and later a model's predictions against them.
@@ -200,7 +200,7 @@ level = "info"
 
 `config.toml` on the host sets the proxy's address, dashboard port, default path
 prefix and the ffmpeg capture and encoder options; see the comments in the file.
-An optional `[inspect]` section sets the Inspector's `root` (the folder of
+An optional `[inspect]` section sets the Inkspector's `root` (the folder of
 session folders) and `calibration` (AgentZero's `calibration.json`, by default
 `../AgentZero/calibration.json` next to the config).
 
@@ -239,7 +239,7 @@ The codebase is organized into the following modules:
 - **`src/studio.rs`** - Host coordinator: sessions, `session.json`, saved dashboard settings
 - **`src/audio.rs`** - Capture card sound: always read from PulseAudio, the last 2 s kept, streamed into recordings from their first frame
 - **`src/web.rs`** - Dashboard server: static page, WebSocket live feed and preview, command API
-- **`src/inspect.rs`** - Inspector app backend: session list, frames decoded by ffmpeg, labels via `gameplay-data`
+- **`src/inspect.rs`** - Inkspector app backend: session list, frames decoded by ffmpeg, labels via `gameplay-data`
 - **`crates/gameplay-data`** - Recording format (80-byte frames, `session.json`), per-frame alignment of controller input to video, labels and calibration; shared with AgentZero's Python training code
 - **`web/`** - Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `inspect.js`), embedded into the binary
 - **`examples/fake_proxy.rs`** - Streams a synthetic controller like the proxy, no hardware needed

@@ -1,4 +1,4 @@
-// Inspector app: pick a recorded session, then check its controller labels
+// Inkspector app: pick a recorded session, then check its controller labels
 // against the video frame by frame. Runs next to app.js and uses its helpers
 // ($, root, drawInputHud, stickPercent); its state lives in the hash as
 // #inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>&pred=<path>.
@@ -45,7 +45,7 @@ const FULL_KEYS = [
   ["zl", "ZL"],
 ];
 
-/** Read a remembered Inspector choice */
+/** Read a remembered Inkspector choice */
 function remembered(key, fallback) {
   try {
     return localStorage.getItem(`procon-inspect-${key}`) ?? fallback;
@@ -54,7 +54,7 @@ function remembered(key, fallback) {
   }
 }
 
-/** Remember an Inspector choice in this browser */
+/** Remember an Inkspector choice in this browser */
 function remember(key, value) {
   try {
     localStorage.setItem(`procon-inspect-${key}`, value);
@@ -64,7 +64,7 @@ function remember(key, value) {
 }
 
 const inspector = {
-  /** Whether the Inspector app is shown */
+  /** Whether the Inkspector app is shown */
   shown: false,
   sessions: null,
   /** Info of the open segment, or null in the picker */
@@ -169,11 +169,15 @@ function hashOf(session, segment, extra = {}) {
 
 function writeHash() {
   const { info, frame, delay, pred } = inspector;
-  history.replaceState(
-    null,
-    "",
-    hashOf(info.session, info.segment, { n: frame, delay, pred }),
-  );
+  const hash = hashOf(info.session, info.segment, { n: frame, delay, pred });
+  history.replaceState(null, "", hash);
+  rememberView(hash);
+}
+
+/** Where the Inkspector's app link leads: back to this view, even after a reload */
+function rememberView(hash) {
+  document.querySelector('.app-nav [data-app="inspect"]').href = hash;
+  remember("view", hash);
 }
 
 // ------------------------------------------------------------------ picker
@@ -220,6 +224,8 @@ async function loadSessions() {
 
 function showPicker() {
   pause();
+  inspector.resume = false;
+  rememberView("#inspect");
   inspector.info = null;
   $("inspect-viewer").hidden = true;
   $("inspect-picker").hidden = false;
@@ -789,7 +795,7 @@ function goTo() {
   go(Math.round(seconds * inspector.info.fps));
 }
 
-// Keys act only while the Inspector shows a segment
+// Keys act only while the Inkspector shows a segment
 document.addEventListener("keydown", (event) => {
   const tag = event.target.tagName;
   if (!inspector.shown || !inspector.info) return;
@@ -881,11 +887,28 @@ async function routeInspector(state) {
     resetLabels();
   }
   go(parseInt(state.get("n")) || 0);
+  // Back from another app: carry on playing if it was
+  if (inspector.resume) {
+    inspector.resume = false;
+    play();
+  }
 }
 
 window.addEventListener("app-route", (event) => {
   const { app, state } = event.detail;
+  if (inspector.shown && app !== "inspect") {
+    // Leaving: remember whether it was playing, to resume on return
+    inspector.resume = inspector.playing;
+    pause();
+  }
   inspector.shown = app === "inspect";
   if (inspector.shown) routeInspector(state);
-  else pause();
 });
+$("i-back").onclick = () => {
+  location.hash = "#inspect";
+};
+// The last view, for the app link after a reload
+document.querySelector('.app-nav [data-app="inspect"]').href = remembered(
+  "view",
+  "#inspect",
+);

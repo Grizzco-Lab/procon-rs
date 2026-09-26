@@ -2288,11 +2288,6 @@ input:focus-visible {
   flex: none;
 }
 
-/* The View menu gained the Nav choice; let it wrap on narrow screens */
-.theme-picker {
-  flex-wrap: wrap;
-}
-
 /* The Inspector's full overlay, after AgentZero's agentzero-overlay */
 .full-hud {
   position: absolute;
@@ -2360,4 +2355,268 @@ input:focus-visible {
 
 .full-mid {
   stroke: #ffffff;
+}
+
+/* ============================================================ top bar
+ * One grid for every theme: the brand, the app switch (top nav), the status
+ * chips (which wrap inside their cell) and the View button. Where the chips
+ * would not fit next to the brand they get the full second row; phones stack
+ * brand and View, then the app switch, then the chips.
+ */
+
+.topbar {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-areas: "brand nav status view";
+  align-items: center;
+  gap: 10px 16px;
+}
+
+.topbar .brand {
+  grid-area: brand;
+}
+
+.topbar .app-nav {
+  grid-area: nav;
+}
+
+.topbar .status-strip {
+  grid-area: status;
+  align-items: center;
+}
+
+.topbar .view-button {
+  grid-area: view;
+}
+
+@media (min-width: 721px) {
+  /* The app links live in the rail, outside the bar */
+  :root[data-nav="side"]:not([data-layout="phone"]) .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "brand status view";
+  }
+}
+
+/* The page is a size container, so the bar knows how much room it has (the
+   rail's width already taken off). The Inkspector's chips need more. */
+body {
+  container: page / inline-size;
+}
+
+@container page (max-width: 1280px) {
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand nav view"
+      "status status status";
+  }
+}
+
+@container page (max-width: 1800px) {
+  :root[data-app="inspect"] .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand nav view"
+      "status status status";
+  }
+}
+
+/* Without the app switch in the bar, the middle stays empty */
+@container page (max-width: 1280px) {
+  :root[data-nav="side"]:not([data-layout="phone"]) .topbar {
+    grid-template-areas:
+      "brand . view"
+      "status status status";
+  }
+}
+
+@container page (max-width: 1800px) {
+  :root[data-app="inspect"][data-nav="side"]:not([data-layout="phone"])
+    .topbar {
+    grid-template-areas:
+      "brand . view"
+      "status status status";
+  }
+}
+
+.topbar .app-nav {
+  justify-self: start;
+}
+
+/* Chips of one app stay together when the strip wraps */
+.chip-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-strip {
+  column-gap: 16px;
+}
+
+[data-theme="joy"] #inspect-viewer,
+[data-theme="joy"] #inspect-picker {
+  max-width: 1360px;
+}
+
+:root[data-layout="phone"] .topbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "brand view"
+    "nav nav"
+    "status status";
+}
+
+@media (max-width: 720px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand view"
+      "nav nav"
+      "status status";
+  }
+}
+
+.view-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.view-button:hover {
+  background: var(--btn-hover);
+}
+
+.view-button .app-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* The menu opens under the View button, above everything */
+.view-menu:not(:popover-open) {
+  display: none;
+}
+
+.view-menu:popover-open {
+  position: fixed;
+  inset: 52px 12px auto auto;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.3);
+}
+
+.view-menu .theme-picker-label {
+  margin: 0;
+}
+
+.view-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Navigation in the Frame panel: back to the session list */
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.back-link {
+  padding: 4px 10px 4px 6px;
+  border: 1px solid color-mix(in oklab, var(--accent) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.back-link:hover {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+}
+
+.back-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Under the View button wherever the bar puts it (Joy centres the bar) */
+@supports (anchor-name: --view) {
+  .view-button {
+    anchor-name: --view;
+  }
+
+  .view-menu:popover-open {
+    position-anchor: --view;
+    inset: calc(anchor(bottom) + 6px) anchor(right) auto auto;
+  }
+}
+
+/* Joy keeps its bar at the layout's width, too narrow for one row here */
+:root[data-theme="joy"][data-app="inspect"] .topbar {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "brand nav view"
+    "status status status";
+}
+
+@media (min-width: 721px) {
+  :root[data-theme="joy"][data-app="inspect"][data-nav="side"]:not(
+      [data-layout="phone"]
+    )
+    .topbar {
+    grid-template-areas:
+      "brand . view"
+      "status status status";
+  }
+}
+
+/* On phones the app switch and the video panel's controls may wrap */
+.topbar .app-nav {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.p-video .panel-head {
+  flex-wrap: wrap;
+}
+
+/* Phones last, over every wider arrangement above */
+:root[data-layout="phone"][data-app][data-theme] .topbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "brand view"
+    "nav nav"
+    "status status";
+}
+
+@media (max-width: 720px) {
+  :root[data-app][data-theme] .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand view"
+      "nav nav"
+      "status status";
+  }
 }

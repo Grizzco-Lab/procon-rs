@@ -104,7 +104,7 @@ cargo clippy
 
 **Web dashboard (`src/web.rs`, `web/`)**: warp server with the embedded page, a WebSocket (`state` per input report, `status` once per second, preview JPEGs as binary) and `POST /api/command`; one page with two apps switched by hash (`#studio`, `#inspect/...`), nav as a left rail or top-bar switch (`data-nav`)
 
-**Inspector (`src/inspect.rs`, `web/inspect.js`)**: `GET /api/inspect/...` over the sessions under `[inspect] root`: summaries, frames decoded by ffmpeg in short windows (cached), labels via `gameplay-data`, calibrated delay from AgentZero's `calibration.json`
+**Inkspector (`src/inspect.rs`, `web/inspect.js`)**: `GET /api/inspect/...` over the sessions under `[inspect] root`: summaries, frames decoded by ffmpeg in short windows (cached), labels via `gameplay-data`, calibrated delay from AgentZero's `calibration.json`
 
 **gameplay-data (`crates/gameplay-data`)**: recording format (80-byte `Frame`, `session.json` model), per-frame alignment, labels, calibration; `python` feature for AgentZero (maturin)
 

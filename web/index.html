@@ -52,77 +52,89 @@
           </svg>
           <span class="app-name">Studio</span>
         </a>
-        <a href="#inspect" data-app="inspect" title="Inspector">
+        <a href="#inspect" data-app="inspect" title="Inkspector">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <rect x="3" y="4" width="14" height="10" rx="1.5" />
             <circle cx="15.5" cy="15.5" r="4" />
             <path d="M18.5 18.5l3 3" />
           </svg>
-          <span class="app-name">Inspector</span>
+          <span class="app-name">Inkspector</span>
         </a>
       </nav>
       <div class="status-strip">
-        <span class="chip" id="chip-link" data-level="off">
-          <span class="chip-dot"></span
-          ><span class="chip-text">Connecting…</span>
+        <span class="chip-group">
+          <span class="chip" id="chip-link" data-level="off">
+            <span class="chip-dot"></span
+            ><span class="chip-text">Connecting…</span>
+          </span>
+          <span class="chip" id="chip-controller" data-level="off">
+            <span class="chip-dot"></span
+            ><span class="chip-text">No controller input</span>
+          </span>
+          <span class="chip" id="chip-latency" data-level="off">
+            <span class="chip-dot"></span
+            ><span class="chip-text">Proxy latency unknown</span>
+          </span>
+          <span class="chip chip-rec" id="chip-rec" data-state="idle">
+            <span class="chip-dot"></span
+            ><span class="chip-text">Not recording</span>
+          </span>
         </span>
-        <span class="chip" id="chip-controller" data-level="off">
-          <span class="chip-dot"></span
-          ><span class="chip-text">No controller input</span>
-        </span>
-        <span class="chip" id="chip-latency" data-level="off">
-          <span class="chip-dot"></span
-          ><span class="chip-text">Proxy latency unknown</span>
-        </span>
-        <span class="chip chip-rec" id="chip-rec" data-state="idle">
-          <span class="chip-dot"></span
-          ><span class="chip-text">Not recording</span>
-        </span>
-        <!-- Inspector only: which session, where in it and its delay -->
-        <select
-          class="select"
-          id="i-session"
-          aria-label="Inspected session"
-          data-app-only="inspect"
-        >
-          <option value="">All sessions</option>
-        </select>
-        <span
-          class="chip num"
-          id="i-position"
-          data-app-only="inspect"
-          hidden
-        ></span>
-        <span
-          class="chip"
-          id="i-delay-chip"
-          data-level="off"
-          data-app-only="inspect"
-          hidden
-        >
-          <span class="chip-dot"></span><span class="chip-text"></span>
+        <!-- Inkspector only: which session, where in it and its delay -->
+        <span class="chip-group" data-app-only="inspect">
+          <select class="select" id="i-session" aria-label="Inspected session">
+            <option value="">All sessions</option>
+          </select>
+          <span class="chip num" id="i-position" hidden></span>
+          <span class="chip" id="i-delay-chip" data-level="off" hidden>
+            <span class="chip-dot"></span><span class="chip-text"></span>
+          </span>
         </span>
       </div>
-      <nav class="theme-picker" aria-label="View">
-        <span class="theme-picker-label">View</span>
-        <button type="button" data-pick="studio">Studio</button>
-        <button type="button" data-pick="joy">Joy</button>
-        <button type="button" data-pick="telemetry">Telemetry</button>
-        <button
-          type="button"
-          id="pick-phone"
-          title="Single-column phone layout"
-        >
-          Phone
-        </button>
-        <span class="theme-picker-label nav-label">Nav</span>
-        <button type="button" data-pick-nav="side" title="Apps in a left rail">
-          Side
-        </button>
-        <button type="button" data-pick-nav="top" title="Apps in the top bar">
-          Top
-        </button>
-      </nav>
+      <!-- View menu: a popover, so it closes on Escape or a click outside -->
+      <button
+        type="button"
+        class="view-button"
+        popovertarget="view-menu"
+        title="Theme, layout and app navigation"
+      >
+        <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M4 7h4M16 7h4M4 17h10M18 17h2M10 5v4M14 15v4" />
+        </svg>
+        <span>View</span>
+      </button>
+      <div class="theme-picker view-menu" id="view-menu" popover>
+        <span class="theme-picker-label">Theme</span>
+        <div class="view-choices">
+          <button type="button" data-pick="studio">Studio</button>
+          <button type="button" data-pick="joy">Joy</button>
+          <button type="button" data-pick="telemetry">Telemetry</button>
+        </div>
+        <span class="theme-picker-label">Layout</span>
+        <div class="view-choices">
+          <button
+            type="button"
+            id="pick-phone"
+            title="Single-column phone layout"
+          >
+            Phone
+          </button>
+        </div>
+        <span class="theme-picker-label">Apps</span>
+        <div class="view-choices">
+          <button
+            type="button"
+            data-pick-nav="side"
+            title="Apps in a left rail"
+          >
+            Side rail
+          </button>
+          <button type="button" data-pick-nav="top" title="Apps in the top bar">
+            Top bar
+          </button>
+        </div>
+      </div>
     </header>
 
     <main class="layout" data-app-section="studio">
@@ -690,7 +702,7 @@
       </section>
     </main>
 
-    <!-- Inspector app: session picker, then one segment frame by frame -->
+    <!-- Inkspector app: session picker, then one segment frame by frame -->
     <div data-app-section="inspect" hidden>
       <main class="layout" id="inspect-picker" hidden>
         <section class="panel p-sessions" aria-labelledby="h-sessions">
@@ -720,7 +732,18 @@
       <main class="layout" id="inspect-viewer" hidden>
         <section class="panel p-frame" aria-labelledby="h-frame">
           <header class="panel-head">
-            <h2 id="h-frame">Frame</h2>
+            <div class="panel-title">
+              <!-- Navigation, not playback: back to the session list -->
+              <button
+                type="button"
+                class="back-link"
+                id="i-back"
+                title="Back to the session list"
+              >
+                ← Sessions
+              </button>
+              <h2 id="h-frame">Frame</h2>
+            </div>
             <div class="controls">
               <button
                 type="button"
