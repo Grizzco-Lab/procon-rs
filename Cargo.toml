@@ -22,6 +22,7 @@ futures-util = "0.3.31"
 gameplay-data = { version = "0.1.0", path = "crates/gameplay-data" }
 cuttlefish = { version = "0.1.0", path = "crates/cuttlefish" }
 gameplay-vision = { version = "0.1.0", path = "crates/gameplay-vision" }
+include_dir = "0.7.4"
 
 [features]
 # The Vision app's detector on an NVIDIA GPU; needs the CUDA toolkit (nvcc)

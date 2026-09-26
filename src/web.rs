@@ -137,6 +137,27 @@ pub async fn serve(
         Ok(asset(body, "text/javascript; charset=utf-8"))
     });
 
+    // The icon set and its gallery (`/icons/`)
+    let icons =
+        warp::path("icons")
+            .and(warp::path::tail())
+            .and_then(|tail: warp::path::Tail| async move {
+                let name = match tail.as_str() {
+                    "" => "index.html",
+                    name => name,
+                };
+                let file = ICONS.get_file(name).ok_or_else(warp::reject::not_found)?;
+                let content_type = match name.rsplit_once('.') {
+                    Some((_, "svg")) => "image/svg+xml",
+                    _ => "text/html; charset=utf-8",
+                };
+                Ok::<_, warp::Rejection>(warp::reply::with_header(
+                    file.contents(),
+                    "content-type",
+                    content_type,
+                ))
+            });
+
     let delay_inspector = Arc::clone(&inspector);
     let objects_inspector = Arc::clone(&inspector);
     // Inkspector data reads files and runs ffmpeg; keep that off the async workers
@@ -277,6 +298,7 @@ pub async fn serve(
                 .or(model)
                 .or(inspect_script)
                 .or(scripts)
+                .or(icons)
                 .or(inspect),
         )
         .or(websocket)
@@ -290,6 +312,9 @@ pub async fn serve(
     log::info!("Dashboard on http://0.0.0.0:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;
 }
+
+/// The icon set (`web/icons/`): SVGs and the gallery page
+static ICONS: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/web/icons");
 
 /// Reply with an embedded static file
 fn asset(body: &'static str, content_type: &'static str) -> impl warp::Reply {
