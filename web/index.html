@@ -809,15 +809,35 @@
         <section class="panel p-labels" aria-labelledby="h-labels">
           <header class="panel-head">
             <h2 id="h-labels">Labels</h2>
-            <label class="check" for="i-delay"
-              >video_delay_ms
-              <input
-                class="select num delay-input"
-                id="i-delay"
-                type="number"
-                step="1"
-              />
-            </label>
+            <div class="controls">
+              <label class="check" for="i-delay"
+                >video_delay_ms
+                <input
+                  class="select num delay-input"
+                  id="i-delay"
+                  type="number"
+                  step="1"
+                />
+              </label>
+              <!-- Writes the box's value to the calibration file as this session's delay -->
+              <button
+                type="button"
+                class="mode-toggle"
+                id="i-delay-save"
+                title="Save the delay in the box as this session's, set by hand"
+              >
+                Save as this session's delay
+              </button>
+              <button
+                type="button"
+                class="mode-toggle"
+                id="i-delay-remove"
+                title="Forget the delay set by hand; use the computed one again"
+                hidden
+              >
+                Remove
+              </button>
+            </div>
           </header>
           <div class="table-wrap">
             <table class="data-table">

@@ -18,6 +18,9 @@
 //!   `[start, stop)`, and those of a predictions file (`.jsonl`) if given
 //! - `random?s=&seg=&delay=&active=1`: a random frame, with `active` one
 //!   where a button changes or the gyro turns
+//! - `POST delay` with `{"s": session, "video_delay_ms": ms}` sets a
+//!   session's delay by hand in the calibration file, `{"s": session,
+//!   "remove": true}` removes it again; answered with the new calibration
 //! - `audio?s=&seg=`: the segment's sound track as WebM (Opus copied, not
 //!   re-encoded), with HTTP range support for seeking; it starts with the
 //!   first frame, so audio time `t` is frame `t * fps`
@@ -27,7 +30,9 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use gameplay_data::align::{self, FrameActions};
-use gameplay_data::calibration::{Calibration, Calibrations, read_calibrations};
+use gameplay_data::calibration::{
+    Calibration, Calibrations, read_calibrations, remove_manual_delay, set_manual_delay,
+};
 use gameplay_data::controller::ControllerLog;
 use gameplay_data::labels::{self, Label};
 use gameplay_data::session::{SESSION_FILE, SessionInfo};
@@ -202,7 +207,7 @@ impl Inspector {
             "sound": video.segments.iter().any(|s| s.has_audio()),
             "controller_reports": info.controller.frames,
             "game_settings": info.game_settings,
-            "calibration": calibration.map(calibration_json),
+            "calibration": calibration_json(calibration),
         }))
     }
 
@@ -323,7 +328,7 @@ impl Inspector {
             "fps": segment.fps,
             "controller_shift_ms": 0.0,
             "video_delay_ms": segment.default_delay(),
-            "calibration": segment.calibration.as_ref().map(calibration_json),
+            "calibration": calibration_json(segment.calibration.as_ref()),
             "sound": segment.has_audio,
             "summary": segment.summary,
         }))
@@ -419,6 +424,25 @@ impl Inspector {
 }
 
 impl Inspector {
+    /// Set a session's delay by hand (`Some`) or remove the one set by hand
+    /// (`None`), then answer with the session's calibration as the page
+    /// shows it
+    pub fn set_delay(&self, name: &str, delay_ms: Option<f64>) -> Result<Value> {
+        ensure!(
+            self.root().join(name).join(SESSION_FILE).is_file(),
+            "no session {name}"
+        );
+        match delay_ms {
+            Some(delay) => set_manual_delay(&self.calibration, name, delay)?,
+            None => {
+                remove_manual_delay(&self.calibration, name)?;
+            }
+        }
+        // Open segments keep the calibration they were opened with
+        self.open.lock().unwrap().retain(|s| s.session != name);
+        Ok(calibration_json(self.calibrations().get(name)))
+    }
+
     /// Answer `GET /api/inspect/<endpoint>?<query>`: the body and its
     /// content type
     pub fn handle(
@@ -682,12 +706,37 @@ fn parse_duration(tag: &str) -> Option<f64> {
     Some(hours * 3600.0 + minutes * 60.0 + seconds)
 }
 
-/// The fields of a calibration the page shows
-fn calibration_json(calibration: &Calibration) -> Value {
+/// A session's own estimate; for a delay set by hand, the computed one kept
+/// next to it
+fn own_estimate(calibration: &Calibration) -> Option<Value> {
+    let fields = |e: &Value| {
+        json!({
+            "video_delay_ms": e["video_delay_ms"],
+            "interval_ms": e["interval_ms"],
+            "confidence": e["confidence"],
+        })
+    };
+    if calibration.source.as_deref() == Some("manual") {
+        return calibration.extra.get("computed").map(fields);
+    }
+    Some(fields(&serde_json::to_value(calibration).ok()?))
+}
+
+/// What the page shows about a session's delay: the one applied, with its
+/// source and interval, the own estimate and, when none applies, why
+fn calibration_json(calibration: Option<&Calibration>) -> Value {
+    let applied = calibration.and_then(Calibration::applied);
+    let reason = match (calibration, applied) {
+        (_, Some(_)) => None,
+        (None, None) => Some("not calibrated yet (agentzero-calibrate)"),
+        (Some(_), None) => {
+            Some("too little aiming or jumping to measure, and no measured session of this setup")
+        }
+    };
     json!({
-        "video_delay_ms": calibration.video_delay_ms,
-        "confidence": calibration.confidence,
-        "spread_ms": calibration.extra.get("spread_ms"),
+        "applied": applied,
+        "reason": reason,
+        "own": calibration.and_then(own_estimate),
     })
 }
 

@@ -15,8 +15,8 @@ const PREFETCH = 45;
 const LABEL_CHUNK = 64;
 /** Wait after the last scrubber move before seeking, in ms */
 const SCRUB_DEBOUNCE_MS = 120;
-/** Chip level for each calibration confidence */
-const LEVELS = { high: "good", medium: "warning", low: "critical" };
+/** Chip level for each source of a session's delay */
+const LEVELS = { manual: "good", session: "good", setup: "warning" };
 /** Angular rate that fills a gyro bar of the full overlay, in °/s */
 const FULL_GYRO_DPS = 300;
 /** Button labels of the full overlay, in the order of the label names */
@@ -120,19 +120,38 @@ function started(summary) {
   return isNaN(date) ? summary.name : date.toLocaleString();
 }
 
-/** A calibrated delay the loader applies: high or medium confidence only */
-function usable(calibration) {
-  return (
-    calibration?.video_delay_ms != null &&
-    ["high", "medium"].includes(calibration.confidence)
-  );
+/** Half the width of an interval, rounded, as "±15" */
+function plusMinus(interval) {
+  return interval ? ` ±${Math.round((interval[1] - interval[0]) / 2)}` : "";
 }
 
+/**
+ * The delay the loader applies, with where it comes from: "212 ms ±15 ·
+ * session", "≈284 ms ±139 · setup", "210 ms · by hand"; or plainly why
+ * there is none
+ */
 function delayText(calibration) {
-  if (!calibration) return "not calibrated";
-  // A low-confidence number is a guess the loader ignores; don't show it as a delay
-  if (!usable(calibration)) return "uncertain";
-  return `${Math.round(calibration.video_delay_ms)} ms · ${calibration.confidence}`;
+  const applied = calibration?.applied;
+  if (!applied)
+    return `no delay: ${calibration?.reason ?? "not calibrated yet"}`;
+  const ms = Math.round(applied.video_delay_ms);
+  if (applied.source === "manual") return `${ms} ms · by hand`;
+  const approx = applied.source === "setup" ? "≈" : "";
+  return `${approx}${ms} ms${plusMinus(applied.interval_ms)} · ${applied.source}`;
+}
+
+/** What the source of the applied delay means, for the session tile */
+function delaySourceText(calibration) {
+  const applied = calibration?.applied;
+  const own = calibration?.own;
+  if (!applied) return calibration?.reason ?? "not calibrated yet";
+  if (applied.source === "manual")
+    return own?.video_delay_ms != null
+      ? `set by hand; own estimate ${Math.round(own.video_delay_ms)} ms (${own.confidence})`
+      : "set by hand";
+  if (applied.source === "setup")
+    return `this setup's delay${plusMinus(applied.interval_ms)} ms; too little to measure here`;
+  return `measured from this session${plusMinus(applied.interval_ms)} ms (${own?.confidence})`;
 }
 
 function gameText(settings) {
@@ -199,7 +218,7 @@ async function loadSessions() {
   const body = $("i-sessions");
   for (const summary of data.sessions) {
     const tr = document.createElement("tr");
-    const level = LEVELS[summary.calibration?.confidence] ?? "";
+    const level = LEVELS[summary.calibration?.applied?.source] ?? "";
     const segments = summary.segments
       .map(
         (s) =>
@@ -283,9 +302,10 @@ function drawSession() {
 
   const chip = $("i-delay-chip");
   chip.hidden = false;
-  chip.dataset.level = LEVELS[info.calibration?.confidence] ?? "off";
+  chip.dataset.level = LEVELS[info.calibration?.applied?.source] ?? "off";
   chip.querySelector(".chip-text").textContent =
     `delay ${delayText(info.calibration)}`;
+  $("i-delay-remove").hidden = info.calibration?.applied?.source !== "manual";
 
   const tile = (label, value, note) =>
     `<div class="tile"><span class="tile-label">${label}</span><span class="tile-value num">${escapeHtml(value)}</span><span class="tile-note">${escapeHtml(note)}</span></div>`;
@@ -304,17 +324,11 @@ function drawSession() {
       `${info.frames} frames · ${summary.sound ? "sound" : "no sound"}`,
     ),
     tile(
-      "Calibrated delay",
-      usable(calibration)
-        ? `${Math.round(calibration.video_delay_ms)} ms`
+      "Video delay",
+      calibration?.applied
+        ? `${calibration.applied.source === "setup" ? "≈" : ""}${Math.round(calibration.applied.video_delay_ms)} ms`
         : "–",
-      !calibration
-        ? "not calibrated"
-        : usable(calibration)
-          ? `${calibration.confidence} · spread ${calibration.spread_ms ?? "–"} ms`
-          : calibration.video_delay_ms != null
-            ? `uncertain: ${Math.round(calibration.video_delay_ms)} ms guessed, not used`
-            : "uncertain: too little aiming to measure",
+      delaySourceText(calibration),
     ),
     tile("Reports", summary.controller_reports ?? "–", summary.name),
     tile(
@@ -816,6 +830,36 @@ $("i-delay").addEventListener("change", () => {
   resetLabels();
   go(inspector.frame);
 });
+
+/** Save or remove this session's delay set by hand, then show the result */
+async function saveDelay(remove) {
+  const { info } = inspector;
+  if (!info) return;
+  const body = remove
+    ? { s: info.session, remove: true }
+    : { s: info.session, video_delay_ms: parseFloat($("i-delay").value) || 0 };
+  const response = await fetch("/api/inspect/delay", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const calibration = await response.json();
+  if (!response.ok) {
+    alert(`Could not save the delay: ${calibration.error}`);
+    return;
+  }
+  info.calibration = calibration;
+  const summary = inspector.sessions?.find((s) => s.name === info.session);
+  if (summary) summary.calibration = calibration;
+  if (remove && calibration.applied) {
+    inspector.delay = calibration.applied.video_delay_ms;
+    resetLabels();
+    show(inspector.frame);
+  }
+  drawSession();
+}
+$("i-delay-save").onclick = () => saveDelay(false);
+$("i-delay-remove").onclick = () => saveDelay(true);
 $("i-pred").addEventListener("change", () => {
   inspector.pred = $("i-pred").value.trim();
   resetLabels();

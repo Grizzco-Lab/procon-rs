@@ -22,7 +22,7 @@ use anyhow::Result;
 use core::sync::atomic::Ordering;
 use core::time::Duration;
 use futures_util::{SinkExt, StreamExt};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -102,6 +102,7 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, inspector: Arc<Inspector
         )
     });
 
+    let delay_inspector = Arc::clone(&inspector);
     // Inspector data reads files and runs ffmpeg; keep that off the async workers
     let inspect = warp::path!("api" / "inspect" / String)
         .and(warp::query::<HashMap<String, String>>())
@@ -143,6 +144,34 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, inspector: Arc<Inspector
                 }
             },
         );
+
+    // A session's delay set by hand, written to the calibration file
+    let delay = warp::path!("api" / "inspect" / "delay")
+        .and(warp::post())
+        .and(warp::body::content_length_limit(1024))
+        .and(warp::body::json())
+        .map(move |body: Value| {
+            let session = body["s"].as_str().unwrap_or_default().to_string();
+            let delay_ms = if body["remove"] == true {
+                None
+            } else {
+                body["video_delay_ms"].as_f64()
+            };
+            let result = if delay_ms.is_none() && body["remove"] != true {
+                Err(anyhow::anyhow!("give video_delay_ms or remove"))
+            } else {
+                tokio::task::block_in_place(|| delay_inspector.set_delay(&session, delay_ms))
+            };
+            match result {
+                Ok(calibration) => {
+                    warp::reply::with_status(warp::reply::json(&calibration), StatusCode::OK)
+                }
+                Err(e) => warp::reply::with_status(
+                    warp::reply::json(&json!({ "error": format!("{e:#}") })),
+                    StatusCode::BAD_REQUEST,
+                ),
+            }
+        });
 
     let video = studio.video.clone();
     let websocket = warp::path!("ws")
@@ -186,7 +215,8 @@ pub async fn serve(feed: LiveFeed, studio: Arc<Studio>, inspector: Arc<Inspector
                 .or(inspect),
         )
         .or(websocket)
-        .or(api);
+        .or(api)
+        .or(delay);
 
     log::info!("Dashboard on http://0.0.0.0:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;

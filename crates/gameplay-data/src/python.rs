@@ -228,13 +228,26 @@ fn read_calibration(path: PathBuf) -> PyResult<String> {
     Ok(serde_json::to_string(&read_calibrations(&path)?).map_err(anyhow::Error::from)?)
 }
 
-/// The delay to apply to a session: its measured one if confidence is
-/// high or medium, else None
+/// The delay to apply to a session in ms: set by hand, else its own when
+/// confident, else its setup era's; None when nothing is known
 #[pyfunction]
 fn calibrated_delay_ms(path: PathBuf, session: &str) -> PyResult<Option<f64>> {
     Ok(read_calibrations(&path)?
         .get(session)
         .and_then(|c| c.applied_delay_ms()))
+}
+
+/// The applied delay as JSON (`video_delay_ms`, `source` and `interval_ms`),
+/// or None when nothing is known
+#[pyfunction]
+fn calibrated_delay(path: PathBuf, session: &str) -> PyResult<Option<String>> {
+    let applied = read_calibrations(&path)?
+        .get(session)
+        .and_then(|c| c.applied());
+    Ok(applied
+        .map(|a| serde_json::to_string(&a))
+        .transpose()
+        .map_err(anyhow::Error::from)?)
 }
 
 #[pymodule]
@@ -252,5 +265,6 @@ fn gameplay_data(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_labels, m)?)?;
     m.add_function(wrap_pyfunction!(read_calibration, m)?)?;
     m.add_function(wrap_pyfunction!(calibrated_delay_ms, m)?)?;
+    m.add_function(wrap_pyfunction!(calibrated_delay, m)?)?;
     Ok(())
 }
