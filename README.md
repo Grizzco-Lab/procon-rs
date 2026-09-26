@@ -146,7 +146,25 @@ with the picture, and a model's predictions against them.
 - **Label** (L): draw boxes around objects on the frame, class by class, for
   training a detector. Boxes are saved per frame in `[inspect] annotations`
   (default `Annotations` next to the sessions' folder); the model's boxes
-  (from Vision) are dashed until accepted or corrected.
+  (from Vision) are dashed until accepted or corrected. Keys 1–9, 0 and
+  Shift+1…0 pick the first twenty classes; `/` finds any class by typing
+  (Enter picks the first match). Labeled frames are marked on the progress
+  bar (full ticks: labeled by you; short ticks: model boxes only), also
+  outside the Label mode, fainter; a click next to a mark goes to its frame.
+- **Follow** (F, in the Label mode): the selected box, or all of the frame's,
+  is tracked over the next 0.5–10 s (forward, backward or both ways) by SAM 2
+  and written as dashed model boxes with a score and one track id per
+  object. Step through with →, accept with A, fix a box that drifted and
+  Follow again from there: the new boxes replace that object's model boxes.
+  Frames you labeled are never overwritten (a Follow stops before the first
+  one), and an object the tracker loses is not followed further. The tracker
+  is AgentZero's local service: start it with `cd ../AgentZero && uv run
+  agentzero-track-serve` (port 7340, `[inspect] tracker`), or with **Start
+  tracker** on the page. It uses the GPU when it has room, else the CPU,
+  and says which: about 35 ms per frame for one object on an RTX 4070 SUPER
+  (+20 ms per extra object), 1.2–2 s on the CPU. Fast camera turns, ink and
+  name tags make boxes drift within a few frames for players and small
+  Salmonids; golden eggs and baskets hold for seconds.
 - The URL keeps the view (`#inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>`).
 
 Labels come from `crates/gameplay-data`, the same code the training side uses.
@@ -311,7 +329,7 @@ Both programs take `--config <path>`.
 | `[web]` | Dashboard `port` |
 | `[recording]` | Default path `prefix` until one is set on the dashboard |
 | `[video]` | First `input` (`"screen"`, `/dev/video0` or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
-| `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) and `annotations` (object labels, default `Annotations` next to the root); relative paths start at the config's folder |
+| `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) `annotations` (object labels, default `Annotations` next to the root), `tracker` (Follow's tracker, default `http://127.0.0.1:7340`), `tracker_command` and `tracker_dir` (what Start tracker runs, default `uv run agentzero-track-serve --port <port>` in `../AgentZero`); relative paths start at the config's folder |
 | `[cuttlefish]` | Optional: `reviews` (one folder per review with its video; default `Reviews` next to the root), `knowledge` (the knowledge store, default `$CUTTLEFISH_DATA` or `~/.local/share/cuttlefish`) and `model` |
 | `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model) and `confidence` (0.25) |
 | `[predictor]` | Optional: `agentzero` (the AgentZero folder, default `../AgentZero`) and `results` (stored predictions, default `Predictions` next to the root) |

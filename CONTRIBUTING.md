@@ -71,7 +71,8 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/studio.rs` | Coordinator: sessions, `session.json`, dashboard commands, saved settings |
 | `src/web.rs` | Dashboard server (warp): page, WebSocket, command API, Inkspector API |
 | `src/inspect.rs` | Inkspector backend: sessions, frames, labels, delays |
-| `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes |
+| `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes, Follow's write rules |
+| `src/follow.rs` | Follow: boxes carried over the next frames by AgentZero's SAM 2 tracker, proxied from a thread; starts the tracker |
 | `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` and the video), video bytes with ranges, yt-dlp downloads into new reviews, migration of the older flat layout, "Ask Cuttlefish" with the shared knowledge store |
 | `src/knowledge.rs` | Cuttlefish's Knowledge tab: the store and embedder loaded once, search, ask, translate, glossary, import jobs |
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results through our classes, dataset overview, send to labels |
@@ -188,6 +189,18 @@ and cached; labels come from `gameplay_data::align` at the requested delay; a
 segment's sound is served as WebM with byte ranges. `POST
 /api/inspect/delay` sets or removes a delay by hand in the calibration file.
 `web/inspect.js` keeps its state in the hash.
+
+The labeling mode (`src/objects.rs`, `web/label.js`) saves boxes frame by
+frame; the scrubber marks labeled frames on one canvas (`drawMarks`). Follow
+(`src/follow.rs`) sends a frame's boxes and the video path to the tracker
+(`agentzero-track-serve` in AgentZero: SAM 2.1 tiny through transformers,
+streaming, JSON lines per frame) from a thread and writes its boxes every ten
+frames under the labeling lock. `follow_span` stops a Follow before the first
+frame a person labeled; `apply_followed` skips frames labeled meanwhile and
+replaces the model boxes of the followed track ids; `follow_ids` gives boxes
+without an id a new one and writes it on the start frame. The page polls
+`GET follow/job`; `POST follow/start` runs `[inspect] tracker_command` in its
+own process group, stopped with the studio.
 
 ### Cuttlefish and its knowledge
 
