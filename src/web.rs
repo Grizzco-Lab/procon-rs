@@ -10,7 +10,8 @@
 //! - `POST /api/command`: a [`Command`] such as `{"action":"start"}`, answered
 //!   with `{"recorder": ..., "replay": ...}` or `{"error": "..."}`
 //! - `GET /api/inspect/...`: the Inkspector app's data, see [`crate::inspect`];
-//!   errors are `400` with `{"error": "..."}`
+//!   errors are `400` with `{"error": "..."}`; `/api/inspect/follow/...`:
+//!   Follow in its labeling mode, see [`crate::follow`]
 //! - `/api/cuttlefish/...`: the Cuttlefish app's reviews, videos and
 //!   knowledge, see [`crate::cuttlefish`] and [`crate::knowledge`]
 //! - `/api/vision/...`: the Vision app's runs and results, see
@@ -20,6 +21,7 @@
 
 use crate::cuttlefish::{self, Cuttlefish};
 use crate::dump::{Dumper, Frame};
+use crate::follow::{self, Follow};
 use crate::inspect::Inspector;
 use crate::motion::Orientation;
 use crate::parser::ProConParser;
@@ -88,6 +90,7 @@ impl Dumper for LiveFeed {
 }
 
 /// Serve the dashboard on all interfaces
+#[allow(clippy::too_many_arguments)]
 pub async fn serve(
     feed: LiveFeed,
     studio: Arc<Studio>,
@@ -95,6 +98,7 @@ pub async fn serve(
     cuttlefish: Arc<Cuttlefish>,
     vision: Arc<Vision>,
     predictor: Arc<Predictor>,
+    follow: Arc<Follow>,
     port: u16,
 ) {
     let status = watch::Sender::new(String::new());
@@ -305,6 +309,7 @@ pub async fn serve(
         .or(api)
         .or(delay)
         .or(objects)
+        .or(follow::routes(follow))
         .or(cuttlefish::routes(cuttlefish))
         .or(vision::routes(vision))
         .or(predictor::routes(predictor));

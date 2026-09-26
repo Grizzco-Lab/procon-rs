@@ -139,6 +139,15 @@ pub struct InspectConfig {
     /// stem>.objects.jsonl`), relative to this config file; by default
     /// `Annotations` next to the root
     pub annotations: Option<String>,
+    /// The box tracker behind the labeling mode's Follow (AgentZero's
+    /// `agentzero-track-serve`); by default `http://127.0.0.1:7340`
+    pub tracker: Option<String>,
+    /// Command the page's "Start tracker" runs; by default `uv run
+    /// agentzero-track-serve --port <the tracker's port>`
+    pub tracker_command: Option<Vec<String>>,
+    /// Folder that command runs in, relative to this config file; by
+    /// default `../AgentZero`
+    pub tracker_dir: Option<String>,
 }
 
 /// The Cuttlefish app: video reviews with comments and drawings

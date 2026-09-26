@@ -30,6 +30,8 @@
 //! - `POST objects` with `{"s", "seg", "frame", "boxes", "base"}` replaces a
 //!   frame's boxes (`base`: the model boxes the page loaded for it) and
 //!   answers with the frame as saved
+//! - `follow/...`: Follow, boxes carried over the next frames by a tracker
+//!   (see [`crate::follow`])
 
 use crate::objects::{Annotations, ObjectBox};
 use crate::recorder::Recorder;
@@ -353,6 +355,13 @@ impl Inspector {
             "sound": segment.has_audio,
             "summary": segment.summary,
         }))
+    }
+
+    /// A segment's file name, video path and frame count, for tools that
+    /// decode the video themselves (Follow's tracker)
+    pub fn video(&self, name: &str, file: Option<&str>) -> Result<(String, PathBuf, usize)> {
+        let segment = self.segment(name, file)?;
+        Ok((segment.file.clone(), segment.video.clone(), segment.frames))
     }
 
     /// Frame `n` of a segment as JPEG

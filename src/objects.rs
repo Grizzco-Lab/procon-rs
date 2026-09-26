@@ -108,6 +108,101 @@ impl ObjectBox {
     fn by_model(&self) -> bool {
         self.by == "model"
     }
+
+    /// The track id, if it is a whole number
+    pub fn track_id(&self) -> Option<u64> {
+        self.id.as_ref().and_then(Value::as_u64)
+    }
+
+    /// Whether two boxes are the same drawing, ids aside
+    fn same_place(&self, other: &ObjectBox) -> bool {
+        (&self.class, self.x, self.y, self.w, self.h)
+            == (&other.class, other.x, other.y, other.w, other.h)
+    }
+}
+
+/// Whether a person has labeled a frame: it holds a box that is not a
+/// model's, or none at all (the same rule as
+/// `gameplay_vision::labels::is_reviewed`)
+pub fn is_reviewed(frame: &FrameObjects) -> bool {
+    frame.boxes.is_empty() || frame.boxes.iter().any(|b| !b.by_model())
+}
+
+/// How many frames after `start` Follow may write, going forward (towards
+/// frame `total - 1`) or backward (towards 0): at most `count`, and never
+/// up to a frame a person has labeled
+pub fn follow_span(
+    frames: &BTreeMap<u64, FrameObjects>,
+    start: u64,
+    count: u64,
+    forward: bool,
+    total: u64,
+) -> u64 {
+    let room = if forward {
+        total.saturating_sub(start + 1)
+    } else {
+        start
+    };
+    let limit = count.min(room);
+    if limit == 0 {
+        return 0;
+    }
+    let labeled = if forward {
+        frames
+            .range(start + 1..=start + limit)
+            .find(|(_, f)| is_reviewed(f))
+            .map(|(&n, _)| n - start - 1)
+    } else {
+        frames
+            .range(start - limit..start)
+            .rev()
+            .find(|(_, f)| is_reviewed(f))
+            .map(|(&n, _)| start - n - 1)
+    };
+    labeled.unwrap_or(limit)
+}
+
+/// What [`apply_followed`] did
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct FollowWrite {
+    /// Frames written
+    pub written: usize,
+    /// Frames left alone because a person labeled them meanwhile
+    pub kept: usize,
+}
+
+/// Write Follow's boxes into a segment's frames: `followed` holds, per
+/// frame, the boxes of the objects still followed there, whose ids are
+/// among `ids`. A frame a person has labeled ([`is_reviewed`]) is never
+/// changed. On any other frame the model boxes of those ids (an earlier
+/// Follow, or an object lost since) give way to the new boxes; other boxes
+/// stay. A frame left without boxes loses its line, since an empty line
+/// would mean "looked at, nothing here".
+pub fn apply_followed(
+    frames: &mut BTreeMap<u64, FrameObjects>,
+    followed: &[(u64, Vec<ObjectBox>)],
+    ids: &[u64],
+) -> FollowWrite {
+    let mut done = FollowWrite::default();
+    for (frame, boxes) in followed {
+        if frames.get(frame).is_some_and(is_reviewed) {
+            done.kept += 1;
+            continue;
+        }
+        let line = frames.entry(*frame).or_insert_with(|| FrameObjects {
+            frame: *frame,
+            boxes: Vec::new(),
+            extra: Map::new(),
+        });
+        line.boxes
+            .retain(|b| !(b.by_model() && b.track_id().is_some_and(|id| ids.contains(&id))));
+        line.boxes.extend(boxes.iter().cloned());
+        if line.boxes.is_empty() {
+            frames.remove(frame);
+        }
+        done.written += 1;
+    }
+    done
 }
 
 /// The boxes of one frame: a line of a `.objects.jsonl` file
@@ -218,17 +313,73 @@ impl Annotations {
         if !saved.boxes.is_empty() {
             frames.insert(frame, saved.clone());
         }
-        let mut text = String::new();
-        for line in frames.values() {
-            text.push_str(&serde_json::to_string(line)?);
-            text.push('\n');
-        }
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)
-                .with_context(|| format!("cannot create {}", dir.display()))?;
-        }
-        write_atomic(&path, text.as_bytes())?;
+        write_objects(&path, &frames)?;
         Ok(saved)
+    }
+
+    /// Track ids of `boxes`, drawn on `frame`, before Follow: a box's own
+    /// whole-number id, else a new one above every id in the segment's
+    /// file. Boxes of the frame that match one of `boxes` get its id in the
+    /// file too, so a later Follow from any frame continues the same
+    /// tracks. Answers with the ids in the order of `boxes`.
+    pub fn follow_ids(
+        &self,
+        session: &str,
+        segment: &str,
+        frame: u64,
+        boxes: &[ObjectBox],
+    ) -> Result<Vec<u64>> {
+        let path = self.path(session, segment)?;
+        let _writing = self.writing.lock().unwrap();
+        let mut frames = read_objects(&path)?;
+        let mut next = frames
+            .values()
+            .flat_map(|f| &f.boxes)
+            .chain(boxes)
+            .filter_map(ObjectBox::track_id)
+            .max()
+            .map_or(1, |id| id + 1);
+        let ids: Vec<u64> = boxes
+            .iter()
+            .map(|b| {
+                b.track_id().unwrap_or_else(|| {
+                    next += 1;
+                    next - 1
+                })
+            })
+            .collect();
+        let mut changed = false;
+        if let Some(line) = frames.get_mut(&frame) {
+            for (b, &id) in boxes.iter().zip(&ids) {
+                if let Some(saved) = line.boxes.iter_mut().find(|s| s.same_place(b))
+                    && saved.track_id() != Some(id)
+                {
+                    saved.id = Some(Value::from(id));
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            write_objects(&path, &frames)?;
+        }
+        Ok(ids)
+    }
+
+    /// Write Follow's boxes by the rule of [`apply_followed`], under the
+    /// lock of the labeling mode's saves
+    pub fn write_followed(
+        &self,
+        session: &str,
+        segment: &str,
+        followed: &[(u64, Vec<ObjectBox>)],
+        ids: &[u64],
+    ) -> Result<FollowWrite> {
+        let path = self.path(session, segment)?;
+        let _writing = self.writing.lock().unwrap();
+        let mut frames = read_objects(&path)?;
+        let done = apply_followed(&mut frames, followed, ids);
+        write_objects(&path, &frames)?;
+        Ok(done)
     }
 }
 
@@ -275,6 +426,16 @@ pub fn read_objects(path: &Path) -> Result<BTreeMap<u64, FrameObjects>> {
         frames.insert(objects.frame, objects);
     }
     Ok(frames)
+}
+
+/// Write a labels file, one line per frame in frame order
+fn write_objects(path: &Path, frames: &BTreeMap<u64, FrameObjects>) -> Result<()> {
+    let mut text = String::new();
+    for line in frames.values() {
+        text.push_str(&serde_json::to_string(line)?);
+        text.push('\n');
+    }
+    write_atomic(path, text.as_bytes())
 }
 
 /// Write `bytes` to a temporary file next to `path`, then rename it over
@@ -402,6 +563,122 @@ mod tests {
         )
         .unwrap();
         assert_eq!(annotations.classes().unwrap()[0].name, "egg");
+        let _ = std::fs::remove_dir_all(annotations.dir());
+    }
+
+    #[test]
+    fn starter_classes_match_the_vision_crate() {
+        assert_eq!(STARTER_CLASSES, gameplay_vision::labels::STARTER_CLASSES);
+    }
+
+    /// A model box of track `id`
+    fn followed(id: u64, x: f64) -> ObjectBox {
+        ObjectBox {
+            id: Some(Value::from(id)),
+            ..a_box("chum", x, "model")
+        }
+    }
+
+    fn line(frame: u64, boxes: Vec<ObjectBox>) -> (u64, FrameObjects) {
+        (
+            frame,
+            FrameObjects {
+                frame,
+                boxes,
+                extra: Map::new(),
+            },
+        )
+    }
+
+    #[test]
+    fn follow_stops_before_labeled_frames() {
+        let frames: BTreeMap<u64, FrameObjects> = [
+            line(10, vec![a_box("chum", 0.1, "user")]),
+            line(14, vec![followed(1, 0.2)]),
+            line(
+                20,
+                vec![a_box("maws", 0.1, "model"), a_box("chum", 0.3, "user")],
+            ),
+            line(4, vec![]),
+        ]
+        .into_iter()
+        .collect();
+        // Forward from 10: model-only frame 14 is fine, user frame 20 stops
+        assert_eq!(follow_span(&frames, 10, 60, true, 100), 9);
+        assert_eq!(follow_span(&frames, 10, 5, true, 100), 5);
+        // Backward from 10: frame 4 was looked at and holds nothing
+        assert_eq!(follow_span(&frames, 10, 60, false, 100), 5);
+        // The ends of the video
+        assert_eq!(follow_span(&frames, 95, 60, true, 100), 4);
+        assert_eq!(follow_span(&frames, 2, 60, false, 100), 2);
+        assert_eq!(follow_span(&frames, 99, 60, true, 100), 0);
+        // Right next to a labeled frame there is nothing to do
+        assert_eq!(follow_span(&frames, 19, 60, true, 100), 0);
+    }
+
+    #[test]
+    fn followed_boxes_never_touch_labeled_frames() {
+        let other = a_box("maws", 0.6, "model");
+        let mut frames: BTreeMap<u64, FrameObjects> = [
+            // Model only: the old box of track 1 gives way, track 7 stays
+            line(11, vec![followed(1, 0.1), followed(7, 0.5), other.clone()]),
+            // A person labeled it meanwhile
+            line(12, vec![a_box("chum", 0.1, "user")]),
+            // Looked at, nothing there
+            line(13, vec![]),
+            // Track 1 was lost here: its old box goes, the line with it
+            line(15, vec![followed(1, 0.1)]),
+        ]
+        .into_iter()
+        .collect();
+        let result = [
+            (11, vec![followed(1, 0.2)]),
+            (12, vec![followed(1, 0.2)]),
+            (13, vec![followed(1, 0.2)]),
+            (14, vec![followed(1, 0.2)]),
+            (15, vec![]),
+        ];
+        let done = apply_followed(&mut frames, &result, &[1]);
+        assert_eq!(
+            done,
+            FollowWrite {
+                written: 3,
+                kept: 2
+            }
+        );
+        assert_eq!(
+            frames[&11].boxes,
+            [followed(7, 0.5), other, followed(1, 0.2)]
+        );
+        assert_eq!(frames[&12].boxes, [a_box("chum", 0.1, "user")]);
+        assert!(frames[&13].boxes.is_empty());
+        assert_eq!(frames[&14].boxes, [followed(1, 0.2)]);
+        assert!(!frames.contains_key(&15));
+    }
+
+    #[test]
+    fn follow_ids_are_kept_and_written_on_the_frame() {
+        let annotations = Annotations::new(scratch("ids"));
+        let (s, seg) = ("s", "video-01.mkv");
+        let tracked = followed(5, 0.1);
+        let fresh = a_box("chum", 0.3, "user");
+        annotations
+            .save_frame(s, seg, 3, vec![tracked.clone(), fresh.clone()], &[])
+            .unwrap();
+        // A box the file does not have (not saved yet) still gets an id
+        let unsaved = a_box("maws", 0.7, "user");
+        let ids = annotations
+            .follow_ids(s, seg, 3, &[tracked.clone(), fresh.clone(), unsaved])
+            .unwrap();
+        assert_eq!(ids, [5, 6, 7]);
+        let frame = &annotations.read(s, seg).unwrap()[&3];
+        assert_eq!(frame.boxes[0], tracked);
+        assert_eq!(frame.boxes[1].track_id(), Some(6));
+        assert_eq!(frame.boxes[1].by, "user");
+        // Asking again changes nothing
+        let mut again = fresh.clone();
+        again.id = Some(Value::from(6));
+        assert_eq!(annotations.follow_ids(s, seg, 3, &[again]).unwrap(), [6]);
         let _ = std::fs::remove_dir_all(annotations.dir());
     }
 

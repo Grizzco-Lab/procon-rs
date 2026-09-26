@@ -5,6 +5,7 @@ pub mod config;
 pub mod cuttlefish;
 pub mod device;
 pub mod dump;
+pub mod follow;
 pub mod gadget;
 pub mod inspect;
 pub mod keystate;

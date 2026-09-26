@@ -9,6 +9,7 @@ use clap::Parser;
 use procon::config::{self, StudioConfig};
 use procon::cuttlefish::Cuttlefish;
 use procon::dump::MultiDumper;
+use procon::follow::{self, Follow};
 use procon::inspect::Inspector;
 use procon::player::Player;
 use procon::predictor::{self, Predictor};
@@ -147,6 +148,7 @@ fn main() -> anyhow::Result<()> {
         .parent()
         .unwrap_or(Path::new("."))
         .to_path_buf();
+    let follow_settings = follow::Settings::from_config(&config.inspect, &config_dir)?;
     let calibration = config
         .inspect
         .calibration
@@ -213,11 +215,12 @@ fn main() -> anyhow::Result<()> {
         Arc::clone(&cuttlefish),
         predictor::Settings::from_config(config.predictor, &config_dir, beside("Predictions")),
     ));
+    let follow = Arc::new(Follow::new(Arc::clone(&inspector), follow_settings));
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         tokio::select! {
-            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, vision, predictor, config.web.port) => {}
+            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, vision, predictor, Arc::clone(&follow), config.web.port) => {}
             _ = tokio::signal::ctrl_c() => {
                 // Let ffmpeg finish the video file and session.json get its end time
                 if studio.recorder.status().state != RecorderState::Idle {
@@ -229,6 +232,8 @@ fn main() -> anyhow::Result<()> {
             }
         }
     });
+    // A tracker started from the page ends with the studio
+    follow.stop_service();
     // Stops ffmpeg even when idle
     studio.video.set_input(None)?;
     studio.video.stop_audio();

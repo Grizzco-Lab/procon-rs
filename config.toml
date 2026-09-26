@@ -43,6 +43,11 @@ preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerol
 # calibration = "../AgentZero/calibration.json"
 # Object labels drawn in the Inkspector; by default "Annotations" next to the root
 # annotations = "/data/Annotations"
+# Box tracker behind Follow in the labeling mode (AgentZero's agentzero-track-serve)
+# tracker = "http://127.0.0.1:7340"
+# What the page's "Start tracker" runs, and where (relative to this file)
+# tracker_command = ["uv", "run", "agentzero-track-serve", "--port", "7340"]
+# tracker_dir = "../AgentZero"
 
 [cuttlefish]
 # Reviews, one folder each (review.json and its video); by default "Reviews"
