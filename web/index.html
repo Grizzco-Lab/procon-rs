@@ -8,7 +8,10 @@
 >
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content"
+    />
     <title>ProCon Studio</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -1084,161 +1087,172 @@
 
     <!-- Cuttlefish app: chat with Cuttlefish, review videos with comments and drawings -->
     <div data-app-section="cuttlefish" hidden>
-      <!-- The two views as tabs; hidden in the player -->
+      <!-- The two views as a segmented switch, like the apps'; hidden in
+           the player -->
       <nav class="cf-views" id="cf-tabs" aria-label="Cuttlefish">
-        <a class="cf-view" href="#cuttlefish" data-tab="reviews">
-          <svg class="cf-view-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <use href="icons/app-reviews.svg#i" />
-          </svg>
-          <span class="cf-view-text">
-            <b data-i18n="cf.tab.reviews">Reviews</b>
-            <span class="cf-view-note" data-i18n="cf.tab.reviewsNote"
-              >Ask Cuttlefish, open a video, browse your reviews</span
-            >
-          </span>
-        </a>
-        <a
-          class="cf-view"
-          href="#cuttlefish/view=knowledge"
-          data-tab="knowledge"
-        >
-          <svg class="cf-view-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <use href="icons/app-knowledge.svg#i" />
-          </svg>
-          <span class="cf-view-text">
-            <b data-i18n="cf.tab.knowledge">Knowledge</b>
-            <span class="cf-view-note" data-i18n="cf.tab.knowledgeNote"
-              >What Cuttlefish knows: import material, documents, glossary,
-              assets, search</span
-            >
-          </span>
-        </a>
+        <div class="cf-views-track">
+          <a
+            class="cf-view"
+            href="#cuttlefish"
+            data-tab="reviews"
+            title="Ask Cuttlefish, open a video, browse your reviews"
+            data-i18n-title="cf.tab.reviewsNote"
+          >
+            <svg class="cf-view-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <use href="icons/app-reviews.svg#i" />
+            </svg>
+            <span data-i18n="cf.tab.reviews">Reviews</span>
+          </a>
+          <a
+            class="cf-view"
+            href="#cuttlefish/view=knowledge"
+            data-tab="knowledge"
+            title="What Cuttlefish knows: import material, documents, glossary, assets, search"
+            data-i18n-title="cf.tab.knowledgeNote"
+          >
+            <svg class="cf-view-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <use href="icons/app-knowledge.svg#i" />
+            </svg>
+            <span data-i18n="cf.tab.knowledge">Knowledge</span>
+          </a>
+        </div>
       </nav>
 
-      <main class="layout" id="cf-library" hidden>
-        <section class="panel p-cf-open" aria-labelledby="h-cf-open">
-          <header class="panel-head">
-            <h2 id="h-cf-open" data-i18n="cf.open.title">Open a video</h2>
-            <span class="panel-note" data-i18n="cf.open.note"
-              >each review is a folder: notes, and the video when it lives
-              there</span
-            >
-          </header>
-          <form class="cf-source" id="cf-form-session">
-            <span class="readout-label" data-i18n="cf.open.session"
-              >Recorded session</span
-            >
-            <div class="cf-row">
-              <select
-                class="select"
-                id="cf-session"
-                aria-label="Session"
-                data-i18n-aria-label="cf.open.sessionLabel"
-              ></select>
-              <select
-                class="select"
-                id="cf-segment"
-                aria-label="Segment"
-                data-i18n-aria-label="cf.open.segmentLabel"
-              ></select>
-              <button type="submit" class="btn" data-i18n="cf.open.open">
-                Open
-              </button>
-            </div>
-          </form>
-          <form class="cf-source" id="cf-form-file">
-            <label class="readout-label" for="cf-file" data-i18n="cf.open.file"
-              >Video file on this machine</label
-            >
-            <div class="cf-row">
-              <input
-                class="select cf-grow"
-                id="cf-file"
-                type="text"
-                placeholder="/path/to/video.mp4"
-                data-i18n-placeholder="cf.open.filePlaceholder"
-                required
-              />
-              <button type="submit" class="btn" data-i18n="cf.open.open">
-                Open
-              </button>
-            </div>
-          </form>
-          <form class="cf-source" id="cf-form-youtube">
-            <label class="readout-label" for="cf-url">YouTube</label>
-            <div class="cf-row">
-              <input
-                class="select cf-grow"
-                id="cf-url"
-                type="url"
-                placeholder="https://www.youtube.com/watch?v=…"
-                required
-              />
-            </div>
-            <div class="cf-row">
-              <label class="check" for="cf-from"
-                ><span data-i18n="cf.open.from">From</span>
+      <!-- The cards, then the chat bar kept at the bottom of the window -->
+      <main class="cf-library" id="cf-library" hidden>
+        <div class="cf-cards">
+          <section class="panel p-cf-open" aria-labelledby="h-cf-open">
+            <header class="panel-head">
+              <h2 id="h-cf-open" data-i18n="cf.open.title">Open a video</h2>
+              <span class="panel-note" data-i18n="cf.open.note"
+                >each review is a folder: notes, and the video when it lives
+                there</span
+              >
+            </header>
+            <form class="cf-source" id="cf-form-session">
+              <span class="readout-label" data-i18n="cf.open.session"
+                >Recorded session</span
+              >
+              <div class="cf-row">
+                <select
+                  class="select"
+                  id="cf-session"
+                  aria-label="Session"
+                  data-i18n-aria-label="cf.open.sessionLabel"
+                ></select>
+                <select
+                  class="select"
+                  id="cf-segment"
+                  aria-label="Segment"
+                  data-i18n-aria-label="cf.open.segmentLabel"
+                ></select>
+                <button type="submit" class="btn" data-i18n="cf.open.open">
+                  Open
+                </button>
+              </div>
+            </form>
+            <form class="cf-source" id="cf-form-file">
+              <label
+                class="readout-label"
+                for="cf-file"
+                data-i18n="cf.open.file"
+                >Video file on this machine</label
+              >
+              <div class="cf-row">
                 <input
-                  class="select num cf-time-input"
-                  id="cf-from"
+                  class="select cf-grow"
+                  id="cf-file"
                   type="text"
-                  placeholder="1:30"
-              /></label>
-              <label class="check" for="cf-to"
-                ><span data-i18n="cf.open.to">to</span>
+                  placeholder="/path/to/video.mp4"
+                  data-i18n-placeholder="cf.open.filePlaceholder"
+                  required
+                />
+                <button type="submit" class="btn" data-i18n="cf.open.open">
+                  Open
+                </button>
+              </div>
+            </form>
+            <form class="cf-source" id="cf-form-youtube">
+              <label class="readout-label" for="cf-url">YouTube</label>
+              <div class="cf-row">
                 <input
-                  class="select num cf-time-input"
-                  id="cf-to"
-                  type="text"
-                  placeholder="2:45"
-              /></label>
-              <button type="submit" class="btn" data-i18n="cf.open.download">
-                Download and open
-              </button>
-            </div>
-          </form>
-          <p class="notice" id="cf-open-error" hidden></p>
-          <ul class="cf-downloads" id="cf-downloads"></ul>
-        </section>
+                  class="select cf-grow"
+                  id="cf-url"
+                  type="url"
+                  placeholder="https://www.youtube.com/watch?v=…"
+                  required
+                />
+              </div>
+              <div class="cf-row">
+                <label class="check" for="cf-from"
+                  ><span data-i18n="cf.open.from">From</span>
+                  <input
+                    class="select num cf-time-input"
+                    id="cf-from"
+                    type="text"
+                    placeholder="1:30"
+                /></label>
+                <label class="check" for="cf-to"
+                  ><span data-i18n="cf.open.to">to</span>
+                  <input
+                    class="select num cf-time-input"
+                    id="cf-to"
+                    type="text"
+                    placeholder="2:45"
+                /></label>
+                <button type="submit" class="btn" data-i18n="cf.open.download">
+                  Download and open
+                </button>
+              </div>
+            </form>
+            <p class="notice" id="cf-open-error" hidden></p>
+            <ul class="cf-downloads" id="cf-downloads"></ul>
+          </section>
 
-        <section class="panel p-cf-reviews" aria-labelledby="h-cf-reviews">
-          <header class="panel-head">
-            <h2 id="h-cf-reviews" data-i18n="cf.tab.reviews">Reviews</h2>
-            <span class="panel-note" id="cf-reviews-note" data-i18n="cf.loading"
-              >Loading…</span
-            >
-          </header>
-          <div class="table-wrap">
-            <table class="data-table cf-reviews-table">
-              <thead>
-                <tr>
-                  <th data-i18n="cf.reviews.video">Video</th>
-                  <th data-i18n="cf.reviews.comments">Comments</th>
-                  <th data-i18n="cf.reviews.changed">Changed</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="cf-reviews"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <!-- The chat bar: a message starts a new review (without a video) -->
-        <section class="panel p-cf-entry" aria-labelledby="h-cf-entry">
-          <header class="panel-head">
-            <div class="panel-title">
-              <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
-                <use href="icons/app-cuttlefish.svg#i" />
-              </svg>
-              <h2 id="h-cf-entry" data-i18n="cf.ask">Ask Cuttlefish</h2>
+          <section class="panel p-cf-reviews" aria-labelledby="h-cf-reviews">
+            <header class="panel-head">
+              <h2 id="h-cf-reviews" data-i18n="cf.tab.reviews">Reviews</h2>
+              <span
+                class="panel-note"
+                id="cf-reviews-note"
+                data-i18n="cf.loading"
+                >Loading…</span
+              >
+            </header>
+            <div class="table-wrap">
+              <table class="data-table cf-reviews-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="cf.reviews.video">Video</th>
+                    <th data-i18n="cf.reviews.comments">Comments</th>
+                    <th data-i18n="cf.reviews.changed">Changed</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="cf-reviews"></tbody>
+              </table>
             </div>
-            <span class="panel-note" data-i18n="cf.chat.entryNote"
-              >a question, a callout to translate, jargon to explain; each
-              conversation is a review, with or without a video</span
-            >
-          </header>
+          </section>
+        </div>
+
+        <!-- The chat bar: a message starts a new review (without a video).
+             The examples show while the input is empty. -->
+        <section
+          class="panel p-cf-entry"
+          aria-label="Ask Cuttlefish"
+          data-i18n-aria-label="cf.ask"
+          title="a question, a callout to translate, jargon to explain; each conversation is a review, with or without a video"
+          data-i18n-title="cf.chat.entryNote"
+        >
           <div class="cf-chips" id="cf-entry-chips"></div>
           <form class="cf-composer" id="cf-entry-form">
+            <svg
+              class="app-icon cf-entry-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <use href="icons/app-cuttlefish.svg#i" />
+            </svg>
             <textarea
               class="select cf-input"
               id="cf-entry-text"

@@ -3580,8 +3580,9 @@ body {
 }
 
 /* ============================================================ cuttlefish
- * The Cuttlefish app: a library (open a video, the reviews, the chat bar
- * that starts one) and the player (video with drawings and a timeline of
+ * The Cuttlefish app: a library (open a video and the reviews as cards, the
+ * chat bar that starts a review kept at the bottom of the window) and the
+ * player (video with drawings and a timeline of
  * comments, the comments and notes under it, the chat beside; a review
  * without a video shows the chat and "Attach a video").
  */
@@ -3598,12 +3599,39 @@ body {
   align-items: start;
 }
 
+/* The app fills the window below the top bar, so the library's chat bar
+ * sits at the bottom even when the cards are short */
+:root[data-app="cuttlefish"] body {
+  display: flex;
+  flex-direction: column;
+}
+
+[data-app-section="cuttlefish"] {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+}
+
+/* The cards, then the chat bar; the cards take the spare height. Every row
+ * (the tabs above too) shares the column's edges. */
 #cf-library {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--gap);
   max-width: 1360px;
+  padding: var(--gap) var(--gap) 0;
+}
+
+.cf-cards {
+  display: grid;
+  flex: 1 0 auto;
+  align-content: start;
+  align-items: start;
+  gap: var(--gap);
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-  grid-template-areas:
-    "open reviews"
-    "entry entry";
+  grid-template-areas: "open reviews";
 }
 
 /* The chat column spans every row; the flexible last row takes the extra
@@ -3628,9 +3656,6 @@ body {
 }
 .p-cf-reviews {
   grid-area: reviews;
-}
-.p-cf-entry {
-  grid-area: entry;
 }
 .p-cf-video {
   grid-area: video;
@@ -3657,11 +3682,8 @@ body {
   grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
 }
 
-[data-theme="telemetry"] #cf-library {
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-template-areas:
-    "open open open open open reviews reviews reviews reviews reviews reviews reviews"
-    "entry entry entry entry entry entry entry entry entry entry entry entry";
+[data-theme="telemetry"] .cf-cards {
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
 }
 
 [data-theme="telemetry"] #cf-player {
@@ -3686,7 +3708,6 @@ body {
 [data-theme="telemetry"] .p-cf-attach {
   --panel-no: "02";
 }
-[data-theme="telemetry"] .p-cf-entry,
 [data-theme="telemetry"] .p-cf-notes {
   --panel-no: "03";
 }
@@ -3698,8 +3719,15 @@ body {
   :root[data-theme] #cf-library,
   :root[data-theme] #cf-player {
     max-width: 900px;
+  }
+
+  :root[data-theme] .cf-cards,
+  :root[data-theme] #cf-player {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "open" "reviews" "entry";
+  }
+
+  :root[data-theme] .cf-cards {
+    grid-template-areas: "open" "reviews";
   }
 
   :root[data-theme] #cf-player {
@@ -3715,8 +3743,15 @@ body {
 :root[data-layout="phone"][data-theme] #cf-library,
 :root[data-layout="phone"][data-theme] #cf-player {
   max-width: 480px;
+}
+
+:root[data-layout="phone"][data-theme] .cf-cards,
+:root[data-layout="phone"][data-theme] #cf-player {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "open" "reviews" "entry";
+}
+
+:root[data-layout="phone"][data-theme] .cf-cards {
+  grid-template-areas: "open" "reviews";
 }
 
 :root[data-layout="phone"][data-theme] #cf-player {
@@ -3729,10 +3764,13 @@ body {
 }
 
 @media (max-width: 720px) {
-  :root[data-theme] #cf-library,
+  :root[data-theme] .cf-cards,
   :root[data-theme] #cf-player {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "open" "reviews" "entry";
+  }
+
+  :root[data-theme] .cf-cards {
+    grid-template-areas: "open" "reviews";
   }
 
   :root[data-theme] #cf-player {
@@ -3745,17 +3783,121 @@ body {
   }
 }
 
-/* On wide pages the chat bar stays in view at the bottom of the library,
- * like a chat app's input (on narrow ones it would cover the panels above),
- * and the chat panel keeps to the viewport beside the video, its thread
- * scrolling inside */
-@media (min-width: 1101px) {
-  :root:not([data-layout="phone"]) .p-cf-entry {
-    position: sticky;
-    bottom: var(--gap);
-    z-index: 2;
-  }
+/* The library's chat bar stays at the bottom of the window, like a chat
+ * app's input: the cards scroll above it and end above it. It fades in the
+ * page's background over what scrolls under it. */
+#cf-library .p-cf-entry {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  flex: none;
+  gap: 8px;
+  margin: 0 calc(-1 * var(--gap));
+  padding: 6px var(--gap) calc(var(--gap) + env(safe-area-inset-bottom));
+  border: 0;
+  border-radius: 0;
+  background: var(--bg);
+  box-shadow: none;
+}
 
+#cf-library .p-cf-entry::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 100%;
+  height: 16px;
+  background: linear-gradient(transparent, var(--bg));
+  pointer-events: none;
+}
+
+/* The input and Send in one card as wide as the cards above */
+.p-cf-entry .cf-composer {
+  align-items: center;
+  padding: 5px 5px 5px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--panel-shadow);
+}
+
+.p-cf-entry .cf-composer:focus-within {
+  border-color: var(--accent);
+}
+
+.p-cf-entry .cf-input {
+  min-height: 36px;
+  padding: 7px 4px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.p-cf-entry .cf-input:focus {
+  outline: none;
+}
+
+/* A warning in the bar stays small */
+.p-cf-entry .cf-composer-note.is-warning {
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.cf-entry-icon {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+
+/* The examples: one row that scrolls sideways, while the input is empty */
+.p-cf-entry .cf-chips {
+  flex-wrap: nowrap;
+  padding-bottom: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent);
+}
+
+.p-cf-entry .cf-chip {
+  flex: none;
+  max-width: none;
+  white-space: nowrap;
+}
+
+.p-cf-entry:has(.cf-input:not(:placeholder-shown)) .cf-chips {
+  display: none;
+}
+
+/* A review without a video: the chat fills the window, its input at the
+ * bottom of it */
+#cf-player.is-chat {
+  flex: 1 0 auto;
+  align-items: stretch;
+}
+
+#cf-player.is-chat .cf-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 calc(-1 * var(--pad));
+  padding: 8px var(--pad) calc(var(--pad) + env(safe-area-inset-bottom));
+  background: var(--panel);
+}
+
+#cf-player.is-chat .p-cf-chat {
+  padding-bottom: 0;
+}
+
+#cf-player.is-chat .p-cf-attach {
+  align-self: start;
+}
+
+#cf-player.is-chat .cf-composer-note {
+  margin-bottom: var(--pad);
+}
+
+/* On wide pages the chat panel keeps to the viewport beside the video, its
+ * thread scrolling inside */
+@media (min-width: 1101px) {
   :root:not([data-layout="phone"]) #cf-player:not(.is-chat) .p-cf-chat {
     position: sticky;
     top: var(--gap);
@@ -3763,13 +3905,11 @@ body {
   }
 }
 
-.p-cf-chat .panel-head,
-.p-cf-entry .panel-head {
+.p-cf-chat .panel-head {
   flex: none;
 }
 
-.p-cf-chat .panel-title .app-icon,
-.p-cf-entry .panel-title .app-icon {
+.p-cf-chat .panel-title .app-icon {
   width: 22px;
   height: 22px;
 }
@@ -3926,6 +4066,7 @@ body {
 .cf-composer {
   display: grid;
   flex: none;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   margin: 0;
 }
@@ -3939,6 +4080,7 @@ body {
 
 .cf-input {
   flex: 1;
+  min-width: 0;
   max-width: none;
   height: auto;
   min-height: 40px;
@@ -4297,34 +4439,45 @@ body {
   --font-num: Nunito, var(--font-cjk), system-ui, sans-serif;
 }
 
-/* The library's two views: tabs with an icon, a name and what they hold */
+/* The library's two views: a segmented switch like the apps' in the top
+ * bar, at the start of the content column; what each holds is its tooltip */
 .cf-views {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
   width: 100%;
   max-width: 1360px;
   margin: 0 auto;
   padding: var(--gap) var(--gap) 0;
 }
 
-.cf-view {
+.cf-views-track {
   display: flex;
-  flex: 1 1 280px;
-  align-items: center;
-  gap: 12px;
+  gap: 2px;
   min-width: 0;
-  max-width: 460px;
-  padding: 10px 14px;
-  border: 1px solid var(--panel-border);
+  padding: 3px;
+  border: 1px solid var(--nav-track-border);
+  border-radius: calc(var(--radius-sm) + 3px);
+  background: var(--nav-track);
+}
+
+.cf-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 16px 0 11px;
   border-radius: var(--radius-sm);
-  background: var(--panel);
   color: var(--text-2);
+  font-size: 14px;
+  font-weight: 500;
   text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 .cf-view:hover {
-  border-color: color-mix(in oklab, var(--accent) 50%, var(--panel-border));
+  background: var(--nav-hover);
   color: var(--text);
 }
 
@@ -4334,19 +4487,16 @@ body {
 }
 
 .cf-view[aria-current="page"] {
-  border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 12%, var(--panel));
-  box-shadow: inset 0 -3px 0 var(--accent);
-  color: var(--text);
+  background: var(--nav-on);
+  box-shadow: var(--nav-on-shadow);
+  color: var(--nav-on-ink);
+  font-weight: 600;
 }
 
 .cf-view-icon {
   flex: none;
-  width: 30px;
-  height: 30px;
-  padding: 5px;
-  border-radius: var(--radius-sm);
-  background: var(--inset);
+  width: 20px;
+  height: 20px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -4355,24 +4505,7 @@ body {
 }
 
 .cf-view[aria-current="page"] .cf-view-icon {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-.cf-view-text {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.cf-view-text b {
-  font-size: 14.5px;
-}
-
-.cf-view-note {
-  color: var(--text-2);
-  font-size: 12px;
-  line-height: 1.35;
+  color: var(--accent);
 }
 
 /* As wide as the view below them: the knowledge view is wider than the

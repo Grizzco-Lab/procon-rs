@@ -525,6 +525,16 @@
   border: 2px solid var(--sr-ink);
 }
 
+/* The library's chat bar: the sticker edge on the bar, not the input in it */
+[data-theme="salmon"] .p-cf-entry .cf-composer {
+  border: 2px solid var(--sr-ink);
+  box-shadow: 2px 3px 0 var(--sr-ink);
+}
+
+[data-theme="salmon"] .p-cf-entry .cf-input {
+  border-color: transparent;
+}
+
 /* ------------------------------------------------------ controller
  * Grips in workwear orange and teal on a charcoal face
  */
@@ -639,7 +649,7 @@
 }
 
 [data-theme="salmon"] #inspect-picker > *,
-[data-theme="salmon"] #cf-library > * {
+[data-theme="salmon"] #cf-library > .cf-cards {
   position: relative;
   z-index: 1;
 }
