@@ -447,10 +447,16 @@ impl Knowledge {
         let embedder =
             E5Embedder::load(&store::models_dir()).context("cannot load the embedding model")?;
         let mut store = Store::open(&self.root, &embedder)?;
-        let caught_up = store.catch_up(&embedder)?;
-        if caught_up > 0 {
-            log::info!("Embedded {caught_up} documents the index lacked");
+        let caught_up = store.catch_up(&embedder, &mut |line| self.catching_up(line))?;
+        if caught_up.documents > 0 {
+            log::info!(
+                "Embedded {} documents the index lacked",
+                caught_up.documents
+            );
             store.save()?;
+        }
+        if caught_up.stopped {
+            log::info!("Embedding stopped; the rest is embedded when the store opens next");
         }
         let opened = Arc::new(Loaded {
             store: RwLock::new(store),
@@ -458,6 +464,32 @@ impl Knowledge {
         });
         *loaded = Some(Arc::clone(&opened));
         Ok(opened)
+    }
+
+    /// A line of the embedding done while the store opens: shown in the
+    /// running import (a progress line replaces the one before) and logged;
+    /// false once that import is cancelled, which stops the embedding
+    fn catching_up(&self, line: &str) -> bool {
+        let progress = line.contains(" chunks (");
+        let running = {
+            let jobs = self.jobs.lock().unwrap();
+            jobs.iter()
+                .find(|j| j.state == JobState::Running)
+                .map(|j| j.id)
+        };
+        if !progress {
+            log::info!("{line}");
+        }
+        let Some(id) = running else {
+            return true;
+        };
+        self.update(id, |job| {
+            if progress && job.lines.last().is_some_and(|l| l.contains(" chunks (")) {
+                job.lines.pop();
+            }
+            job.lines.push(line.to_string());
+        });
+        !self.cancel.load(Ordering::Relaxed)
     }
 
     /// A model client for the chat on the configured backend (the API with
@@ -897,7 +929,11 @@ impl Knowledge {
                 ingest::youtube(&mut sink, url, ingest::SUB_LANGS, max.unwrap_or(50), meta)
             }
             Source::File { paths, url } => {
-                ingest::files(&mut sink, paths, url.as_deref().map(str::trim), meta)
+                let url = url.as_deref().map(str::trim);
+                let result = ingest::files(&mut sink, &self.root, &self.cache, paths, url, meta);
+                // Folders and archives may have brought name tables
+                loaded.store.write().unwrap().reload_glossary()?;
+                result
             }
             Source::DiscordExport { paths, whole } => {
                 ingest::discord_export(&mut sink, paths, *whole, meta)

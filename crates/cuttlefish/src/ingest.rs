@@ -13,6 +13,7 @@
 use crate::crawl::{Fetcher, MediaWiki, sitemap_locs};
 use crate::doc::{Document, SourceKind, doc_id, guess_language};
 use crate::google::{self, Format, GoogleFile};
+use crate::inbox::{self, INBOX};
 use crate::tables::{self, Member, Table};
 use crate::{discord, file, html, youtube};
 use alloc::string::String;
@@ -321,10 +322,28 @@ pub fn discord_bot(
     Ok(added)
 }
 
-/// Import local markdown, text, HTML or PDF files, citing `url` if given.
-/// Returns the documents added.
+/// Whether a local path is taken through the inbox: a folder, or an
+/// archive by its name or first bytes
+fn through_inbox(path: &Path) -> bool {
+    if path.is_dir() {
+        return true;
+    }
+    let name = path.to_string_lossy();
+    let head = inbox::head(path, 4096);
+    inbox::classify(&name, || head.clone()) == inbox::Route::Archive
+        || (inbox::is_archive(&head) && file::is_binary(&head))
+}
+
+/// Import local markdown, text, HTML, PDF or Word files, citing `url` if
+/// given. Folders and archives are put into the inbox of the data folder
+/// `root` and taken as the inbox takes them ([`inbox::take_in`],
+/// [`inbox::import`], unpacked in `cache`); binary files are refused. A
+/// file that fails is reported and skipped; the import fails only when
+/// nothing could be taken. Returns the documents added.
 pub fn files(
     sink: &mut dyn Sink,
+    root: &Path,
+    cache: &Path,
     paths: &[PathBuf],
     url: Option<&str>,
     meta: &Meta,
@@ -332,17 +351,56 @@ pub fn files(
     if paths.is_empty() {
         bail!("no files given");
     }
+    let mut added = 0;
+    let mut taken_in = 0;
+    let mut failed = None;
     for (i, p) in paths.iter().enumerate() {
         check(sink)?;
         sink.progress(i, paths.len());
-        let mut doc = file::load(p, meta.source.unwrap_or(SourceKind::File))
-            .with_context(|| alloc::format!("reading {}", p.display()))?;
-        if let Some(url) = url {
-            doc.url = Some(String::from(url));
+        if through_inbox(p) {
+            match inbox::take_in(root, p) {
+                Ok((rel, n)) => {
+                    sink.note(&alloc::format!(
+                        "{} put into the inbox as {INBOX}/{rel} ({n} files copied)",
+                        p.display()
+                    ));
+                    taken_in += 1;
+                }
+                Err(e) => {
+                    sink.note(&alloc::format!("skipped {}: {e:#}", p.display()));
+                    failed = Some(e);
+                }
+            }
+            continue;
         }
-        add(sink, doc, meta)?;
+        let doc = file::load(p, meta.source.unwrap_or(SourceKind::File))
+            .with_context(|| alloc::format!("reading {}", p.display()));
+        match doc {
+            Ok(mut doc) => {
+                if let Some(url) = url {
+                    doc.url = Some(String::from(url));
+                }
+                add(sink, doc, meta)?;
+                added += 1;
+            }
+            Err(e) => {
+                sink.note(&alloc::format!("skipped: {e:#}"));
+                failed = Some(e);
+            }
+        }
     }
-    Ok(paths.len())
+    if taken_in > 0 {
+        check(sink)?;
+        sink.note("importing the inbox (folders and archives are unpacked and sorted there)");
+        let report = inbox::import(sink, root, cache, meta)?;
+        sink.note(&report.summary());
+        added += report.count("document");
+    } else if added == 0
+        && let Some(e) = failed
+    {
+        return Err(e);
+    }
+    Ok(added)
 }
 
 /// Keeps what was downloaded, named by the document id
@@ -498,7 +556,15 @@ mod tests {
             root: dir.clone(),
             ..Default::default()
         };
-        let n = files(&mut sink, &[a.clone(), b.clone()], Some("https://x"), &meta).unwrap();
+        let n = files(
+            &mut sink,
+            &dir,
+            &dir,
+            &[a.clone(), b.clone()],
+            Some("https://x"),
+            &meta,
+        )
+        .unwrap();
         assert_eq!(n, 2);
         assert_eq!(sink.docs[0].title, "Eggs");
         assert_eq!(sink.docs[0].source, SourceKind::Guide);
@@ -512,10 +578,74 @@ mod tests {
             stop_after: Some(1),
             ..Default::default()
         };
-        let err = files(&mut stopping, &[a, b], None, &Meta::default()).unwrap_err();
+        let err = files(&mut stopping, &dir, &dir, &[a, b], None, &Meta::default()).unwrap_err();
         assert_eq!(err.to_string(), "cancelled");
         assert_eq!(stopping.docs.len(), 1);
-        assert!(files(&mut stopping, &[], None, &Meta::default()).is_err());
+        assert!(files(&mut stopping, &dir, &dir, &[], None, &Meta::default()).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn folders_and_archives_go_through_the_inbox_and_binaries_are_refused() {
+        let dir = std::env::temp_dir().join(alloc::format!(
+            "cuttlefish-ingest-inbox-{}",
+            std::process::id()
+        ));
+        let data = dir.join("data");
+        let guides = dir.join("guides");
+        std::fs::create_dir_all(guides.join("node_modules")).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(
+            guides.join("eggs.md"),
+            "# Eggs\n\nBank the golden eggs before the tide changes, every wave.",
+        )
+        .unwrap();
+        std::fs::write(guides.join("node_modules/x.md"), "# Not this").unwrap();
+        let zip = dir.join("stat.ink-3.128.4.zip");
+        std::fs::write(&zip, b"PK\x03\x04\x14\x00\x00\x00\x08\x00garbage\x00\xff").unwrap();
+        let unnamed = dir.join("dump");
+        std::fs::write(&unnamed, b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\xff").unwrap();
+        let blob = dir.join("blob.dat");
+        std::fs::write(&blob, b"\x00\x01\x02binary\xff\xfe").unwrap();
+        assert!(through_inbox(&guides));
+        assert!(through_inbox(&zip));
+        assert!(through_inbox(&unnamed));
+        assert!(!through_inbox(&blob));
+        assert!(!through_inbox(&guides.join("eggs.md")));
+
+        let mut sink = Memory {
+            root: dir.clone(),
+            ..Default::default()
+        };
+        // A binary file alone fails with the reason
+        let err = files(
+            &mut sink,
+            &data,
+            &dir,
+            core::slice::from_ref(&blob),
+            None,
+            &Meta::default(),
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("binary data"), "{err:#}");
+        assert!(sink.docs.is_empty());
+
+        // A folder is copied into the inbox (without node_modules) and read
+        let n = files(
+            &mut sink,
+            &data,
+            &dir,
+            &[guides, blob],
+            None,
+            &Meta::default(),
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(sink.docs[0].title, "Eggs");
+        assert_eq!(sink.docs[0].path.as_deref(), Some("inbox/guides/eggs.md"));
+        assert!(data.join("inbox/guides/eggs.md").is_file());
+        assert!(!data.join("inbox/guides/node_modules").exists());
+        assert!(sink.notes.iter().any(|l| l.contains("binary data")));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

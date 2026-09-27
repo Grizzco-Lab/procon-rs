@@ -202,10 +202,33 @@ pub fn classify(rel: &str, head: impl FnOnce() -> Vec<u8>) -> Route {
         "exe" | "dll" | "so" | "dylib" | "o" | "a" | "lib" | "class" | "jar" | "wasm" | "pyc"
         | "pdb" | "apk" | "ipa" | "nro" | "nso" | "nsp" | "xci" | "iso" | "dmg" | "msi" | "deb"
         | "rpm" => Route::Skip("program or binary"),
-        _ if head().contains(&0) => Route::Skip("binary file of an unknown format"),
-        "" => Route::Skip("no extension: unknown format"),
-        _ => Route::Skip("unknown format"),
+        _ => {
+            let head = head();
+            if is_archive(&head) {
+                Route::Archive
+            } else if head.contains(&0) {
+                Route::Skip("binary file of an unknown format")
+            } else if ext.is_empty() {
+                Route::Skip("no extension: unknown format")
+            } else {
+                Route::Skip("unknown format")
+            }
+        }
     }
+}
+
+/// Whether a file's first bytes are those of an archive `bsdtar` unpacks:
+/// zip, gzip, xz, bzip2, zstd, 7z or tar
+pub fn is_archive(head: &[u8]) -> bool {
+    const MAGIC: [&[u8]; 6] = [
+        b"PK\x03\x04",
+        b"\x1f\x8b",
+        b"\xfd7zXZ\x00",
+        b"BZh",
+        b"\x28\xb5\x2f\xfd",
+        b"7z\xbc\xaf\x27\x1c",
+    ];
+    MAGIC.iter().any(|m| head.starts_with(m)) || head.get(257..262) == Some(b"ustar")
 }
 
 /// A file as the last import saw it
@@ -447,7 +470,7 @@ pub fn hash_file(path: &Path) -> Result<String> {
 }
 
 /// The first `n` bytes of a file (fewer if it is shorter)
-fn head(path: &Path, n: u64) -> Vec<u8> {
+pub fn head(path: &Path, n: u64) -> Vec<u8> {
     let mut out = Vec::new();
     if let Ok(f) = std::fs::File::open(path) {
         let _ = f.take(n).read_to_end(&mut out);
@@ -1081,6 +1104,51 @@ pub fn upload_path(root: &Path, rel: &str) -> Result<PathBuf> {
         "not a file name for the inbox: {rel}"
     );
     Ok(parts.iter().fold(root.join(INBOX), |dir, p| dir.join(p)))
+}
+
+/// Puts a folder or an archive on this machine into the inbox of the data
+/// folder `root`, as `<its name>/...` or `<its name>`, for [`import`] to
+/// take: a folder's files as [`walk`] finds them (hidden, dependency and
+/// build folders left out), an archive as it is. Returns its path in the
+/// inbox and the files copied; nothing is copied when it is in the inbox
+/// already.
+pub fn take_in(root: &Path, path: &Path) -> Result<(String, usize)> {
+    let inbox = root.join(INBOX);
+    std::fs::create_dir_all(&inbox)?;
+    let full = std::fs::canonicalize(path)
+        .with_context(|| alloc::format!("reading {}", path.display()))?;
+    if let Ok(rel) = full.strip_prefix(std::fs::canonicalize(&inbox)?) {
+        return Ok((rel.to_string_lossy().replace('\\', "/"), 0));
+    }
+    let name = full
+        .file_name()
+        .context("no file name")?
+        .to_string_lossy()
+        .into_owned();
+    let mut files = Vec::new();
+    if full.is_dir() {
+        let mut notes = Vec::new();
+        walk(&full, &alloc::format!("{name}/"), &mut files, &mut notes);
+        for note in notes {
+            log::info!("{note}");
+        }
+    } else {
+        files.push((name.clone(), full));
+    }
+    for (rel, from) in &files {
+        let to = upload_path(root, rel)?;
+        let dir = to.parent().context("no folder")?;
+        std::fs::create_dir_all(dir)?;
+        // Hidden while copied, so an import meanwhile skips it
+        let part = dir.join(alloc::format!(
+            ".{}.part",
+            to.file_name().unwrap_or_default().to_string_lossy()
+        ));
+        std::fs::copy(from, &part)
+            .with_context(|| alloc::format!("copying {} into the inbox", from.display()))?;
+        std::fs::rename(&part, &to)?;
+    }
+    Ok((name, files.len()))
 }
 
 /// Document id of an inbox file's document

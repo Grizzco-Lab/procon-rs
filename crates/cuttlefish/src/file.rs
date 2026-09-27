@@ -23,6 +23,39 @@ fn run(command: &mut Command, what: &str) -> Result<String> {
     Ok(String::from(String::from_utf8_lossy(&out.stdout)))
 }
 
+/// Characters looked at to tell text from binary data
+const SAMPLE: usize = 64 << 10;
+
+/// Whether text (already decoded, invalid bytes as U+FFFD) is binary data:
+/// NUL characters, or more than 1% replacement or control characters
+/// (other than tab, newlines and form feed) in its first [`SAMPLE`]
+/// characters
+pub fn is_binary_text(text: &str) -> bool {
+    let (mut n, mut bad) = (0usize, 0usize);
+    for c in text.chars().take(SAMPLE) {
+        n += 1;
+        if c == '\0' {
+            return true;
+        }
+        if c == '\u{fffd}' || (c.is_control() && !matches!(c, '\t' | '\n' | '\r' | '\u{c}')) {
+            bad += 1;
+        }
+    }
+    bad * 100 > n
+}
+
+/// Whether bytes are binary data rather than text ([`is_binary_text`] of
+/// their start)
+pub fn is_binary(bytes: &[u8]) -> bool {
+    let sample = &bytes[..bytes.len().min(SAMPLE)];
+    // A character cut at the end of the sample is not an error
+    let sample = match core::str::from_utf8(sample) {
+        Err(e) if e.error_len().is_none() => &sample[..e.valid_up_to()],
+        _ => sample,
+    };
+    is_binary_text(&String::from_utf8_lossy(sample))
+}
+
 /// Replaces the five XML entities
 fn unescape_xml(s: &str) -> String {
     s.replace("&lt;", "<")
@@ -117,11 +150,16 @@ pub fn read(path: &Path) -> Result<(Option<String>, String, Option<String>)> {
             youtube::vtt_to_text(&String::from_utf8_lossy(&std::fs::read(path)?)),
             None,
         ),
-        _ => (
-            None,
-            String::from(String::from_utf8_lossy(&std::fs::read(path)?)),
-            None,
-        ),
+        _ => {
+            let bytes = std::fs::read(path)?;
+            if is_binary(&bytes) {
+                bail!(
+                    "{} is binary data, not text: not imported (archives and folders go through the inbox)",
+                    path.display()
+                );
+            }
+            (None, String::from_utf8_lossy(&bytes).into_owned(), None)
+        }
     })
 }
 
@@ -166,6 +204,39 @@ mod tests {
         assert_eq!(doc.title, "Egg flow");
         assert_eq!(doc.source, SourceKind::Guide);
         assert_eq!(doc.weight, SourceKind::Guide.default_weight());
+    }
+
+    #[test]
+    fn tells_binary_from_text() {
+        assert!(!is_binary(
+            "Kill the Steelhead. バクダン\tfirst\r\n".as_bytes()
+        ));
+        assert!(!is_binary(b""));
+        // A zip's start: magic, then NULs
+        assert!(is_binary(b"PK\x03\x04\x14\x00\x00\x00\x08\x00"));
+        // Invalid UTF-8 everywhere, no NUL
+        assert!(is_binary(
+            &[0xff, 0xfe, 0x81, 0x9f, b'a', 0xc3, b'b'].repeat(50)
+        ));
+        // A multi-byte character cut by the sample is fine
+        let mut text = "é".repeat(SAMPLE / 2).into_bytes();
+        text.push(0xc3);
+        assert!(!is_binary(&text));
+        // What a lossy read of a zip left in a document
+        assert!(is_binary_text(
+            "PK\u{3}\u{4}\u{14}\0\0\0\u{8}\0\u{fffd}\u{fffd}stat.ink"
+        ));
+        assert!(!is_binary_text(&"Egg flow. ".repeat(500)));
+    }
+
+    #[test]
+    fn refuses_binary_files() {
+        let path =
+            std::env::temp_dir().join(alloc::format!("cuttlefish-{}.zip", std::process::id()));
+        std::fs::write(&path, b"PK\x03\x04\x14\x00\x00\x00\x08\x00garbage\x00\xff").unwrap();
+        let e = read(&path).unwrap_err();
+        std::fs::remove_file(&path).unwrap();
+        assert!(e.to_string().contains("binary data"), "{e}");
     }
 
     #[test]

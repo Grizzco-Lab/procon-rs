@@ -224,9 +224,20 @@ fn open(data: &Path, catch_up: bool) -> Result<(Store, E5Embedder)> {
     let embedder = E5Embedder::load(&models)?;
     let mut store = Store::open(data, &embedder)?;
     if catch_up {
-        let n = store.catch_up(&embedder)?;
-        if n > 0 {
-            println!("{n} documents synced in from elsewhere embedded");
+        let mut last = std::time::Instant::now();
+        let caught_up = store.catch_up(&embedder, &mut |line| {
+            // Progress every few seconds, other lines as they come
+            if !line.contains(" chunks (") || last.elapsed().as_secs() >= 5 {
+                log::info!("{line}");
+                last = std::time::Instant::now();
+            }
+            true
+        })?;
+        if caught_up.documents > 0 {
+            println!(
+                "{} documents synced in from elsewhere embedded",
+                caught_up.documents
+            );
             store.save()?;
         }
     }
@@ -619,7 +630,8 @@ fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
                 bail!("no files given");
             }
             let mut sink = Sink::open(data)?;
-            ingest::files(&mut sink, &paths, url.as_deref(), &meta)?;
+            let cache = cuttlefish::store::cache_dir();
+            ingest::files(&mut sink, data, &cache, &paths, url.as_deref(), &meta)?;
             sink.finish()
         }
     }

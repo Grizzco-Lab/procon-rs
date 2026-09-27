@@ -32,9 +32,10 @@
 //! read is rebuilt, and [`Store::catch_up`] embeds documents synced in from
 //! elsewhere.
 
-use crate::chunk::{ChunkConfig, chunk_text};
+use crate::chunk::{Chunk, ChunkConfig, chunk_text};
 use crate::doc::{Document, SourceKind};
 use crate::embed::{Embedder, Role};
+use crate::file::is_binary_text;
 use crate::glossary::Glossary;
 use crate::index::{Entry, FlatIndex, VectorIndex};
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -55,6 +56,19 @@ pub struct Hit {
     /// The chunk and its document's metadata
     #[serde(flatten)]
     pub entry: Entry,
+}
+
+/// Chunks embedded between two looks at whether to stop
+/// ([`Store::catch_up`])
+pub const EMBED_BATCH: usize = 32;
+
+/// What [`Store::catch_up`] did
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CaughtUp {
+    /// Documents embedded
+    pub documents: usize,
+    /// Whether it was told to stop before the end
+    pub stopped: bool,
 }
 
 /// Temporary files written by this process so far, to name the next
@@ -282,6 +296,11 @@ impl Store {
     /// indexes its chunks; returns the number of chunks. Call
     /// [`Store::save`] to write the index.
     pub fn add(&mut self, doc: &Document, embedder: &dyn Embedder) -> Result<usize> {
+        ensure!(
+            !is_binary_text(&doc.text),
+            "\"{}\" is binary data, not text: not stored",
+            doc.title
+        );
         write_atomic(&self.doc_path(&doc.id), &serde_json::to_vec_pretty(doc)?)?;
         self.index_doc(doc, embedder)
     }
@@ -302,30 +321,51 @@ impl Store {
     }
 
     fn index_doc(&mut self, doc: &Document, embedder: &dyn Embedder) -> Result<usize> {
-        self.index.remove_doc(&doc.id);
         let chunks = chunk_text(&doc.text, &self.chunking);
-        let inputs: Vec<String> = chunks
-            .iter()
-            .map(|c| passage_text(&doc.title, &c.heading, &c.text))
-            .collect();
-        let refs: Vec<&str> = inputs.iter().map(String::as_str).collect();
-        let vectors = embedder.embed(&refs, Role::Passage)?;
-        for (c, v) in chunks.iter().zip(vectors) {
-            let entry = Entry {
-                doc_id: doc.id.clone(),
-                ordinal: c.ordinal,
-                title: doc.title.clone(),
-                heading: c.heading.clone(),
-                url: doc.url.clone(),
-                source: doc.source,
-                license: doc.license.clone(),
-                language: doc.language.clone(),
-                weight: doc.weight,
-                text: c.text.clone(),
-            };
-            self.index.add(entry, v)?;
-        }
+        self.index_chunks(doc, &chunks, embedder, &mut |_| true)?;
         Ok(chunks.len())
+    }
+
+    /// Indexes a document's chunks, [`EMBED_BATCH`] at a time; after each
+    /// batch `batch` hears how many were embedded and says whether to go
+    /// on. False when it said stop: the document's chunks are removed
+    /// again, so it is embedded whole next time.
+    fn index_chunks(
+        &mut self,
+        doc: &Document,
+        chunks: &[Chunk],
+        embedder: &dyn Embedder,
+        batch: &mut dyn FnMut(usize) -> bool,
+    ) -> Result<bool> {
+        self.index.remove_doc(&doc.id);
+        for group in chunks.chunks(EMBED_BATCH) {
+            let inputs: Vec<String> = group
+                .iter()
+                .map(|c| passage_text(&doc.title, &c.heading, &c.text))
+                .collect();
+            let refs: Vec<&str> = inputs.iter().map(String::as_str).collect();
+            let vectors = embedder.embed(&refs, Role::Passage)?;
+            for (c, v) in group.iter().zip(vectors) {
+                let entry = Entry {
+                    doc_id: doc.id.clone(),
+                    ordinal: c.ordinal,
+                    title: doc.title.clone(),
+                    heading: c.heading.clone(),
+                    url: doc.url.clone(),
+                    source: doc.source,
+                    license: doc.license.clone(),
+                    language: doc.language.clone(),
+                    weight: doc.weight,
+                    text: c.text.clone(),
+                };
+                self.index.add(entry, v)?;
+            }
+            if !batch(group.len()) {
+                self.index.remove_doc(&doc.id);
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Every stored document
@@ -334,23 +374,69 @@ impl Store {
     }
 
     /// Embeds the documents the index lacks (synced in from another
-    /// machine, or all of them after the index was rebuilt); returns how
-    /// many. Call [`Store::save`] afterwards when it is not 0.
-    pub fn catch_up(&mut self, embedder: &dyn Embedder) -> Result<usize> {
+    /// machine, or all of them after the index was rebuilt). `step` hears
+    /// progress lines (`embedding 64 of 950 chunks (2 of 7 documents)`,
+    /// after each batch) and says whether to go on; stopped, what was
+    /// embedded stays and the rest waits for the next time. Documents whose
+    /// text is binary data are never embedded (a warning each). Call
+    /// [`Store::save`] afterwards when something was embedded.
+    pub fn catch_up(
+        &mut self,
+        embedder: &dyn Embedder,
+        step: &mut dyn FnMut(&str) -> bool,
+    ) -> Result<CaughtUp> {
         let indexed: BTreeSet<String> = self
             .index
             .entries()
             .iter()
             .map(|e| e.doc_id.clone())
             .collect();
-        let mut n = 0;
+        let mut todo = Vec::new();
         for doc in self.documents()? {
-            if !indexed.contains(&doc.id) && !doc.text.trim().is_empty() {
-                self.index_doc(&doc, embedder)?;
-                n += 1;
+            if indexed.contains(&doc.id) || doc.text.trim().is_empty() {
+                continue;
             }
+            if is_binary_text(&doc.text) {
+                let line = alloc::format!(
+                    "not embedding \"{}\" ({}): its text is binary data; delete it",
+                    doc.title,
+                    doc.id
+                );
+                log::warn!("{line}");
+                step(&line);
+                continue;
+            }
+            let chunks = chunk_text(&doc.text, &self.chunking);
+            todo.push((doc, chunks));
         }
-        Ok(n)
+        let total: usize = todo.iter().map(|(_, c)| c.len()).sum();
+        let mut out = CaughtUp::default();
+        if todo.is_empty() {
+            return Ok(out);
+        }
+        let docs = todo.len();
+        let mut done = 0;
+        if !step(&alloc::format!(
+            "embedding {total} chunks of {docs} documents the index lacks"
+        )) {
+            out.stopped = true;
+            return Ok(out);
+        }
+        for (i, (doc, chunks)) in todo.iter().enumerate() {
+            let whole = self.index_chunks(doc, chunks, embedder, &mut |n| {
+                done += n;
+                step(&alloc::format!(
+                    "embedding {done} of {total} chunks ({} of {docs} documents)",
+                    i + 1
+                ))
+            })?;
+            if !whole {
+                out.stopped = true;
+                break;
+            }
+            out.documents += 1;
+        }
+        Ok(out)
     }
 
     /// Re-chunks and re-embeds every stored document into a fresh index
@@ -359,6 +445,14 @@ impl Store {
         self.index = FlatIndex::new(embedder.name(), embedder.dim());
         let mut n = 0;
         for doc in self.documents()? {
+            if is_binary_text(&doc.text) {
+                log::warn!(
+                    "not embedding \"{}\" ({}): its text is binary data; delete it",
+                    doc.title,
+                    doc.id
+                );
+                continue;
+            }
             n += self.index_doc(&doc, embedder)?;
         }
         Ok(n)
@@ -716,14 +810,74 @@ mod tests {
         std::fs::write(docs.join("00000000000000ff.json"), b"{\"id\":").unwrap();
         let mut store = Store::open(&root, &e).unwrap();
         assert_eq!(store.index().len(), 1);
-        assert_eq!(store.catch_up(&e).unwrap(), 1);
-        assert_eq!(store.catch_up(&e).unwrap(), 0);
+        assert_eq!(store.catch_up(&e, &mut |_| true).unwrap().documents, 1);
+        assert_eq!(store.catch_up(&e, &mut |_| true).unwrap().documents, 0);
         assert_eq!(store.documents().unwrap().len(), 2);
         // A half-synced index is rebuilt
         std::fs::write(root.join("index/vectors.f32"), b"xx").unwrap();
         let mut store = Store::open(&root, &e).unwrap();
         assert_eq!(store.index().len(), 0);
-        assert_eq!(store.catch_up(&e).unwrap(), 2);
+        assert_eq!(store.catch_up(&e, &mut |_| true).unwrap().documents, 2);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn catching_up_stops_when_told_and_skips_binary_documents() {
+        let root = temp("catch-up");
+        let e = HashEmbedder { dim: 16 };
+        let long = "Bank the golden eggs before the tide changes.\n\n".repeat(2000);
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let big = doc("big", "Eggs", &long);
+        // What a zip read as text left behind
+        let garbage = doc(
+            "zip",
+            "stat.ink.zip",
+            "PK\u{3}\u{4}\u{14}\0\0\0\u{fffd}\u{fffd}",
+        );
+        for d in [&big, &garbage] {
+            std::fs::write(
+                docs.join(alloc::format!("{}.json", d.id)),
+                serde_json::to_vec(d).unwrap(),
+            )
+            .unwrap();
+        }
+        let mut store = Store::open(&root, &e).unwrap();
+        // Stopped after the first batch: nothing of the document stays
+        let mut lines = Vec::new();
+        let mut batches = 0;
+        let out = store
+            .catch_up(&e, &mut |line| {
+                lines.push(String::from(line));
+                if line.contains(" chunks (") {
+                    batches += 1;
+                }
+                batches < 1
+            })
+            .unwrap();
+        assert_eq!(
+            out,
+            CaughtUp {
+                documents: 0,
+                stopped: true
+            }
+        );
+        assert_eq!(store.index().len(), 0);
+        assert!(lines[0].starts_with("not embedding \"stat.ink.zip\""));
+        assert!(lines.iter().any(|l| l.starts_with("embedding 32 of ")));
+        // Going on embeds it whole, never the binary one
+        let out = store.catch_up(&e, &mut |_| true).unwrap();
+        assert_eq!(
+            out,
+            CaughtUp {
+                documents: 1,
+                stopped: false
+            }
+        );
+        assert!(store.index().len() > EMBED_BATCH);
+        assert!(store.index().entries().iter().all(|x| x.doc_id == big.id));
+        // Nor is a binary document stored
+        assert!(store.add(&garbage, &e).is_err());
         std::fs::remove_dir_all(&root).unwrap();
     }
 
