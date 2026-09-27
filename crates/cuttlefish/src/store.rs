@@ -280,6 +280,12 @@ impl Store {
         self.doc_path(&crate::doc::doc_id(key)).exists()
     }
 
+    /// The stored document of this url or path, when there is one that reads
+    pub fn document(&self, key: &str) -> Option<Document> {
+        let bytes = std::fs::read(self.doc_path(&crate::doc::doc_id(key))).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
     /// Folder for raw downloads of one kind (`web`, `youtube`, `discord`)
     pub fn raw_dir(&self, kind: &str) -> PathBuf {
         self.root.join("raw").join(kind)

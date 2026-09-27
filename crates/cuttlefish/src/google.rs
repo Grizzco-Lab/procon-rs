@@ -4,8 +4,10 @@
 //! shell ("This browser version is no longer supported... File Edit View").
 //! [`recognise`] finds the file in the address and [`GoogleFile::exports`]
 //! gives its export addresses, tried in order: a document as Markdown
-//! (headings kept), else plain text, else Word; a sheet as CSV (the sheet
-//! the address names with `gid`, else the first); slides as plain text.
+//! (headings kept), else plain text, else Word; a sheet as CSV (the tab
+//! the address names with `gid`, else the first); slides as plain text. A
+//! sheet's HTML view lists its tabs ([`tabs`]), so every tab can be
+//! imported, each at its own address ([`tab_url`]).
 //!
 //! Exports work only for files shared as "Anyone with the link can view";
 //! others answer with Google's sign-in page or 401/403 ([`access_error`]).
@@ -142,6 +144,87 @@ impl GoogleFile {
             GoogleFile::Slides(_) => "Google Slides",
         }
     }
+}
+
+/// One tab of a Google Sheet
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tab {
+    /// Its name
+    pub name: String,
+    /// Its `gid`
+    pub gid: String,
+}
+
+/// The HTML view of a sheet, which lists its tabs ([`tabs`])
+pub fn tabs_url(id: &str) -> String {
+    alloc::format!("https://docs.google.com/spreadsheets/d/{id}/htmlview")
+}
+
+/// The address of one tab of a sheet
+pub fn tab_url(id: &str, gid: &str) -> String {
+    alloc::format!("https://docs.google.com/spreadsheets/d/{id}/edit#gid={gid}")
+}
+
+/// The tabs a sheet's HTML view lists, in order: its script adds one
+/// `{name: "...", ..., gid: "..."}` item per tab
+pub fn tabs(html: &str) -> Vec<Tab> {
+    let mut out: Vec<Tab> = Vec::new();
+    for item in html.split("items.push({").skip(1) {
+        let field = |key: &str| {
+            let start = item.find(&alloc::format!("{key}: \""))? + key.len() + 3;
+            let rest = &item[start..];
+            // The value ends at the first quote not escaped
+            let mut end = None;
+            let mut escaped = false;
+            for (i, c) in rest.char_indices() {
+                match c {
+                    '\\' if !escaped => escaped = true,
+                    '"' if !escaped => {
+                        end = Some(i);
+                        break;
+                    }
+                    _ => escaped = false,
+                }
+            }
+            Some(unescape_js(&rest[..end?]))
+        };
+        if let (Some(name), Some(gid)) = (field("name"), field("gid"))
+            && gid.bytes().all(|b| b.is_ascii_digit())
+            && !out.iter().any(|t| t.gid == gid)
+        {
+            out.push(Tab {
+                name: String::from(name.trim()),
+                gid,
+            });
+        }
+    }
+    out
+}
+
+/// Undoes a JavaScript string's escapes (`\"`, `\/`, `\x3d`, `é`)
+fn unescape_js(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        let hex = |chars: &mut core::str::Chars, n: usize| {
+            let digits: String = chars.by_ref().take(n).collect();
+            u32::from_str_radix(&digits, 16)
+                .ok()
+                .and_then(char::from_u32)
+        };
+        match chars.next() {
+            Some('x') => out.extend(hex(&mut chars, 2)),
+            Some('u') => out.extend(hex(&mut chars, 4)),
+            Some('n') => out.push('\n'),
+            Some(other) => out.push(other),
+            None => {}
+        }
+    }
+    out
 }
 
 /// Why an export answer is not the file: not shared publicly (401, 403,
@@ -384,6 +467,37 @@ mod tests {
         ] {
             assert_eq!(recognise(url), None, "{url}");
         }
+    }
+
+    #[test]
+    fn lists_a_sheets_tabs() {
+        let html = r#"<script>var items = [];
+            items.push({name: "通常 Normal Rotations", pageUrl: "https:\/\/docs.google.com\/x?headers\x3dtrue&gid=1945984177", gid: "1945984177",initialSheet: ("1945984177" == gid)});
+            items.push({name: "Big \"Run\"", pageUrl: "x", gid: "1585830063",initialSheet: false});
+            items.push({name: "Again", gid: "1585830063"});
+            items.push({name: "Bad", gid: "abc"});</script>"#;
+        assert_eq!(
+            tabs(html),
+            [
+                Tab {
+                    name: String::from("\u{901a}\u{5e38} Normal Rotations"),
+                    gid: String::from("1945984177")
+                },
+                Tab {
+                    name: String::from("Big \"Run\""),
+                    gid: String::from("1585830063")
+                }
+            ]
+        );
+        let url = tab_url(ID, "1585830063");
+        assert_eq!(
+            recognise(&url),
+            Some(GoogleFile::Sheet {
+                id: String::from(ID),
+                gid: Some(String::from("1585830063"))
+            })
+        );
+        assert!(tabs("<html>no script</html>").is_empty());
     }
 
     #[test]

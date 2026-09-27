@@ -67,6 +67,10 @@ pub struct Document {
     /// Authors or channel to credit
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attribution: Option<String>,
+    /// The source's revision it was made from (a wiki page's revision id),
+    /// so a re-import fetches only what changed
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
     /// When it was fetched or imported
     pub fetched_at: DateTime<Utc>,
     /// Retrieval weight, [`SourceKind::default_weight`] unless overridden
@@ -92,6 +96,7 @@ impl Document {
             language: guess_language(&text).map(String::from),
             license: None,
             attribution: None,
+            revision: None,
             fetched_at: Utc::now(),
             weight: source.default_weight(),
             text,

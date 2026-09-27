@@ -148,7 +148,7 @@ enum Ingest {
         #[command(flatten)]
         meta: Meta,
     },
-    /// Web pages: urls, a list file, a sitemap, or MediaWiki categories
+    /// Web pages: urls, a list file or a sitemap
     Url {
         /// Page urls
         urls: Vec<String>,
@@ -158,18 +158,31 @@ enum Ingest {
         /// Sitemap (or sitemap index) url
         #[arg(long)]
         sitemap: Option<String>,
-        /// MediaWiki api.php url, used with --category
+        /// Every tab of a Google Sheet, even when its address names one
         #[arg(long)]
-        mediawiki: Option<String>,
-        /// MediaWiki category to import (repeatable)
-        #[arg(long, requires = "mediawiki")]
-        category: Vec<String>,
+        all_tabs: bool,
         /// At most this many pages
         #[arg(long, default_value_t = 200)]
         max_pages: usize,
         /// Seconds between requests to one site (robots.txt may ask more)
         #[arg(long, default_value_t = 3.0)]
         delay_s: f32,
+        #[command(flatten)]
+        meta: Meta,
+    },
+    /// A MediaWiki topic through the wiki's API: categories with their
+    /// subcategories, start pages with the pages they link to; again, only
+    /// pages whose revision changed
+    Wiki {
+        #[command(flatten)]
+        wiki: cuttlefish::wiki::Wiki,
+        #[command(flatten)]
+        meta: Meta,
+    },
+    /// A whole site from a start address, on its host only
+    Site {
+        #[command(flatten)]
+        site: cuttlefish::wiki::Site,
         #[command(flatten)]
         meta: Meta,
     },
@@ -322,6 +335,10 @@ impl Sink {
 impl ingest::Sink for Sink {
     fn has(&self, key: &str) -> bool {
         self.store.has(key)
+    }
+
+    fn revision(&self, key: &str) -> Option<u64> {
+        self.store.document(key)?.revision
     }
 
     fn add(&mut self, doc: &Document) -> Result<usize> {
@@ -735,8 +752,7 @@ fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
             urls,
             list,
             sitemap,
-            mediawiki,
-            category,
+            all_tabs,
             max_pages,
             delay_s,
             meta,
@@ -755,13 +771,22 @@ fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
             let web = ingest::Web {
                 urls: all,
                 sitemap,
-                mediawiki,
-                categories: category,
                 max_pages,
                 delay_s,
+                all_tabs,
             };
             let mut sink = Sink::open(data)?;
             ingest::web(&mut sink, &web, &meta)?;
+            sink.finish()
+        }
+        Ingest::Wiki { wiki, meta } => {
+            let mut sink = Sink::open(data)?;
+            cuttlefish::wiki::wiki(&mut sink, &wiki, &meta)?;
+            sink.finish()
+        }
+        Ingest::Site { site, meta } => {
+            let mut sink = Sink::open(data)?;
+            cuttlefish::wiki::site(&mut sink, &site, &meta)?;
             sink.finish()
         }
         Ingest::Youtube {

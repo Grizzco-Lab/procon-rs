@@ -5,8 +5,11 @@
 //! with a server error blocks the site, as RFC 9309 asks) and waits between
 //! requests to the same site: the given delay or the site's `Crawl-delay`,
 //! whichever is longer. It also reads sitemaps and MediaWiki's API, which
-//! returns an article's content without the page chrome.
+//! lists categories and links with each page's latest revision and returns
+//! an article's content without the page chrome. Requests go out through
+//! [`Http`], which tests replace with a fake server.
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use anyhow::{Context, Result, bail};
@@ -61,47 +64,24 @@ pub fn download(url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Fetches pages politely
-pub struct Fetcher {
-    agent: ureq::Agent,
-    delay: Duration,
-    /// Per robots.txt url (one per site): its rules, `None` when the site
-    /// has none
-    robots: HashMap<String, Option<Robot>>,
-    /// Per site: when the last request went out
-    last: HashMap<String, Instant>,
+/// How requests go out: over the network ([`Network`]), or through a fake
+/// in tests
+pub trait Http {
+    /// GET a url, redirects followed; fails only when no answer came
+    fn get(&mut self, url: &str) -> Result<Fetched>;
+    /// Waits `d` (a fake only records it)
+    fn sleep(&mut self, d: Duration) {
+        std::thread::sleep(d);
+    }
 }
 
-impl Fetcher {
-    /// A fetcher waiting at least `delay` between requests to one site
-    pub fn new(delay: Duration) -> Self {
-        Fetcher {
-            agent: agent(Duration::from_secs(60)),
-            delay,
-            robots: HashMap::new(),
-            last: HashMap::new(),
-        }
-    }
+/// Requests over the network, as [`user_agent`]
+pub struct Network(ureq::Agent);
 
-    /// Sleeps until the site may be asked again
-    fn wait(&mut self, site: &str, extra: Option<f32>) {
-        let delay = self.delay.max(Duration::from_secs_f32(
-            extra.unwrap_or(0.0).clamp(0.0, 120.0),
-        ));
-        if let Some(last) = self.last.get(site) {
-            let since = last.elapsed();
-            if since < delay {
-                std::thread::sleep(delay - since);
-            }
-        }
-        self.last.insert(String::from(site), Instant::now());
-    }
-
-    /// GET with the politeness delay
-    fn get_raw(&mut self, url: &str, site: &str, crawl_delay: Option<f32>) -> Result<Fetched> {
-        self.wait(site, crawl_delay);
+impl Http for Network {
+    fn get(&mut self, url: &str) -> Result<Fetched> {
         let mut resp = self
-            .agent
+            .0
             .get(url)
             .call()
             .with_context(|| alloc::format!("GET {url}"))?;
@@ -129,9 +109,68 @@ impl Fetcher {
             body,
         })
     }
+}
 
-    /// Whether `robots.txt` lets us fetch `url`, and the site's crawl delay
-    fn check_robots(&mut self, url: &str) -> Result<(String, bool, Option<f32>)> {
+/// Fetches pages politely
+pub struct Fetcher {
+    http: Box<dyn Http>,
+    delay: Duration,
+    /// Per robots.txt url (one per site): its rules, `None` when the site
+    /// has none
+    robots: HashMap<String, Option<Robot>>,
+    /// Per site: when the last request went out
+    last: HashMap<String, Instant>,
+}
+
+impl Fetcher {
+    /// A fetcher waiting at least `delay` between requests to one site
+    pub fn new(delay: Duration) -> Self {
+        Self::with_http(Box::new(Network(agent(Duration::from_secs(60)))), delay)
+    }
+
+    /// A fetcher sending its requests through `http`
+    pub fn with_http(http: Box<dyn Http>, delay: Duration) -> Self {
+        Fetcher {
+            http,
+            delay,
+            robots: HashMap::new(),
+            last: HashMap::new(),
+        }
+    }
+
+    /// The pause between two requests to a site: the given delay, or the
+    /// site's `Crawl-delay` (at most two minutes) when longer
+    fn pause(&self, crawl_delay: Option<f32>) -> Duration {
+        self.delay.max(Duration::from_secs_f32(
+            crawl_delay.unwrap_or(0.0).clamp(0.0, 120.0),
+        ))
+    }
+
+    /// Sleeps until the site may be asked again
+    fn wait(&mut self, site: &str, crawl_delay: Option<f32>) {
+        let delay = self.pause(crawl_delay);
+        if let Some(last) = self.last.get(site) {
+            let since = last.elapsed();
+            if since < delay {
+                self.http.sleep(delay - since);
+            }
+        }
+        self.last.insert(String::from(site), Instant::now());
+    }
+
+    /// Waits `d` (a server asked us to come back later)
+    pub fn sleep(&mut self, d: Duration) {
+        self.http.sleep(d);
+    }
+
+    /// GET with the politeness delay
+    fn get_raw(&mut self, url: &str, site: &str, crawl_delay: Option<f32>) -> Result<Fetched> {
+        self.wait(site, crawl_delay);
+        self.http.get(url)
+    }
+
+    /// `url`'s site's `robots.txt` url and rules (`None`: it has none)
+    fn robot(&mut self, url: &str) -> Result<(String, Option<&Robot>)> {
         let robots_url =
             get_robots_url(url).map_err(|e| anyhow::anyhow!("bad url {url}: {e:?}"))?;
         if !self.robots.contains_key(&robots_url) {
@@ -143,10 +182,33 @@ impl Fetcher {
             };
             self.robots.insert(robots_url.clone(), robot);
         }
-        let robot = &self.robots[&robots_url];
-        let allowed = robot.as_ref().is_none_or(|r| r.allowed(url));
-        let delay = robot.as_ref().and_then(|r| r.delay);
-        Ok((robots_url, allowed, delay))
+        let robot = self.robots[&robots_url].as_ref();
+        Ok((robots_url, robot))
+    }
+
+    /// Whether `robots.txt` lets us fetch `url`, and the site's crawl delay
+    fn check_robots(&mut self, url: &str) -> Result<(String, bool, Option<f32>)> {
+        let (site, robot) = self.robot(url)?;
+        let allowed = robot.is_none_or(|r| r.allowed(url));
+        let delay = robot.and_then(|r| r.delay);
+        Ok((site, allowed, delay))
+    }
+
+    /// Whether `robots.txt` lets us fetch `url`
+    pub fn allowed(&mut self, url: &str) -> Result<bool> {
+        Ok(self.check_robots(url)?.1)
+    }
+
+    /// The pause between two requests to `url`'s site
+    pub fn pace(&mut self, url: &str) -> Result<Duration> {
+        let (_, _, delay) = self.check_robots(url)?;
+        Ok(self.pause(delay))
+    }
+
+    /// The sitemaps `url`'s site names in its `robots.txt`
+    pub fn sitemaps(&mut self, url: &str) -> Result<Vec<String>> {
+        let (_, robot) = self.robot(url)?;
+        Ok(robot.map(|r| r.sitemaps.clone()).unwrap_or_default())
     }
 
     /// Fetches a url whatever the server answers; fails only if
@@ -276,14 +338,37 @@ pub fn encode(s: &str) -> String {
     out
 }
 
-/// A MediaWiki site through its `api.php`
+/// A MediaWiki site through its `api.php`. Every request carries `maxlag`
+/// ([`MAXLAG_S`]): while the wiki's database lags more than that, it
+/// answers with an error instead, and the request is sent again after the
+/// wait it asks for; likewise after a database error, a read-only wiki or
+/// an HTTP 503, half a minute later.
 pub struct MediaWiki {
     /// `https://example.org/w/api.php`
     pub api: String,
 }
 
+/// Seconds of database lag above which the wiki is left alone for a while
+pub const MAXLAG_S: u32 = 5;
+
+/// Times a request is sent while the wiki lags or is busy
+const MAXLAG_TRIES: usize = 5;
+
+/// Wait after the wiki's database failed or was read-only (or an HTTP 503)
+const BUSY_WAIT: Duration = Duration::from_secs(30);
+
+/// Namespace of categories
+pub const CATEGORY_NS: i64 = 14;
+
+/// Titles asked about in one request (the API's limit)
+const TITLES_PER_REQUEST: usize = 50;
+
 /// What [`MediaWiki::site_info`] returns
 pub struct SiteInfo {
+    /// The wiki's name (`Inkipedia`)
+    pub name: String,
+    /// Language code of its content (`en`)
+    pub language: Option<String>,
     /// Content license, for example `CC BY-NC-SA 3.0 (https://...)`
     pub license: Option<String>,
     /// Article url with `$1` for the title
@@ -298,26 +383,98 @@ impl SiteInfo {
     }
 }
 
+/// A page as a listing gives it
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listed {
+    /// Title, with its namespace (`Category:Salmon Run`)
+    pub title: String,
+    /// Namespace number (0: articles, [`CATEGORY_NS`])
+    pub ns: i64,
+    /// Id of its latest revision
+    pub revision: u64,
+}
+
 /// One article from [`MediaWiki::page`]
 pub struct WikiPage {
     /// Article title
     pub title: String,
     /// Rendered content HTML (no navigation or footer)
     pub html: String,
+    /// Id of the revision rendered
+    pub revision: u64,
+}
+
+/// A value of a `continue` object as a query parameter
+fn continue_value(v: &serde_json::Value) -> String {
+    match v.as_str() {
+        Some(s) => encode(s),
+        None => encode(&v.to_string()),
+    }
 }
 
 impl MediaWiki {
     fn query(&self, fetcher: &mut Fetcher, params: &str) -> Result<serde_json::Value> {
-        let url = alloc::format!("{}?format=json&formatversion=2&{params}", self.api);
-        let body = fetcher.get(&url)?;
-        let v: serde_json::Value = serde_json::from_str(&body).context("MediaWiki answer")?;
-        if let Some(err) = v.get("error") {
-            bail!("MediaWiki: {err}");
+        let url = alloc::format!(
+            "{}?format=json&formatversion=2&maxlag={MAXLAG_S}&{params}",
+            self.api
+        );
+        let mut last = String::new();
+        for _ in 0..MAXLAG_TRIES {
+            let got = fetcher.fetch(&url)?;
+            let v: serde_json::Value = match serde_json::from_slice(&got.body) {
+                Ok(v) => v,
+                Err(_) if got.status == 503 => {
+                    last = String::from("HTTP 503");
+                    fetcher.sleep(BUSY_WAIT);
+                    continue;
+                }
+                Err(_) if !got.ok() => bail!("GET {url}: HTTP {}", got.status),
+                Err(e) => return Err(e).context("MediaWiki answer"),
+            };
+            let code = v["error"]["code"].as_str().unwrap_or_default();
+            if code == "maxlag" {
+                let lag = v["error"]["lag"].as_f64().unwrap_or(0.0);
+                log::info!("the wiki lags {lag:.0} s; waiting");
+                last = alloc::format!("its database lags {lag:.0} s");
+                fetcher.sleep(Duration::from_secs_f64(lag.clamp(5.0, 60.0)));
+            } else if code == "readonly" || code.starts_with("internal_api_error_DB") {
+                log::info!("the wiki's database is busy ({code}); waiting");
+                last = String::from(code);
+                fetcher.sleep(BUSY_WAIT);
+            } else if !code.is_empty() {
+                bail!("MediaWiki: {}", v["error"]);
+            } else if !got.ok() {
+                bail!("GET {url}: HTTP {}", got.status);
+            } else {
+                return Ok(v);
+            }
         }
-        Ok(v)
+        bail!("the wiki is busy ({last}); try again later")
     }
 
-    /// The site's content license and article url pattern (`siteinfo`)
+    /// Every answer of a query, following `continue`
+    fn query_all(
+        &self,
+        fetcher: &mut Fetcher,
+        params: &str,
+        each: &mut dyn FnMut(&serde_json::Value),
+    ) -> Result<()> {
+        let mut cont = String::new();
+        loop {
+            let v = self.query(fetcher, &alloc::format!("{params}{cont}"))?;
+            each(&v);
+            let Some(next) = v.get("continue").and_then(|c| c.as_object()) else {
+                return Ok(());
+            };
+            cont = next
+                .iter()
+                .map(|(k, v)| alloc::format!("&{k}={}", continue_value(v)))
+                .collect();
+        }
+    }
+
+    /// The site's name, language, content license and article url pattern
+    /// (`siteinfo`)
     pub fn site_info(&self, fetcher: &mut Fetcher) -> Result<SiteInfo> {
         let v = self.query(
             fetcher,
@@ -340,48 +497,88 @@ impl MediaWiki {
         };
         let path = general["articlepath"].as_str().unwrap_or("/wiki/$1");
         Ok(SiteInfo {
+            name: String::from(general["sitename"].as_str().unwrap_or("the wiki")),
+            language: general["lang"].as_str().map(String::from),
             license,
             article_url: alloc::format!("{server}{path}"),
         })
     }
 
-    /// Article titles in a category (`Category:Salmon Run Next Wave`), not
-    /// descending into subcategories
-    pub fn category(&self, fetcher: &mut Fetcher, category: &str) -> Result<Vec<String>> {
-        let mut titles = Vec::new();
-        let mut cont = String::new();
-        loop {
-            let params = alloc::format!(
-                "action=query&list=categorymembers&cmtitle={}&cmnamespace=0&cmlimit=500{cont}",
-                encode(category)
-            );
-            let v = self.query(fetcher, &params)?;
-            for m in v["query"]["categorymembers"]
-                .as_array()
-                .into_iter()
-                .flatten()
-            {
-                if let Some(t) = m["title"].as_str() {
-                    titles.push(String::from(t));
-                }
+    /// Pages from one `pages` answer
+    fn listed(v: &serde_json::Value, out: &mut Vec<Listed>) {
+        for p in v["query"]["pages"].as_array().into_iter().flatten() {
+            if p.get("missing").is_some() || p.get("invalid").is_some() {
+                continue;
             }
-            match v["continue"]["cmcontinue"].as_str() {
-                Some(c) => cont = alloc::format!("&cmcontinue={}", encode(c)),
-                None => return Ok(titles),
+            if let Some(title) = p["title"].as_str() {
+                out.push(Listed {
+                    title: String::from(title),
+                    ns: p["ns"].as_i64().unwrap_or(0),
+                    revision: p["lastrevid"].as_u64().unwrap_or(0),
+                });
             }
         }
+    }
+
+    /// The articles and subcategories of a category (`Category:Salmon Run`),
+    /// with their latest revisions
+    pub fn members(&self, fetcher: &mut Fetcher, category: &str) -> Result<Vec<Listed>> {
+        let params = alloc::format!(
+            "action=query&generator=categorymembers&gcmtitle={}&gcmnamespace=0%7C{CATEGORY_NS}&gcmlimit=500&prop=info",
+            encode(category)
+        );
+        let mut out = Vec::new();
+        self.query_all(fetcher, &params, &mut |v| Self::listed(v, &mut out))?;
+        out.sort_by(|a, b| a.title.cmp(&b.title));
+        Ok(out)
+    }
+
+    /// Titles of the articles a page links to
+    pub fn links(&self, fetcher: &mut Fetcher, title: &str) -> Result<Vec<String>> {
+        let params = alloc::format!(
+            "action=query&prop=links&titles={}&plnamespace=0&pllimit=max&redirects=1",
+            encode(title)
+        );
+        let mut out = Vec::new();
+        self.query_all(fetcher, &params, &mut |v| {
+            for p in v["query"]["pages"].as_array().into_iter().flatten() {
+                for l in p["links"].as_array().into_iter().flatten() {
+                    if let Some(t) = l["title"].as_str() {
+                        out.push(String::from(t));
+                    }
+                }
+            }
+        })?;
+        Ok(out)
+    }
+
+    /// The latest revisions of pages by title (redirects followed; pages
+    /// that do not exist are left out)
+    pub fn latest(&self, fetcher: &mut Fetcher, titles: &[String]) -> Result<Vec<Listed>> {
+        let mut out = Vec::new();
+        for group in titles.chunks(TITLES_PER_REQUEST) {
+            let titles: Vec<String> = group.iter().map(|t| encode(t)).collect();
+            let params = alloc::format!(
+                "action=query&prop=info&redirects=1&titles={}",
+                titles.join("%7C")
+            );
+            let v = self.query(fetcher, &params)?;
+            Self::listed(&v, &mut out);
+        }
+        Ok(out)
     }
 
     /// One article's rendered content
     pub fn page(&self, fetcher: &mut Fetcher, title: &str) -> Result<WikiPage> {
         let params = alloc::format!(
-            "action=parse&page={}&prop=text&redirects=1&disableeditsection=1",
+            "action=parse&page={}&prop=text%7Crevid&redirects=1&disableeditsection=1",
             encode(title)
         );
         let v = self.query(fetcher, &params)?;
         Ok(WikiPage {
             title: String::from(v["parse"]["title"].as_str().unwrap_or(title)),
             html: String::from(v["parse"]["text"].as_str().unwrap_or_default()),
+            revision: v["parse"]["revid"].as_u64().unwrap_or(0),
         })
     }
 }

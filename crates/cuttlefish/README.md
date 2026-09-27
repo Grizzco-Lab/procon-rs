@@ -25,7 +25,9 @@ cuttlefish ingest inbox --reimport 'stat.ink-3.128.4.zip'   # forget what a file
 cuttlefish ingest file fundamentals.pdf --source guide --license "by permission of the authors"
 cuttlefish ingest url https://example.org/guide --source guide
 cuttlefish ingest url --sitemap https://example.org/sitemap.xml --max-pages 100
-cuttlefish ingest url --mediawiki https://wiki.example.org/w/api.php --category "Category:Salmon Run"
+cuttlefish ingest url "https://docs.google.com/spreadsheets/d/<id>/edit" --all-tabs   # every tab of a sheet
+cuttlefish ingest wiki https://splatoonwiki.org/wiki/Category:Salmon_Run --depth 2 --dry-run
+cuttlefish ingest site https://example.org/ --skip /app/ --max-pages 50 --dry-run
 cuttlefish ingest youtube https://www.youtube.com/playlist?list=...
 cuttlefish ingest discord-export vod-review.json
 DISCORD_BOT_TOKEN=... cuttlefish ingest discord-bot --channel 123456789012345678
@@ -68,7 +70,8 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   digest.md          curated fundamentals, sent with every request (optional)
   raw/<kind>/        pages, subtitles, exports as received
   docs/<id>.json     processed documents with source, url or inbox path, title,
-                     language, license, attribution, fetch time, weight and text
+                     language, license, attribution, revision (wiki pages),
+                     fetch time, weight and text
   index/             meta.json, entries.jsonl, vectors.f32
 ~/.cache/procon-cuttlefish/ models/, thumbs/, unpack/: on this machine only
 ```
@@ -192,9 +195,10 @@ skipped and why, failed, gone.
 | Source | How | Notes |
 |---|---|---|
 | Guides ("Overfishing Fundamentals", Lenny, ...) | `ingest file` (md, txt, html, pdf) or `ingest url` | `--source guide` (weight 1.15); record the license with `--license` |
-| Inkipedia, other MediaWiki wikis | `ingest url --mediawiki <api.php> --category ...` | Article content through the API; the site's license is read from `siteinfo` (Inkipedia: CC BY-NC-SA) and kept per document. See the note below |
-| Other sites, stat.ink docs | `ingest url` (urls, `--list`, `--sitemap`) | robots.txt obeyed, one request per site every 3 s or the site's `Crawl-delay` |
-| Google Docs, Sheets, Slides | `ingest url <the address you share>` | Read through their exports (see below); only files shared as "Anyone with the link can view" |
+| Inkipedia, other MediaWiki wikis | `ingest wiki <start pages or categories>` (the studio: **Wiki / site**, MediaWiki topic) | A whole topic through the API, re-runs fetch only changed pages; the wiki's license (from `siteinfo`) and "<wiki> contributors" kept per document. See "Whole wikis and sites" |
+| A whole site | `ingest site <start address>` (the studio: **Wiki / site**, Whole site) | Same host only, a page cap, assets and given paths skipped. See "Whole wikis and sites" |
+| Other pages, stat.ink docs | `ingest url` (urls, `--list`, `--sitemap`) | robots.txt obeyed, one request per site every 3 s or the site's `Crawl-delay` |
+| Google Docs, Sheets, Slides | `ingest url <the address you share>` | Read through their exports (see below); only files shared as "Anyone with the link can view"; a sheet's tabs one by one with `--all-tabs` |
 | YouTube | `ingest youtube <video/playlist/channel>` | `yt-dlp` fetches subtitles and metadata only; uploaded subtitles preferred over auto captions |
 | Discord #vod-review | `ingest discord-export`, `ingest discord-bot`, or `fetch discord` + `ingest inbox` | The export and the bot are the sanctioned ways; `fetch discord` reads with your own account, against Discord's terms. See below |
 | Twitter/X, Twitch | not automated | X's API terms and pricing rule out scraping; save the posts or threads you value as text and `ingest file`. Twitch VODs have no subtitles (a speech-to-text step would be needed) |
@@ -206,9 +210,13 @@ supported... File Edit View"). An address on `docs.google.com`
 is read through its export instead (`google.rs`): a document as Markdown
 (`export?format=md`; headings kept for the chunker, embedded images, heading
 anchors and the table of contents dropped), else plain text, else `.docx`; a
-sheet as CSV (`export?format=csv`, the sheet of the address's `gid`, else the
-first), which becomes a name table in the glossary when it holds names in
-several languages and a text document otherwise, like a CSV in the inbox;
+sheet as CSV (`export?format=csv`, the tab of the address's `gid`), which
+becomes a name table in the glossary when it holds names in several languages
+and a text document otherwise, like a CSV in the inbox. A sheet's address
+without a `gid`, or any with `--all-tabs` (the studio's **Every tab of a
+Google Sheet**), brings every tab, each a document of its own under its
+tab's address: the tabs are listed from the sheet's HTML view
+(`/htmlview`);
 slides as text (`export/txt`). The document is stored under the address you
 gave, so importing it again with `--refresh` (in the studio: **Again if
 stored**) replaces it. Exports work only for files shared publicly: in Google
@@ -335,14 +343,67 @@ pauses, so 20,000 messages (200 pages) take roughly 20 to 30 minutes, and
 each thread or forum post at least one more request; a forum with 300 posts
 adds about half an hour.
 
+**Whole wikis and sites** (`wiki.rs`). Both are as polite as the rest: one
+request at a time, `--delay-s` (default 2 s, at least 1) or the site's
+`Crawl-delay` when longer, every `robots.txt` rule for `Cuttlefish` (else
+`*`), and a `robots.txt` answering with a server error stops the import. A
+`--dry-run` (the studio's **Dry run: count the pages first**, on by
+default) tells what is in scope and how long fetching it would take, and
+stores nothing. Progress and **Cancel** work as for any import.
+
+- *MediaWiki topic* (`ingest wiki`): start pages and categories, as titles
+  or `/wiki/` addresses (the API is `/w/api.php` on that host unless
+  `--api` says otherwise). A category brings its articles, and its
+  subcategories' down to `--depth` levels (default 2) except those left out
+  with `--exclude`; a start page brings itself and, with `--link-match
+  <word>`, the pages it links to whose titles contain the word. Listing
+  gives each page's latest revision; pages are fetched rendered
+  (`action=parse`) and kept as text with headings (hidden infobox rows,
+  navigation boxes, edit links and references dropped). Each document
+  records its url, `revision`, the wiki's license and "<wiki> contributors";
+  a re-run fetches only the pages whose revision changed (`--refresh`
+  fetches all). Every request carries `maxlag=5`: a lagging or busy wiki
+  is left alone for the time it asks (or half a minute) and asked again.
+  Raw pages go to `raw/wiki/`.
+- *Whole site* (`ingest site`): from a start address, the pages on the same
+  host reached through links and through the sitemaps `robots.txt` names
+  (else `/sitemap.xml`), up to `--max-pages` (default 100). Images,
+  scripts, styles, fonts and feeds are skipped, and so are the path
+  prefixes given with `--skip` (an app such as a map viewer). A page drawn
+  by JavaScript is noted and not kept. The notes end with the sections
+  found (pages per first path segment). A re-run reads the links of pages
+  already stored from their raw copy (`raw/web/`) instead of fetching them
+  again; `--refresh` fetches everything. A dry run needs no page when the
+  site has a sitemap; without one it still fetches pages to find links,
+  but keeps nothing.
+
 **Inkipedia.** Its `robots.txt` allows general crawlers (`*`) on articles and
-`api.php`, but disallows AI crawlers such as ClaudeBot and GPTBot entirely.
-Cuttlefish identifies as itself and is run by you for personal study, so the
-rules for `*` apply to it, but feeding the wiki to a model is close to what
-those lines refuse. Worth asking the Inkipedia admins, or using a database
-dump they publish, before a large import; CC BY-NC-SA also means
-non-commercial use with attribution, and derived text shared under the
-same license.
+`api.php` (it disallows `/w/index.php`, `Help:` and `MediaWiki:` pages and
+names no `Crawl-delay` for `*`), but disallows AI crawlers such as ClaudeBot
+and GPTBot entirely. Cuttlefish identifies as itself and is run by you for
+personal study, so the rules for `*` apply to it, but feeding the wiki to a
+model is close to what those lines refuse; import it only for your own
+private use, and ask the Inkipedia admins (or use a database dump they
+publish) for anything more. The license the wiki states in `siteinfo` is
+kept per document (in September 2026: Creative Commons
+Attribution-ShareAlike 4.0): attribution, and derived text shared under
+the same license.
+
+The Salmon Run topic, as a dry run counts it (107 pages at depth 2, about
+4 minutes):
+
+```bash
+cuttlefish ingest wiki https://splatoonwiki.org/wiki/Category:Salmon_Run \
+  "Category:Salmon Run Next Wave" https://splatoonwiki.org/wiki/Salmon_Run \
+  --depth 2 --exclude Category:Mechanics --exclude Category:Collectibles \
+  --exclude "Category:Salmon Run music" \
+  --link-match salmon --link-match grizzco --link-match "big run" --link-match eggstra \
+  --dry-run
+```
+
+`Category:Mechanics` and `Category:Collectibles` are subcategories of
+`Category:Salmon Run` that hold the whole game's mechanics and collectibles
+(Octo Expansion's 8-balls, Sunken Scrolls, ...), so they are left out.
 
 ## Library API (for the studio)
 

@@ -17,6 +17,8 @@ pub struct Page {
     pub language: Option<String>,
     /// `<link rel="license">` target
     pub license: Option<String>,
+    /// The site's name (`<meta property="og:site_name">`)
+    pub site_name: Option<String>,
     /// Article text
     pub text: String,
 }
@@ -63,6 +65,12 @@ pub fn convert(html: &str) -> Page {
         .next()
         .and_then(|e| e.value().attr("href"))
         .map(String::from);
+    let site_name = doc
+        .select(&sel("meta[property=\"og:site_name\"]"))
+        .next()
+        .and_then(|e| e.value().attr("content"))
+        .map(collapse)
+        .filter(|n| !n.is_empty());
     let root = [
         "#mw-content-text .mw-parser-output",
         "#mw-content-text",
@@ -82,18 +90,22 @@ pub fn convert(html: &str) -> Page {
         title,
         language,
         license,
+        site_name,
         text: tidy(&text),
     }
 }
 
 /// Phrases of pages that draw their content with JavaScript, lowercase
-const SHELL_PHRASES: [&str; 6] = [
+const SHELL_PHRASES: [&str; 8] = [
     "this browser version is no longer supported",
     "enable javascript",
     "javascript is required",
     "javascript is disabled",
     "requires javascript",
     "turn on javascript",
+    "loading...",
+    // "Loading..." in Japanese, where a script fills the page in
+    "\u{8aad}\u{307f}\u{8fbc}\u{307f}\u{4e2d}...",
 ];
 
 /// Text shorter than this may be a page shell, in characters
@@ -137,10 +149,22 @@ fn collapse(s: &str) -> String {
         .join(" ")
 }
 
+/// Whether an element is hidden by its own style (`display: none`, as the
+/// empty rows of a wiki's infobox)
+fn hidden(el: ElementRef) -> bool {
+    el.value().attr("style").is_some_and(|s| {
+        s.split(';').any(|decl| {
+            decl.split_once(':').is_some_and(|(k, v)| {
+                k.trim().eq_ignore_ascii_case("display") && v.trim().starts_with("none")
+            })
+        })
+    })
+}
+
 fn walk(el: ElementRef, out: &mut String) {
     let v = el.value();
     let name = v.name();
-    if SKIP_TAGS.contains(&name) || v.classes().any(|c| SKIP_CLASSES.contains(&c)) {
+    if SKIP_TAGS.contains(&name) || v.classes().any(|c| SKIP_CLASSES.contains(&c)) || hidden(el) {
         return;
     }
     if let Some(level) = name
@@ -249,6 +273,9 @@ mod tests {
             .is_some()
         );
         assert_eq!(shell_reason(100, "tiny"), Some("no text on the page"));
+        // A schedule a script fills in, still loading
+        let loading = "## Schedule (latest 5)\n\nLatest 5 / all\n\n\u{8aad}\u{307f}\u{8fbc}\u{307f}\u{4e2d}...\n\nVer.0.4.9";
+        assert!(shell_reason(6_000, loading).is_some());
         // Little text in a huge page
         let short = "Salmon Run schedule and rotation for this week, updated daily.";
         assert!(shell_reason(2_000_000, short).is_some());
@@ -263,5 +290,10 @@ mod tests {
     fn converts_fragments() {
         let t = fragment_text("<div><h3>Tips</h3><p>Low tide.</p></div>");
         assert_eq!(t, "### Tips\n\nLow tide.");
+        // An infobox's hidden rows are left out
+        let t = fragment_text(
+            "<table><tr style=\"display: none;\"><td>Full name</td><td></td></tr><tr style=\"padding: 5px\"><td>HP</td><td>1,200</td></tr></table>",
+        );
+        assert_eq!(t, "HP | 1,200");
     }
 }

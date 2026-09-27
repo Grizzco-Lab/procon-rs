@@ -48,6 +48,8 @@
     documents: [],
     /** Import form's kind */
     kind: "web",
+    /** What the Wiki / site kind imports: `mediawiki` or `site` */
+    topic: "mediawiki",
     pollTimer: null,
     /** The uploads so far, one after another */
     uploads: Promise.resolve(),
@@ -203,24 +205,57 @@
 
   // --------------------------------------------------------------- import
 
+  /** The import button's words: the inbox's, a dry run's or an import's */
+  function goLabel() {
+    if (k.kind === "inbox") return t("k.inbox.import");
+    if (k.kind === "wiki" && $("k-dry-run").checked) return t("k.countPages");
+    return t("k.import");
+  }
+
+  /** Shows the fields of the kind (`data-for`) and, for a wiki or site,
+   * of the topic (`data-topic`) */
+  function showFields() {
+    const form = $("k-import-form");
+    for (const el of form.querySelectorAll("[data-for], [data-topic]")) {
+      const kind =
+        !el.dataset.for || el.dataset.for.split(" ").includes(k.kind);
+      const topic = !el.dataset.topic || el.dataset.topic === k.topic;
+      el.hidden = !(kind && topic);
+    }
+    for (const button of $("k-topics").querySelectorAll("[data-topic-pick]")) {
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.topicPick === k.topic),
+      );
+    }
+    $("k-import-go").textContent = goLabel();
+  }
+
   function setKind(kind) {
     k.kind = kind;
     remember("kind", kind);
     for (const button of $("k-kinds").querySelectorAll("[data-kind]")) {
       button.setAttribute("aria-pressed", String(button.dataset.kind === kind));
     }
-    for (const el of $("k-import-form").querySelectorAll("[data-for]")) {
-      el.hidden = !el.dataset.for.split(" ").includes(kind);
-    }
-    $("k-import-go").textContent = t(
-      kind === "inbox" ? "k.inbox.import" : "k.import",
-    );
+    showFields();
     if (kind === "inbox" && k.shown) loadInbox();
   }
 
   $("k-kinds").addEventListener("click", (event) => {
     const button = event.target.closest("[data-kind]");
     if (button) setKind(button.dataset.kind);
+  });
+
+  $("k-topics").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-topic-pick]");
+    if (!button) return;
+    k.topic = button.dataset.topicPick;
+    remember("topic", k.topic);
+    showFields();
+  });
+
+  $("k-dry-run").addEventListener("change", () => {
+    $("k-import-go").textContent = goLabel();
   });
 
   const lines = (id) =>
@@ -236,16 +271,37 @@
       max_pages: number("k-max-pages"),
       delay_s: number("k-delay"),
     };
+    const topic = {
+      max_pages: number("k-topic-max"),
+      delay_s: number("k-topic-delay"),
+      dry_run: $("k-dry-run").checked,
+    };
     const request = {
       inbox: { kind: "inbox" },
-      web: { kind: "web", urls: lines("k-urls"), ...web },
-      sitemap: { kind: "web", sitemap: $("k-sitemap").value.trim(), ...web },
-      wiki: {
+      web: {
         kind: "web",
-        mediawiki: $("k-api").value.trim(),
-        categories: lines("k-categories"),
+        urls: lines("k-urls"),
+        all_tabs: $("k-all-tabs").checked,
         ...web,
       },
+      sitemap: { kind: "web", sitemap: $("k-sitemap").value.trim(), ...web },
+      wiki:
+        k.topic === "site"
+          ? {
+              kind: "site",
+              start: $("k-site-start").value.trim(),
+              skip: lines("k-skip"),
+              ...topic,
+            }
+          : {
+              kind: "wiki",
+              start: lines("k-wiki-start"),
+              api: $("k-api").value.trim() || undefined,
+              depth: Number($("k-depth").value),
+              exclude: lines("k-exclude"),
+              link_match: lines("k-link-match"),
+              ...topic,
+            },
       youtube: {
         kind: "youtube",
         url: $("k-youtube").value.trim(),
@@ -855,9 +911,7 @@
   window.addEventListener("lang-change", () => {
     drawStats();
     if (k.documents.length) drawDocuments();
-    $("k-import-go").textContent = t(
-      k.kind === "inbox" ? "k.inbox.import" : "k.import",
-    );
+    $("k-import-go").textContent = goLabel();
     if (k.shown) {
       pollJobs();
       loadOverview();
@@ -867,5 +921,6 @@
     }
   });
 
+  k.topic = remembered("topic", "mediawiki") === "site" ? "site" : "mediawiki";
   setKind(remembered("kind", "inbox"));
 })();

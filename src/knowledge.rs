@@ -13,7 +13,9 @@
 //!
 //! Imports run one at a time on a thread of their own, with a log the page
 //! polls; web pages go through the crate's polite crawler (robots.txt, one
-//! request per site every few seconds). The inbox (`<knowledge>/inbox/`,
+//! request per site every few seconds), and so do whole wiki topics and
+//! sites (`cuttlefish::wiki`: a dry run counts what is in scope first; a
+//! re-run fetches only what changed). The inbox (`<knowledge>/inbox/`,
 //! see `cuttlefish::inbox`) takes files dropped there by hand or uploaded
 //! from the page, and its import sorts them into documents, glossary terms
 //! and the asset catalogue, with a report.
@@ -79,7 +81,7 @@ use cuttlefish::llm::{Client, Settings};
 use cuttlefish::review::{self, ChatReply, ChatRequest};
 use cuttlefish::slang::{self, AliasEdit, SuggestOptions, UserGlossary};
 use cuttlefish::store::{self, Store};
-use cuttlefish::{inbox, tables};
+use cuttlefish::{inbox, tables, wiki};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -238,8 +240,12 @@ pub enum Source {
         #[serde(default)]
         reimport: Option<String>,
     },
-    /// Web pages, a sitemap or MediaWiki categories
+    /// Web pages or a sitemap
     Web(Web),
+    /// A MediaWiki topic: start pages and categories, through the API
+    Wiki(wiki::Wiki),
+    /// A whole site from a start address, on its host only
+    Site(wiki::Site),
     /// A YouTube video, playlist or channel's transcripts
     Youtube {
         url: String,
@@ -328,27 +334,64 @@ impl IngestRequest {
             }
             Source::Web(web) => {
                 trim(&mut web.urls);
-                trim(&mut web.categories);
-                for url in web.urls.iter().chain(&web.sitemap).chain(&web.mediawiki) {
+                for url in web.urls.iter().chain(&web.sitemap) {
                     ensure!(is_url(url), "not a web address: {url}");
                 }
-                ensure!(
-                    web.mediawiki.is_none() || !web.categories.is_empty(),
-                    "give a category for the wiki"
-                );
                 ensure!(
                     web.max_pages >= 1 && web.delay_s.is_finite(),
                     "bad page limit or delay"
                 );
-                Ok(match (&web.mediawiki, &web.sitemap) {
-                    (Some(api), _) => format!("MediaWiki {} · {api}", web.categories.join(", ")),
-                    (None, Some(sitemap)) => format!("Sitemap {sitemap}"),
-                    (None, None) if web.urls.len() == 1 => format!("Page {}", web.urls[0]),
-                    (None, None) => {
-                        ensure!(!web.urls.is_empty(), "give a url, a sitemap or a wiki");
+                Ok(match &web.sitemap {
+                    Some(sitemap) => format!("Sitemap {sitemap}"),
+                    None if web.urls.len() == 1 => format!("Page {}", web.urls[0]),
+                    None => {
+                        ensure!(!web.urls.is_empty(), "give a url or a sitemap");
                         format!("{} pages", web.urls.len())
                     }
                 })
+            }
+            Source::Wiki(w) => {
+                trim(&mut w.start);
+                trim(&mut w.exclude);
+                trim(&mut w.link_match);
+                w.api = w
+                    .api
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|a| !a.is_empty())
+                    .map(String::from);
+                ensure!(!w.start.is_empty(), "give a start page or category");
+                if let Some(api) = &w.api {
+                    ensure!(is_url(api), "not a web address: {api}");
+                } else {
+                    ensure!(
+                        w.start.iter().any(|s| is_url(s)),
+                        "give the wiki's api.php, or a start page's address"
+                    );
+                }
+                ensure!(
+                    w.max_pages >= 1 && w.delay_s.is_finite(),
+                    "bad page limit or delay"
+                );
+                Ok(format!(
+                    "{}Wiki {}",
+                    if w.dry_run { "Dry run: " } else { "" },
+                    w.start.join(", ")
+                ))
+            }
+            Source::Site(site) => {
+                site.start = site.start.trim().to_string();
+                trim(&mut site.skip);
+                ensure!(is_url(&site.start), "give the site's address");
+                ensure!(
+                    site.max_pages >= 1 && site.delay_s.is_finite(),
+                    "bad page limit or delay"
+                );
+                Ok(format!(
+                    "{}Site {}",
+                    if site.dry_run { "Dry run: " } else { "" },
+                    site.start
+                ))
             }
             Source::Youtube { url, .. } => {
                 *url = url.trim().to_string();
@@ -880,9 +923,18 @@ impl Knowledge {
     /// Start an import on a thread of its own
     pub fn ingest(self: &Arc<Self>, mut request: IngestRequest) -> Result<IngestJob, Status> {
         let what = request.check()?;
+        let dry_run = match &request.source {
+            Source::Wiki(w) => w.dry_run,
+            Source::Site(s) => s.dry_run,
+            _ => false,
+        };
         self.start_job(what, move |knowledge, id| {
             let added = knowledge.run_import(id, &request)?;
-            Ok(format!("done: {added} documents added"))
+            Ok(if dry_run {
+                "dry run done: nothing stored".to_string()
+            } else {
+                format!("done: {added} documents added")
+            })
         })
     }
 
@@ -994,6 +1046,8 @@ impl Knowledge {
                 })
             }
             Source::Web(web) => ingest::web(&mut sink, web, meta),
+            Source::Wiki(w) => wiki::wiki(&mut sink, w, meta),
+            Source::Site(site) => wiki::site(&mut sink, site, meta),
             Source::Youtube { url, max } => {
                 ingest::youtube(&mut sink, url, ingest::SUB_LANGS, max.unwrap_or(50), meta)
             }
@@ -1029,6 +1083,10 @@ struct JobSink<'a> {
 impl ingest::Sink for JobSink<'_> {
     fn has(&self, key: &str) -> bool {
         self.loaded.store.read().unwrap().has(key)
+    }
+
+    fn revision(&self, key: &str) -> Option<u64> {
+        self.loaded.store.read().unwrap().document(key)?.revision
     }
 
     fn add(&mut self, doc: &Document) -> Result<usize> {
@@ -1453,17 +1511,44 @@ mod tests {
         assert_eq!(web.max_pages, 200);
         assert_eq!(r.meta.license.as_deref(), Some("CC BY"));
 
-        let mut wiki = request(
-            r#"{"kind": "web", "mediawiki": "https://wiki.example/w/api.php", "categories": ["Category:Salmon Run"], "max_pages": 20}"#,
+        let mut w = request(
+            r#"{"kind": "wiki", "start": [" https://wiki.example/wiki/Category:Salmon_Run ", ""], "depth": 1, "exclude": ["Category:Mechanics"], "dry_run": true}"#,
         )
         .unwrap();
+        assert_eq!(
+            w.check().unwrap(),
+            "Dry run: Wiki https://wiki.example/wiki/Category:Salmon_Run"
+        );
+        let Source::Wiki(spec) = &w.source else {
+            panic!("not a wiki")
+        };
+        assert_eq!((spec.depth, spec.max_pages), (1, 500));
+        // A title alone needs the api
         assert!(
-            wiki.check()
+            request(r#"{"kind": "wiki", "start": ["Category:Salmon Run"]}"#)
                 .unwrap()
-                .starts_with("MediaWiki Category:Salmon Run")
+                .check()
+                .is_err()
         );
         assert!(
-            request(r#"{"kind": "web", "mediawiki": "https://w/api.php"}"#)
+            request(
+                r#"{"kind": "wiki", "start": ["Salmon Run"], "api": "https://w.example/w/api.php"}"#
+            )
+            .unwrap()
+            .check()
+            .is_ok()
+        );
+        let mut site = request(
+            r#"{"kind": "site", "start": "https://s.example/", "skip": ["/map/", " "], "max_pages": 30}"#,
+        )
+        .unwrap();
+        assert_eq!(site.check().unwrap(), "Site https://s.example/");
+        let Source::Site(spec) = &site.source else {
+            panic!("not a site")
+        };
+        assert_eq!(spec.skip, ["/map/"]);
+        assert!(
+            request(r#"{"kind": "site", "start": "s.example"}"#)
                 .unwrap()
                 .check()
                 .is_err()

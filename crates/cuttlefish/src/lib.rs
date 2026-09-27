@@ -1,8 +1,9 @@
 //! Cuttlefish: an AI reviewer for Splatoon 3 Salmon Run gameplay, with a
 //! knowledge store far larger than a model's context.
 //!
-//! Sources are imported as [`doc::Document`]s (web pages and wikis through
-//! [`crawl`] and [`html`], Google Docs, Sheets and Slides through
+//! Sources are imported as [`doc::Document`]s (web pages through [`crawl`]
+//! and [`html`], whole wiki topics and sites through [`wiki`], Google Docs,
+//! Sheets and Slides through
 //! [`google`], YouTube transcripts through [`youtube`], Discord
 //! conversations through [`discord`], local files through [`mod@file`]), split
 //! into chunks ([`chunk`]), embedded ([`embed`]) and indexed ([`index`]) in a
@@ -46,4 +47,5 @@ pub mod review;
 pub mod slang;
 pub mod store;
 pub mod tables;
+pub mod wiki;
 pub mod youtube;

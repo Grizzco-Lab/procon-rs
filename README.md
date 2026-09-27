@@ -334,9 +334,12 @@ asking is the chat's job, translating and looking up the glossary the
 Translate view's. It is laid out in two columns, feeding and searching on the
 left, what is there on the right:
 
-- **Import**: the **Inbox** (below), web pages, a sitemap or a MediaWiki
-  category (robots.txt obeyed, one request per site every few seconds),
-  YouTube subtitles, files on the PC (markdown, text, HTML, PDF, Word, subtitles),
+- **Import**: the **Inbox** (below), web pages (every tab of a Google Sheet
+  if asked), a sitemap, **Wiki / site**: a MediaWiki topic (start pages and
+  categories with their subcategories, a depth limit; a re-run fetches only
+  changed pages) or a whole site on its own host (a page cap), each with a
+  dry run that counts the pages first (robots.txt obeyed, one request per
+  site every few seconds), YouTube subtitles, files on the PC (markdown, text, HTML, PDF, Word, subtitles),
   a Discord export or a Discord bot; one import at a time, with its log and a
   Cancel button;
 - **Search**, the nearest chunks with their source, link, license and score,

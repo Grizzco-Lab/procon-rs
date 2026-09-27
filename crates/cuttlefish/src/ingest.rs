@@ -1,5 +1,6 @@
-//! Importing sources into the store: web pages (urls, sitemaps, MediaWiki
-//! categories), YouTube transcripts, Discord conversations and local files.
+//! Importing sources into the store: web pages (urls, sitemaps), YouTube
+//! transcripts, Discord conversations and local files; whole wikis and
+//! sites are [`crate::wiki`]'s.
 //!
 //! Each importer turns its source into [`Document`]s and hands them to a
 //! [`Sink`], which stores them (the CLI prints, the studio keeps a job log).
@@ -8,9 +9,11 @@
 //! not stop an import. So is a page that is only the shell of a JavaScript
 //! app ([`html::shell_reason`]); Google Docs, Sheets and Slides are read
 //! through their exports instead ([`google`]), a sheet with names in
-//! several languages becoming a name table of the glossary.
+//! several languages becoming a name table of the glossary. A sheet's
+//! address without a `gid` (or any, with [`Web::all_tabs`]) brings every
+//! tab.
 
-use crate::crawl::{Fetcher, MediaWiki, sitemap_locs};
+use crate::crawl::{Fetcher, sitemap_locs};
 use crate::doc::{Document, SourceKind, doc_id, guess_language};
 use crate::google::{self, Format, GoogleFile};
 use crate::inbox::{self, INBOX};
@@ -67,6 +70,11 @@ impl Meta {
 pub trait Sink {
     /// Whether the document of this url or path is stored already
     fn has(&self, key: &str) -> bool;
+    /// The source revision the stored document of this url was made from
+    /// ([`Document::revision`]), if any
+    fn revision(&self, _key: &str) -> Option<u64> {
+        None
+    }
     /// Store a document; returns its number of chunks
     fn add(&mut self, doc: &Document) -> Result<usize>;
     /// Remove the document with this id (an inbox file imported again);
@@ -93,7 +101,7 @@ pub trait Sink {
 }
 
 /// Apply `meta` and add the document, noting it
-fn add(sink: &mut dyn Sink, mut doc: Document, meta: &Meta) -> Result<()> {
+pub(crate) fn add(sink: &mut dyn Sink, mut doc: Document, meta: &Meta) -> Result<()> {
     meta.apply(&mut doc);
     let n = sink.add(&doc)?;
     sink.note(&alloc::format!("+ {} ({n} chunks)", doc.title));
@@ -101,7 +109,7 @@ fn add(sink: &mut dyn Sink, mut doc: Document, meta: &Meta) -> Result<()> {
 }
 
 /// Stop if the sink asks to
-fn check(sink: &dyn Sink) -> Result<()> {
+pub(crate) fn check(sink: &dyn Sink) -> Result<()> {
     if sink.cancelled() {
         bail!("cancelled");
     }
@@ -116,16 +124,13 @@ pub struct Web {
     pub urls: Vec<String>,
     /// Sitemap (or sitemap index) url
     pub sitemap: Option<String>,
-    /// MediaWiki `api.php` url, used with `categories`
-    pub mediawiki: Option<String>,
-    /// MediaWiki categories to import
-    pub categories: Vec<String>,
-    /// At most this many pages from the urls and the sitemap, and as many
-    /// from the categories
+    /// At most this many pages from the urls and the sitemap
     pub max_pages: usize,
     /// Seconds between requests to one site (robots.txt may ask more); at
     /// least 1
     pub delay_s: f32,
+    /// Every tab of a Google Sheet, even when its address names one
+    pub all_tabs: bool,
 }
 
 impl Default for Web {
@@ -133,52 +138,18 @@ impl Default for Web {
         Web {
             urls: Vec::new(),
             sitemap: None,
-            mediawiki: None,
-            categories: Vec::new(),
             max_pages: 200,
             delay_s: 3.0,
+            all_tabs: false,
         }
     }
 }
 
-/// Import web pages, a sitemap's pages and MediaWiki categories, politely
-/// (robots.txt, one request per site every `delay_s`); returns the number
-/// of documents added
+/// Import web pages and a sitemap's pages, politely (robots.txt, one
+/// request per site every `delay_s`); returns the number of documents added
 pub fn web(sink: &mut dyn Sink, web: &Web, meta: &Meta) -> Result<usize> {
     let mut fetcher = Fetcher::new(Duration::from_secs_f32(web.delay_s.max(1.0)));
     let mut added = 0;
-    if let Some(api) = &web.mediawiki {
-        let wiki = MediaWiki { api: api.clone() };
-        let info = wiki.site_info(&mut fetcher)?;
-        let mut titles = Vec::new();
-        for c in &web.categories {
-            titles.extend(wiki.category(&mut fetcher, c)?);
-        }
-        titles.truncate(web.max_pages);
-        sink.note(&alloc::format!("{} wiki pages listed", titles.len()));
-        for (i, title) in titles.iter().enumerate() {
-            check(sink)?;
-            sink.progress(i, titles.len());
-            let url = info.page_url(title);
-            if !meta.refresh && sink.has(&url) {
-                continue;
-            }
-            let page = match wiki.page(&mut fetcher, title) {
-                Ok(p) => p,
-                Err(e) => {
-                    sink.note(&alloc::format!("skipped {title}: {e:#}"));
-                    continue;
-                }
-            };
-            save_raw(&sink.raw_dir("wiki"), &url, "html", page.html.as_bytes())?;
-            let text = html::fragment_text(&page.html);
-            let mut doc = Document::new(SourceKind::Wiki, &url, page.title, text);
-            doc.url = Some(url);
-            doc.license = info.license.clone();
-            add(sink, doc, meta)?;
-            added += 1;
-        }
-    }
     let mut all = web.urls.clone();
     if let Some(sitemap) = &web.sitemap {
         let mut queue = alloc::vec![sitemap.clone()];
@@ -193,6 +164,7 @@ pub fn web(sink: &mut dyn Sink, web: &Web, meta: &Meta) -> Result<usize> {
         }
     }
     all.truncate(web.max_pages);
+    let all = sheet_tabs(sink, &mut fetcher, all, web.all_tabs)?;
     if !all.is_empty() {
         sink.note(&alloc::format!("{} pages to fetch", all.len()));
     }
@@ -408,8 +380,47 @@ pub fn files(
     Ok(added)
 }
 
+/// The urls with each Google Sheet among them replaced by its tabs' (when
+/// its address names no tab, or with `all`), listed by the sheet's HTML
+/// view; a sheet whose tabs cannot be listed stays as it is
+fn sheet_tabs(
+    sink: &mut dyn Sink,
+    fetcher: &mut Fetcher,
+    urls: Vec<String>,
+    all: bool,
+) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    for url in urls {
+        let Some(GoogleFile::Sheet { id, gid }) = google::recognise(&url) else {
+            out.push(url);
+            continue;
+        };
+        if gid.is_some() && !all {
+            out.push(url);
+            continue;
+        }
+        check(sink)?;
+        let tabs = fetcher
+            .get(&google::tabs_url(&id))
+            .map(|html| google::tabs(&html))
+            .unwrap_or_default();
+        if tabs.is_empty() {
+            out.push(url);
+            continue;
+        }
+        let names: Vec<&str> = tabs.iter().map(|t| t.name.as_str()).collect();
+        sink.note(&alloc::format!(
+            "{} tabs in the sheet: {}",
+            tabs.len(),
+            names.join(", ")
+        ));
+        out.extend(tabs.iter().map(|t| google::tab_url(&id, &t.gid)));
+    }
+    Ok(out)
+}
+
 /// Keeps what was downloaded, named by the document id
-fn save_raw(dir: &Path, key: &str, ext: &str, body: &[u8]) -> Result<PathBuf> {
+pub(crate) fn save_raw(dir: &Path, key: &str, ext: &str, body: &[u8]) -> Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let path = dir.join(alloc::format!("{}.{ext}", doc_id(key)));
     std::fs::write(&path, body)?;
@@ -658,6 +669,6 @@ mod tests {
         let web: Web = serde_json::from_str(r#"{"urls": ["https://a"]}"#).unwrap();
         assert_eq!(web.max_pages, 200);
         assert_eq!(web.delay_s, 3.0);
-        assert!(web.sitemap.is_none());
+        assert!(web.sitemap.is_none() && !web.all_tabs);
     }
 }

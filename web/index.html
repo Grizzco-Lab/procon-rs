@@ -1791,7 +1791,7 @@
                   data-kind="wiki"
                   data-i18n="k.kind.wiki"
                 >
-                  Wiki category
+                  Wiki / site
                 </button>
                 <button
                   type="button"
@@ -1905,8 +1905,46 @@
                   placeholder="https://example.org/sitemap.xml"
                 />
               </label>
-              <label class="field" data-for="wiki">
-                <span class="readout-label">MediaWiki api.php</span>
+              <label class="check" data-for="web"
+                ><input type="checkbox" id="k-all-tabs" />
+                <span data-i18n="k.f.allTabs"
+                  >Every tab of a Google Sheet</span
+                ></label
+              >
+              <div class="k-kinds" data-for="wiki" id="k-topics">
+                <button
+                  type="button"
+                  class="mode-toggle"
+                  data-topic-pick="mediawiki"
+                  data-i18n="k.topic.mediawiki"
+                >
+                  MediaWiki topic
+                </button>
+                <button
+                  type="button"
+                  class="mode-toggle"
+                  data-topic-pick="site"
+                  data-i18n="k.topic.site"
+                >
+                  Whole site
+                </button>
+              </div>
+              <label class="field" data-for="wiki" data-topic="mediawiki">
+                <span class="readout-label" data-i18n="k.f.wikiStart"
+                  >Start pages or categories, titles or addresses, one per
+                  line</span
+                >
+                <textarea
+                  class="select cf-question"
+                  id="k-wiki-start"
+                  rows="3"
+                  placeholder="https://splatoonwiki.org/wiki/Category:Salmon_Run"
+                ></textarea>
+              </label>
+              <label class="field" data-for="wiki" data-topic="mediawiki">
+                <span class="readout-label" data-i18n="k.f.api"
+                  >api.php (found from an address when empty)</span
+                >
                 <input
                   class="select"
                   id="k-api"
@@ -1914,18 +1952,97 @@
                   placeholder="https://splatoonwiki.org/w/api.php"
                 />
               </label>
-              <label class="field" data-for="wiki">
-                <span class="readout-label" data-i18n="k.f.categories"
-                  >Categories, one per line</span
+              <label class="field" data-for="wiki" data-topic="mediawiki">
+                <span class="readout-label" data-i18n="k.f.exclude"
+                  >Categories left out, one per line (optional)</span
                 >
                 <textarea
                   class="select cf-question"
-                  id="k-categories"
+                  id="k-exclude"
                   rows="2"
-                  placeholder="Category:Salmon Run"
+                  placeholder="Category:Mechanics"
                 ></textarea>
               </label>
-              <div class="cf-row" data-for="web sitemap wiki">
+              <label class="field" data-for="wiki" data-topic="mediawiki">
+                <span class="readout-label" data-i18n="k.f.linkMatch"
+                  >Also pages a start page links to whose titles contain one of
+                  these words, one per line (optional)</span
+                >
+                <textarea
+                  class="select cf-question"
+                  id="k-link-match"
+                  rows="2"
+                  placeholder="salmon"
+                ></textarea>
+              </label>
+              <label class="field" data-for="wiki" data-topic="site">
+                <span class="readout-label" data-i18n="k.f.siteStart"
+                  >Start address (only its host is crawled)</span
+                >
+                <input
+                  class="select"
+                  id="k-site-start"
+                  type="url"
+                  placeholder="https://salmon-learn-nw.gungee.jp/"
+                />
+              </label>
+              <label class="field" data-for="wiki" data-topic="site">
+                <span class="readout-label" data-i18n="k.f.skip"
+                  >Paths skipped besides images and scripts, one per line
+                  (optional)</span
+                >
+                <textarea
+                  class="select cf-question"
+                  id="k-skip"
+                  rows="2"
+                  placeholder="/map/"
+                ></textarea>
+              </label>
+              <div class="cf-row" data-for="wiki">
+                <label class="check" data-topic="mediawiki"
+                  ><span data-i18n="k.f.depth">Subcategory levels</span>
+                  <input
+                    class="select num k-number"
+                    id="k-depth"
+                    type="number"
+                    min="0"
+                    value="2"
+                /></label>
+                <label class="check"
+                  ><span data-i18n="k.f.atMost">At most</span>
+                  <input
+                    class="select num k-number"
+                    id="k-topic-max"
+                    type="number"
+                    min="1"
+                    value="500"
+                  />
+                  <span data-i18n="k.f.pages">pages</span></label
+                >
+                <label class="check"
+                  ><span data-i18n="k.f.delay">one request per site every</span>
+                  <input
+                    class="select num k-number"
+                    id="k-topic-delay"
+                    type="number"
+                    min="1"
+                    step="0.5"
+                    value="2"
+                  />
+                  s</label
+                >
+              </div>
+              <label
+                class="check"
+                data-for="wiki"
+                title="Lists what is in scope and how long fetching it would take; stores nothing"
+                data-i18n-title="k.f.dryRunTitle"
+                ><input type="checkbox" id="k-dry-run" checked />
+                <span data-i18n="k.f.dryRun"
+                  >Dry run: count the pages first</span
+                ></label
+              >
+              <div class="cf-row" data-for="web sitemap">
                 <label class="check"
                   ><span data-i18n="k.f.atMost">At most</span>
                   <input

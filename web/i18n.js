@@ -342,7 +342,7 @@ const I18N = {
     "k.importNote": "one at a time; web pages politely",
     "k.kind.web": "Web pages",
     "k.kind.sitemap": "Sitemap",
-    "k.kind.wiki": "Wiki category",
+    "k.kind.wiki": "Wiki / site",
     "k.kind.youtube": "YouTube",
     "k.kind.file": "Files",
     "k.kind.export": "Discord export",
@@ -350,7 +350,23 @@ const I18N = {
     "k.f.urls":
       "Page addresses, one per line (Google Docs, Sheets and Slides shared by link too)",
     "k.f.sitemap": "Sitemap address",
-    "k.f.categories": "Categories, one per line",
+    "k.f.allTabs": "Every tab of a Google Sheet",
+    "k.topic.mediawiki": "MediaWiki topic",
+    "k.topic.site": "Whole site",
+    "k.f.wikiStart":
+      "Start pages or categories, titles or addresses, one per line",
+    "k.f.api": "api.php (found from an address when empty)",
+    "k.f.exclude": "Categories left out, one per line (optional)",
+    "k.f.linkMatch":
+      "Also pages a start page links to whose titles contain one of these words, one per line (optional)",
+    "k.f.siteStart": "Start address (only its host is crawled)",
+    "k.f.skip":
+      "Paths skipped besides images and scripts, one per line (optional)",
+    "k.f.depth": "Subcategory levels",
+    "k.f.dryRun": "Dry run: count the pages first",
+    "k.f.dryRunTitle":
+      "Lists what is in scope and how long fetching it would take; stores nothing",
+    "k.countPages": "Count pages",
     "k.f.atMost": "At most",
     "k.f.pages": "pages",
     "k.f.delay": "one request per site every",
