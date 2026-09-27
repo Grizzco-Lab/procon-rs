@@ -6402,3 +6402,196 @@ body {
   max-height: 240px;
   overflow: auto;
 }
+
+/* ---------------------------------------------------------------------
+   Cuttlefish: deep questions, expert notes and the note editor */
+
+/* A deep question's chip is marked */
+.cf-chip.is-deep {
+  border-style: dashed;
+  border-color: color-mix(in oklab, var(--s3) 55%, var(--inset-border));
+}
+
+.cf-chip.is-deep::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--s3);
+  vertical-align: 1px;
+}
+
+/* "Correct / add to memory" under an answer */
+.cf-msg-tools {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cf-memo {
+  color: var(--text-2);
+}
+
+.cf-memo:hover {
+  color: var(--text);
+}
+
+/* The note editor */
+.cf-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 16px 18px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--panel-shadow);
+}
+
+.cf-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+.cf-note-form {
+  display: grid;
+  gap: 10px;
+}
+
+.cf-note-form .cf-alias-field .select,
+.cf-note-body {
+  width: 100%;
+  max-width: none;
+}
+
+.cf-note-body {
+  min-height: 200px;
+  resize: vertical;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.cf-note-fields {
+  display: grid;
+  gap: 8px 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 640px) {
+  .cf-note-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The Notes panel */
+.k-notes-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-note details {
+  padding: 6px 10px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.k-note summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.k-note-body {
+  margin: 8px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.k-note-tags {
+  margin-bottom: 6px;
+}
+
+.k-note-link {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+/* The Deep questions panel */
+.k-deep-max {
+  width: 64px;
+}
+
+.k-deep-bank summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.k-deep-questions {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.k-deep-questions .cf-kind {
+  margin-left: 4px;
+}
+
+.cf-kind.is-later {
+  border-style: dashed;
+  color: var(--text-3);
+}
+
+.k-deep-files {
+  margin-top: 6px;
+}
+
+.k-deep-entries {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-deep-entry {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--inset-border);
+  border-left: 3px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.k-deep-entry[data-verdict="good"] {
+  border-left-color: var(--s3);
+}
+
+.k-deep-entry[data-verdict="wrong"] {
+  border-left-color: var(--accent);
+}
+
+.k-deep-answer {
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.k-deep-entry [data-verdict][aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* The term form: definition over the row of relation and its term */
+.cf-term-form textarea.select {
+  min-height: 64px;
+  resize: vertical;
+}

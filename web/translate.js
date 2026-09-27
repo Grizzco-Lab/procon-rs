@@ -257,10 +257,98 @@
         <span class="cf-kind">${escapeHtml(term.id)}</span>
         ${term.related ? `<span class="panel-note">${escapeHtml(relationLabel(term.related))}</span>` : ""}
         <button type="button" class="mode-toggle cf-mini" data-add-alias>${escapeHtml(t("alias.add"))}</button>
+        <button type="button" class="mode-toggle cf-mini" data-edit-term title="${escapeHtml(t("term.editTitle"))}">${escapeHtml(t("term.edit"))}</button>
       </div>
       ${term.definition ? `<p class="k-hit-text">${escapeHtml(term.definition)}</p>` : ""}
       <div class="k-forms">${forms}${aliasesHtml(term)}</div>
     </li>`;
+  }
+
+  /** The relation kinds a term can have to a broader one */
+  const RELATIONS = ["part-of", "kind-of", "related-to"];
+
+  /** The form editing a term's definition and relation (and, for a new
+   * term of the user file, its name and kind); `id` is the term's,
+   * `glossary` says it is a term of the generated glossary, whose edits
+   * become an override; `entry` is the translation to refresh after */
+  function termForm({
+    id,
+    glossary,
+    name = "",
+    kind = "",
+    definition = "",
+    related = null,
+    entry = "",
+  }) {
+    const form = document.createElement("form");
+    form.className = "cf-alias-form cf-term-form";
+    Object.assign(form.dataset, { id, glossary: glossary ? "1" : "", entry });
+    const kinds = ["", ...RELATIONS]
+      .map(
+        (r) =>
+          `<option value="${r}" ${(related?.kind ?? "") === r ? "selected" : ""}>${escapeHtml(r ? t(`slang.rel.${r}`, { name: "…" }) : t("term.relationNone"))}</option>`,
+      )
+      .join("");
+    form.innerHTML = `
+      ${
+        glossary
+          ? ""
+          : `<label class="cf-alias-field"><span>${escapeHtml(t("term.name"))}</span>
+              <input class="select" data-name required maxlength="60" value="${escapeHtml(name)}" /></label>
+             <label class="cf-alias-field"><span>${escapeHtml(t("term.kind"))}</span>
+              <input class="select" data-kind maxlength="40" value="${escapeHtml(kind)}" placeholder="attack, technique…" /></label>`
+      }
+      <label class="cf-alias-field cf-alias-note"><span>${escapeHtml(t("term.definition"))}</span>
+        <textarea class="select" data-definition rows="3" maxlength="600">${escapeHtml(definition)}</textarea></label>
+      <label class="cf-alias-field"><span>${escapeHtml(t("term.relation"))}</span>
+        <select class="select" data-relation>${kinds}</select></label>
+      <label class="cf-alias-field cf-term-pick"><span>${escapeHtml(t("term.relationTo"))}</span>
+        <input class="select" data-term-search autocomplete="off" value="${escapeHtml(related?.name ?? "")}" placeholder="${escapeHtml(t("alias.termSearch"))}" />
+        <ul class="cf-term-results" data-term-results hidden></ul></label>
+      <input type="hidden" data-term value="${escapeHtml(related?.term ?? "")}" />
+      <div class="cf-alias-actions">
+        <button type="submit" class="btn">${escapeHtml(t("term.save"))}</button>
+        <button type="button" class="mode-toggle" data-form-cancel>${escapeHtml(t("alias.cancel"))}</button>
+        ${glossary ? `<span class="panel-note">${escapeHtml(t("term.overrideNote"))}</span>` : ""}
+        <span class="panel-note" data-form-note></span>
+      </div>`;
+    return form;
+  }
+
+  /** Saves a term form: `knowledge/slang/term-edit`, the relation as the
+   * form shows it (none clears it) */
+  async function saveTerm(form) {
+    const field = (name) => form.querySelector(`[data-${name}]`)?.value ?? "";
+    const note = form.querySelector("[data-form-note]");
+    const kind = field("relation");
+    const target = field("term");
+    if (kind && !target) {
+      note.textContent = t("alias.pickTerm");
+      return;
+    }
+    const body = {
+      id: form.dataset.id,
+      definition: field("definition"),
+      relation: kind ? { kind, term: target } : null,
+    };
+    if (!form.dataset.glossary) {
+      body.name = field("name");
+      body.kind = field("kind");
+    }
+    try {
+      const saved = await api("knowledge/slang/term-edit", "POST", body);
+      composerNote(
+        t("term.saved", {
+          name: saved.term.forms?.en?.[0] ?? saved.term.id,
+        }),
+      );
+      form.remove();
+      await loadSlang();
+      const entry = tr.entries.find((e) => e.id === form.dataset.entry);
+      if (entry) refreshTerms(entry);
+    } catch (error) {
+      note.textContent = t("term.failed", { error: error.message });
+    }
   }
 
   /** The translation, or why there is none yet */
@@ -471,8 +559,10 @@
   const slang = {
     /** The user glossary as the server lists it */
     aliases: [],
-    /** New terms, and old aliases a new term claims */
+    /** New terms, the user's edits of glossary terms, and old aliases a
+     * new term claims */
     terms: [],
+    overrides: [],
     moves: [],
     file: "",
     pending: 0,
@@ -688,6 +778,29 @@
       form.querySelector("[data-text]").focus();
       return;
     }
+    const editTerm = event.target.closest("[data-edit-term]");
+    if (editTerm) {
+      const card = editTerm.closest(".k-term");
+      if (card.querySelector("form")) return;
+      const li = editTerm.closest(".cf-tr");
+      const entry = tr.entries.find((e) => e.id === li.dataset.id);
+      const term = entry?.terms.find((x) => x.id === card.dataset.term);
+      if (!term) return;
+      // A term of the user file is edited in place, any other as an override
+      const own = slang.terms.some((x) => x.id === term.id);
+      const form = termForm({
+        id: term.id,
+        glossary: !own,
+        name: term.forms?.en?.[0] ?? "",
+        kind: term.kind ?? "",
+        definition: term.definition ?? "",
+        related: term.related,
+        entry: li.dataset.id,
+      });
+      card.append(form);
+      form.querySelector("[data-definition]").focus();
+      return;
+    }
     const teach = event.target.closest("[data-teach]");
     if (teach) {
       const li = teach.closest(".cf-tr");
@@ -716,7 +829,8 @@
       const form = event.target.closest(".cf-alias-form");
       if (!form) return;
       event.preventDefault();
-      saveAlias(form);
+      if (form.matches(".cf-term-form")) saveTerm(form);
+      else saveAlias(form);
     });
     root.addEventListener("click", (event) => {
       const pick = event.target.closest("[data-pick-term]");
@@ -760,6 +874,7 @@
       Object.assign(slang, {
         aliases: data.aliases,
         terms: data.terms ?? [],
+        overrides: data.overrides ?? [],
         moves: data.moves ?? [],
         file: data.file,
         pending: data.pending,
@@ -861,7 +976,36 @@
         }
         ${pending ? `<button type="button" class="mode-toggle" data-term-status="rejected">${escapeHtml(t("slang.reject"))}</button>` : ""}
         ${term.status === "approved" ? undoButton() : ""}
+        <button type="button" class="mode-toggle" data-term-edit>${escapeHtml(t("slang.edit"))}</button>
         <button type="button" class="mode-toggle" data-delete>${escapeHtml(t("slang.delete"))}</button>
+      </div>`;
+    return li;
+  }
+
+  /** The user's edits of a glossary term: the term as it now reads, and
+   * Edit / Restore */
+  function overrideItem(over) {
+    const li = document.createElement("li");
+    li.className = "cf-alias";
+    li.dataset.override = over.term;
+    const name = termLabel(over.term_forms, over.term_name || over.term);
+    const relation = over.unrelated
+      ? t("term.unrelated")
+      : over.related
+        ? relationLabel(over.related)
+        : "";
+    li.innerHTML = `
+      <div class="k-hit-head">
+        <b class="cf-tr-to">${escapeHtml(name)}</b>
+        <span class="cf-kind">${escapeHtml(over.term)}</span>
+        ${over.kind ? `<span class="cf-kind">${escapeHtml(over.kind)}</span>` : ""}
+        ${relation ? `<span class="panel-note">${escapeHtml(relation)}</span>` : ""}
+        <span class="panel-note">${escapeHtml(t("term.edited"))}</span>
+      </div>
+      ${over.definition ? `<p class="k-hit-text">${escapeHtml(over.definition)}</p>` : ""}
+      <div class="cf-alias-actions">
+        <button type="button" class="mode-toggle" data-term-edit>${escapeHtml(t("slang.edit"))}</button>
+        <button type="button" class="mode-toggle" data-term-reset>${escapeHtml(t("term.reset"))}</button>
       </div>`;
     return li;
   }
@@ -929,6 +1073,9 @@
     $("cf-slang-moves-box").hidden = !slang.moves.length;
     list("cf-slang-moves", slang.moves, moveItem, "slang.noPending");
     list("cf-slang-terms", slang.terms, termItem, "slang.noTerms");
+    const overrides = slang.overrides ?? [];
+    $("cf-slang-overrides-box").hidden = !overrides.length;
+    list("cf-slang-overrides", overrides, overrideItem, "slang.noTerms");
     list("cf-slang-pending", pending, aliasItem, "slang.noPending");
     list(
       "cf-slang-taught",
@@ -949,9 +1096,32 @@
   }
 
   $("cf-slang").addEventListener("click", async (event) => {
+    if (event.target.closest(".cf-term-form")) return;
     const move = event.target.closest("[data-move]");
     if (move) {
       changeSlang("move", { id: move.closest("li").dataset.move });
+      return;
+    }
+    const overLi = event.target.closest("[data-override]");
+    if (overLi) {
+      const over = slang.overrides.find(
+        (o) => o.term === overLi.dataset.override,
+      );
+      if (!over) return;
+      if (event.target.closest("[data-term-edit]")) {
+        const form = termForm({
+          id: over.term,
+          glossary: true,
+          definition: over.definition ?? "",
+          related: over.unrelated ? null : over.related,
+        });
+        overLi.replaceChildren(form);
+        form.querySelector("[data-definition]").focus();
+      } else if (event.target.closest("[data-term-reset]")) {
+        const name = termLabel(over.term_forms, over.term_name || over.term);
+        if (!confirm(t("term.resetAsk", { name }))) return;
+        changeSlang("term-reset", { id: over.term });
+      }
       return;
     }
     const termLi = event.target.closest("[data-new-term]");
@@ -966,6 +1136,17 @@
         });
       } else if (event.target.closest("[data-undo]")) {
         changeSlang("undo", { id: term.id });
+      } else if (event.target.closest("[data-term-edit]")) {
+        const form = termForm({
+          id: term.id,
+          glossary: false,
+          name: term.name,
+          kind: term.kind ?? "",
+          definition: term.definition ?? "",
+          related: term.related,
+        });
+        termLi.replaceChildren(form);
+        form.querySelector("[data-name]").focus();
       } else if (event.target.closest("[data-delete]")) {
         if (!confirm(t("slang.deleteTermAsk", { name: term.name }))) return;
         changeSlang("delete", { id: term.id });

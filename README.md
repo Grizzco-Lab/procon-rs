@@ -232,6 +232,26 @@ chat needs a model backend: `ANTHROPIC_API_KEY` in the studio's environment
 (the only place it is read from), or the Claude Code CLI (below); without one
 the chat says so and messages, comments and drawings are still saved.
 
+Among the chips are a few **deep questions** at random, marked with a dot:
+questions a high-level player asks, whose answers the community knows ("Why
+do the first kills of a wave need to be so aggressive when we lure bosses
+to the basket anyway?", "Which way does the Drizzler jump, and when?"; the
+bank is `crates/cuttlefish/questions/deep.toml`, in English and Chinese).
+Every answer of Cuttlefish has **Correct / add to memory** (纠正/补充 →
+存为笔记): it opens an editor with the question and the answer, which you
+edit into the correct explanation and save as an **expert note**, a
+Markdown file in `notes/` of the knowledge folder that Cuttlefish trusts
+over every other source from then on (notes are retrieved first and
+labelled "Expert note (user), <date>" under **Sources**). The Knowledge
+view lists the notes (**Expert notes**: edit, delete) and the bank (**Deep
+questions**), and runs the **deep eval**: the model answers the questions
+that need no video, a few at a time; you mark each answer **Good** or
+**Wrong** and turn a wrong one into a note with **Correct → note**. That is
+how the memory grows. When a chat is about a video without a controller
+recording, the input it reasons from is the Predictor's estimate, and the
+prompt says so with the model's measured reliability, so Cuttlefish does
+not build fine claims on it.
+
 **Translate** is the translator, a chat-like page for jargon and callouts: a
 box at the bottom with a target language (English, 中文, 日本語, Español,
 Français, Русский, 한국어; the last choice is remembered), the player's own
@@ -290,6 +310,13 @@ when it is unsure what a slang word means. You teach it on the page:
 - **Better terms for old aliases**: an alias approved for a broader term
   whose text a new term now claims (missiles of the Flyfish) is listed with
   **Move** (or **Move all**), which gives it to the new term.
+- **Edit definition / relation** on a term card (and **Edit** on a new term
+  in the panel): correct a term's definition, or how it relates to a
+  broader term (part of, a kind of, related to, picking the term as you
+  type). A new term changes in place, and its name and kind too; a term of
+  the glossary keeps its names, and your definition and relation are kept
+  as an override in `glossary-user.toml` (listed under **Edited glossary
+  terms**, with **Restore the glossary's**), so imports never lose them.
 
 What you teach and approve is kept in `<knowledge>/glossary-user.toml`,
 apart from the generated glossary, so re-importing name tables never

@@ -42,6 +42,13 @@
 //! confidence = 0.8
 //! created_ms = 1790000000001
 //!
+//! [[override]]
+//! term = "inertia-cancel"
+//! term_name = "inertia cancel"
+//! definition = "Cancelling a jump's momentum with a squid roll or a sub."
+//! related = { kind = "related-to", term = "egg-run", name = "egg run" }
+//! edited_ms = 1790000000002
+//!
 //! [scanned]
 //! 0a1b2c3d4e5f6071 = 24000
 //! ```
@@ -54,7 +61,13 @@
 //! [`Relation`]. Approved terms join the glossary, then approved aliases
 //! join their terms ([`UserGlossary::apply`]); pending ones are suggestions
 //! waiting for the user, rejected ones are kept so they are not suggested
-//! again.
+//! again. The user can edit a term ([`UserGlossary::edit_term`]): a new
+//! term's name, kind, definition and relation are changed in place and the
+//! term becomes the user's (source `user`, which suggestions never change);
+//! for a term of the generated glossary (the seed, `glossary.toml`, an
+//! import) the definition, kind and relation are kept as an
+//! [`TermOverride`], applied on every load, so a re-import never loses
+//! them.
 //!
 //! Suggestions: [`plan`] cuts the community documents of the store
 //! (everything but wikis by default) into batches of text not read yet
@@ -103,6 +116,9 @@ pub const MAX_NOTE: usize = 300;
 
 /// Longest evidence quote kept, in characters
 pub const MAX_EVIDENCE: usize = 200;
+
+/// Longest definition the user writes, in characters
+pub const MAX_DEFINITION: usize = 600;
 
 /// An alias the user taught or a suggestion, with the term it belongs to
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -212,6 +228,13 @@ pub struct UserTerm {
     /// Unix time in ms
     #[serde(default)]
     pub created_ms: u64,
+    /// When the user last edited it, Unix ms; 0 when never
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub edited_ms: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 impl UserTerm {
@@ -295,6 +318,78 @@ pub struct AliasEdit {
     pub status: Option<AliasStatus>,
 }
 
+/// A relation as the page gives it: how, and the broader term by id or
+/// any name
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct RelationEdit {
+    pub kind: RelationKind,
+    pub term: String,
+}
+
+/// Changes to a term ([`UserGlossary::edit_term`]); what is `None` stays.
+/// `relation` absent keeps the relation, `null` removes it.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct TermEdit {
+    /// A new term's English name (a term of the generated glossary keeps
+    /// its names)
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub definition: Option<String>,
+    #[serde(default, deserialize_with = "given")]
+    pub relation: Option<Option<RelationEdit>>,
+}
+
+/// A field that is `Some(None)` when given as `null`, `None` when absent
+fn given<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<RelationEdit>>, D::Error> {
+    Option::<RelationEdit>::deserialize(d).map(Some)
+}
+
+/// The user's changes to a term of the generated glossary (the seed, the
+/// data folder's `glossary.toml` or an import), applied on every load so
+/// a re-import never loses them; what is `None` is not overridden
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TermOverride {
+    /// The term's id
+    pub term: String,
+    /// Its English name (else its first name) when edited, to find it again
+    /// after a re-import changed its id
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub term_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// The relation to set
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related: Option<Relation>,
+    /// Remove the term's own relation instead
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unrelated: bool,
+    /// When the user last edited it, Unix ms
+    #[serde(default)]
+    pub edited_ms: u64,
+}
+
+impl TermOverride {
+    /// Applies it to a term
+    pub fn apply_to(&self, t: &mut Term) {
+        if let Some(d) = &self.definition {
+            t.definition = d.clone();
+        }
+        if let Some(k) = &self.kind {
+            t.kind = Some(k.clone()).filter(|k| !k.is_empty());
+        }
+        if self.unrelated {
+            t.related = None;
+        } else if let Some(r) = &self.related {
+            t.related = Some(r.clone());
+        }
+    }
+}
+
 /// An approved alias of one term whose text a suggestion gives to a new
 /// term: the alias would better name the new one
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -324,6 +419,9 @@ pub struct UserGlossary {
     /// New terms, oldest first
     #[serde(rename = "term", default, skip_serializing_if = "Vec::is_empty")]
     pub terms: Vec<UserTerm>,
+    /// The user's changes to terms of the generated glossary
+    #[serde(rename = "override", default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<TermOverride>,
     /// Characters of each document (by id) read for suggestions
     #[serde(default)]
     pub scanned: BTreeMap<String, usize>,
@@ -351,8 +449,9 @@ impl UserGlossary {
     }
 
     /// Adds its approved terms to `g` (unless a term there has the name
-    /// already), then its approved aliases to their terms; answers how many
-    /// aliases found their term
+    /// already), applies its overrides to the terms they name, then adds
+    /// its approved aliases to their terms; answers how many aliases found
+    /// their term
     pub fn apply(&self, g: &mut Glossary) -> usize {
         for t in self
             .terms
@@ -374,6 +473,19 @@ impl UserGlossary {
                 term.id = alloc::format!("{}-{n}", t.id);
             }
             g.terms.push(term);
+        }
+        for o in &self.overrides {
+            let Some(i) = find_term(g, &o.term, &o.term_name) else {
+                continue;
+            };
+            let mut over = o.clone();
+            // The related term may have another id now too
+            if let Some(r) = &mut over.related
+                && let Some(j) = find_term(g, &r.term, &r.name)
+            {
+                r.term = g.terms[j].id.clone();
+            }
+            over.apply_to(&mut g.terms[i]);
         }
         let places: Vec<Option<usize>> = self.aliases.iter().map(|a| a.find(g)).collect();
         let mut n = 0;
@@ -497,6 +609,148 @@ impl UserGlossary {
             a.auto = false;
         }
         Ok(&self.aliases[i])
+    }
+
+    /// Changes the term `id` as the user decides: a new term of this file
+    /// in place (its name, kind, definition and relation; it becomes the
+    /// user's, source `user`), a term of the generated glossary `g` (the
+    /// seed, `glossary.toml`, an import) through an [`TermOverride`] of its
+    /// definition, kind and relation, kept in this file and applied on every
+    /// load. The relation's broader term is looked up in `g` by id or any
+    /// name. Answers the term as it now is (the glossary's, with the
+    /// override applied) and whether it is an override.
+    pub fn edit_term(
+        &mut self,
+        g: &Glossary,
+        id: &str,
+        edit: &TermEdit,
+        now_ms: u64,
+    ) -> Result<(Term, bool)> {
+        let definition = edit
+            .definition
+            .as_deref()
+            .map(|d| {
+                let d = d.trim();
+                ensure!(
+                    d.chars().count() <= MAX_DEFINITION,
+                    "a definition is at most {MAX_DEFINITION} characters"
+                );
+                Ok(String::from(d))
+            })
+            .transpose()?;
+        let kind = edit.kind.as_deref().map(|k| {
+            k.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+                .chars()
+                .take(MAX_ALIAS)
+                .collect::<String>()
+        });
+        let related = edit
+            .relation
+            .as_ref()
+            .map(|r| {
+                r.as_ref()
+                    .map(|r| {
+                        let t = g
+                            .lookup(&r.term)
+                            .with_context(|| alloc::format!("no glossary term {:?}", r.term))?;
+                        ensure!(t.id != id, "a term cannot relate to itself");
+                        Ok(Relation {
+                            kind: r.kind,
+                            term: t.id.clone(),
+                            name: term_name(t),
+                        })
+                    })
+                    .transpose()
+            })
+            .transpose()?;
+        if let Some(i) = self.terms.iter().position(|t| t.id == id) {
+            if let Some(name) = edit.name.as_deref() {
+                let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+                ensure!(!name.is_empty(), "give the term's name");
+                ensure!(
+                    name.chars().count() <= MAX_NAME,
+                    "a name is at most {MAX_NAME} characters"
+                );
+                if let Some(other) = g.terms.iter().find(|o| o.has_name(&name)) {
+                    bail!("{name:?} is a name of {} already", other.id);
+                }
+                ensure!(
+                    !self
+                        .terms
+                        .iter()
+                        .any(|o| o.id != id && same(&o.name, &name)),
+                    "{name:?} is a new term already"
+                );
+                self.terms[i].name = name;
+            }
+            let t = &mut self.terms[i];
+            if let Some(k) = kind {
+                t.kind = Some(k).filter(|k| !k.is_empty());
+            }
+            if let Some(d) = definition {
+                t.definition = d;
+            }
+            if let Some(r) = related {
+                t.related = r;
+            }
+            t.source = AliasSource::User;
+            t.auto = false;
+            t.edited_ms = now_ms;
+            return Ok((t.term(), false));
+        }
+        let i = g
+            .terms
+            .iter()
+            .position(|t| t.id == id)
+            .with_context(|| alloc::format!("no glossary term {id}"))?;
+        ensure!(
+            edit.name.is_none(),
+            "a term of the glossary keeps its names; teach an alias instead"
+        );
+        let name = term_name(&g.terms[i]);
+        let at = match self
+            .overrides
+            .iter()
+            .position(|o| find_term(g, &o.term, &o.term_name) == Some(i))
+        {
+            Some(at) => at,
+            None => {
+                self.overrides.push(TermOverride {
+                    term: g.terms[i].id.clone(),
+                    term_name: name,
+                    ..TermOverride::default()
+                });
+                self.overrides.len() - 1
+            }
+        };
+        let o = &mut self.overrides[at];
+        if definition.is_some() {
+            o.definition = definition;
+        }
+        if kind.is_some() {
+            o.kind = kind;
+        }
+        if let Some(r) = related {
+            o.unrelated = r.is_none();
+            o.related = r;
+        }
+        o.edited_ms = now_ms;
+        let mut term = g.terms[i].clone();
+        o.apply_to(&mut term);
+        Ok((term, true))
+    }
+
+    /// Drops the override of the glossary term `id`, so it reads as the
+    /// glossary has it again; answers whether there was one
+    pub fn remove_override(&mut self, g: &Glossary, id: &str) -> bool {
+        let before = self.overrides.len();
+        let place = g.terms.iter().position(|t| t.id == id);
+        self.overrides
+            .retain(|o| o.term != id && find_term(g, &o.term, &o.term_name) != place);
+        self.overrides.len() != before
     }
 
     /// Sets the status of the new term `id` as the user decides:
@@ -1282,6 +1536,7 @@ impl Checker<'_> {
                     document: first.and_then(|a| a.document).or(named),
                     confidence: Some(c.confidence.clamp(0.0, 1.0)),
                     created_ms: self.created_ms,
+                    edited_ms: 0,
                 };
             }
         }
@@ -1615,6 +1870,142 @@ mod tests {
         assert_eq!((a.term.as_str(), a.note.as_str()), ("stinger", ""));
         assert!(user.remove(&id));
         assert!(!user.remove(&id));
+    }
+
+    #[test]
+    fn edits_new_terms_and_overrides_glossary_terms() {
+        let g0 = Glossary::seed();
+        let mut user = UserGlossary::default();
+        user.terms.push(UserTerm {
+            id: "flyfish-missiles".into(),
+            name: "Flyfish missiles".into(),
+            source: AliasSource::Suggested,
+            status: AliasStatus::Approved,
+            auto: true,
+            ..UserTerm::default()
+        });
+        // A new term: name, kind, definition and relation in place; it is
+        // the user's from then on
+        let edit: TermEdit = serde_json::from_value(json!({
+            "name": " Flyfish  missiles ", "kind": " Attack ",
+            "definition": " Missiles from the Flyfish's pots. ",
+            "relation": {"kind": "part-of", "term": "カタパッド"}
+        }))
+        .unwrap();
+        let (term, over) = user.edit_term(&g0, "flyfish-missiles", &edit, 7).unwrap();
+        assert!(!over);
+        assert_eq!(term.definition, "Missiles from the Flyfish's pots.");
+        assert_eq!(term.kind.as_deref(), Some("attack"));
+        let r = term.related.unwrap();
+        assert_eq!(
+            (r.kind, r.term.as_str(), r.name.as_str()),
+            (RelationKind::PartOf, "flyfish", "Flyfish")
+        );
+        let t = user.term("flyfish-missiles").unwrap();
+        assert_eq!(
+            (t.source, t.auto, t.edited_ms),
+            (AliasSource::User, false, 7)
+        );
+        // Absent keeps, null removes the relation
+        let keep: TermEdit = serde_json::from_value(json!({"definition": "Short."})).unwrap();
+        assert_eq!(keep.relation, None);
+        let (term, _) = user.edit_term(&g0, "flyfish-missiles", &keep, 8).unwrap();
+        assert!(term.related.is_some());
+        let clear: TermEdit = serde_json::from_value(json!({"relation": null})).unwrap();
+        assert_eq!(clear.relation, Some(None));
+        let (term, _) = user.edit_term(&g0, "flyfish-missiles", &clear, 9).unwrap();
+        assert_eq!(term.related, None);
+        // Bad edits
+        let mut bad = |v: Value| {
+            let e: TermEdit = serde_json::from_value(v).unwrap();
+            user.edit_term(&g0, "flyfish-missiles", &e, 10).is_err()
+        };
+        assert!(bad(json!({"name": "Flyfish"})));
+        assert!(bad(json!({"name": " "})));
+        assert!(bad(
+            json!({"relation": {"kind": "kind-of", "term": "nothing"}})
+        ));
+        assert!(bad(json!({"definition": "x".repeat(MAX_DEFINITION + 1)})));
+        assert!(user.edit_term(&g0, "nothing", &keep, 10).is_err());
+
+        // A glossary term: an override, applied on load and after a
+        // re-import renamed the term's id
+        let edit: TermEdit = serde_json::from_value(json!({
+            "definition": "Cancelling a jump's momentum.",
+            "relation": {"kind": "related-to", "term": "egg run"}
+        }))
+        .unwrap();
+        let (term, over) = user.edit_term(&g0, "inertia-cancel", &edit, 11).unwrap();
+        assert!(over);
+        assert_eq!(term.definition, "Cancelling a jump's momentum.");
+        assert_eq!(term.related.as_ref().unwrap().term, "egg-run");
+        assert_eq!(user.overrides.len(), 1);
+        assert_eq!(user.overrides[0].term_name, "inertia cancel");
+        let named: TermEdit = serde_json::from_value(json!({"name": "x"})).unwrap();
+        assert!(user.edit_term(&g0, "inertia-cancel", &named, 12).is_err());
+        let self_related: TermEdit = serde_json::from_value(
+            json!({"relation": {"kind": "kind-of", "term": "inertia-cancel"}}),
+        )
+        .unwrap();
+        assert!(
+            user.edit_term(&g0, "inertia-cancel", &self_related, 12)
+                .is_err()
+        );
+        let mut g = g0.clone();
+        user.apply(&mut g);
+        let t = g.lookup("inertia-cancel").unwrap();
+        assert_eq!(t.definition, "Cancelling a jump's momentum.");
+        assert_eq!(t.related.as_ref().unwrap().label(), "related to egg run");
+        let mut g = g0.clone();
+        for t in g.terms.iter_mut() {
+            if t.id == "inertia-cancel" {
+                t.id = "inertia-cancel-2".into();
+            }
+        }
+        user.apply(&mut g);
+        assert_eq!(
+            g.lookup("inertia-cancel-2").unwrap().definition,
+            "Cancelling a jump's momentum."
+        );
+        // Editing again changes the same override; the file keeps it
+        let (_, over) = user.edit_term(&g0, "inertia-cancel", &clear, 13).unwrap();
+        assert!(over);
+        assert_eq!(user.overrides.len(), 1);
+        assert_eq!(user.overrides[0].related, None);
+        assert!(user.overrides[0].unrelated);
+        let mut g = g0.clone();
+        user.apply(&mut g);
+        assert_eq!(g.lookup("inertia-cancel").unwrap().related, None);
+        let dir = std::env::temp_dir().join(alloc::format!("cf-slang-over-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        user.save(&dir).unwrap();
+        assert_eq!(UserGlossary::load(&dir).unwrap(), user);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(user.remove_override(&g0, "inertia-cancel"));
+        assert!(!user.remove_override(&g0, "inertia-cancel"));
+        assert!(user.overrides.is_empty());
+
+        // A suggestion of the edited term's name changes nothing of it
+        let docs = alloc::vec![doc(
+            "d",
+            SourceKind::DiscordVodReview,
+            "Run from the Flyfish missiles, the FF missiles land where you stand."
+        )];
+        let plan = plan(&docs, &user, &SuggestOptions::default());
+        let answer = json!({"candidates": [], "new_terms": [
+            {"name": "Flyfish missiles", "kind": "thing", "definition": "Something else.",
+             "relation": "part-of", "related_term": "Flyfish", "confidence": 0.9,
+             "aliases": [{"alias": "FF missiles", "language": "en",
+                          "evidence": "the FF missiles", "confidence": 0.9, "note": ""}]}
+        ]});
+        let found =
+            parse_candidates(&answer.to_string(), &g0, &user, &plan.batches[0], 20).unwrap();
+        assert!(found.terms.is_empty());
+        assert_eq!(found.aliases.len(), 1);
+        user.take(found, &plan.batches[0]);
+        let t = user.term("flyfish-missiles").unwrap();
+        assert_eq!(t.definition, "Short.");
+        assert_eq!(t.source, AliasSource::User);
     }
 
     #[test]

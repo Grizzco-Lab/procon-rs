@@ -28,14 +28,18 @@ pub enum SourceKind {
     Discord,
     /// A local file
     File,
+    /// An expert note the player wrote or corrected by hand
+    /// ([`crate::notes`])
+    ExpertNote,
 }
 
 impl SourceKind {
-    /// Default retrieval weight ([`crate::index::score`]); high-end VOD
-    /// review is the most trusted, generic web pages and auto-captions the
-    /// least
+    /// Default retrieval weight ([`crate::index::score`]); the player's own
+    /// expert notes are the most trusted, then high-end VOD review; generic
+    /// web pages and auto-captions the least
     pub fn default_weight(self) -> f32 {
         match self {
+            SourceKind::ExpertNote => 1.3,
             SourceKind::DiscordVodReview => 1.2,
             SourceKind::Guide => 1.15,
             SourceKind::Wiki | SourceKind::Discord | SourceKind::File => 1.0,

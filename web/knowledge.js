@@ -1,8 +1,11 @@
 // Cuttlefish's knowledge view (/cuttlefish/knowledge): managing what
 // Cuttlefish knows. Imports (uploads into the inbox and its import report
 // included), what the store holds, documents, the asset browser and search,
-// through /api/cuttlefish/knowledge/... (see src/knowledge.rs). Questions
-// are the chat's (cuttlefish.js), glossary lookups and translations the
+// the expert notes (the player's corrections, Cuttlefish's memory; the
+// editor dialog is shared with the chat as window.cuttlefishNotes.edit) and
+// the deep questions with their eval runs, through
+// /api/cuttlefish/knowledge/... (see src/knowledge.rs). Questions are the
+// chat's (cuttlefish.js), glossary lookups and translations the
 // translator's (translate.js). Runs after cuttlefish.js, which hides its
 // library and player for this view and marks the tab, and uses the helpers
 // of i18n.js, app.js and inspect.js (t, $, escapeHtml).
@@ -22,6 +25,7 @@
     "discord-vod-review": "k.source.vodReview",
     discord: "k.source.discord",
     file: "k.source.file",
+    "expert-note": "k.source.expertNote",
   };
 
   /** Document formats as shown: names, or i18n keys (`k.`); others are
@@ -37,6 +41,7 @@
     "google-slides": "k.format.googleSlides",
     subtitles: "k.format.subtitles",
     messages: "k.format.messages",
+    note: "k.format.note",
     file: "k.source.file",
     other: "k.format.other",
   };
@@ -400,6 +405,7 @@
       loadOverview();
       loadAssets();
       loadInbox();
+      loadEvalFiles();
     }
     k.wasRunning = running;
   }
@@ -924,6 +930,402 @@
     loadOverview();
   });
 
+  // ---------------------------------------------------------------- notes
+  //
+  // Expert notes are the player's corrections (<knowledge>/notes/<id>.md,
+  // see cuttlefish::notes): written from any answer of Cuttlefish with
+  // "Correct / add to memory" (cuttlefish.js), from a deep eval answer
+  // below, or from scratch; listed, edited and deleted here. The editor is
+  // one dialog, shared through window.cuttlefishNotes.edit(...).
+
+  const notes = {
+    list: [],
+    /** The note the address names (?note=), shown open */
+    open: null,
+  };
+
+  /** The editor's state: the note edited (or none), where it came from, and
+   * what to do with the saved note */
+  const editor = { id: "", from: "", questionId: "", onSaved: null };
+
+  const dialog = $("cf-note-dialog");
+
+  /** The date of a note as shown */
+  const noteDate = (note) => note.date;
+
+  /** Opens the editor: `id` for an existing note, else the question and
+   * body it starts from (an answer to correct); `from` says where it came
+   * from, `questionId` the bank question it answers; `onSaved(note)` runs
+   * after a save */
+  function editNote({
+    id = "",
+    question = "",
+    body = "",
+    tags = [],
+    terms = [],
+    era = "S3",
+    version = "",
+    questionId = "",
+    from = "",
+    onSaved = null,
+  } = {}) {
+    Object.assign(editor, { id, from, questionId, onSaved });
+    $("cf-note-title").textContent = id
+      ? t("note.editTitle", { id })
+      : t("note.title");
+    $("cf-note-question").value = question;
+    $("cf-note-body").value = body;
+    $("cf-note-tags").value = tags.join(", ");
+    $("cf-note-terms").value = terms.join(", ");
+    $("cf-note-era").value = era === "S2" ? "S2" : "S3";
+    $("cf-note-version").value = version ?? "";
+    $("cf-note-from").textContent = from ? t("note.from", { from }) : "";
+    $("cf-note-status").textContent = "";
+    $("cf-note-save").disabled = false;
+    dialog.showModal();
+    $(body ? "cf-note-body" : "cf-note-question").focus();
+  }
+
+  /** The words of a comma-separated field */
+  const words = (id) =>
+    $(id)
+      .value.split(/[,，]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  $("cf-note-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const status = $("cf-note-status");
+    status.textContent = t("note.saving");
+    $("cf-note-save").disabled = true;
+    const body = {
+      id: editor.id,
+      question: $("cf-note-question").value,
+      body: $("cf-note-body").value,
+      tags: words("cf-note-tags"),
+      terms: words("cf-note-terms"),
+      era: $("cf-note-era").value,
+      version: $("cf-note-version").value.trim(),
+    };
+    if (editor.questionId) body.question_id = editor.questionId;
+    if (editor.from) body.from = editor.from;
+    try {
+      const note = await api("notes/save", body);
+      dialog.close();
+      if (editor.onSaved) editor.onSaved(note);
+      if (k.shown) {
+        loadNotes();
+        loadQuestions();
+        loadStats();
+      }
+    } catch (error) {
+      status.textContent = t("note.failed", { error: error.message });
+      $("cf-note-save").disabled = false;
+    }
+  });
+  $("cf-note-cancel").onclick = () => dialog.close();
+
+  window.cuttlefishNotes = { edit: editNote };
+
+  async function loadNotes() {
+    try {
+      notes.list = (await api("notes")).notes;
+    } catch (error) {
+      $("k-notes-count").textContent = error.message;
+      return;
+    }
+    drawNotes();
+  }
+
+  /** The reference of a bank question as a link to its note */
+  function noteLink(id, text = id) {
+    return `<a class="k-note-link" href="/cuttlefish/knowledge?note=${encodeURIComponent(id)}">${escapeHtml(text)}</a>`;
+  }
+
+  function drawNotes() {
+    const list = notes.list;
+    $("k-notes-count").textContent = list.length
+      ? t("k.notes.count", { n: list.length })
+      : t("k.notes.none");
+    $("k-notes").replaceChildren(
+      ...list.map((note) => {
+        const li = document.createElement("li");
+        li.className = "k-note";
+        li.dataset.id = note.id;
+        const open = note.id === notes.open;
+        const facts = [
+          t("k.notes.by", { author: note.author, date: noteDate(note) }),
+          note.era === "S2" && t("cf.era.S2"),
+          note.version && `v${note.version}`,
+          note.question_id && t("k.notes.answers", { id: note.question_id }),
+          note.from && t("k.notes.from", { from: note.from }),
+        ].filter(Boolean);
+        const tags = [...note.tags, ...note.terms]
+          .map((tag) => `<span class="cf-kind">${escapeHtml(tag)}</span>`)
+          .join(" ");
+        li.innerHTML = `
+          <details ${open ? "open" : ""}>
+            <summary><b>${escapeHtml(note.question)}</b> <span class="panel-note">${escapeHtml(facts.join(" · "))}</span></summary>
+            <div class="k-note-body">${escapeHtml(note.body)}</div>
+            ${tags ? `<div class="k-note-tags">${tags}</div>` : ""}
+            <div class="cf-alias-actions">
+              <button type="button" class="mode-toggle" data-edit>${escapeHtml(t("k.notes.edit"))}</button>
+              <button type="button" class="mode-toggle" data-delete>${escapeHtml(t("k.notes.delete"))}</button>
+              <span class="panel-note path">${escapeHtml(`notes/${note.id}.md`)}</span>
+            </div>
+          </details>`;
+        return li;
+      }),
+    );
+    if (notes.open) {
+      $("k-notes")
+        .querySelector(`[data-id="${CSS.escape(notes.open)}"]`)
+        ?.scrollIntoView({ block: "center" });
+      notes.open = null;
+    }
+  }
+
+  $("k-notes").addEventListener("click", async (event) => {
+    const li = event.target.closest(".k-note");
+    if (!li) return;
+    const note = notes.list.find((n) => n.id === li.dataset.id);
+    if (!note) return;
+    if (event.target.closest("[data-edit]")) {
+      editNote({
+        id: note.id,
+        question: note.question,
+        body: note.body,
+        tags: note.tags,
+        terms: note.terms,
+        era: note.era,
+        version: note.version,
+        questionId: note.question_id ?? "",
+        from: note.from ?? "",
+      });
+    } else if (event.target.closest("[data-delete]")) {
+      if (!confirm(t("k.notes.deleteAsk", { id: note.id }))) return;
+      try {
+        await api("notes/delete", { id: note.id });
+      } catch (error) {
+        $("k-notes-count").textContent = error.message;
+        return;
+      }
+      loadNotes();
+      loadQuestions();
+      loadStats();
+    }
+  });
+
+  // ------------------------------------------------------- deep questions
+  //
+  // The bank (cuttlefish::questions), the eval runs (cuttlefish::deep_eval,
+  // a knowledge job; also `cuttlefish eval deep`) and the review of their
+  // answers: good / wrong, and a wrong one corrected into a note.
+
+  const deep = {
+    bank: null,
+    files: [],
+    /** The eval file shown */
+    file: remembered("deep-file", ""),
+    entries: [],
+  };
+
+  /** A question in the page's language */
+  const questionText = (q) => (i18nLang() === "zh" ? q.zh : q.en);
+
+  const categoryName = (id) => t(`k.deep.cat.${id}`);
+
+  async function loadQuestions() {
+    try {
+      deep.bank = await api("questions");
+    } catch (error) {
+      $("k-deep-count").textContent = error.message;
+      return;
+    }
+    drawBank();
+  }
+
+  function drawBank() {
+    const bank = deep.bank;
+    if (!bank) return;
+    const questions = bank.questions;
+    $("k-deep-count").textContent = t("k.deep.count", {
+      n: questions.length,
+      notes: questions.filter((q) => q.reference).length,
+    });
+    $("k-deep-bank-summary").textContent = t("k.deep.bank", {
+      n: questions.length,
+      c: bank.categories.length,
+    });
+    $("k-deep-bank-list").innerHTML = bank.categories
+      .map(([id]) => {
+        const items = questions.filter((q) => q.category === id);
+        if (!items.length) return "";
+        const lis = items
+          .map((q) => {
+            const needs = `<span class="cf-kind ${q.needs === "detector" ? "is-later" : ""}" title="${escapeHtml(q.id)}">${escapeHtml(t(`k.deep.needs.${q.needs}`))}</span>`;
+            const reference = q.reference
+              ? ` ${noteLink(q.reference, t("k.deep.reference"))}`
+              : "";
+            const note = q.note
+              ? `<span class="panel-note" title="${escapeHtml(q.note)}">?</span>`
+              : "";
+            return `<li>${escapeHtml(questionText(q))} ${needs}${note}${reference}</li>`;
+          })
+          .join("");
+        return `<h4 class="readout-label">${escapeHtml(categoryName(id))} <span class="num">${items.length}</span></h4><ul class="k-deep-questions">${lis}</ul>`;
+      })
+      .join("");
+  }
+
+  async function loadEvalFiles() {
+    let data;
+    try {
+      data = await api("eval");
+    } catch (error) {
+      $("k-deep-file-note").textContent = error.message;
+      return;
+    }
+    deep.files = data.files;
+    const select = $("k-deep-file");
+    select.replaceChildren(
+      ...deep.files.map(
+        (f) =>
+          new Option(
+            `${f.file} · ${t("k.deep.fileNote", f)}`,
+            f.file,
+            false,
+            f.file === deep.file,
+          ),
+      ),
+    );
+    if (!deep.files.some((f) => f.file === deep.file))
+      deep.file = deep.files[0]?.file ?? "";
+    select.value = deep.file;
+    select.hidden = !deep.files.length;
+    $("k-deep-file-note").textContent = deep.files.length
+      ? ""
+      : t("k.deep.noFiles");
+    loadEntries();
+  }
+
+  async function loadEntries() {
+    if (!deep.file) {
+      deep.entries = [];
+      return drawEntries();
+    }
+    try {
+      deep.entries = (
+        await api(`eval?${new URLSearchParams({ file: deep.file })}`)
+      ).entries;
+    } catch (error) {
+      $("k-deep-file-note").textContent = error.message;
+      return;
+    }
+    drawEntries();
+  }
+
+  function drawEntries() {
+    $("k-deep-entries").replaceChildren(
+      ...deep.entries.map((entry) => {
+        const li = document.createElement("li");
+        li.className = "k-deep-entry";
+        li.dataset.id = entry.id;
+        if (entry.verdict) li.dataset.verdict = entry.verdict;
+        const pressed = (v) => `aria-pressed="${entry.verdict === v}"`;
+        const sources = entry.sources?.length
+          ? `<details class="cf-sources"><summary>${escapeHtml(t("k.deep.sources", { n: entry.sources.length }))}</summary><ol class="k-sources">${entry.sources
+              .map(
+                (s) =>
+                  `<li><b>${escapeHtml(s.id)}</b> ${titleLink(s.title, s.url)}${s.heading ? ` › ${escapeHtml(s.heading)}` : ""} <span class="cf-kind">${escapeHtml(sourceName(s.source))}</span></li>`,
+              )
+              .join("")}</ol></details>`
+          : "";
+        const answer = entry.error
+          ? `<p class="panel-note level-critical">${escapeHtml(t("k.deep.failed", { error: entry.error }))}</p>`
+          : `<div class="k-deep-answer">${escapeHtml(entry.answer)}</div>`;
+        const made = entry.note
+          ? noteLink(entry.note, t("k.deep.noteMade", { id: entry.note }))
+          : `<button type="button" class="mode-toggle" data-note>${escapeHtml(t("k.deep.toNote"))}</button>`;
+        li.innerHTML = `
+          <div class="k-hit-head">
+            <span class="cf-kind">${escapeHtml(categoryName(entry.category))}</span>
+            <b>${escapeHtml(entry.question)}</b>
+            <span class="panel-note num">${(entry.ms / 1000).toFixed(0)} s</span>
+          </div>
+          ${answer}
+          ${sources}
+          <div class="cf-alias-actions">
+            <button type="button" class="mode-toggle" data-verdict="good" ${pressed("good")}>${escapeHtml(t("k.deep.good"))}</button>
+            <button type="button" class="mode-toggle" data-verdict="wrong" ${pressed("wrong")}>${escapeHtml(t("k.deep.wrong"))}</button>
+            ${made}
+          </div>`;
+        return li;
+      }),
+    );
+  }
+
+  $("k-deep-file").onchange = () => {
+    deep.file = $("k-deep-file").value;
+    remember("deep-file", deep.file);
+    loadEntries();
+  };
+
+  /** Records a verdict (or the note made) on an entry of the shown file */
+  async function markEntry(id, body) {
+    try {
+      await api("eval/mark", { file: deep.file, id, ...body });
+    } catch (error) {
+      $("k-deep-file-note").textContent = error.message;
+    }
+    loadEvalFiles();
+  }
+
+  $("k-deep-entries").addEventListener("click", (event) => {
+    const li = event.target.closest(".k-deep-entry");
+    if (!li) return;
+    const entry = deep.entries.find((e) => e.id === li.dataset.id);
+    if (!entry) return;
+    const verdict = event.target.closest("[data-verdict]");
+    if (verdict) {
+      const v = verdict.dataset.verdict;
+      // Pressing the verdict again takes it back
+      markEntry(entry.id, { verdict: entry.verdict === v ? null : v });
+      return;
+    }
+    if (event.target.closest("[data-note]")) {
+      const file = deep.file;
+      editNote({
+        question: entry.question,
+        body: entry.answer,
+        tags: [entry.category],
+        questionId: entry.id,
+        from: `eval ${file}`,
+        onSaved: (note) => {
+          deep.file = file;
+          markEntry(entry.id, { verdict: "wrong", note: note.id });
+        },
+      });
+    }
+  });
+
+  $("k-deep-run").onclick = async () => {
+    note("k-deep-error", null);
+    const max = Number($("k-deep-max").value) || undefined;
+    try {
+      await api("eval/deep", { lang: $("k-deep-lang").value, max });
+    } catch (error) {
+      return note("k-deep-error", error.message);
+    }
+    pollJobs();
+  };
+
+  $("k-deep-new-note").onclick = () => editNote();
+
+  $("k-deep-lang").value = remembered("deep-lang", i18nLang());
+  $("k-deep-lang").onchange = () =>
+    remember("deep-lang", $("k-deep-lang").value);
+
   // -------------------------------------------------------------- routing
 
   function show() {
@@ -932,6 +1334,9 @@
     loadOverview();
     loadAssets();
     loadInbox();
+    loadNotes();
+    loadQuestions();
+    loadEvalFiles();
     pollJobs();
   }
 
@@ -940,7 +1345,9 @@
     const wasShown = k.shown;
     k.shown = app === "cuttlefish" && state.get("view") === "knowledge";
     $("cf-knowledge").hidden = !k.shown;
+    if (k.shown) notes.open = state.get("note");
     if (k.shown && !wasShown) show();
+    else if (k.shown && notes.open) loadNotes();
     if (!k.shown) clearTimeout(k.pollTimer);
   });
 
@@ -953,11 +1360,15 @@
     drawStats();
     if (k.documents.length) drawDocuments();
     $("k-import-go").textContent = goLabel();
+    drawNotes();
+    drawBank();
+    drawEntries();
     if (k.shown) {
       pollJobs();
       loadOverview();
       loadAssets();
       loadInbox();
+      loadEvalFiles();
       if (k.report) drawReport();
     }
   });

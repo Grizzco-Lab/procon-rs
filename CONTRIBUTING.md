@@ -311,7 +311,20 @@ runs them as a job (`Knowledge::start_job`, shared with imports) through the
 translator's client, three at once (`slang::run`), each batch's aliases and
 new terms (`slang::parse_candidates`) saved as it ends, the sure ones
 approved at once with auto-apply (`[cuttlefish] slang_auto_apply`,
-`slang_threshold`). Imports use `cuttlefish::ingest`
+`slang_threshold`). `POST knowledge/slang/term-edit` edits a term
+(`UserGlossary::edit_term`: a new term in place, a glossary term as an
+`[[override]]` of the user file applied on every load; `term-reset` drops
+one). Expert notes (`cuttlefish::notes`, `<knowledge>/notes/<id>.md`, source
+kind `expert-note`, weight 1.3): `GET knowledge/notes`, `POST
+knowledge/notes/save` (written, then indexed at once under the store lock)
+and `notes/delete`; the page's editor (`web/knowledge.js`,
+`window.cuttlefishNotes.edit`) is opened by the chat's **Correct / add to
+memory** and by the deep eval's answers. The deep question bank
+(`cuttlefish::questions`, `GET knowledge/questions`) feeds the chat's chips
+and the eval (`cuttlefish::deep_eval`: `POST knowledge/eval/deep` runs it as
+a job, `GET knowledge/eval[?file=]` lists and reads
+`<knowledge>/eval/deep-<date>.jsonl`, `POST knowledge/eval/mark` records a
+verdict and the note made). Imports use `cuttlefish::ingest`
 (the same code as the CLI) with a `Sink` that writes the job's log; one runs
 at a time, and the index is written every fifty documents and at the end (it
 may live in a synced folder, where each write uploads it whole). The

@@ -1351,6 +1351,12 @@
             </div>
             <h3 class="readout-label" data-i18n="slang.newTerms">New terms</h3>
             <ul class="cf-aliases" id="cf-slang-terms"></ul>
+            <div id="cf-slang-overrides-box" hidden>
+              <h3 class="readout-label" data-i18n="slang.overrides">
+                Edited glossary terms
+              </h3>
+              <ul class="cf-aliases" id="cf-slang-overrides"></ul>
+            </div>
             <h3 class="readout-label" data-i18n="slang.pending">
               Waiting for review
             </h3>
@@ -2332,6 +2338,74 @@
             <p class="notice" id="k-search-error" hidden></p>
             <ol class="k-hits" id="k-hits"></ol>
           </section>
+
+          <!-- Deep questions: the bank, the eval runs and the review of
+               their answers into expert notes -->
+          <section class="panel p-k-deep" aria-labelledby="h-k-deep">
+            <header class="panel-head">
+              <h2 id="h-k-deep" data-i18n="k.deep.title">Deep questions</h2>
+              <span class="panel-note" id="k-deep-count"></span>
+            </header>
+            <p class="panel-note" data-i18n="k.deep.note">
+              Questions a high-level player asks, with answers the community
+              knows. The eval asks the model the ones that need no video; mark
+              each answer good or wrong, and turn a wrong one into an expert
+              note, which Cuttlefish trusts over every other source from then
+              on.
+            </p>
+            <div class="cf-row">
+              <select
+                class="select"
+                id="k-deep-lang"
+                aria-label="Language of the questions"
+                data-i18n-aria-label="k.deep.langLabel"
+              >
+                <option value="en">English</option>
+                <option value="zh">中文</option>
+              </select>
+              <label class="check"
+                ><span data-i18n="k.deep.max">at most</span>
+                <input
+                  class="select num k-deep-max"
+                  id="k-deep-max"
+                  type="number"
+                  min="1"
+                  max="99"
+                  placeholder="all"
+                  aria-label="Questions at most"
+                  data-i18n-aria-label="k.deep.maxLabel"
+              /></label>
+              <button
+                type="button"
+                class="btn btn-small"
+                id="k-deep-run"
+                data-i18n="k.deep.run"
+              >
+                Run the deep eval
+              </button>
+              <button
+                type="button"
+                class="mode-toggle"
+                id="k-deep-new-note"
+                data-i18n="k.notes.new"
+              >
+                New note
+              </button>
+            </div>
+            <p class="notice" id="k-deep-error" hidden></p>
+            <details class="k-deep-bank" id="k-deep-bank">
+              <summary id="k-deep-bank-summary"></summary>
+              <div id="k-deep-bank-list"></div>
+            </details>
+            <div class="cf-row k-deep-files">
+              <label class="check" for="k-deep-file"
+                ><span data-i18n="k.deep.answers">Answers</span>
+                <select class="select" id="k-deep-file"></select
+              ></label>
+              <span class="panel-note" id="k-deep-file-note"></span>
+            </div>
+            <ol class="k-deep-entries" id="k-deep-entries"></ol>
+          </section>
         </div>
 
         <div class="k-col">
@@ -2412,6 +2486,21 @@
             <p class="panel-note" id="k-docs-note"></p>
           </section>
 
+          <!-- Expert notes: the player's corrections, Cuttlefish's memory -->
+          <section class="panel p-k-notes" aria-labelledby="h-k-notes">
+            <header class="panel-head">
+              <h2 id="h-k-notes" data-i18n="k.notes.title">Expert notes</h2>
+              <span class="panel-note" id="k-notes-count"></span>
+            </header>
+            <p class="panel-note" data-i18n="k.notes.note">
+              What you corrected or explained by hand, one Markdown file each in
+              notes/ of the knowledge folder; the most trusted source in every
+              answer. Write one from any answer of Cuttlefish with "Correct /
+              add to memory".
+            </p>
+            <ul class="k-notes-list" id="k-notes"></ul>
+          </section>
+
           <section class="panel p-k-assets" aria-labelledby="h-k-assets">
             <header class="panel-head">
               <h2 id="h-k-assets" data-i18n="k.assets">Assets</h2>
@@ -2442,6 +2531,88 @@
           </section>
         </div>
       </main>
+
+      <!-- The expert note editor, shared by the chat ("Correct / add to
+           memory"), the deep questions and the Notes panel (knowledge.js) -->
+      <dialog class="cf-dialog" id="cf-note-dialog">
+        <form class="cf-note-form" id="cf-note-form" method="dialog">
+          <header class="panel-head">
+            <h2 id="cf-note-title" data-i18n="note.title">Expert note</h2>
+            <span class="panel-note" data-i18n="note.hint"
+              >edit the answer into the correct explanation; Cuttlefish will
+              follow it</span
+            >
+          </header>
+          <label class="cf-alias-field"
+            ><span data-i18n="note.question">Question</span>
+            <input
+              class="select"
+              id="cf-note-question"
+              required
+              maxlength="300"
+          /></label>
+          <label class="cf-alias-field"
+            ><span data-i18n="note.body"
+              >The correct explanation (Markdown)</span
+            >
+            <textarea
+              class="select cf-note-body"
+              id="cf-note-body"
+              rows="12"
+              required
+            ></textarea>
+          </label>
+          <div class="cf-note-fields">
+            <label class="cf-alias-field"
+              ><span data-i18n="note.tags">Tags, comma-separated</span>
+              <input
+                class="select"
+                id="cf-note-tags"
+                placeholder="bosses, drizzler"
+            /></label>
+            <label class="cf-alias-field"
+              ><span data-i18n="note.terms"
+                >Glossary terms, comma-separated ids</span
+              >
+              <input
+                class="select"
+                id="cf-note-terms"
+                placeholder="drizzler, egg-basket"
+            /></label>
+            <label class="cf-alias-field"
+              ><span data-i18n="note.era">Era</span>
+              <select class="select" id="cf-note-era">
+                <option value="S3" data-i18n="cf.era.S3">Splatoon 3 era</option>
+                <option value="S2" data-i18n="cf.era.S2">Splatoon 2 era</option>
+              </select></label
+            >
+            <label class="cf-alias-field"
+              ><span data-i18n="note.version">Game version (optional)</span>
+              <input class="select" id="cf-note-version" placeholder="10.0.0"
+            /></label>
+          </div>
+          <p class="panel-note" id="cf-note-from"></p>
+          <div class="cf-alias-actions">
+            <button
+              type="submit"
+              class="btn"
+              id="cf-note-save"
+              data-i18n="note.save"
+            >
+              Save as note
+            </button>
+            <button
+              type="button"
+              class="mode-toggle"
+              id="cf-note-cancel"
+              data-i18n="cf.cancel"
+            >
+              Cancel
+            </button>
+            <span class="panel-note" id="cf-note-status"></span>
+          </div>
+        </form>
+      </dialog>
     </div>
 
     <!-- Vision app: detect and track objects in a session, review, send to labels -->

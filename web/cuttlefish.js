@@ -374,6 +374,7 @@
     pollDownloads();
     drawChips($("cf-entry-chips"), $("cf-entry-text"), entryChips());
     checkKey();
+    loadDeep();
   }
 
   /** The session pickers: the library's "Open a video" and the player's
@@ -757,6 +758,7 @@
     markSaved(id ? "saved" : "new");
     drawChat();
     checkKey();
+    loadDeep();
     if (!withVideo) {
       writeUrl(0);
       pollDownloads();
@@ -1535,14 +1537,17 @@
     }
   }
 
-  /** Example messages as chips that fill `input`: `{text, ctx?}`, a chip
-   * with `ctx` also choosing what the message takes of the video */
+  /** Example messages as chips that fill `input`: `{text, ctx?, title?,
+   * deep?}`, a chip with `ctx` also choosing what the message takes of the
+   * video; a deep question's chip is marked */
   function drawChips(box, input, chips) {
     box.replaceChildren(
-      ...chips.map(({ text, ctx }) => {
+      ...chips.map(({ text, ctx, title, deep }) => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "cf-chip";
+        if (deep) button.classList.add("is-deep");
+        if (title) button.title = title;
         button.textContent = text;
         button.onclick = () => {
           input.value = text;
@@ -1559,16 +1564,89 @@
     );
   }
 
-  /** The library bar's chips: questions about one's play */
-  const entryChips = () => examples().map((text) => ({ text }));
+  /** Deep questions offered as chips at once */
+  const DEEP_CHIPS = 3;
 
-  /** A review's chips: with a video, the moment and the range first */
+  /** The deep question bank (crates/cuttlefish/questions/deep.toml), once
+   * fetched; the chips draw a few at random from it */
+  let deepBank = null;
+
+  async function loadDeep() {
+    if (deepBank) return;
+    try {
+      const data = await (
+        await fetch("/api/cuttlefish/knowledge/questions")
+      ).json();
+      if (!Array.isArray(data.questions)) return;
+      deepBank = data.questions;
+    } catch {
+      return;
+    }
+    // Drawn without them until now
+    if (cf.shown && !cf.review)
+      drawChips($("cf-entry-chips"), $("cf-entry-text"), entryChips());
+    if (cf.review && !cf.review.messages.length)
+      drawChips($("cf-chat-chips"), $("cf-chat-text"), chatChips());
+  }
+
+  /** `n` random items of a list */
+  function sample(list, n) {
+    const pool = [...list];
+    const out = [];
+    while (pool.length && out.length < n) {
+      out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    }
+    return out;
+  }
+
+  /** A question of the bank as a chip, in the page's language, its
+   * category as the tooltip; a video question also picks the moment or
+   * the range */
+  function deepChip(q) {
+    const ctx = { video_moment: "moment", hud: "moment", video_range: "range" }[
+      q.needs
+    ];
+    return {
+      text: i18nLang() === "zh" ? q.zh : q.en,
+      ctx,
+      title: t("cf.chat.deepTitle", {
+        category: t(`k.deep.cat.${q.category}`),
+      }),
+      deep: true,
+    };
+  }
+
+  /** A few deep questions at random: those about a video only with one
+   * (a couple of them first), never the ones that wait for the detector */
+  function deepChips(withVideo) {
+    if (!deepBank) return [];
+    const askable = deepBank.filter((q) => q.needs === "knowledge");
+    if (!withVideo) return sample(askable, DEEP_CHIPS).map(deepChip);
+    const video = deepBank.filter((q) =>
+      ["video_moment", "video_range", "hud"].includes(q.needs),
+    );
+    return [...sample(video, 2), ...sample(askable, DEEP_CHIPS - 1)].map(
+      deepChip,
+    );
+  }
+
+  /** The library bar's chips: questions about one's play, then a few
+   * deep ones */
+  const entryChips = () => [
+    ...examples().map((text) => ({ text })),
+    ...deepChips(false),
+  ];
+
+  /** A review's chips: with a video, the moment and the range first, then
+   * the deep questions and the examples */
   function chatChips() {
-    const chips = entryChips();
-    if (!cf.review?.video) return chips;
+    const withVideo = Boolean(cf.review?.video);
+    const chips = examples().map((text) => ({ text }));
+    if (!withVideo) return [...chips, ...deepChips(false)];
     return [
       { text: t("cf.ask.moment"), ctx: "moment" },
       { text: t("cf.chat.rangeExample"), ctx: "range" },
+      ...deepChips(true),
       ...chips,
     ];
   }
@@ -1611,12 +1689,17 @@
 
   /** A source of a message as a list item: its id, title (linked) and
    * section; an expert comment of #vod-review as its reviewer and date
-   * linked to the Discord message, the era and the moment it is about */
+   * linked to the Discord message, the era and the moment it is about; an
+   * expert note as its label ("Expert note (user), date") linked to the
+   * Notes panel, then the question it answers */
   function sourceItem(s) {
     const link = (text) =>
       s.url
         ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`
         : escapeHtml(text);
+    if (s.source === "expert-note") {
+      return `<li><b>${escapeHtml(s.id)}</b> ${link(s.heading || t("k.source.expertNote"))} <span class="cf-kind">${escapeHtml(t("k.source.expertNote"))}</span> › ${escapeHtml(s.title)}</li>`;
+    }
     const x = s.expert;
     if (x) {
       const about = s.heading.split(", about ")[1];
@@ -1702,6 +1785,10 @@
           added.length && withVideo
             ? `<div class="cf-msg-comments"><span class="panel-note">${escapeHtml(t("cf.chat.commentsAdded", { n: added.length }))}</span> ${added.map((c) => `<button type="button" class="cf-time num" data-comment="${escapeHtml(c.id)}">${timeText(c)}</button>`).join(" ")}</div>`
             : "";
+        // An answer can be corrected into an expert note
+        const memo = user
+          ? ""
+          : `<button type="button" class="mode-toggle cf-mini cf-memo" data-memo title="${escapeHtml(t("cf.chat.memoTitle"))}">${escapeHtml(t("cf.chat.memo"))}</button>`;
         li.innerHTML = `
           <div class="cf-msg-head">
             <span class="cf-author">${escapeHtml(user ? t("cf.author.you") : t("cf.name"))}</span>
@@ -1711,14 +1798,39 @@
           <div class="cf-msg-text">${messageHtml(message)}</div>
           ${sources ? `<details class="cf-sources"><summary>${escapeHtml(t("cf.chat.sources"))} (${message.sources.length})</summary><ol class="k-sources">${sources}</ol></details>` : ""}
           ${experts ? `<details class="cf-sources"><summary>${escapeHtml(t("cf.chat.experts"))} (${message.experts.length})</summary><ol class="k-sources">${experts}</ol></details>` : ""}
-          ${comments}`;
+          ${comments}
+          ${memo ? `<div class="cf-msg-tools">${memo}</div>` : ""}`;
         return li;
       }),
     );
     list.scrollTop = list.scrollHeight;
   }
 
+  /** "Correct / add to memory": the answer, with the question it answered,
+   * in the expert note editor (knowledge.js); the note is indexed at once */
+  function correctAnswer(message) {
+    const messages = cf.review?.messages ?? [];
+    const at = messages.indexOf(message);
+    const question = messages
+      .slice(0, at)
+      .reverse()
+      .find((m) => m.role === "user");
+    window.cuttlefishNotes?.edit({
+      question: question?.text ?? "",
+      body: message.text,
+      from: `chat ${cf.id ?? ""}`.trim(),
+      onSaved: (note) => chatNote(t("cf.chat.memoSaved", { id: note.id })),
+    });
+  }
+
   $("cf-chat").addEventListener("click", (event) => {
+    const memo = event.target.closest("[data-memo]");
+    if (memo) {
+      const id = memo.closest(".cf-msg")?.dataset.id;
+      const message = cf.review?.messages.find((m) => m.id === id);
+      if (message) correctAnswer(message);
+      return;
+    }
     const seekTo = event.target.closest("[data-seek]");
     if (seekTo && cf.review?.video) {
       seek(parseFloat(seekTo.dataset.seek));

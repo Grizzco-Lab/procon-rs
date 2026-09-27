@@ -265,6 +265,28 @@ const I18N = {
     "cf.chat.at": "at {time}",
     "cf.chat.sources": "Sources",
     "cf.chat.experts": "Expert comments given",
+    "cf.chat.deepTitle": "A deep question of the bank: {category}",
+    "cf.chat.memo": "Correct / add to memory",
+    "cf.chat.memoTitle":
+      "Edit this answer into the correct explanation and save it as an expert note; Cuttlefish follows notes over every other source",
+    "cf.chat.memoSaved":
+      "Saved as the expert note {id}; Cuttlefish uses it from now on",
+
+    // The expert note editor
+    "note.title": "Expert note",
+    "note.editTitle": "Expert note {id}",
+    "note.hint":
+      "edit the answer into the correct explanation; Cuttlefish will follow it",
+    "note.question": "Question",
+    "note.body": "The correct explanation (Markdown)",
+    "note.tags": "Tags, comma-separated",
+    "note.terms": "Glossary terms, comma-separated ids",
+    "note.era": "Era",
+    "note.version": "Game version (optional)",
+    "note.save": "Save as note",
+    "note.saving": "Saving and indexing…",
+    "note.failed": "Not saved: {error}",
+    "note.from": "From: {from}",
     "cf.chat.commentsAdded": ({ n }) =>
       n === 1 ? "1 comment added" : `${n} comments added`,
     "cf.chat.seek": "Go to {time}",
@@ -381,6 +403,28 @@ const I18N = {
     "alias.saved": "Saved: {text} → {term}",
     "alias.failed": "Not saved: {error}",
 
+    // Editing a term: a new term in place, a glossary term as an override
+    "slang.overrides": "Edited glossary terms",
+    "term.edit": "Edit definition / relation",
+    "term.editTitle":
+      "Correct the definition, or how this term relates to a broader one; kept in glossary-user.toml, so imports never lose it",
+    "term.name": "Name",
+    "term.kind": "Kind",
+    "term.definition": "Definition",
+    "term.relation": "Relation",
+    "term.relationNone": "none",
+    "term.relationTo": "to the term",
+    "term.save": "Save",
+    "term.saved": "Saved: {name}",
+    "term.failed": "Not saved: {error}",
+    "term.overrideNote":
+      "a glossary term keeps its names; your definition and relation override the glossary's",
+    "term.edited": "edited by you",
+    "term.unrelated": "relation removed",
+    "term.reset": "Restore the glossary's",
+    "term.resetAsk":
+      "Drop your edits of {name}? The glossary's definition and relation come back.",
+
     // Knowledge
     "k.loading":
       "Loading the knowledge store… The first time, the embedding model (about 470 MB) is downloaded into the data folder.",
@@ -468,6 +512,8 @@ const I18N = {
     "k.source.vodReview": "#vod-review",
     "k.source.discord": "Discord",
     "k.source.file": "File",
+    "k.source.expertNote": "Expert note",
+    "k.format.note": "Note",
     "k.job.running": "running",
     "k.job.done": "done",
     "k.job.failed": "failed",
@@ -492,6 +538,57 @@ const I18N = {
     "k.corpus.note":
       "reads the HUD of the videos on disk, then each reviewed VOD with its video becomes a review with the community's comments, and every comment becomes an expert comment the chat can draw on; re-run any time",
     "k.corpus.failed": "Could not start: {error}",
+
+    // Knowledge: expert notes
+    "k.notes.title": "Expert notes",
+    "k.notes.note":
+      'What you corrected or explained by hand, one Markdown file each in notes/ of the knowledge folder; the most trusted source in every answer. Write one from any answer of Cuttlefish with "Correct / add to memory".',
+    "k.notes.count": ({ n }) => (n === 1 ? "1 note" : `${n} notes`),
+    "k.notes.none": "no notes yet",
+    "k.notes.new": "New note",
+    "k.notes.edit": "Edit",
+    "k.notes.delete": "Delete",
+    "k.notes.deleteAsk": "Delete the note {id}? Its file is removed.",
+    "k.notes.by": "{author}, {date}",
+    "k.notes.answers": "answers {id}",
+    "k.notes.from": "from {from}",
+
+    // Knowledge: the deep questions and their eval
+    "k.deep.title": "Deep questions",
+    "k.deep.note":
+      "Questions a high-level player asks, with answers the community knows. The eval asks the model the ones that need no video; mark each answer good or wrong, and turn a wrong one into an expert note, which Cuttlefish trusts over every other source from then on.",
+    "k.deep.count": ({ n, notes }) =>
+      `${n} questions${notes ? `, ${notes} answered by a note` : ""}`,
+    "k.deep.langLabel": "Language of the questions",
+    "k.deep.max": "at most",
+    "k.deep.maxLabel": "Questions at most",
+    "k.deep.run": "Run the deep eval",
+    "k.deep.bank": "The bank: {n} questions in {c} categories",
+    "k.deep.needs.knowledge": "knowledge",
+    "k.deep.needs.video_moment": "a moment of a video",
+    "k.deep.needs.video_range": "a range of a video",
+    "k.deep.needs.hud": "the HUD",
+    "k.deep.needs.detector": "coming later: needs the detector",
+    "k.deep.reference": "note",
+    "k.deep.answers": "Answers",
+    "k.deep.noFiles":
+      "No eval yet: run one here, or `cuttlefish eval deep` in a terminal.",
+    "k.deep.fileNote": ({ entries, good, wrong, failed }) =>
+      `${entries} answers, ${good} good, ${wrong} wrong${failed ? `, ${failed} failed` : ""}`,
+    "k.deep.good": "Good",
+    "k.deep.wrong": "Wrong",
+    "k.deep.toNote": "Correct → note",
+    "k.deep.noteMade": "note {id}",
+    "k.deep.failed": "failed: {error}",
+    "k.deep.sources": ({ n }) => (n === 1 ? "1 source" : `${n} sources`),
+    "k.deep.cat.macro": "Macro and strategy",
+    "k.deep.cat.openings": "Wave openings and roles",
+    "k.deep.cat.bosses": "Boss mechanics",
+    "k.deep.cat.stages": "Stages and tides",
+    "k.deep.cat.events": "Known occurrences",
+    "k.deep.cat.eggs": "Egg flow",
+    "k.deep.cat.weapons": "Weapons and specials",
+    "k.deep.cat.moments": "Moments of a video",
 
     // Knowledge: the inbox, import reports, overview, assets
     "k.kind.inbox": "Inbox",

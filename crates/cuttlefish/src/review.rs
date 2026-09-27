@@ -18,10 +18,12 @@
 //!
 //! About a moment of a video, both also get the moment as text (the
 //! `<moment>` block, [`Situation`]: HUD, controller input, labelled
-//! objects), and retrieval asks for it too: the [`EXPERT_K`] closest expert
-//! comments of the #vod-review corpus ([`crate::expert`], in an
-//! `<expert_comments>` block labelled "Centritide, 2023 (S3), about a W2
-//! :50 moment") come before the `k` best other excerpts, all numbered as
+//! objects), and retrieval asks for it too: the [`NOTE_K`] closest expert
+//! notes of the player's own ([`crate::notes`], in an `<expert_notes>`
+//! block labelled "Expert note (user), 2026-09-27"), then the [`EXPERT_K`]
+//! closest expert comments of the #vod-review corpus ([`crate::expert`], in
+//! an `<expert_comments>` block labelled "Centritide, 2023 (S3), about a W2
+//! :50 moment"), come before the `k` best other excerpts, all numbered as
 //! one list.
 //!
 //! [`translate`] and [`explain`] are the translator's own calls, without a
@@ -211,6 +213,9 @@ const QUERY_TURNS: usize = 2;
 /// Expert comments retrieved per request, before the other excerpts
 pub const EXPERT_K: usize = 4;
 
+/// Expert notes retrieved per request, before everything else
+pub const NOTE_K: usize = 2;
+
 const PERSONA: &str = "\
 You are Cuttlefish, an experienced Salmon Run (Splatoon 3) player who plays at \
 Eggsecutive VP 999 and high Hazard Levels, and a kind mentor. You review gameplay \
@@ -259,11 +264,22 @@ players, each labelled like \"Centritide, 2023 (S3), about a W2 :50 moment\", \
 found because their moment resembles the one asked about. They were said about \
 someone else's game: use one when the situation matches, cite its id and quote \
 the reviewer and year.
+The expert_notes block holds notes the player wrote or corrected by hand, each \
+labelled like \"Expert note (user), 2026-09-27\" with the question it answers: \
+they come from a high-level player checking your earlier answers and are the most \
+trusted material you have. When a note applies to the question, follow it over \
+every other source, cite its id and say it is the player's note; when it does not \
+apply, leave it aside.
 
 The moment block describes the moment in text: the HUD (wave, timer, golden \
-eggs), the controller input (recorded from the controller, or predicted from the \
-video by a model, which is an estimate and can be wrong) and objects a person \
-labelled on a frame. Use it with the frames; where they disagree, say so.";
+eggs), the controller input and objects a person labelled on a frame. Use it with \
+the frames; where they disagree, say so. The controller input is either recorded \
+from the controller, which you can trust, or estimated from the video by an \
+inverse dynamics model, which the block says plainly along with how reliable that \
+model measured: do not rely on estimated input for fine claims (which button was \
+pressed when, how far the stick or camera moved, a squid roll); use it only for \
+the broad picture, say it is estimated when you mention it, and prefer what the \
+frames show.";
 
 /// The system prompt: persona and rules, then the curated digest. It does
 /// not change between calls, so the API caches it.
@@ -302,8 +318,10 @@ fn push_situation(q: &mut String, situation: Option<&Situation>) {
     }
 }
 
-/// Knowledge excerpts, numbered from S1: the expert comments among the
-/// hits in an `<expert_comments>` block, each after its label
+/// Knowledge excerpts, numbered from S1: the expert notes among the hits
+/// in an `<expert_notes>` block, each after its label (the note's heading,
+/// `Expert note (user), 2026-09-27`) and the question it answers, then the
+/// expert comments in an `<expert_comments>` block, each after its label
 /// ([`Expert::label`]), then the others in `<knowledge>`. Each is labelled
 /// with its source kind and place; a source of a known era with the era
 /// (`[Splatoon 2 era]`, as the model quotes it), a #vod-review
@@ -321,7 +339,25 @@ pub fn knowledge_block(hits: &[Hit]) -> String {
             .map(|v| alloc::format!(" video=\"{}\"", v.replace('"', "'")))
             .unwrap_or_default()
     };
+    let is_note = |e: &crate::index::Entry| e.source == SourceKind::ExpertNote;
     let mut out = String::new();
+    if hits.iter().any(|h| is_note(&h.entry)) {
+        out.push_str("<expert_notes>\n");
+        for (i, h) in hits.iter().enumerate() {
+            let e = &h.entry;
+            if is_note(e) {
+                out.push_str(&alloc::format!(
+                    "<note id=\"S{}\"{} question=\"{}\">\n{}: {}\n</note>\n",
+                    i + 1,
+                    era(e),
+                    e.title.replace('"', "'"),
+                    e.heading,
+                    e.text.trim()
+                ));
+            }
+        }
+        out.push_str("</expert_notes>\n");
+    }
     if hits.iter().any(|h| h.entry.expert.is_some()) {
         out.push_str("<expert_comments>\n");
         for (i, h) in hits.iter().enumerate() {
@@ -342,7 +378,7 @@ pub fn knowledge_block(hits: &[Hit]) -> String {
     out.push_str("<knowledge>\n");
     for (i, h) in hits.iter().enumerate() {
         let e = &h.entry;
-        if e.expert.is_some() {
+        if e.expert.is_some() || is_note(e) {
             continue;
         }
         let place = if e.heading.is_empty() {
@@ -752,17 +788,25 @@ impl Reviewer {
     }
 }
 
-/// The [`EXPERT_K`] best expert comments ([`crate::expert::search`]) and
-/// the `k` best other chunks for a query, in that order, and the glossary
-/// terms it mentions
+/// The [`NOTE_K`] best expert notes, the [`EXPERT_K`] best expert comments
+/// ([`crate::expert::search`]) and the `k` best other chunks for a query,
+/// in that order, and the glossary terms it mentions
 fn retrieve<'a>(
     store: &'a Store,
     embedder: &dyn Embedder,
     k: usize,
     query: &str,
 ) -> Result<(Vec<Hit>, Vec<&'a Term>)> {
-    let mut hits = crate::expert::search(store, embedder, query, EXPERT_K, &|_| true)?;
-    hits.extend(store.search_where(query, k, embedder, &|e| e.expert.is_none())?);
+    let is_note = |e: &crate::index::Entry| e.source == SourceKind::ExpertNote;
+    let mut hits = store.search_where(query, NOTE_K, embedder, &is_note)?;
+    hits.extend(crate::expert::search(
+        store,
+        embedder,
+        query,
+        EXPERT_K,
+        &|_| true,
+    )?);
+    hits.extend(store.search_where(query, k, embedder, &|e| e.expert.is_none() && !is_note(e))?);
     let terms = store.glossary().find_in(query);
     Ok((hits, terms))
 }
@@ -1445,6 +1489,29 @@ mod tests {
         assert_eq!(hits.len(), 8);
         assert!(hits[..3].iter().all(|h| h.entry.expert.is_some()));
         assert!(hits[3..].iter().all(|h| h.entry.expert.is_none()));
+        // A note of the player's comes before everything, once
+        let mut note = crate::notes::Note::new("Starved basket?", "Someone runs eggs.");
+        note.id = String::from("2026-09-27-starved-basket");
+        store.add(&note.document(), &e).unwrap();
+        let (hits, _) = retrieve(&store, &e, 5, "go left, the basket starved").unwrap();
+        assert_eq!(hits.len(), 9);
+        assert_eq!(hits[0].entry.source, SourceKind::ExpertNote);
+        assert!(hits[1..4].iter().all(|h| h.entry.expert.is_some()));
+        assert!(
+            hits[4..]
+                .iter()
+                .all(|h| h.entry.expert.is_none() && h.entry.source != SourceKind::ExpertNote)
+        );
+        let block = knowledge_block(&hits);
+        assert!(block.starts_with(
+            "<expert_notes>\n<note id=\"S1\" era=\"[Splatoon 3 era]\" question=\"Starved basket?\">\n"
+        ));
+        assert!(block.contains("\nExpert note (user), "));
+        assert!(
+            block.contains(": Someone runs eggs.\n</note>\n</expert_notes>\n<expert_comments>\n")
+        );
+        assert!(!block.contains("source=\"expert-note\""));
+        assert!(system_prompt(None).contains("expert_notes block"));
         std::fs::remove_dir_all(&root).unwrap();
         std::fs::remove_dir_all(&corpus_root).unwrap();
     }

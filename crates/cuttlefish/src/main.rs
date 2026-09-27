@@ -26,6 +26,7 @@ use cuttlefish::slang::{self, UserGlossary};
 use cuttlefish::store::{self, Store};
 use cuttlefish::{assets, env_file, inbox, tables};
 use cuttlefish::{corpus, corpus_reviews, corpus_videos, expert};
+use cuttlefish::{deep_eval, notes, questions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -91,16 +92,32 @@ enum Command {
         #[command(flatten)]
         model: ModelArgs,
     },
-    /// Run an evaluation file (see `eval.example.toml`)
+    /// Run an evaluation file (see `eval.example.toml`), or `deep`: ask the
+    /// model the deep question bank's questions that need no video
+    /// (questions/deep.toml) and keep the answers in
+    /// <knowledge>/eval/deep-<date>.jsonl for review in the studio
     Eval {
-        /// Evaluation file
-        file: PathBuf,
+        /// Evaluation file, or "deep"
+        target: String,
         /// Knowledge excerpts to retrieve
         #[arg(short, default_value_t = 8)]
         k: usize,
-        /// Also ask the model and check the answers (needs a model backend)
+        /// Also ask the model and check the answers (needs a model backend;
+        /// `deep` always asks)
         #[arg(long)]
         answer: bool,
+        /// deep: the language the questions are asked in (en, zh)
+        #[arg(long, default_value = "en")]
+        lang: String,
+        /// deep: questions asked at once (at most 8)
+        #[arg(long, default_value_t = cuttlefish::deep_eval::DEFAULT_PARALLEL)]
+        parallel: usize,
+        /// deep: at most this many questions
+        #[arg(long)]
+        max: Option<usize>,
+        /// deep: only these question ids (repeatable)
+        #[arg(long)]
+        only: Vec<String>,
         #[command(flatten)]
         model: ModelArgs,
     },
@@ -459,6 +476,15 @@ fn open(data: &Path, catch_up: bool) -> Result<(Store, E5Embedder)> {
             );
             store.save()?;
         }
+        // The expert notes' files are the truth
+        let synced = notes::sync(&mut store, &embedder)?;
+        if synced.changed() {
+            println!(
+                "expert notes: {} embedded, {} removed",
+                synced.embedded, synced.removed
+            );
+            store.save()?;
+        }
     }
     Ok((store, embedder))
 }
@@ -688,11 +714,26 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Eval {
-            file,
+            target,
             k,
             answer,
+            lang,
+            parallel,
+            max,
+            only,
             model,
         } => {
+            if target == "deep" {
+                let opts = deep_eval::Options {
+                    lang,
+                    parallel,
+                    max,
+                    only,
+                    k,
+                };
+                return eval_deep(&data, model.settings(), &opts);
+            }
+            let file = PathBuf::from(target);
             let set = EvalSet::parse(
                 &std::fs::read_to_string(&file)
                     .with_context(|| format!("reading {}", file.display()))?,
@@ -1015,6 +1056,57 @@ fn slang_command(data: &Path, cmd: Slang) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// `eval deep`: the bank's askable questions through the model, the
+/// answers into `<knowledge>/eval/deep-<date>.jsonl`
+fn eval_deep(data: &Path, settings: Settings, opts: &deep_eval::Options) -> Result<()> {
+    let client = Client::from_env(settings)?;
+    let (store, embedder) = open(data, true)?;
+    let bank = questions::Bank::seed();
+    let picked = deep_eval::pick(&bank, opts);
+    let out = deep_eval::new_file(data, chrono::Utc::now());
+    println!(
+        "Asking {} of the bank's {} questions in {}, {} at a time; answers go to {}. Ctrl+C stops after the batch under way.",
+        picked.len(),
+        bank.questions.len(),
+        opts.lang,
+        opts.parallel.clamp(1, deep_eval::MAX_PARALLEL),
+        out.display()
+    );
+    let stop = ctrl_c()?;
+    let summary = deep_eval::run(
+        deep_eval::Asker {
+            store: &store,
+            embedder: &embedder,
+            client: &client,
+        },
+        &bank,
+        opts,
+        &out,
+        &|| stop.load(Ordering::Relaxed),
+        &mut |done, total, entry| {
+            println!("[{done}/{total}] {} ({})", entry.question, entry.id);
+            match &entry.error {
+                Some(e) => println!("     failed: {e}"),
+                None => {
+                    println!("     {}", entry.answer.replace('\n', "\n     "));
+                    for s in &entry.sources {
+                        println!(
+                            "     [{}] {} > {}{}",
+                            s.id,
+                            s.title,
+                            s.heading,
+                            s.url.as_ref().map(|u| format!(" {u}")).unwrap_or_default()
+                        );
+                    }
+                }
+            }
+            println!();
+        },
+    )?;
+    println!("{summary}; review them in the studio's Knowledge view");
+    Ok(())
 }
 
 /// A flag Ctrl+C sets

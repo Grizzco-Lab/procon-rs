@@ -54,6 +54,7 @@ export ANTHROPIC_API_KEY=...               # only ever from the environment, or 
 cuttlefish ask "When should I leave the basket to kill a Stinger?"
 cuttlefish translate "Kill the Steelhead before the Flyfish" --to ja
 cuttlefish eval eval.example.toml --answer
+cuttlefish eval deep --lang zh --max 5       # the deep question bank; answers into <data>/eval/, reviewed in the studio
 ```
 
 The first command that embeds downloads the embedding model (about 470 MB)
@@ -70,7 +71,12 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   inbox/             drop anything here (see "The inbox")
   inbox.json         what each inbox file gave, with its size, time and hash
   glossary.toml      your glossary; the crate's glossary.toml seed until you add one
-  glossary-user.toml slang and new terms you taught, approved or auto-applied (never overwritten)
+  glossary-user.toml slang and new terms you taught, approved or auto-applied, and your
+                     edits of glossary terms' definitions and relations (never overwritten)
+  notes/<id>.md      expert notes: your corrections, Markdown with front matter (see
+                     "Deep questions and expert notes"); the most trusted source
+  eval/deep-<date>.jsonl
+                     answers of `eval deep` runs, with your verdicts
   terms/<id>.json    name tables imported from the inbox, merged into the glossary
   assets.json        images and icons from the inbox
   reports/<t>.json   one report per inbox import (the last 30)
@@ -228,6 +234,7 @@ skipped and why, failed, gone.
 
 | Source | How | Notes |
 |---|---|---|
+| Expert notes (your own corrections) | **Correct / add to memory** under an answer in the studio, the Notes panel, or a file in `<data>/notes/` | Source `expert-note`, weight 1.3, the highest; retrieved first and labelled "Expert note (user), <date>". See "Deep questions and expert notes" |
 | Guides ("Overfishing Fundamentals", Lenny, ...) | `ingest file` (md, txt, html, pdf) or `ingest url` | `--source guide` (weight 1.15); record the license with `--license` |
 | Inkipedia, other MediaWiki wikis | `ingest wiki <start pages or categories>` (the studio: **Wiki / site**, MediaWiki topic) | A whole topic through the API, re-runs fetch only changed pages; the wiki's license (from `siteinfo`) and "<wiki> contributors" kept per document. See "Whole wikis and sites" |
 | A whole site | `ingest site <start address>` (the studio: **Wiki / site**, Whole site) | Same host only, a page cap, assets and given paths skipped. See "Whole wikis and sites" |
@@ -787,6 +794,75 @@ cuttlefish ingest wiki https://splatoonwiki.org/wiki/Category:Salmon_Run \
 `Category:Salmon Run` that hold the whole game's mechanics and collectibles
 (Octo Expansion's 8-balls, Sunken Scrolls, ...), so they are left out.
 
+## Deep questions and expert notes
+
+Fact questions ("how much health does a Steelhead have?") test the store;
+the questions a high-level player asks test reasoning: why the opening
+kills of a wave are aggressive when bosses are lured to the basket anyway,
+which way a Drizzler jumps and when, where to fight the Mothership on a
+stage and tide and at what second to open it, how to plant eggs for the
+Snatchers. `questions/deep.toml` is a bank of about fifty such questions in
+English and Simplified Chinese (`questions.rs`), each with a `category`
+(macro, openings, bosses, stages, events, eggs, weapons, moments) and what
+it `needs`: `knowledge` alone, a `video_moment`, a `video_range`, the `hud`,
+or the `detector` that is not trained yet. The studio offers a few at
+random as chips next to the chat (video questions only in a review with a
+video; detector ones not yet) and lists the whole bank in the Knowledge
+view.
+
+**The eval** (`cuttlefish eval deep [--lang en|zh] [--parallel 3] [--max N]
+[--only <id>]`, or **Run the deep eval** in the Knowledge view) asks the
+model the questions that need no video, a few at a time, through the
+configured backend (`deep_eval.rs`), and writes one line per answer, with
+the sources cited, to `<data>/eval/deep-<date>.jsonl` after every batch.
+The Knowledge view lists the runs; for each answer you mark **Good** or
+**Wrong**, and **Correct → note** opens the answer in the note editor.
+
+**Expert notes** are the memory: an answer you edited into the correct
+explanation, or anything you wrote from scratch, saved as
+`<data>/notes/<id>.md` (`notes.rs`; the id is the date and the question's
+words). Every answer of Cuttlefish in the studio has **Correct / add to
+memory** (中文: 纠正/补充 → 存为笔记), which opens the editor prefilled with
+the question and the answer. The file is Markdown with YAML front matter:
+
+```markdown
+---
+question: Which way does the Drizzler jump?
+question_id: drizzler-jump
+tags: [bosses, drizzler]
+terms: [drizzler]
+author: user
+date: 2026-09-27
+era: S3
+version: 10.0.0
+from: chat 2026-09-27_20-15-00
+---
+It jumps away from the player who last shot its umbrella, ...
+```
+
+A note is a document of source kind `expert-note` with the highest weight
+(1.3, above #vod-review's 1.2), titled by its question and headed by its
+label ("Expert note (user), 2026-09-27"), indexed the moment it is saved.
+Retrieval fetches the two closest notes before anything else, the prompt
+puts them in an `<expert_notes>` block, and the persona is told they come
+from a high-level player checking its earlier answers: when one applies,
+follow it over every other source and cite it. A note whose `question_id`
+names a bank question is that question's `reference`. The files are the
+truth: when the store opens (the studio, or any CLI command), notes edited
+by hand or synced from another machine are re-embedded and notes whose file
+is gone lose their document (`notes::sync`). The Knowledge view's **Expert
+notes** panel lists, edits and deletes them.
+
+**Estimated controller input.** When a chat is about a video without a
+recording, the `<moment>` block's controller input comes from AgentZero's
+IDM. `situation::IDM_RELIABILITY` holds how far it can be trusted (IDM v2
+on held-out frames: camera turn r 0.80, gyro pitch r 0.70, right stick x r
+0.70; button F1 ZL 0.90, ZR 0.83, B 0.57, R 0.22; about 14 minutes of
+training data), the block says the input is *estimated, not recorded* with
+those numbers and tells the model not to build fine claims on it, and the
+persona repeats the rule. Update the constant when a better IDM exists; set
+its `trusted` once the estimates are good enough, which drops the warning.
+
 ## Library API (for the studio)
 
 ```rust
@@ -952,13 +1028,20 @@ Flyfish]`. A new term the user rejected, or the glossary has, is never
 proposed again. **Moves**: an approved alias whose text an approved new
 term's alias also has (`missiles` of the Flyfish, then of Flyfish missiles)
 is offered to move to the new term (`UserGlossary::moves`, `apply_move`).
-CLI: `cuttlefish slang suggest [--all] [--max-batches N] [--parallel N]
-[--no-auto-apply] [--threshold T] [--dry-run]` and `cuttlefish slang move
-[--dry-run]`.
+**Editing terms** (`UserGlossary::edit_term`, the studio's `POST
+knowledge/slang/term-edit`): a new term's name, kind, definition and
+relation change in place and the term becomes the user's (source `user`;
+suggestions never change a term that exists); a term of the generated
+glossary (the seed, `glossary.toml`, an import) keeps its names, and the
+definition, kind and relation you give are kept as an `[[override]]` of the
+user file, applied on every load (`UserGlossary::apply`), so a re-import
+never loses them (`term-reset` drops one). CLI: `cuttlefish slang suggest
+[--all] [--max-batches N] [--parallel N] [--no-auto-apply] [--threshold T]
+[--dry-run]` and `cuttlefish slang move [--dry-run]`.
 
-**4. Source quality.** Each document has a weight: #vod-review 1.2, guides
-1.15, wikis/Discord/files 1.0, web pages and video transcripts 0.9
-(`--weight` overrides). Ranking adds 0.1 x (weight - 1) to the cosine, which
+**4. Source quality.** Each document has a weight: expert notes 1.3,
+#vod-review 1.2, guides 1.15, wikis/Discord/files 1.0, web pages and video
+transcripts 0.9 (`--weight` overrides). Ranking adds 0.1 x (weight - 1) to the cosine, which
 reorders close matches without burying a clearly better one, and takes
 0.02 off a source of the Splatoon 2 era (`game.rs`: Discord conversations
 get their era from their date at import, and every document may carry

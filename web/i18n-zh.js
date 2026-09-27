@@ -242,6 +242,26 @@ I18N.zh = {
   "cf.chat.at": "在 {time}",
   "cf.chat.sources": "来源",
   "cf.chat.experts": "提供的专家评论",
+  "cf.chat.deepTitle": "题库里的深度问题：{category}",
+  "cf.chat.memo": "纠正/补充 → 存为笔记",
+  "cf.chat.memoTitle":
+    "把这条回答改成正确的解释，存为专家笔记；鱼干司令之后会优先遵循笔记",
+  "cf.chat.memoSaved": "已存为专家笔记 {id}；鱼干司令从现在起会参考它",
+
+  // The expert note editor
+  "note.title": "专家笔记",
+  "note.editTitle": "专家笔记 {id}",
+  "note.hint": "把回答改成正确的解释；鱼干司令会遵循它",
+  "note.question": "问题",
+  "note.body": "正确的解释（Markdown）",
+  "note.tags": "标签，逗号分隔",
+  "note.terms": "术语表 id，逗号分隔",
+  "note.era": "时期",
+  "note.version": "游戏版本（可选）",
+  "note.save": "存为笔记",
+  "note.saving": "保存并索引中…",
+  "note.failed": "未能保存：{error}",
+  "note.from": "来自：{from}",
   "cf.chat.commentsAdded": "添加了 {n} 条评论",
   "cf.chat.seek": "跳到 {time}",
   "cf.attach.title": "附加视频",
@@ -347,6 +367,26 @@ I18N.zh = {
   "alias.saved": "已保存：{text} → {term}",
   "alias.failed": "未能保存：{error}",
 
+  // Editing a term
+  "slang.overrides": "改过的术语表词条",
+  "term.edit": "编辑释义 / 关系",
+  "term.editTitle":
+    "修正释义，或这个术语与更大概念的关系；保存在 glossary-user.toml，导入不会丢失",
+  "term.name": "名称",
+  "term.kind": "类别",
+  "term.definition": "释义",
+  "term.relation": "关系",
+  "term.relationNone": "无",
+  "term.relationTo": "关联的术语",
+  "term.save": "保存",
+  "term.saved": "已保存：{name}",
+  "term.failed": "未能保存：{error}",
+  "term.overrideNote": "术语表词条保留原有名称；你的释义和关系会覆盖术语表里的",
+  "term.edited": "你改过",
+  "term.unrelated": "已去掉关系",
+  "term.reset": "恢复术语表原文",
+  "term.resetAsk": "放弃你对 {name} 的修改？术语表原来的释义和关系会回来。",
+
   // Knowledge
   "k.loading":
     "正在加载知识库… 第一次会把嵌入模型（约 470 MB）下载到数据文件夹。",
@@ -429,6 +469,8 @@ I18N.zh = {
   "k.source.vodReview": "#vod-review",
   "k.source.discord": "Discord",
   "k.source.file": "文件",
+  "k.source.expertNote": "专家笔记",
+  "k.format.note": "笔记",
   "k.job.running": "进行中",
   "k.job.done": "完成",
   "k.job.failed": "失败",
@@ -452,6 +494,57 @@ I18N.zh = {
   "k.corpus.note":
     "先读取本机视频的 HUD，然后每个视频在本机的被点评 VOD 都会成为一个带社区评论的复盘，每条评论也会成为聊天可以参考的专家评论；可随时重新运行",
   "k.corpus.failed": "无法开始：{error}",
+
+  // Knowledge: expert notes
+  "k.notes.title": "专家笔记",
+  "k.notes.note":
+    "你亲手纠正或补充的解释，每条一个 Markdown 文件，放在知识库文件夹的 notes/ 里；每次回答中最受信任的来源。在鱼干司令的任何回答下点“纠正/补充 → 存为笔记”即可写一条。",
+  "k.notes.count": "{n} 条笔记",
+  "k.notes.none": "还没有笔记",
+  "k.notes.new": "新笔记",
+  "k.notes.edit": "编辑",
+  "k.notes.delete": "删除",
+  "k.notes.deleteAsk": "删除笔记 {id}？它的文件会被移除。",
+  "k.notes.by": "{author}，{date}",
+  "k.notes.answers": "回答 {id}",
+  "k.notes.from": "来自 {from}",
+
+  // Knowledge: the deep questions and their eval
+  "k.deep.title": "深度问题",
+  "k.deep.note":
+    "高水平玩家会问的问题，社区里有公认的答案。评测会把不需要视频的问题问一遍模型；给每条回答标“好”或“错”，把错的改成专家笔记，之后鱼干司令会把笔记放在所有来源之前。",
+  "k.deep.count": ({ n, notes }) =>
+    `${n} 个问题${notes ? `，其中 ${notes} 个已有笔记回答` : ""}`,
+  "k.deep.langLabel": "提问的语言",
+  "k.deep.max": "最多",
+  "k.deep.maxLabel": "最多问几个",
+  "k.deep.run": "运行深度评测",
+  "k.deep.bank": "题库：{c} 类共 {n} 个问题",
+  "k.deep.needs.knowledge": "知识库",
+  "k.deep.needs.video_moment": "视频的某一刻",
+  "k.deep.needs.video_range": "视频的一段",
+  "k.deep.needs.hud": "HUD",
+  "k.deep.needs.detector": "以后：需要检测器",
+  "k.deep.reference": "笔记",
+  "k.deep.answers": "回答",
+  "k.deep.noFiles":
+    "还没有评测：在这里运行一次，或在终端运行 `cuttlefish eval deep`。",
+  "k.deep.fileNote": ({ entries, good, wrong, failed }) =>
+    `${entries} 条回答，${good} 好，${wrong} 错${failed ? `，${failed} 失败` : ""}`,
+  "k.deep.good": "好",
+  "k.deep.wrong": "错",
+  "k.deep.toNote": "纠正 → 笔记",
+  "k.deep.noteMade": "笔记 {id}",
+  "k.deep.failed": "失败：{error}",
+  "k.deep.sources": "{n} 个来源",
+  "k.deep.cat.macro": "大局与策略",
+  "k.deep.cat.openings": "开局与分工",
+  "k.deep.cat.bosses": "巨大鲑鱼机制",
+  "k.deep.cat.stages": "场地与潮位",
+  "k.deep.cat.events": "特殊事件",
+  "k.deep.cat.eggs": "蛋流",
+  "k.deep.cat.weapons": "武器与大招",
+  "k.deep.cat.moments": "视频中的某一刻",
 
   // Knowledge: the inbox, import reports, overview, assets
   "k.kind.inbox": "收件箱",

@@ -87,6 +87,80 @@ pub enum InputSource {
     Predicted { model: String },
 }
 
+/// How far the IDM's estimates can be trusted, as measured on held-out
+/// frames: the one place to update when a better IDM exists. Until
+/// `trusted` is set, the `<moment>` block warns the model off fine claims
+/// built on estimated input.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IdmReliability {
+    /// The model these numbers are about
+    pub model: &'static str,
+    /// Pearson r of the camera turn
+    pub camera_turn_r: f32,
+    /// Pearson r of the gyro pitch
+    pub gyro_pitch_r: f32,
+    /// Pearson r of the right stick's x
+    pub right_stick_x_r: f32,
+    /// Per-frame F1 of the buttons worth naming
+    pub buttons_f1: &'static [(&'static str, f32)],
+    /// Minutes of play it was trained on
+    pub training_minutes: u32,
+    /// Whether its estimates are good enough to use like recorded input
+    pub trusted: bool,
+}
+
+/// AgentZero's IDM v2 on held-out frames (September 2026)
+pub const IDM_RELIABILITY: IdmReliability = IdmReliability {
+    model: "IDM v2",
+    camera_turn_r: 0.80,
+    gyro_pitch_r: 0.70,
+    right_stick_x_r: 0.70,
+    buttons_f1: &[("ZL", 0.90), ("ZR", 0.83), ("B", 0.57), ("R", 0.22)],
+    training_minutes: 14,
+    trusted: false,
+};
+
+impl IdmReliability {
+    /// The numbers in one sentence: `IDM v2 on held-out frames: camera
+    /// turn r 0.80, gyro pitch r 0.70, right stick x r 0.70; button F1 ZL
+    /// 0.90, ZR 0.83, B 0.57, R 0.22; trained on about 14 min of play`
+    pub fn describe(&self) -> String {
+        let buttons: Vec<String> = self
+            .buttons_f1
+            .iter()
+            .map(|(b, f1)| alloc::format!("{b} {f1:.2}"))
+            .collect();
+        alloc::format!(
+            "{} on held-out frames: camera turn r {:.2}, gyro pitch r {:.2}, right stick x r \
+             {:.2}; button F1 {}; trained on about {} min of play",
+            self.model,
+            self.camera_turn_r,
+            self.gyro_pitch_r,
+            self.right_stick_x_r,
+            buttons.join(", "),
+            self.training_minutes
+        )
+    }
+
+    /// How the `<moment>` block introduces input estimated by `model`
+    /// (the checkpoint): plainly an estimate, with the numbers and, until
+    /// trusted, the warning
+    pub fn label(&self, model: &str) -> String {
+        if self.trusted {
+            alloc::format!(
+                "estimated from the video by the inverse dynamics model {model}, not recorded ({})",
+                self.describe()
+            )
+        } else {
+            alloc::format!(
+                "ESTIMATED from the video by the inverse dynamics model {model}, not recorded. \
+                 {}. Treat the lines below as hints, not facts: do not build fine claims on them",
+                self.describe()
+            )
+        }
+    }
+}
+
 /// Controller input over a stretch, summarized
 #[derive(Clone, Debug, PartialEq)]
 pub struct Input {
@@ -234,9 +308,7 @@ impl Situation {
         if let Some(input) = &self.input {
             let from = match &input.source {
                 InputSource::Recorded => String::from("recorded from the controller"),
-                InputSource::Predicted { model } => alloc::format!(
-                    "predicted from the video by the inverse dynamics model {model}; an estimate"
-                ),
+                InputSource::Predicted { model } => IDM_RELIABILITY.label(model),
             };
             s.push_str(&alloc::format!(
                 "Controller input {}, {from}:\n",
@@ -766,11 +838,29 @@ mod tests {
             situation.block(),
             "<moment>\n\
              HUD at 15.0 s: wave 2, 43 s left (W2 :43), golden eggs 18/24\n\
-             Controller input 12.0\u{2013}18.0 s, predicted from the video by the inverse dynamics model v2; an estimate:\n\
+             Controller input 12.0\u{2013}18.0 s, ESTIMATED from the video by the inverse dynamics model v2, not recorded. \
+             IDM v2 on held-out frames: camera turn r 0.80, gyro pitch r 0.70, right stick x r 0.70; \
+             button F1 ZL 0.90, ZR 0.83, B 0.57, R 0.22; trained on about 14 min of play. \
+             Treat the lines below as hints, not facts: do not build fine claims on them:\n\
              - 14.2 s: squid roll\n\
              Objects a person labelled on the frame at 15.0 s: chum \u{d7}2 (left, center), steel eel (right)\n\
              </moment>"
         );
+        // Recorded input is not warned about; a trusted IDM only names its numbers
+        let mut recorded = situation.clone();
+        recorded.input.as_mut().unwrap().source = InputSource::Recorded;
+        assert!(
+            recorded
+                .block()
+                .contains("12.0\u{2013}18.0 s, recorded from the controller:\n")
+        );
+        assert!(!recorded.block().contains("ESTIMATED"));
+        let trusted = IdmReliability {
+            trusted: true,
+            ..IDM_RELIABILITY
+        };
+        assert!(trusted.label("v3").starts_with("estimated from the video"));
+        assert!(!trusted.label("v3").contains("hints"));
         assert_eq!(
             situation.query(),
             "W2 :43, wave 2 with 43 seconds left, 18 of 24 golden eggs\n\

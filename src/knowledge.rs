@@ -59,7 +59,27 @@
 //!   (with `all`, everything not read yet), a few batches at once, and
 //!   proposes aliases and new terms; with auto-apply (`[cuttlefish]
 //!   slang_auto_apply`, on by default) the sure ones are approved at once,
-//!   the rest waits as pending
+//!   the rest waits as pending. `POST slang/term-edit` with `{"id",
+//!   "name"?, "kind"?, "definition"?, "relation"?: {"kind", "term"} | null}`
+//!   edits a term (`cuttlefish::slang::UserGlossary::edit_term`): a new
+//!   term of the user file in place, a term of the generated glossary as
+//!   an override kept in the user file (`overrides` in `GET slang`);
+//!   `slang/term-reset` with `{"id"}` drops such an override
+//! - `GET notes`: the expert notes (`<knowledge>/notes/<id>.md`, see
+//!   `cuttlefish::notes`), newest first; `GET note?id=` one; `POST
+//!   notes/save` with `{"id"?, "question", "body", "tags"?, "terms"?,
+//!   "era"?, "version"?, "question_id"?, "from"?}` writes one (a new id
+//!   from the date and the question when none) and indexes it at once;
+//!   `POST notes/delete` with `{"id"}` removes it and its document
+//! - `GET questions`: the deep question bank (`cuttlefish::questions`),
+//!   each question with the note that answers it as `reference`
+//! - `POST eval/deep` with `{"lang"?, "parallel"?, "max"?, "only"?}` starts
+//!   the deep eval as a job (`cuttlefish::deep_eval`: the bank's questions
+//!   that need no video through the chat's backend, a few at a time, into
+//!   `<knowledge>/eval/deep-<date>.jsonl`); `GET eval` lists the eval
+//!   files, `GET eval?file=` one file's entries; `POST eval/mark` with
+//!   `{"file", "id", "verdict": "good" | "wrong" | null, "note"?}` records
+//!   the player's verdict and the note made from an answer
 //! - `GET assets?q=&folder=`: images and icons of the catalogue, with the
 //!   names of their glossary terms; `GET thumb?id=` one's thumbnail
 //! - `GET inbox`: files waiting in the inbox; `POST upload?path=` with the
@@ -88,10 +108,11 @@ use cuttlefish::glossary::{Glossary, Term};
 use cuttlefish::google::{self, GoogleFile};
 use cuttlefish::ingest::{self, Meta, Web};
 use cuttlefish::llm::{Client, Settings};
+use cuttlefish::notes::{self, Note};
 use cuttlefish::review::{self, ChatReply, ChatRequest};
-use cuttlefish::slang::{self, AliasEdit, SuggestOptions, UserGlossary};
+use cuttlefish::slang::{self, AliasEdit, SuggestOptions, TermEdit, UserGlossary};
 use cuttlefish::store::{self, Store};
-use cuttlefish::{inbox, lock, tables, wiki};
+use cuttlefish::{deep_eval, inbox, lock, questions, tables, wiki};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -469,8 +490,12 @@ pub struct IngestJob {
 
 /// A document's format for the overview: the extension of its file;
 /// for an address `google-doc`, `google-sheet` or `google-slides`,
-/// `subtitles` (videos), `messages` (Discord) or `html`; else `other`
+/// `subtitles` (videos), `messages` (Discord) or `html`; an expert note
+/// `note`; else `other`
 fn format_of(d: &Document) -> String {
+    if d.source == SourceKind::ExpertNote {
+        return "note".to_string();
+    }
     match (&d.path, &d.url) {
         (Some(path), _) => path
             .rsplit_once('.')
@@ -599,6 +624,20 @@ impl Knowledge {
         }
         if caught_up.stopped {
             log::info!("Embedding stopped; the rest is embedded when the store opens next");
+        }
+        // The expert notes' files are the truth: one edited by hand or synced
+        // in is indexed now
+        match notes::sync(&mut store, &embedder) {
+            Ok(synced) if synced.changed() => {
+                log::info!(
+                    "Expert notes: {} embedded, {} removed",
+                    synced.embedded,
+                    synced.removed
+                );
+                store.save()?;
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("Expert notes not synced: {e:#}"),
         }
         let opened = Arc::new(Loaded {
             store: RwLock::new(store),
@@ -1306,10 +1345,22 @@ impl Knowledge {
                 value
             })
             .collect();
+        // Overrides of glossary terms, each with the term as it now reads
+        let overrides: Vec<Value> = user
+            .overrides
+            .iter()
+            .rev()
+            .map(|o| {
+                let mut value = json!(o);
+                value["term_forms"] = json!(glossary.lookup(&o.term).map(|t| &t.forms));
+                value
+            })
+            .collect();
         Ok(json!({
             "file": self.root.join(slang::FILE),
             "aliases": aliases,
             "terms": terms,
+            "overrides": overrides,
             "moves": user.moves(),
             "pending": user.pending().count() + user.pending_terms().count(),
             "backend": self.translate.detect(),
@@ -1371,6 +1422,29 @@ impl Knowledge {
                     .map_err(|e| anyhow::anyhow!("bad status: {e}"))?;
                 self.change_slang(|_, user| Ok(json!(user.set_term_status(text("id"), status)?)))
             }
+            "term-edit" => {
+                let edit: TermEdit = serde_json::from_value(body.clone())
+                    .map_err(|e| anyhow::anyhow!("bad edit: {e}"))?;
+                self.change_slang(|g, user| {
+                    // The glossary as loaded has the user's terms and earlier
+                    // overrides applied; the edit resolves against it
+                    let (term, over) = user.edit_term(g, text("id"), &edit, now_ms())?;
+                    log::info!(
+                        "Glossary: {} edited{}",
+                        term.id,
+                        if over { " (override)" } else { "" }
+                    );
+                    Ok(json!({ "term": term, "override": over }))
+                })
+            }
+            "term-reset" => self.change_slang(|g, user| {
+                ensure!(
+                    user.remove_override(g, text("id")),
+                    "no edits of the glossary term {}",
+                    text("id")
+                );
+                Ok(json!({ "reset": text("id") }))
+            }),
             "move" => self.change_slang(|_, user| {
                 let ids: Vec<String> = if body["all"].as_bool() == Some(true) {
                     user.moves().into_iter().map(|m| m.alias).collect()
@@ -1473,6 +1547,213 @@ impl Knowledge {
     }
 }
 
+// ------------------------------------------------- notes, questions, eval
+
+/// The deep eval as the page asks for it
+#[derive(Deserialize)]
+struct EvalRequest {
+    #[serde(default)]
+    lang: Option<String>,
+    #[serde(default)]
+    parallel: Option<usize>,
+    #[serde(default)]
+    max: Option<usize>,
+    #[serde(default)]
+    only: Vec<String>,
+}
+
+impl Knowledge {
+    /// The expert notes, newest first
+    pub fn notes(&self) -> Result<Value> {
+        Ok(json!({ "dir": notes::dir(&self.root), "notes": notes::list(&self.root)? }))
+    }
+
+    /// Writes a note (`POST notes/save`): a new one from the body, or the
+    /// note `id` changed, its date today; then indexes it at once, under
+    /// the store's write lock. Answers with the note.
+    pub fn save_note(&self, body: &Value) -> Result<Value> {
+        let text = |key: &str| body[key].as_str().unwrap_or_default().trim();
+        let list = |key: &str| -> Vec<String> {
+            body[key]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        ensure!(!text("question").is_empty(), "the note needs a question");
+        ensure!(!text("body").is_empty(), "the note needs a body");
+        let mut note = match text("id") {
+            "" => Note::new(text("question"), text("body")),
+            id => {
+                let mut note = notes::load(&self.root, id)?;
+                note.question = text("question").to_string();
+                note.body = text("body").to_string();
+                note.date = chrono::Local::now().date_naive();
+                note
+            }
+        };
+        if body.get("tags").is_some() {
+            note.tags = list("tags");
+        }
+        if body.get("terms").is_some() {
+            note.terms = list("terms");
+        }
+        if let Some(era) = body.get("era").filter(|e| !e.is_null()) {
+            note.era = serde_json::from_value(era.clone()).context("bad era")?;
+        }
+        for (key, field) in [
+            ("version", &mut note.version),
+            ("question_id", &mut note.question_id),
+            ("from", &mut note.from),
+        ] {
+            if body.get(key).is_some() {
+                *field = Some(text(key).to_string()).filter(|v| !v.is_empty());
+            }
+        }
+        if note.id.is_empty() {
+            note.id = notes::new_id(&self.root, &note.question, note.date);
+        }
+        let _lock = lock::acquire(&self.root, "procon studio note")?;
+        notes::save(&self.root, &note)?;
+        let loaded = self.loaded()?;
+        let mut store = loaded.store.write().unwrap();
+        store.add(&note.document(), &loaded.embedder)?;
+        store.save()?;
+        log::info!("Expert note {} saved and indexed", note.id);
+        Ok(json!(note))
+    }
+
+    /// Removes a note and its document (`POST notes/delete`)
+    pub fn delete_note(&self, id: &str) -> Result<Value> {
+        let _lock = lock::acquire(&self.root, "procon studio note")?;
+        ensure!(notes::remove(&self.root, id)?, "no note {id}");
+        let loaded = self.loaded()?;
+        let mut store = loaded.store.write().unwrap();
+        store.delete(&cuttlefish::doc::doc_id(&notes::doc_key(id)))?;
+        store.save()?;
+        log::info!("Expert note {id} deleted");
+        Ok(json!({ "deleted": id }))
+    }
+
+    /// The deep question bank, with the notes that answer its questions
+    pub fn questions(&self) -> Result<Value> {
+        let bank = questions::Bank::seed().with_references(&notes::list(&self.root)?);
+        Ok(json!({
+            "categories": questions::CATEGORIES,
+            "counts": bank.counts(),
+            "questions": bank.questions,
+        }))
+    }
+
+    /// Starts the deep eval as a job (`POST eval/deep`)
+    pub fn eval_deep(self: &Arc<Self>, body: &[u8]) -> Result<Value, Status> {
+        let request: EvalRequest =
+            serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("bad request: {e}"))?;
+        let client = self.client()?;
+        let opts = deep_eval::Options {
+            lang: request
+                .lang
+                .filter(|l| l == "zh")
+                .unwrap_or_else(|| "en".to_string()),
+            parallel: request
+                .parallel
+                .unwrap_or(deep_eval::DEFAULT_PARALLEL)
+                .clamp(1, deep_eval::MAX_PARALLEL),
+            max: request.max,
+            only: request.only,
+            k: K,
+        };
+        let bank = questions::Bank::seed();
+        let count = deep_eval::pick(&bank, &opts).len();
+        if count == 0 {
+            return Err(anyhow::anyhow!("no question to ask").into());
+        }
+        let out = deep_eval::new_file(&self.root, chrono::Utc::now());
+        let file = out
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let what = format!("Deep questions: {count} in {}", opts.lang);
+        let job = self.start_job(what, move |knowledge, id| {
+            knowledge.log(id, "loading the knowledge store".to_string());
+            let loaded = knowledge.loaded()?;
+            let store = loaded.store.read().unwrap();
+            knowledge.update(id, |job| job.total = Some(count));
+            let summary = deep_eval::run(
+                deep_eval::Asker {
+                    store: &store,
+                    embedder: &loaded.embedder,
+                    client: &client,
+                },
+                &bank,
+                &opts,
+                &out,
+                &|| knowledge.cancelled(),
+                &mut |done, _, entry| {
+                    let line = match &entry.error {
+                        Some(e) => format!("{}: failed: {e}", entry.id),
+                        None => format!(
+                            "{}: {}",
+                            entry.id,
+                            entry.answer.chars().take(160).collect::<String>()
+                        ),
+                    };
+                    knowledge.update(id, |job| {
+                        job.done = done;
+                        job.added += entry.error.is_none() as usize;
+                        job.lines.push(line);
+                    });
+                },
+            )?;
+            knowledge.update(id, |job| job.summary = Some(file.clone()));
+            ensure!(
+                !summary.stopped,
+                "stopped: {summary}; the answers so far are in {file}"
+            );
+            Ok(format!("done: {summary}; answers in {file}"))
+        })?;
+        Ok(json!(job))
+    }
+
+    /// The eval files, or one file's entries (`GET eval`, `GET eval?file=`)
+    pub fn eval(&self, file: &str) -> Result<Value> {
+        if file.is_empty() {
+            return Ok(
+                json!({ "dir": deep_eval::dir(&self.root), "files": deep_eval::list(&self.root) }),
+            );
+        }
+        deep_eval::check_file(file)?;
+        let entries = deep_eval::read(&deep_eval::dir(&self.root).join(file))?;
+        Ok(json!({ "file": file, "entries": entries }))
+    }
+
+    /// Records a verdict on an eval answer (`POST eval/mark`)
+    pub fn eval_mark(&self, body: &Value) -> Result<Value> {
+        let text = |key: &str| body[key].as_str().unwrap_or_default();
+        let verdict = match body.get("verdict") {
+            Some(v) if !v.is_null() => {
+                Some(serde_json::from_value(v.clone()).context("verdict is good or wrong")?)
+            }
+            _ => None,
+        };
+        let entry = deep_eval::mark(
+            &self.root,
+            text("file"),
+            text("id"),
+            verdict,
+            body["note"].as_str(),
+        )?;
+        Ok(json!(entry))
+    }
+}
+
 // ------------------------------------------------------------------ HTTP
 
 impl Knowledge {
@@ -1494,6 +1775,10 @@ impl Knowledge {
             "reports" => Ok(json!({ "reports": inbox::reports(&self.root, REPORTS_SHOWN) })),
             "report" => Ok(json!(inbox::report(&self.root, text("id"))?)),
             "jobs" => Ok(self.jobs()),
+            "notes" => Ok(self.notes()?),
+            "note" => Ok(json!(notes::load(&self.root, text("id"))?)),
+            "questions" => Ok(self.questions()?),
+            "eval" => Ok(self.eval(text("file"))?),
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
                 anyhow::anyhow!("no endpoint knowledge/{path}"),
@@ -1526,6 +1811,13 @@ impl Knowledge {
             _ if path.starts_with("slang/") => {
                 Ok(self.post_slang(&path["slang/".len()..], &json_body()?)?)
             }
+            "notes/save" => Ok(self.save_note(&json_body()?)?),
+            "notes/delete" => {
+                let body = json_body()?;
+                Ok(self.delete_note(body["id"].as_str().unwrap_or_default())?)
+            }
+            "eval/deep" => self.eval_deep(body),
+            "eval/mark" => Ok(self.eval_mark(&json_body()?)?),
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
                 anyhow::anyhow!("no endpoint POST knowledge/{path}"),

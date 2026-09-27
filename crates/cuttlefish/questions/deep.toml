@@ -1,0 +1,441 @@
+# Cuttlefish's deep question bank: questions a high-level Salmon Run player
+# asks, whose answers the community knows. The page offers a few as chips
+# next to the chat, `cuttlefish eval deep` asks the model the ones that need
+# no video, and the answers are reviewed into expert notes (the "memory").
+#
+# Each [[question]] has an `id`, a `category` (see `questions::CATEGORIES`:
+# macro, openings, bosses, stages, events, eggs, weapons, moments), what it
+# `needs` to be answered:
+#
+#   knowledge     the knowledge store alone
+#   video_moment  a moment of a video (frames, HUD, input)
+#   video_range   a stretch of a video
+#   hud           the HUD read from the video (wave, timer, eggs)
+#   detector      a Salmon Run object detector, not trained yet ("coming later")
+#
+# the question in English (`en`) and Simplified Chinese (`zh`, in the
+# official names where the glossary has them; a term without an official
+# Chinese name in the glossary stays in English), an optional `note` (what
+# is unsure about the question) and `reference`: the id of the expert note
+# that answers it, empty until one is written (a note whose `question_id`
+# names the question fills it in too).
+
+# ---------------------------------------------------------------- macro
+
+[[question]]
+id = "macro-aggressive-start"
+category = "macro"
+needs = "knowledge"
+en = "We usually lure bosses to the basket to kill them, and the Griller moves fast anyway. So why do the first few kills at the start of a wave need to be so aggressive?"
+zh = "我们通常把巨大鲑鱼引到蛋筐旁再击杀，Griller 本来就跑得快。那为什么一波开局的前几个击杀要打得那么激进？"
+
+[[question]]
+id = "macro-first-egg-left"
+category = "macro"
+needs = "knowledge"
+en = "Why does the first boss kill at the start of a wave often drop one egg off the basket that nobody picks up, and what should the team do about it?"
+zh = "为什么一波开局的第一个巨大鲑鱼击杀常常掉一颗金鲑鱼卵在蛋筐旁边却没人捡？队伍应该怎么处理？"
+
+[[question]]
+id = "macro-priority-three-bosses"
+category = "macro"
+needs = "knowledge"
+en = "Three bosses spawn at once at Eggsecutive VP with a high Hazard Level: how do you decide which to kill first, and how does the weapon in your hands change the order?"
+zh = "传说段位、高危险度下同时刷出三个巨大鲑鱼：怎么决定先打哪个？手里的武器会怎样改变顺序？"
+
+[[question]]
+id = "macro-lure-or-go"
+category = "macro"
+needs = "knowledge"
+en = "Which bosses should be lured to the basket and which should be killed where they spawn? Give the reason for each."
+zh = "哪些巨大鲑鱼应该引到蛋筐旁再打，哪些应该在刷新点直接击杀？分别说明理由。"
+
+[[question]]
+id = "macro-pace-checkpoints"
+category = "macro"
+needs = "knowledge"
+en = "In a normal wave at Eggsecutive VP, how many Golden Eggs should be in the basket with 70, 50 and 30 seconds left to be on pace, and what changes when the team is behind?"
+zh = "传说段位的普通波次里，剩 70、50、30 秒时蛋筐里应该有多少金鲑鱼卵才算正常进度？落后时要改变什么？"
+
+[[question]]
+id = "macro-revive-or-not"
+category = "macro"
+needs = "knowledge"
+en = "When is it right to leave a downed teammate for a while instead of reviving at once, and when must the revive come first?"
+zh = "什么时候应该先不救倒地的队友，什么时候必须先救人？"
+
+[[question]]
+id = "macro-last-wave-quota"
+category = "macro"
+needs = "knowledge"
+en = "Wave 3 with 20 seconds left and the quota still 6 eggs short: what does the team do differently from a normal wave?"
+zh = "第三波还剩 20 秒，配额还差 6 颗：队伍要和平时有什么不同的打法？"
+
+# ------------------------------------------------------------- openings
+
+[[question]]
+id = "opening-role-split"
+category = "openings"
+needs = "knowledge"
+en = "At the start of a wave, how should four players split the roles (the initial movement): who goes out to the shore, who stays near the basket, and how does the weapon rotation decide it?"
+zh = "一波开局四个人怎么分工（初动）：谁出去到岸边，谁留在蛋筐附近？武器配置怎么决定这个分工？"
+
+[[question]]
+id = "opening-role-split-here"
+category = "openings"
+needs = "video_moment"
+en = "For the spawn opening I am looking at, what role split (initial movement) is the most reasonable and fastest, and where should each player be in ten seconds?"
+zh = "对于我现在看到的这个开局，哪种分工（初动）最合理、最快？十秒后每个人应该在哪里？"
+
+[[question]]
+id = "opening-first-kills"
+category = "openings"
+needs = "knowledge"
+en = "Which bosses of the first spawn are worth going out for, and which should be waited for at the basket?"
+zh = "第一批刷出的巨大鲑鱼里，哪些值得出去打，哪些应该在蛋筐旁等它过来？"
+
+[[question]]
+id = "opening-lid-first"
+category = "openings"
+needs = "knowledge"
+en = "A Slammin' Lid spawns first at the opening: who takes it, from where, and what do the others do meanwhile?"
+zh = "开局第一个刷的是锅盖鱼：谁去打、从哪里打？其他人这时做什么？"
+
+[[question]]
+id = "opening-charger"
+category = "openings"
+needs = "knowledge"
+en = "With a charger in your hands at the opening, do you go out or hold the basket, and which bosses are yours?"
+zh = "开局手里是蓄力狙击枪：出去还是守蛋筐？哪些巨大鲑鱼归你打？"
+
+[[question]]
+id = "opening-low-tide-shift"
+category = "openings"
+needs = "knowledge"
+en = "The wave opens at low tide: how far does the team move down with the basket, and what changes in the opening compared with normal tide?"
+zh = "这一波是干潮：队伍要跟着蛋筐往下移多远？开局和普通潮位相比有什么不同？"
+
+# --------------------------------------------------------------- bosses
+
+[[question]]
+id = "drizzler-jump"
+category = "bosses"
+needs = "knowledge"
+en = "Drizzler: which direction does it jump, and under what conditions? How do you use that to kill it near the basket?"
+zh = "蝙蝠鱼往哪个方向跳？在什么条件下跳？怎么利用这一点把它引到蛋筐旁击杀？"
+
+[[question]]
+id = "steelhead-bomb-window"
+category = "bosses"
+needs = "knowledge"
+en = "When exactly is the Steelhead's bomb vulnerable, how much damage does it take, and how does that decide where you stand to kill it?"
+zh = "炸弹鱼的炸弹到底什么时候能打？要打多少伤害？这怎么决定你击杀时的站位？"
+
+[[question]]
+id = "flyfish-one-side"
+category = "bosses"
+needs = "knowledge"
+en = "When is it right to kill only one side of a Flyfish and leave the other, and who should carry the bomb to it?"
+zh = "什么时候应该只打垫肩飞鱼的一边、留着另一边？应该由谁带炸弹去打？"
+
+[[question]]
+id = "stinger-leave-alive"
+category = "bosses"
+needs = "knowledge"
+en = "Why is a Stinger far from the basket often left alive for a while, and when must it die at once?"
+zh = "为什么离蛋筐远的高塔鱼常常先放着不打？什么时候必须马上打掉？"
+
+[[question]]
+id = "maws-bait"
+category = "bosses"
+needs = "knowledge"
+en = "How do you bait a Maws to the basket and kill it with one bomb, and what goes wrong when two players bait it?"
+zh = "怎么把鼹鼠鱼引到蛋筐旁、用一颗炸弹击杀？两个人同时引它会出什么问题？"
+
+[[question]]
+id = "fish-stick-plant"
+category = "bosses"
+needs = "knowledge"
+en = "Where should you make a Fish Stick plant its pillar, when is it worth climbing, and when do you leave it and only take the eggs?"
+zh = "应该让柱鱼把柱子插在哪里？什么时候值得上柱子？什么时候放着不管、只拿蛋？"
+
+[[question]]
+id = "scrapper-steer"
+category = "bosses"
+needs = "knowledge"
+en = "How do you steer a Scrapper to the basket, which side do you shoot, and when should you stop steering it?"
+zh = "怎么把铁板鱼牵到蛋筐旁？打哪一面？什么时候该停止牵引？"
+
+[[question]]
+id = "big-shot-cannon"
+category = "bosses"
+needs = "knowledge"
+en = "When should you use the Big Shot's egg cannon instead of killing it at once, and who carries the eggs to the cannon?"
+zh = "什么时候应该用铁球鱼的发射台运蛋而不是马上击杀它？谁把蛋搬到发射台？"
+
+[[question]]
+id = "flipper-flopper-dive"
+category = "bosses"
+needs = "knowledge"
+en = "How do you stop a Flipper-Flopper's dive by inking its ring, and when is it faster to let it land and kill it there?"
+zh = "怎么通过涂掉圆圈来打断潜水鱼的下潜？什么时候直接让它落地再击杀更快？"
+
+[[question]]
+id = "steel-eel-lead"
+category = "bosses"
+needs = "knowledge"
+en = "How do you lead a Steel Eel so that its tail ends up near the basket, and who should be its target?"
+zh = "怎么牵引蛇鱼让它的尾巴停在蛋筐附近？应该由谁当它的目标？"
+
+[[question]]
+id = "slammin-lid-crush"
+category = "bosses"
+needs = "knowledge"
+en = "How do you make a Slammin' Lid crush the Salmonids under it, and when is it worth waiting for that instead of killing the Lid?"
+zh = "怎么让锅盖鱼压死它下面的鲑鱼？什么时候值得等它压、而不是直接打掉锅盖鱼？"
+
+[[question]]
+id = "goldie-farming"
+category = "bosses"
+needs = "knowledge"
+en = "How many Golden Eggs can a Goldie give, how do you keep it alive to get them, and where is the risk?"
+zh = "一条金鲑鱼能给多少颗金鲑鱼卵？怎么让它活着多掉蛋？风险在哪里？"
+
+# --------------------------------------------------------------- stages
+
+[[question]]
+id = "mothership-where-and-when"
+category = "stages"
+needs = "knowledge"
+en = "On a given stage and tide, where should the Mothership (the smuggler fish and its Chinooks) be fought, and at what second is it best to open it?"
+zh = "在给定的场地和潮位，走私鱼（Mothership 和它的小飞船）应该在哪里打？在第几秒开它最好？"
+note = "走私鱼 (\"smuggler fish\") is taken as the Mothership event: its Chinooks smuggle eggs from the basket, and hitting the ship over the basket opens its crate. The glossary has no such alias yet; confirm with the player."
+
+[[question]]
+id = "spawning-grounds-low"
+category = "stages"
+needs = "knowledge"
+en = "Spawning Grounds at low tide: where does the team fight, which bosses are worth walking to, and where do the Stingers land?"
+zh = "鲑坝干潮：队伍在哪里打？哪些巨大鲑鱼值得走过去打？高塔鱼会落在哪里？"
+
+[[question]]
+id = "marooners-high"
+category = "stages"
+needs = "knowledge"
+en = "Marooner's Bay at high tide: where do you stand, and how do you deal with Flyfish and Stingers that spawn on the far side of the ship?"
+zh = "漂浮落难船满潮：站在哪里？刷在船另一侧的垫肩飞鱼和高塔鱼怎么处理？"
+
+[[question]]
+id = "hydroplant-normal"
+category = "stages"
+needs = "knowledge"
+en = "Gone Fission Hydroplant at normal tide: from which sides do the bosses come, which lanes are safe to run eggs on, and where do you kill Stingers?"
+zh = "麦年海洋发电所普通潮位：巨大鲑鱼从哪几边来？哪些路线运蛋安全？在哪里打高塔鱼？"
+
+[[question]]
+id = "sockeye-basket-shots"
+category = "stages"
+needs = "knowledge"
+en = "Sockeye Station: which Stingers and Flyfish can be killed from the basket area, and where do the Slammin' Lids and Steel Eels pass?"
+zh = "新卷堡：哪些高塔鱼和垫肩飞鱼可以在蛋筐附近直接打掉？锅盖鱼和蛇鱼会从哪里经过？"
+
+[[question]]
+id = "tide-positioning"
+category = "stages"
+needs = "knowledge"
+en = "What changes in positioning between high tide and low tide on every stage, and which tide is the most dangerous on which stage?"
+zh = "每个场地满潮和干潮的站位有什么不同？哪个场地的哪个潮位最危险？"
+
+# --------------------------------------------------------------- events
+
+[[question]]
+id = "griller-turns"
+category = "events"
+needs = "knowledge"
+en = "Griller: how does the targeted player make it turn and expose its tail, where does the team stand, and what does the target do wrong most often?"
+zh = "Griller：被盯上的玩家怎么让它转身露出尾巴？队伍站在哪里？被盯上的人最常犯什么错？"
+
+[[question]]
+id = "griller-two"
+category = "events"
+needs = "knowledge"
+en = "Two Grillers on the field at once: how do the target and the other three move so that both die, and who deals with the Smallfry?"
+zh = "场上同时有两只 Griller：被盯上的人和另外三个人怎么走位才能两只都打掉？谁负责小鲑鱼？"
+
+[[question]]
+id = "fog-goldies"
+category = "events"
+needs = "knowledge"
+en = "Fog: how do you find and kill the Goldies fast, how many eggs are they worth, and how do you keep from dying to bosses you cannot see?"
+zh = "Fog（雾）：怎么快速找到并击杀金鲑鱼？它们值多少颗蛋？怎么避免死于看不见的巨大鲑鱼？"
+
+[[question]]
+id = "cohock-charge-cannons"
+category = "events"
+needs = "knowledge"
+en = "Cohock Charge: who mans which cannon, who runs eggs, and when does a cannoneer leave the cannon?"
+zh = "Cohock Charge：谁上哪个炮台？谁运蛋？炮台上的人什么时候该下来？"
+
+[[question]]
+id = "tornado-trips"
+category = "events"
+needs = "knowledge"
+en = "Giant Tornado: how many trips does the team make, who carries and who covers, and where do you drop the crate?"
+zh = "Giant Tornado：队伍要来回几趟？谁搬箱子谁掩护？箱子放在哪里砸开？"
+
+[[question]]
+id = "mudmouth-which"
+category = "events"
+needs = "knowledge"
+en = "Mudmouth Eruptions: which Mudmouths do you open, in what order, and how do you stop the lesser Salmonids from overrunning the basket?"
+zh = "Mudmouth Eruptions：开哪几个 Mudmouth？按什么顺序？怎么不让小鲑鱼和鲑鱼淹没蛋筐？"
+
+[[question]]
+id = "goldie-seeking-read"
+category = "events"
+needs = "knowledge"
+en = "Goldie Seeking: how do you read the gushers to find the Goldie fastest, and how far do you chase it before letting it go?"
+zh = "Goldie Seeking：怎么通过喷泉判断金鲑鱼在哪里最快？追多远就该放弃？"
+
+[[question]]
+id = "rush-stand"
+category = "events"
+needs = "knowledge"
+en = "Rush (Glowflies): where does the team stand on each stage, what does the targeted player do, and when do you run eggs?"
+zh = "Rush（萤火虫）：每个场地队伍站在哪里？被盯上的玩家做什么？什么时候去运蛋？"
+
+[[question]]
+id = "mothership-chinooks"
+category = "events"
+needs = "knowledge"
+en = "Mothership: how do you keep the Chinooks from reaching the basket, and how do you split the team between shooting them and running eggs?"
+zh = "走私鱼（Mothership）：怎么不让小飞船飞到蛋筐？队伍怎么分配打飞船和运蛋？"
+note = "Chinook: the small flying Salmonids of the Mothership event; no glossary term yet."
+
+# ----------------------------------------------------------------- eggs
+
+[[question]]
+id = "egg-snatcher-planting"
+category = "eggs"
+needs = "knowledge"
+en = "Egg planting to exploit Snatchers: how do you place Golden Eggs so the Snatchers carry them toward the basket for you, and when is it worth it?"
+zh = "利用小偷鱼的种蛋：怎么放金鲑鱼卵才能让小偷鱼替你把蛋搬向蛋筐？什么时候值得这么做？"
+note = "小偷鱼 (\"thief fish\") is taken as the Snatcher, the small Salmonid that carries away eggs left lying; the glossary has no term for it yet."
+
+[[question]]
+id = "egg-basket-starve"
+category = "eggs"
+needs = "knowledge"
+en = "What is a starved basket, how does it happen while everyone is killing bosses, and how does a team keep the eggs flowing?"
+zh = "什么叫蛋筐断流？为什么大家都在打巨大鲑鱼时会发生？队伍怎么保持蛋流不断？"
+
+[[question]]
+id = "egg-throw"
+category = "eggs"
+needs = "knowledge"
+en = "When should you throw a Golden Egg instead of carrying it, and what makes a throw a bad one?"
+zh = "什么时候应该扔金鲑鱼卵而不是搬过去？什么样的扔法是坏的？"
+
+[[question]]
+id = "egg-outer-eggs"
+category = "eggs"
+needs = "knowledge"
+en = "Eggs lying far from the basket: when does someone go out for them, and when are they abandoned?"
+zh = "外围蛋：什么时候派人出差去拿？什么时候放弃？"
+
+[[question]]
+id = "egg-run-or-hold"
+category = "eggs"
+needs = "knowledge"
+en = "Bosses keep coming and eggs lie around the basket: how do you balance running eggs with holding the position?"
+zh = "巨大鲑鱼不断来、蛋筐旁躺着很多蛋：怎么在运蛋和守位之间平衡？"
+
+# -------------------------------------------------------------- weapons
+
+[[question]]
+id = "special-when"
+category = "weapons"
+needs = "knowledge"
+en = "When do you use your specials in waves 1 and 2 instead of saving them for wave 3, and which situations always justify one?"
+zh = "什么时候应该在第一、二波就用大招，而不是留到第三波？哪些情况一定值得用？"
+
+[[question]]
+id = "killer-wail-targets"
+category = "weapons"
+needs = "knowledge"
+en = "Killer Wail 5.1: which bosses is it worth on, how do you aim it, and where do you stand while it fires?"
+zh = "喇叭镭射5.1ch：对哪些巨大鲑鱼值得用？怎么瞄准？放的时候站在哪里？"
+
+[[question]]
+id = "grizzco-roller-role"
+category = "weapons"
+needs = "knowledge"
+en = "Grizzco Roller: which bosses does it kill best, which should it leave to others, and how does its holder run eggs?"
+zh = "熊先生印章滚筒：最擅长打哪些巨大鲑鱼？哪些应该留给别人？拿它的人怎么运蛋？"
+
+[[question]]
+id = "short-range-weapon-role"
+category = "weapons"
+needs = "knowledge"
+en = "Holding a short-range weapon like the Sploosh-o-matic: what is your job in the team, and which bosses do you stay away from?"
+zh = "拿广域标记枪这类小枪：你在队里的任务是什么？哪些巨大鲑鱼要离远点？"
+
+[[question]]
+id = "charger-griller"
+category = "weapons"
+needs = "knowledge"
+en = "With a charger in the rotation, what does its holder do in a Griller wave and against a Flyfish?"
+zh = "武器配置里有蓄力狙击枪：拿它的人在 Griller 波次和面对垫肩飞鱼时做什么？"
+
+# -------------------------------------------------------------- moments
+
+[[question]]
+id = "moment-better"
+category = "moments"
+needs = "video_moment"
+en = "At this timestamp, what could I have done better?"
+zh = "在这个时间点，我可以做得更好的地方是什么？"
+
+[[question]]
+id = "moment-death-sign"
+category = "moments"
+needs = "video_moment"
+en = "Why did I go down here, and what was the earliest sign that I should have moved?"
+zh = "我为什么在这里倒下了？最早的预警信号是什么时候？"
+
+[[question]]
+id = "range-priority"
+category = "moments"
+needs = "video_range"
+en = "In this range, was our boss priority right, and which kill should have come first?"
+zh = "这段时间里，我们打巨大鲑鱼的优先级对吗？哪个应该先打？"
+
+[[question]]
+id = "range-egg-flow"
+category = "moments"
+needs = "video_range"
+en = "Over this range, where did the egg flow break, and who should have run instead of fighting?"
+zh = "这段时间里蛋流在哪里断了？谁应该去运蛋而不是继续打？"
+
+[[question]]
+id = "hud-pace"
+category = "moments"
+needs = "hud"
+en = "From the HUD at this moment, were we on pace for the quota, and what should change in the seconds after?"
+zh = "从这一刻的 HUD 看，我们的进度够配额吗？接下来几秒应该改变什么？"
+
+[[question]]
+id = "detector-spawn-list"
+category = "moments"
+needs = "detector"
+en = "Read this video and list, second by second, the spawns and their positions, including where the Mothership spawns."
+zh = "读这个视频，逐秒列出刷新的巨大鲑鱼和它们的位置，包括走私鱼（Mothership）从哪里出现。"
+note = "Needs the Salmon Run object detector, which is not trained yet."
+
+[[question]]
+id = "detector-eggs-left"
+category = "moments"
+needs = "detector"
+en = "Over this range, where were the Golden Eggs lying on the field, and which were never picked up?"
+zh = "这段时间里金鲑鱼卵都躺在场上哪里？哪些一直没被捡起来？"
+note = "Needs the Salmon Run object detector, which is not trained yet."

@@ -22,7 +22,10 @@
 //! a text summary of it ([`situation`]: controller input, HUD, objects).
 //! [`review::Reviewer`] retrieves what is relevant to a moment or question
 //! and asks the model through the Anthropic Messages API or the Claude Code
-//! CLI ([`llm`], [`claude_cli`]).
+//! CLI ([`llm`], [`claude_cli`]). The player's own corrections are expert
+//! notes ([`notes`]), the most trusted source; a bank of deep questions
+//! ([`questions`]) is asked through [`deep_eval`] and the answers reviewed
+//! into notes.
 //!
 //! See the crate README for the design and the `cuttlefish` CLI.
 
@@ -35,6 +38,7 @@ pub mod corpus;
 pub mod corpus_reviews;
 pub mod corpus_videos;
 pub mod crawl;
+pub mod deep_eval;
 pub mod discord;
 pub mod discord_fetch;
 pub mod discord_media;
@@ -55,7 +59,9 @@ pub mod llm;
 pub mod lock;
 pub mod messages;
 pub mod moments;
+pub mod notes;
 pub mod php;
+pub mod questions;
 pub mod review;
 pub mod situation;
 pub mod slang;
