@@ -240,7 +240,11 @@ async function login() {
       if (!ok) {
         console.error("no login seen; run login again");
         process.exitCode = 1;
-      } else log(`logged in; the session stays in ${resolve(o.profile)}`);
+      } else {
+        // The site may still be setting its cookies right after the login
+        await new Promise((r) => setTimeout(r, 5000));
+        log(`logged in; the session stays in ${resolve(o.profile)}`);
+      }
     }
   } finally {
     await page.close().catch(() => {});

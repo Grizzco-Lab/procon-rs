@@ -41,22 +41,38 @@ export async function launch({ binary, profile, port, headless = false }) {
   for (let i = 0; i < 300; i++) {
     if (failed) throw new Error(`cannot start ${binary}: ${failed.message}`);
     if (child.exitCode !== null) throw new Error(`${binary} exited at start`);
-    if (await probe(port)) return { child, exited, pid: child.pid };
+    if (await probe(port)) return { child, exited, pid: child.pid, port };
     await sleep(100);
   }
   child.kill();
   throw new Error(`${binary} did not listen on port ${port}`);
 }
 
-/** Ends the Chrome we started: SIGTERM, then SIGKILL after 5 s */
-export async function stop({ child, exited }) {
+/** Asks the browser at `port` to close through DevTools (`Browser.close`),
+ * as its own window would: unlike a signal, it first writes the cookies
+ * and the rest of the profile to disk */
+async function closeBrowser(port) {
+  const version = await probe(port);
+  if (!version?.webSocketDebuggerUrl) return;
+  const ws = new WebSocket(version.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {
+    ws.onopen = resolve;
+    ws.onerror = reject;
+  });
+  ws.send(JSON.stringify({ id: 1, method: "Browser.close" }));
+}
+
+/** Ends the Chrome we started: `Browser.close`, then SIGTERM after 20 s,
+ * then SIGKILL after 5 more. A signal alone loses what the profile had not
+ * written yet, such as a login's cookies. */
+export async function stop({ child, exited, port }) {
   if (child.exitCode !== null) return;
+  const within = (ms) =>
+    Promise.race([exited.then(() => true), sleep(ms).then(() => false)]);
+  if (port) await closeBrowser(port).catch(() => {});
+  if (port && (await within(20000))) return;
   child.kill("SIGTERM");
-  const done = await Promise.race([
-    exited.then(() => true),
-    sleep(5000).then(() => false),
-  ]);
-  if (!done) child.kill("SIGKILL");
+  if (!(await within(5000))) child.kill("SIGKILL");
 }
 
 /** Whether an address is X's GraphQL API, the answers kept by default */
