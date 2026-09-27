@@ -37,6 +37,8 @@ cuttlefish corpus build                    # the reviewed VODs of the archive as
 cuttlefish corpus videos --list            # the YouTube VODs with their 480p sizes; `corpus videos` downloads them slowly
 cuttlefish corpus align                    # read the HUD of the videos on disk (wave tables), place the wave-timer moments
 cuttlefish corpus reviews                  # a studio review per VOD on disk, the community's comments at their moments
+cuttlefish corpus index                    # every reviewer comment as an expert comment of its own in the store
+cuttlefish corpus retrieval                # how well a moment's summary alone finds expert comments (no model)
 
 cuttlefish search "バクダンの処理"          # top-k chunks with sources; any language
 cuttlefish glossary "Steelhead"            # a term's names and definition
@@ -598,7 +600,104 @@ written start with `discord-`; a run replaces those and nothing else, so
 comments, notes and chats added in the studio stay where they are, and a
 run that changes nothing writes nothing. The library's **Community**
 filter shows these reviews; the Knowledge page's **Create reviews from
-#vod-review** button runs `align` and `reviews` as a job.
+#vod-review** button runs `align`, `reviews` and `index` as a job.
+
+**Expert comments** (`expert.rs`). The whole conversations are documents of
+the store already (from the inbox), but a question about a moment is best
+answered by the one comment about a similar moment. `cuttlefish corpus index`
+makes every message of a VOD's conversation that is not the poster's (at
+least 30 characters once custom emoji are gone) an **expert comment**: the
+comment, split at line ends into pieces of at most 900 characters, the first
+piece of a reply after the message it answers (`(replying to X: "...")`,
+200 characters), and who said it, when and about what: reviewer, day, the
+VOD's era and video, and the moment of the piece (its first moment with a
+wave or a video time, else the wave named last before it in the message; a
+timer the wave table placed in a wave it did not name gets that wave). One
+document per VOD holds them (source `discord-vod-review`, the highest
+weight, the S2 penalty for Splatoon 2 VODs; its `expert_comments`), and the
+store indexes each piece as one chunk headed by its label, **"Centritide,
+2023 (S3), about a W2 :50 moment"**, with the Discord message as its link.
+It runs under the store's write lock and embeds only VODs whose comments
+changed; VODs gone from the corpus lose theirs. About 1000 comments of 114
+VODs take a few minutes to embed on the CPU the first time.
+
+**The moment as text** (`situation.rs`). A chat or review about a moment
+of a video gets a `<moment>` block, cheap tokens next to the frames. For a
+recorded session at 113.7 s (shortened):
+
+```text
+<moment>
+Controller input 109.7–115.7 s, recorded from the controller:
+- 109.7–110.9 s: ZL ×2 (swimming)
+- 109.8–110.1 s: turning left ~65°/s (peak 98°/s)
+- 111.0–112.9 s: ZR ×4 (shooting)
+- 113.2–113.6 s: moving forward-right (left stick)
+- 113.5–114.5 s: B ×2 (jump)
+Objects a person labelled on the frame at 113.7 s: chum ×2 (left, left), cohock ×4 (center, right, right, right), steel eel (right), golden egg ×4 (center, center, center, center)
+</moment>
+```
+
+and for a #vod-review video with a wave table, at 20 s:
+
+```text
+<moment>
+HUD at 20.0 s: wave 2, 30 s left (W2 :30), golden eggs 21/25
+</moment>
+```
+
+The **controller input** comes from per-frame labels (`gameplay-data`):
+a session's `controller.bin`, aligned as the Inkspector aligns it, or, for
+other videos, the Predictor's newest finished run on that video (the IDM's
+`pred.jsonl`, marked as an estimate). Buttons are held (0.4 s or longer),
+tapped (presses under 0.5 s apart, `×n`) or pressed once, named with what
+they do in Salmon Run; a **squid roll** is B while ZL is held with the left
+stick's direction turned at least 120° within the 0.25 s before; the left
+stick's direction held 0.4 s is movement; the **camera turn** is gyro yaw
+plus the right stick at AgentZero's shared fit (0.00137° of yaw per raw
+unit per frame), or the IDM's `camera_turn` (7.68 px per degree), over 30°/s
+for 0.25 s. The **HUD** comes from the wave table beside the video
+(`<stem>.wave_starts.json`: wave and timer at that time) with the golden
+eggs read from the frames within 0.5 s; without a table, none. **Objects**:
+the boxes a person drew on the session's frame at the moment (the
+Inkspector's annotations); `detected` is the hook for a detector's boxes
+later. The same situation joins the **retrieval query**, without times:
+`W2 :30, wave 2 with 30 seconds left, 21 of 25 golden eggs`, `player:
+shooting, squid roll, turning left`, `on screen: chum, steel eel`.
+
+**Retrieval** then takes the 4 expert comments nearest to the query (at
+most 2 of one VOD, so one reviewer's comment per wave does not fill the
+list) and the 8 best other chunks, numbered S1, S2, ... as one list; the
+expert comments go into an `<expert_comments>` block, each after its label:
+
+```text
+<expert_comments>
+<comment id="S3" era="[Splatoon 3 era]" video="https://cdn.discordapp.com/...">
+Centritide, 2023 (S3), about a W2 :50 moment: - at 50s when you throw an egg into basket you could've ...
+</comment>
+</expert_comments>
+<knowledge>
+<excerpt id="S5" source="guide" title="...">...</excerpt>
+</knowledge>
+```
+
+The persona tells the model these were said about someone else's game, to
+use one when the situation matches and to quote it by reviewer and year.
+The chat's reply lists every expert comment it was given (`experts`, with
+`expert`: reviewer, date, era, wave, timer), which the page shows under
+**Expert comments given**, each linking to its Discord message.
+
+**How well does a moment find them?** `cuttlefish corpus retrieval` (no
+model) takes, for up to `--n 10` VODs whose video is on disk with a wave
+table, the first comment placed in a wave, builds the query from the HUD at
+its time alone (the corpus's videos have no controller input), leaves that
+message out, and counts, in the top `--k 10`, comments on the same VOD and,
+in the top 5, comments about the same wave, next to what a random pick
+would give; `--question` puts a player's question first. On the archive of
+September 2026 (990 comments): no comment of the same VOD in the top 10 for
+any of the 10 moments (0.6 expected by chance); 2.3 comments about the same
+wave in the top 5 (0.2 by chance), 2.5 with "What should I have done
+here?". The HUD alone finds the wave, not the game: the controller summary
+(own sessions, IDM predictions) and the question carry the rest.
 
 ```bash
 cuttlefish corpus build                       # the corpus and its counts
@@ -606,6 +705,8 @@ cuttlefish corpus videos --list               # what a download would take; run 
 cuttlefish corpus videos --max 10             # ten videos, then run again
 cuttlefish corpus align                       # wave tables for the videos on disk
 cuttlefish corpus reviews                     # the reviews; again after align or new videos
+cuttlefish corpus index                       # expert comments; again after build or align
+cuttlefish corpus retrieval                   # the check above
 ```
 
 **Whole wikis and sites** (`wiki.rs`). Both are as polite as the rest: one
@@ -700,6 +801,7 @@ let comments = reviewer.review(&ReviewRequest {
     frames: vec![Frame { t_s: 121.0, jpeg }],       // up to 20 are sent
     question: Some("Why did we lose the basket here?".into()),
     comments: vec![ExistingComment { t_s: 124.0, text: "I died here".into(), author: None }],
+    situation: None,   // or the moment as text: cuttlefish::situation::Situation
 })?;
 let answer = reviewer.ask("...")?;
 let ja = reviewer.translate("...", "ja")?;
@@ -716,10 +818,10 @@ let reply = reviewer.chat(&ChatRequest {
     ],
     message: "Translate for my teammate: 我还剩一个镭射".into(),
     video: Some(VideoContext { video: "…".into(), start_s: 60.0, end_s: 66.0,
-                               frames: vec![], comments: vec![] }),   // or None
+                               frames: vec![], comments: vec![], situation: None }),   // or None
 })?;
-// reply.text cites [S1] and names moments as times; reply.sources; reply.comments
-// (timed AiComments, only with a video)
+// reply.text cites [S1] and names moments as times; reply.sources; reply.experts
+// (every expert comment given); reply.comments (timed AiComments, only with a video)
 ```
 
 `review` and `chat` block (seconds to a minute); call them from a blocking
@@ -763,9 +865,11 @@ every time and the relevant slice of the rest on demand.
 **1. Retrieval, per request.** Every document is split into chunks of about
 400 tokens (by headings, then paragraphs, then sentences, with about 60
 tokens of overlap when a section is cut) and embedded with
-`intfloat/multilingual-e5-small`. A review retrieves the 8 chunks nearest to
-the player's question plus the comments already on the moment (without a
-question, a "fundamentals" query). Asking: nearest to the question.
+`intfloat/multilingual-e5-small`. A review retrieves the 4 expert comments
+(see [Expert comments](#the-vod-review-corpus)) and the 8 other chunks
+nearest to the player's question plus the comments already on the moment and
+its situation (without a question, a "fundamentals" query). Asking: nearest
+to the question.
 Retrieval runs *before* the call, not as a tool the model calls: one
 request, predictable cost and latency. A search tool for the model is the
 next step if single-shot retrieval misses too often (the model could then

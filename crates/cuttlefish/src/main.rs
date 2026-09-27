@@ -25,7 +25,7 @@ use cuttlefish::review::{Reviewer, translate};
 use cuttlefish::slang::{self, UserGlossary};
 use cuttlefish::store::{self, Store};
 use cuttlefish::{assets, env_file, inbox, tables};
-use cuttlefish::{corpus, corpus_reviews, corpus_videos};
+use cuttlefish::{corpus, corpus_reviews, corpus_videos, expert};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -397,6 +397,28 @@ enum Corpus {
         /// reviews of --config, else Reviews next to the knowledge folder)
         #[arg(long)]
         reviews: Option<PathBuf>,
+    },
+    /// Index every reviewer comment of the corpus as an expert comment of
+    /// its own (reviewer, date, era, the VOD and the moment it is about),
+    /// one document per VOD, under the store's write lock; VODs whose
+    /// comments did not change are skipped, those gone are removed
+    Index,
+    /// How well a moment alone finds expert comments: for up to N comments
+    /// placed in a video on disk with a wave table (one per VOD), search
+    /// the expert comments with the moment's summary (the HUD's wave,
+    /// timer and eggs at that time), leaving the comment's own message
+    /// out, and count comments on the same VOD and about the same wave
+    /// near the top. No model is asked.
+    Retrieval {
+        /// Moments to try
+        #[arg(long, default_value_t = 10)]
+        n: usize,
+        /// Expert comments retrieved per moment
+        #[arg(long, default_value_t = 10)]
+        k: usize,
+        /// A question put before the summary, as a player would ask
+        #[arg(long)]
+        question: Option<String>,
     },
 }
 
@@ -1076,6 +1098,64 @@ fn corpus_command(data: &Path, config: Option<&Path>, cmd: Corpus) -> Result<()>
             let done = corpus_reviews::write(&built, data, &reviews)?;
             println!("{done}");
             println!("reviews in {}", reviews.display());
+            Ok(())
+        }
+        Corpus::Index => {
+            let _lock = lock::acquire(data, "cuttlefish corpus index")?;
+            corpus::write(data, &built)?;
+            let (mut store, embedder) = open(data, false)?;
+            let done = expert::index(&mut store, &embedder, &built, &mut |line| {
+                println!("{line}")
+            })?;
+            store.save()?;
+            println!("{done}");
+            Ok(())
+        }
+        Corpus::Retrieval { n, k, question } => {
+            let (store, embedder) = open(data, false)?;
+            let cases =
+                expert::evaluate(&store, &embedder, &built, data, n, k, question.as_deref())?;
+            let (mut found, mut rank_sum, mut wave_top5, mut vod_chance, mut wave_chance) =
+                (0, 0, 0, 0.0, 0.0);
+            for c in &cases {
+                println!("{} (the HUD shows W{})\n  {}", c.label, c.wave, c.url);
+                println!("  query: {}", c.query.replace('\n', " | "));
+                match c.same_vod_rank {
+                    Some(r) => println!("  same VOD first at rank {r}"),
+                    None => println!("  same VOD not in the top {k}"),
+                }
+                println!(
+                    "  same wave in the top 5: {} (chance {:.0}%)",
+                    c.same_wave_top5,
+                    c.same_wave_share * 100.0
+                );
+                for (label, same) in &c.top {
+                    println!("    {}{label}", if *same { "* " } else { "  " });
+                }
+                if let Some(r) = c.same_vod_rank {
+                    found += 1;
+                    rank_sum += r;
+                }
+                wave_top5 += c.same_wave_top5;
+                vod_chance += 1.0 - (1.0 - c.same_vod_share).powi(k as i32);
+                wave_chance += c.same_wave_share * 5.0;
+            }
+            let n = cases.len().max(1) as f64;
+            println!(
+                "{} moments: a comment on the same VOD in the top {k} for {found} (by chance ~{:.1}){}; comments about the same wave in the top 5: {:.1} on average (by chance {:.1})",
+                cases.len(),
+                vod_chance,
+                if found > 0 {
+                    format!(
+                        ", first at rank {:.1} on average",
+                        rank_sum as f64 / found as f64
+                    )
+                } else {
+                    String::new()
+                },
+                wave_top5 as f64 / n,
+                wave_chance / n
+            );
             Ok(())
         }
     }

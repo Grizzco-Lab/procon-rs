@@ -2,6 +2,7 @@
 //! it came from and under which terms it may be used.
 
 use crate::discord::{MessageRow, VideoFrom};
+use crate::expert::ExpertComment;
 use crate::game::{self, Game};
 use crate::moments::Moment;
 use alloc::string::String;
@@ -92,6 +93,10 @@ pub struct Document {
     /// is about and its moments (Discord)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub messages: Vec<MessageRow>,
+    /// The expert comments of one reviewed VOD, each indexed as a chunk of
+    /// its own instead of the text's chunks ([`crate::expert`])
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expert_comments: Vec<ExpertComment>,
 }
 
 impl Document {
@@ -114,6 +119,7 @@ impl Document {
             text,
             moments: Vec::new(),
             messages: Vec::new(),
+            expert_comments: Vec::new(),
         }
     }
 }

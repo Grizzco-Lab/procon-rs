@@ -347,7 +347,15 @@ While reviewing:
 
 The chat sends the message, the conversation so far, the frames it takes along
 and the nearby comments to Claude with knowledge retrieved from the store for
-it. The **Knowledge** view (the third tab above the library) manages that
+it. About a moment it also sends the moment as text: the HUD (wave, timer and
+golden eggs, when the video has a wave table), the controller input (recorded
+for a session, else the Predictor's latest prediction for the video, as an
+estimate) and the objects labelled on that frame; and with the knowledge come
+the closest **expert comments**, single #vod-review comments of high-level
+players about similar moments ("Centritide, 2023 (S3), about a W2 :50
+moment"), listed under the answer as **Expert comments given** with links to
+Discord. The Knowledge view's **Create reviews from #vod-review** indexes
+them (`cuttlefish corpus index` does it alone). The **Knowledge** view (the third tab above the library) manages that
 store (`crates/cuttlefish`, folder `[cuttlefish] knowledge`) and nothing else:
 asking is the chat's job, translating and looking up the glossary the
 Translate view's. It is laid out in two columns, feeding and searching on the

@@ -10,6 +10,7 @@
 //! little-endian `f32`, in entry order).
 
 use crate::doc::SourceKind;
+use crate::expert::Expert;
 use crate::game::Game;
 use crate::store::write_atomic;
 use alloc::string::String;
@@ -49,6 +50,10 @@ pub struct Entry {
     /// The video a conversation is about (Discord documents)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<String>,
+    /// Who made an expert comment, when and about which moment
+    /// ([`crate::expert`]); `url` is then the comment's message
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expert: Option<Expert>,
     /// Chunk text
     pub text: String,
 }
@@ -81,9 +86,19 @@ pub trait VectorIndex {
     fn add(&mut self, entry: Entry, vector: Vec<f32>) -> Result<()>;
     /// Removes every chunk of a document
     fn remove_doc(&mut self, doc_id: &str);
+    /// The `k` best entries that `keep` accepts for a unit query vector,
+    /// best first, by [`score`]
+    fn search_where(
+        &self,
+        query: &[f32],
+        k: usize,
+        keep: &dyn Fn(&Entry) -> bool,
+    ) -> Vec<(&Entry, f32)>;
     /// The `k` best entries for a unit query vector, best first, by
     /// [`score`]
-    fn search(&self, query: &[f32], k: usize) -> Vec<(&Entry, f32)>;
+    fn search(&self, query: &[f32], k: usize) -> Vec<(&Entry, f32)> {
+        self.search_where(query, k, &|_| true)
+    }
     /// Number of chunks
     fn len(&self) -> usize;
     /// True without chunks
@@ -206,11 +221,17 @@ impl VectorIndex for FlatIndex {
         self.vectors = keep_vectors;
     }
 
-    fn search(&self, query: &[f32], k: usize) -> Vec<(&Entry, f32)> {
+    fn search_where(
+        &self,
+        query: &[f32],
+        k: usize,
+        keep: &dyn Fn(&Entry) -> bool,
+    ) -> Vec<(&Entry, f32)> {
         let mut scored: Vec<(usize, f32)> = self
             .vectors
             .chunks_exact(self.dim)
             .enumerate()
+            .filter(|(i, _)| keep(&self.entries[*i]))
             .map(|(i, v)| {
                 let cos: f32 = v.iter().zip(query).map(|(a, b)| a * b).sum();
                 (i, score(cos, self.entries[i].weight, self.entries[i].game))
@@ -247,6 +268,7 @@ mod tests {
             weight,
             game: None,
             video: None,
+            expert: None,
             text: String::from(text),
         }
     }
@@ -282,6 +304,13 @@ mod tests {
         assert_eq!(top(&e, &index, "basket at low tide"), "tides");
         let v = e.embed(&["bomb"], Role::Query).unwrap().remove(0);
         assert_eq!(index.search(&v, 10).len(), 3);
+        let v = e
+            .embed(&["flyfish missile pod"], Role::Query)
+            .unwrap()
+            .remove(0);
+        let other = index.search_where(&v, 10, &|e| e.doc_id != "flyfish");
+        assert_eq!(other.len(), 2);
+        assert!(other.iter().all(|(e, _)| e.doc_id != "flyfish"));
     }
 
     #[test]

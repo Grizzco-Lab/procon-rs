@@ -469,11 +469,18 @@
     const body = $("cf-reviews");
     const filter = libraryFilter();
     for (const button of $("cf-filter").querySelectorAll("[data-filter]")) {
-      button.setAttribute("aria-pressed", String(button.dataset.filter === filter));
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.filter === filter),
+      );
     }
     const community = (r) => r.from === "discord";
     const reviews = data.reviews.filter((r) =>
-      filter === "all" ? true : filter === "community" ? community(r) : !community(r),
+      filter === "all"
+        ? true
+        : filter === "community"
+          ? community(r)
+          : !community(r),
     );
     $("cf-reviews-note").textContent = t("cf.reviews.count", {
       n: reviews.length,
@@ -1579,6 +1586,22 @@
     input.addEventListener("input", () => grow(input));
   }
 
+  /** A source of a message as a list item: its id, title (linked) and
+   * section; an expert comment of #vod-review as its reviewer and date
+   * linked to the Discord message, the era and the moment it is about */
+  function sourceItem(s) {
+    const link = (text) =>
+      s.url
+        ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`
+        : escapeHtml(text);
+    const x = s.expert;
+    if (x) {
+      const about = s.heading.split(", about ")[1];
+      return `<li><b>${escapeHtml(s.id)}</b> ${link(`${x.reviewer}, ${x.date}`)} <span class="panel-note">#vod-review · ${escapeHtml(x.game)}</span>${about ? ` › ${escapeHtml(about)}` : ""}</li>`;
+    }
+    return `<li><b>${escapeHtml(s.id)}</b> ${link(s.title)}${s.heading ? ` › ${escapeHtml(s.heading)}` : ""}${s.license ? ` <span class="panel-note">${escapeHtml(s.license)}</span>` : ""}</li>`;
+  }
+
   /** A message as HTML: escaped, with [S1] citations linked to their
    * sources and, when a video is attached, times that seek to them */
   function messageHtml(message) {
@@ -1646,12 +1669,8 @@
               : t("cf.chat.at", { time: clock(message.t_s) });
           context = `<button type="button" class="cf-time num" data-seek="${message.t_s}">${escapeHtml(label)}</button>`;
         }
-        const sources = (message.sources ?? [])
-          .map(
-            (s) =>
-              `<li><b>${escapeHtml(s.id)}</b> ${s.url ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.title)}</a>` : escapeHtml(s.title)}${s.heading ? ` › ${escapeHtml(s.heading)}` : ""}${s.license ? ` <span class="panel-note">${escapeHtml(s.license)}</span>` : ""}</li>`,
-          )
-          .join("");
+        const sources = (message.sources ?? []).map(sourceItem).join("");
+        const experts = (message.experts ?? []).map(sourceItem).join("");
         const added = (message.comments ?? [])
           .map((id) => review.comments.find((c) => c.id === id))
           .filter(Boolean)
@@ -1668,6 +1687,7 @@
           </div>
           <div class="cf-msg-text">${messageHtml(message)}</div>
           ${sources ? `<details class="cf-sources"><summary>${escapeHtml(t("cf.chat.sources"))} (${message.sources.length})</summary><ol class="k-sources">${sources}</ol></details>` : ""}
+          ${experts ? `<details class="cf-sources"><summary>${escapeHtml(t("cf.chat.experts"))} (${message.experts.length})</summary><ol class="k-sources">${experts}</ol></details>` : ""}
           ${comments}`;
         return li;
       }),
@@ -1807,6 +1827,7 @@
       role: "assistant",
       text: data.text ?? "",
       ...(data.sources?.length && { sources: data.sources }),
+      ...(data.experts?.length && { experts: data.experts }),
       ...(added.length && { comments: added }),
       created_ms: Date.now(),
     });

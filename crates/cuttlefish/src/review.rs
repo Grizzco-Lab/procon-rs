@@ -16,14 +16,24 @@
 //! player asks about the video. Translation requests are ordinary chat
 //! messages too; the persona knows to translate with the glossary's names.
 //!
+//! About a moment of a video, both also get the moment as text (the
+//! `<moment>` block, [`Situation`]: HUD, controller input, labelled
+//! objects), and retrieval asks for it too: the [`EXPERT_K`] closest expert
+//! comments of the #vod-review corpus ([`crate::expert`], in an
+//! `<expert_comments>` block labelled "Centritide, 2023 (S3), about a W2
+//! :50 moment") come before the `k` best other excerpts, all numbered as
+//! one list.
+//!
 //! [`translate`] and [`explain`] are the translator's own calls, without a
 //! knowledge store: a text into a language in the names its community uses,
 //! and what a bare term or callout means and when a player says it.
 
 use crate::doc::SourceKind;
 use crate::embed::Embedder;
+use crate::expert::Expert;
 use crate::glossary::{Glossary, Term};
 use crate::llm::{Block, Client, Prompt, Role, Settings, Turn};
+use crate::situation::Situation;
 use crate::store::{Hit, Store};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -71,6 +81,8 @@ pub struct ReviewRequest {
     pub question: Option<String>,
     /// Comments already in or near the range
     pub comments: Vec<ExistingComment>,
+    /// The range as text: HUD, controller input, objects
+    pub situation: Option<Situation>,
 }
 
 /// Kind of drawing on a frame
@@ -118,6 +130,10 @@ pub struct SourceRef {
     /// License or terms
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
+    /// For an expert comment: reviewer, date and moment; `url` is its
+    /// Discord message
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expert: Option<Expert>,
 }
 
 /// A comment from Cuttlefish
@@ -160,6 +176,8 @@ pub struct VideoContext {
     pub frames: Vec<Frame>,
     /// Comments already in or near the stretch
     pub comments: Vec<ExistingComment>,
+    /// The stretch as text: HUD, controller input, objects
+    pub situation: Option<Situation>,
 }
 
 /// A chat message with its conversation so far
@@ -182,10 +200,16 @@ pub struct ChatReply {
     pub sources: Vec<SourceRef>,
     /// Comments at moments of the attached video, if the reply adds any
     pub comments: Vec<AiComment>,
+    /// Every expert comment the model was given, cited or not
+    #[serde(default)]
+    pub experts: Vec<SourceRef>,
 }
 
 /// Earlier user turns whose text joins the retrieval query of a chat
 const QUERY_TURNS: usize = 2;
+
+/// Expert comments retrieved per request, before the other excerpts
+pub const EXPERT_K: usize = 4;
 
 const PERSONA: &str = "\
 You are Cuttlefish, an experienced Salmon Run (Splatoon 3) player who plays at \
@@ -229,7 +253,17 @@ names, one line per message as \"[date] reviewer: comment\", with times of that 
 video (1:20) or of the wave timer (W2 :50 means 50 s left in wave 2); quote such \
 advice by reviewer and year (\"Centritide, 2023: ...\"). An excerpt labelled \
 [Splatoon 2 era] is about Splatoon 2's Salmon Run: say so when you use it, and \
-prefer Splatoon 3 material where the games differ.";
+prefer Splatoon 3 material where the games differ.
+The expert_comments block holds single #vod-review comments of high-level \
+players, each labelled like \"Centritide, 2023 (S3), about a W2 :50 moment\", \
+found because their moment resembles the one asked about. They were said about \
+someone else's game: use one when the situation matches, cite its id and quote \
+the reviewer and year.
+
+The moment block describes the moment in text: the HUD (wave, timer, golden \
+eggs), the controller input (recorded from the controller, or predicted from the \
+video by a model, which is an estimate and can be wrong) and objects a person \
+labelled on a frame. Use it with the frames; where they disagree, say so.";
 
 /// The system prompt: persona and rules, then the curated digest. It does
 /// not change between calls, so the API caches it.
@@ -247,24 +281,70 @@ pub fn system_prompt(digest: Option<&str>) -> String {
 const DEFAULT_FOCUS: &str =
     "Salmon Run fundamentals: positioning, egg flow, boss priority, specials and wave strategy";
 
-/// Retrieval query for a review: the question and the comments on the moment
+/// Retrieval query for a review: the question, the comments on the moment
+/// and the moment's situation ([`Situation::query`])
 pub fn review_query(req: &ReviewRequest) -> String {
     let mut q = String::from(req.question.as_deref().unwrap_or(DEFAULT_FOCUS));
     for c in &req.comments {
         q.push('\n');
         q.push_str(&c.text);
     }
+    push_situation(&mut q, req.situation.as_ref());
     q
 }
 
-/// Knowledge excerpts, numbered from S1. Each is labelled with its source
-/// kind and place; a source of a known era with the era (`[Splatoon 2
-/// era]`, as the model quotes it), a #vod-review conversation with the
-/// video it is about too, its lines being `[date] reviewer: comment`.
+/// Appends a situation's query lines to a retrieval query
+fn push_situation(q: &mut String, situation: Option<&Situation>) {
+    let about = situation.map(Situation::query).unwrap_or_default();
+    if !about.is_empty() {
+        q.push('\n');
+        q.push_str(&about);
+    }
+}
+
+/// Knowledge excerpts, numbered from S1: the expert comments among the
+/// hits in an `<expert_comments>` block, each after its label
+/// ([`Expert::label`]), then the others in `<knowledge>`. Each is labelled
+/// with its source kind and place; a source of a known era with the era
+/// (`[Splatoon 2 era]`, as the model quotes it), a #vod-review
+/// conversation with the video it is about too, its lines being `[date]
+/// reviewer: comment`.
 pub fn knowledge_block(hits: &[Hit]) -> String {
-    let mut out = String::from("<knowledge>\n");
+    let era = |e: &crate::index::Entry| {
+        e.game
+            .map(|g| alloc::format!(" era=\"[{}]\"", g.era_label()))
+            .unwrap_or_default()
+    };
+    let video = |e: &crate::index::Entry| {
+        e.video
+            .as_ref()
+            .map(|v| alloc::format!(" video=\"{}\"", v.replace('"', "'")))
+            .unwrap_or_default()
+    };
+    let mut out = String::new();
+    if hits.iter().any(|h| h.entry.expert.is_some()) {
+        out.push_str("<expert_comments>\n");
+        for (i, h) in hits.iter().enumerate() {
+            let e = &h.entry;
+            if let Some(x) = &e.expert {
+                out.push_str(&alloc::format!(
+                    "<comment id=\"S{}\"{}{}>\n{}: {}\n</comment>\n",
+                    i + 1,
+                    era(e),
+                    video(e),
+                    x.label(),
+                    e.text.trim()
+                ));
+            }
+        }
+        out.push_str("</expert_comments>\n");
+    }
+    out.push_str("<knowledge>\n");
     for (i, h) in hits.iter().enumerate() {
         let e = &h.entry;
+        if e.expert.is_some() {
+            continue;
+        }
         let place = if e.heading.is_empty() {
             e.title.clone()
         } else {
@@ -279,12 +359,8 @@ pub fn knowledge_block(hits: &[Hit]) -> String {
                 .unwrap_or_default(),
             place.replace('"', "'")
         );
-        if let Some(game) = e.game {
-            attrs.push_str(&alloc::format!(" era=\"[{}]\"", game.era_label()));
-        }
-        if let Some(video) = &e.video {
-            attrs.push_str(&alloc::format!(" video=\"{}\"", video.replace('"', "'")));
-        }
+        attrs.push_str(&era(e));
+        attrs.push_str(&video(e));
         out.push_str(&alloc::format!(
             "<excerpt {attrs}>\n{}\n</excerpt>\n",
             e.text.trim()
@@ -361,6 +437,11 @@ pub fn review_prompt(system: &str, req: &ReviewRequest, hits: &[Hit], terms: &[&
         s.push_str("</comments>");
         user.push(Block::Text(s));
     }
+    if let Some(moment) = req.situation.as_ref().map(Situation::block)
+        && !moment.is_empty()
+    {
+        user.push(Block::Text(moment));
+    }
     for f in thin(&req.frames, MAX_FRAMES) {
         user.push(Block::Text(alloc::format!("Frame at {:.2} s:", f.t_s)));
         user.push(Block::Jpeg(f.jpeg.clone()));
@@ -413,6 +494,7 @@ fn source_refs(hits: &[Hit]) -> Vec<SourceRef> {
             url: h.entry.url.clone(),
             source: h.entry.source,
             license: h.entry.license.clone(),
+            expert: h.entry.expert.clone(),
         })
         .collect()
 }
@@ -670,14 +752,17 @@ impl Reviewer {
     }
 }
 
-/// The `k` best chunks for a query, and the glossary terms it mentions
+/// The [`EXPERT_K`] best expert comments ([`crate::expert::search`]) and
+/// the `k` best other chunks for a query, in that order, and the glossary
+/// terms it mentions
 fn retrieve<'a>(
     store: &'a Store,
     embedder: &dyn Embedder,
     k: usize,
     query: &str,
 ) -> Result<(Vec<Hit>, Vec<&'a Term>)> {
-    let hits = store.search(query, k, embedder)?;
+    let mut hits = crate::expert::search(store, embedder, query, EXPERT_K, &|_| true)?;
+    hits.extend(store.search_where(query, k, embedder, &|e| e.expert.is_none())?);
     let terms = store.glossary().find_in(query);
     Ok((hits, terms))
 }
@@ -734,8 +819,8 @@ pub fn explain(client: &Client, glossary: &Glossary, text: &str, target: &str) -
     Ok(String::from(reply.text.trim()))
 }
 
-/// Retrieval query for a chat: the new message, the last user turns and
-/// the comments on the moment
+/// Retrieval query for a chat: the new message, the last user turns, and
+/// the comments on the moment and its situation ([`Situation::query`])
 pub fn chat_query(req: &ChatRequest) -> String {
     let mut q = String::from(req.message.trim());
     for turn in req
@@ -753,6 +838,7 @@ pub fn chat_query(req: &ChatRequest) -> String {
             q.push('\n');
             q.push_str(&c.text);
         }
+        push_situation(&mut q, v.situation.as_ref());
     }
     q
 }
@@ -791,6 +877,11 @@ pub fn chat_prompt(system: &str, req: &ChatRequest, hits: &[Hit], terms: &[&Term
             }
             s.push_str("</comments>");
             user.push(Block::Text(s));
+        }
+        if let Some(moment) = v.situation.as_ref().map(Situation::block)
+            && !moment.is_empty()
+        {
+            user.push(Block::Text(moment));
         }
         for f in thin(&v.frames, MAX_FRAMES) {
             user.push(Block::Text(alloc::format!("Frame at {:.2} s:", f.t_s)));
@@ -861,6 +952,10 @@ pub fn parse_chat(text: &str, req: &ChatRequest, hits: &[Hit]) -> Result<ChatRep
         sources: cited(&reply, hits),
         text: reply,
         comments,
+        experts: source_refs(hits)
+            .into_iter()
+            .filter(|r| r.expert.is_some())
+            .collect(),
     })
 }
 
@@ -874,7 +969,12 @@ pub fn chat(
     req: &ChatRequest,
 ) -> Result<ChatReply> {
     anyhow::ensure!(!req.message.trim().is_empty(), "say something");
-    let (hits, terms) = retrieve(store, embedder, k, &chat_query(req))?;
+    let query = chat_query(req);
+    log::debug!("chat retrieval query:\n{query}");
+    if let Some(s) = req.video.as_ref().and_then(|v| v.situation.as_ref()) {
+        log::debug!("chat moment:\n{}", s.block());
+    }
+    let (hits, terms) = retrieve(store, embedder, k, &query)?;
     let system = system_prompt(store.digest().as_deref());
     let prompt = chat_prompt(&system, req, &hits, &terms);
     let reply = client.send(&prompt)?;
@@ -904,6 +1004,7 @@ mod tests {
                 weight: 1.2,
                 game: None,
                 video: None,
+                expert: None,
                 text: String::from(text),
             },
         }
@@ -926,6 +1027,7 @@ mod tests {
                 text: String::from("basket starved here"),
                 author: None,
             }],
+            situation: None,
         }
     }
 
@@ -1102,6 +1204,7 @@ mod tests {
                     end_s: req.end_s,
                     frames: req.frames.clone(),
                     comments: req.comments.clone(),
+                    situation: req.situation.clone(),
                 }),
             })
             .unwrap();
@@ -1159,6 +1262,7 @@ mod tests {
                 end_s: req.end_s,
                 frames: req.frames.clone(),
                 comments: req.comments.clone(),
+                situation: req.situation.clone(),
             }),
         }
     }
@@ -1218,6 +1322,131 @@ mod tests {
         assert!(task.contains("watching session-1 and is at 10.0 s to 20.0 s"));
         assert!(task.contains("you may also add comments"));
         assert!(p.system.contains("Translation:"));
+    }
+
+    fn expert_hit() -> Hit {
+        let mut h = hit(
+            "#vod-review: souper's VOD, 2023-05-01",
+            "you were alone on the far side",
+        );
+        h.entry.heading = String::from("Ben, 2023 (S3), about a W2 :50 moment");
+        h.entry.url = Some(String::from("https://discord.com/channels/1/2/202"));
+        h.entry.video = Some(String::from("https://youtu.be/abcdefghijk"));
+        h.entry.game = Some(crate::game::Game::S3);
+        h.entry.expert = Some(Expert {
+            reviewer: String::from("Ben"),
+            date: chrono::NaiveDate::from_ymd_opt(2023, 5, 1).unwrap(),
+            game: crate::game::Game::S3,
+            vod: String::from("200"),
+            video: String::from("https://youtu.be/abcdefghijk"),
+            wave: Some(2),
+            timer_s: Some(50.0),
+            t_s: Some(150.0),
+        });
+        h
+    }
+
+    fn situation() -> Situation {
+        use crate::situation::{HudState, Input, InputSource};
+        Situation {
+            input: Some(Input {
+                source: InputSource::Recorded,
+                start_s: 10.0,
+                end_s: 20.0,
+                lines: alloc::vec![String::from("12.0 s: squid roll")],
+                actions: alloc::vec![String::from("squid roll")],
+            }),
+            hud: alloc::vec![HudState {
+                t_s: 12.0,
+                wave: 2,
+                extra: false,
+                timer_s: 50,
+                eggs: Some((10, 21)),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn expert_comments_and_the_moment_go_into_prompts() {
+        let hits = [expert_hit(), hit("Bosses", "Bomb the pods.")];
+        let k = knowledge_block(&hits);
+        assert_eq!(
+            k,
+            "<expert_comments>\n\
+             <comment id=\"S1\" era=\"[Splatoon 3 era]\" video=\"https://youtu.be/abcdefghijk\">\n\
+             Ben, 2023 (S3), about a W2 :50 moment: you were alone on the far side\n\
+             </comment>\n\
+             </expert_comments>\n\
+             <knowledge>\n\
+             <excerpt id=\"S2\" source=\"discord-vod-review\" title=\"Bosses > Strategy\">\n\
+             Bomb the pods.\n\
+             </excerpt>\n\
+             </knowledge>"
+        );
+        // The review's query and prompt carry the moment
+        let mut req = request();
+        req.situation = Some(situation());
+        assert!(review_query(&req).ends_with(
+            "basket starved here\nW2 :50, wave 2 with 50 seconds left, 10 of 21 golden eggs\nplayer: squid roll"
+        ));
+        let p = review_prompt(&system_prompt(None), &req, &hits, &[]);
+        let Block::Text(moment) = &p.user[2] else {
+            panic!()
+        };
+        assert!(moment.starts_with("<moment>\nHUD at 12.0 s: wave 2, 50 s left (W2 :50)"));
+        assert!(p.system.contains("expert_comments block"));
+        // So do the chat's, and the reply lists the expert comments given
+        let mut chat = chat_request(true);
+        chat.video.as_mut().unwrap().situation = Some(situation());
+        assert!(chat_query(&chat).ends_with("player: squid roll"));
+        let p = chat_prompt(&system_prompt(None), &chat, &hits, &[]);
+        assert!(
+            p.user
+                .iter()
+                .any(|b| matches!(b, Block::Text(t) if t.starts_with("<moment>")))
+        );
+        let reply = parse_chat(
+            r#"{"text": "Stay with the team [S2].", "comments": []}"#,
+            &chat,
+            &hits,
+        )
+        .unwrap();
+        assert_eq!(reply.sources.len(), 1);
+        assert_eq!(reply.experts.len(), 1);
+        assert_eq!(reply.experts[0].id, "S1");
+        assert_eq!(
+            reply.experts[0].url.as_deref(),
+            Some("https://discord.com/channels/1/2/202")
+        );
+        assert_eq!(reply.experts[0].expert.as_ref().unwrap().reviewer, "Ben");
+    }
+
+    #[test]
+    fn retrieval_puts_expert_comments_first() {
+        let root =
+            std::env::temp_dir().join(alloc::format!("cuttlefish-retrieve-{}", std::process::id()));
+        let corpus_root = crate::corpus::tests::fixture("retrieve");
+        let corpus = crate::corpus::build(&corpus_root).unwrap();
+        let e = HashEmbedder { dim: 128 };
+        let mut store = Store::open(&root, &e).unwrap();
+        crate::expert::index(&mut store, &e, &corpus, &mut |_| {}).unwrap();
+        for i in 0..12 {
+            let doc = crate::doc::Document::new(
+                SourceKind::Guide,
+                &alloc::format!("guide-{i}"),
+                alloc::format!("Guide {i}"),
+                alloc::format!("# Basket\n\ngo left to the basket when it starved {i}"),
+            );
+            store.add(&doc, &e).unwrap();
+        }
+        let (hits, _) = retrieve(&store, &e, 5, "go left, the basket starved").unwrap();
+        // All three expert comments (fewer than EXPERT_K), then five others
+        assert_eq!(hits.len(), 8);
+        assert!(hits[..3].iter().all(|h| h.entry.expert.is_some()));
+        assert!(hits[3..].iter().all(|h| h.entry.expert.is_none()));
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&corpus_root).unwrap();
     }
 
     #[test]

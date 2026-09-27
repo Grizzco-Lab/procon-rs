@@ -194,10 +194,13 @@ fn main() -> anyhow::Result<()> {
         },
         ..Default::default()
     };
+    let predictor_settings =
+        predictor::Settings::from_config(config.predictor, &config_dir, beside("Predictions"));
     let cuttlefish = Arc::new(Cuttlefish::new(
         Arc::clone(&inspector),
         reviews,
         knowledge,
+        predictor_settings.results.clone(),
         settings,
         config.cuttlefish.translate_model,
         procon::knowledge::AutoApply {
@@ -232,7 +235,7 @@ fn main() -> anyhow::Result<()> {
     let predictor = Arc::new(Predictor::new(
         Arc::clone(&inspector),
         Arc::clone(&cuttlefish),
-        predictor::Settings::from_config(config.predictor, &config_dir, beside("Predictions")),
+        predictor_settings,
     ));
     let follow = Arc::new(Follow::new(Arc::clone(&inspector), follow_settings));
 

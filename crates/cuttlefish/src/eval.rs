@@ -107,6 +107,7 @@ mod tests {
                 weight: 1.0,
                 game: None,
                 video: None,
+                expert: None,
                 text: String::new(),
             },
         };

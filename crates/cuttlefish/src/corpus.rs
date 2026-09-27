@@ -202,7 +202,8 @@ pub struct CorpusMoment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seconds: Option<f32>,
     /// The wave: named in the text, else the last one named before it in
-    /// the same message
+    /// the same message, else the one the video's wave table placed the
+    /// timer in
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wave: Option<u8>,
     /// Seconds into the VOD's video, when placed
@@ -322,10 +323,10 @@ impl Table {
         Some((t.max(0.0) as f32, agree))
     }
 
-    /// Video time of a timer value whose wave the comment does not name:
-    /// placed when the timer falls into exactly one wave of the table (a
-    /// clip of one wave, mostly); ambiguous otherwise
-    pub fn place_unnamed(&self, timer_s: f32) -> Option<(f32, f64)> {
+    /// The wave and video time of a timer value whose wave the comment does
+    /// not name: placed when the timer falls into exactly one wave of the
+    /// table (a clip of one wave, mostly); ambiguous otherwise
+    pub fn place_unnamed(&self, timer_s: f32) -> Option<(u8, f32, f64)> {
         let mut found: Option<(u8, f32, f64)> = None;
         for w in &self.waves.waves {
             let t = w.to_video_time(f64::from(timer_s));
@@ -338,7 +339,7 @@ impl Table {
                 None => found = Some((w.wave, t.max(0.0) as f32, w.agree)),
             }
         }
-        found.map(|(_, t, agree)| (t, agree))
+        found
     }
 
     /// Where wave `wave` is first seen, for a wave named without a time
@@ -510,11 +511,12 @@ pub fn corpus_moments(
             }
             (MomentKind::WaveTimer, Some(s)) if same_video => {
                 let placed = match wave {
-                    Some(w) => table.and_then(|t| t.place(w, s)),
+                    Some(w) => table.and_then(|t| t.place(w, s)).map(|(t, a)| (w, t, a)),
                     None => table.and_then(|t| t.place_unnamed(s)),
                 };
                 match placed {
-                    Some((t, agree)) => {
+                    Some((w, t, agree)) => {
+                        cm.wave = Some(w);
                         cm.t_s = Some(t);
                         cm.aligned = true;
                         cm.placed_by = Some(PlacedBy::Hud);
@@ -1187,7 +1189,7 @@ pub(crate) mod tests {
         // A timer without a wave: 50 s left fits both waves, 90 s left only
         // wave 1 (wave 2 was first seen at 83)
         assert_eq!(table.place_unnamed(50.0), None);
-        assert_eq!(table.place_unnamed(90.0), Some((20.0, 0.95)));
+        assert_eq!(table.place_unnamed(90.0), Some((1, 20.0, 0.95)));
         // Never before the video starts: a clip that begins with 49.2 s
         // left, and a comment at "50s"
         let clip = Table {
@@ -1200,7 +1202,7 @@ pub(crate) mod tests {
             game: None,
         };
         assert_eq!(clip.place(2, 50.0), Some((0.0, 0.95)));
-        assert_eq!(clip.place_unnamed(50.0), Some((0.0, 0.95)));
+        assert_eq!(clip.place_unnamed(50.0), Some((2, 0.0, 0.95)));
         assert_eq!(
             load_table(&root.join("none.mp4")).unwrap().map(|_| ()),
             None

@@ -17,7 +17,9 @@
 //! [`php`]), images an asset catalogue ([`assets`]).
 //! The #vod-review archive becomes a corpus of reviewed VODs ([`corpus`]),
 //! their videos downloaded at 480p ([`corpus_videos`]) and each conversation
-//! a review of the studio ([`corpus_reviews`]).
+//! a review of the studio ([`corpus_reviews`]); each reviewer's comment is
+//! a unit of retrieval of its own ([`expert`]), found for a moment through
+//! a text summary of it ([`situation`]: controller input, HUD, objects).
 //! [`review::Reviewer`] retrieves what is relevant to a moment or question
 //! and asks the model through the Anthropic Messages API or the Claude Code
 //! CLI ([`llm`], [`claude_cli`]).
@@ -40,6 +42,7 @@ pub mod doc;
 pub mod embed;
 pub mod env_file;
 pub mod eval;
+pub mod expert;
 pub mod file;
 pub mod game;
 pub mod glossary;
@@ -54,6 +57,7 @@ pub mod messages;
 pub mod moments;
 pub mod php;
 pub mod review;
+pub mod situation;
 pub mod slang;
 pub mod store;
 pub mod tables;

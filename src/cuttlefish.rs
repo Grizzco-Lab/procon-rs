@@ -39,8 +39,9 @@
 //! are about the whole video, tied to no time or drawing. `messages` is the
 //! chat, oldest first: a user message may carry the moment (`t_s`) or range
 //! (`t_s`, `t_end_s`) of the video it was asked with; an assistant message
-//! carries the knowledge it cited (`sources`) and the ids of the timed
-//! comments it added (`comments`). Older reviews have no `notes` or
+//! carries the knowledge it cited (`sources`), the expert comments it was
+//! given (`experts`) and the ids of the timed comments it added
+//! (`comments`). Older reviews have no `notes` or
 //! `messages`; neither is written when empty, and `video` is left out of a
 //! review without one.
 //!
@@ -79,10 +80,16 @@
 //!   "t_s"?, "t_end_s"?, "review"?}` sends a chat message to the `cuttlefish`
 //!   crate with the conversation so far and, when a video and `t_s` are
 //!   given, the frames of the range (or of a few seconds around `t_s`) from
-//!   ffmpeg and the review's comments near it; knowledge comes from
-//!   `[cuttlefish] knowledge`. Answers `{"text", "sources", "comments":
-//!   [{"t_s", "t_end_s"?, "text", "shapes"}]}`; the page saves the message
-//!   into the review and adds the comments as Cuttlefish's. `501` while the
+//!   ffmpeg, the review's comments near it and the moment as text
+//!   ([`cuttlefish::situation`]: the controller input of a session's
+//!   recording, else of the Predictor's newest run on the video in
+//!   `[predictor] results`; the HUD when a wave table sits beside the
+//!   video; boxes a person labelled on the session's frame at `t_s`);
+//!   knowledge comes from `[cuttlefish] knowledge`. Answers `{"text",
+//!   "sources", "experts", "comments": [{"t_s", "t_end_s"?, "text",
+//!   "shapes"}]}` (`experts`: every expert comment the model was given);
+//!   the page saves the message into the review and adds the comments as
+//!   Cuttlefish's. `501` while the
 //!   reviewer cannot start: no model backend (`ANTHROPIC_API_KEY`, the only
 //!   place the key is read from, or the logged-in Claude Code CLI; see
 //!   `[cuttlefish] backend`)
@@ -109,7 +116,9 @@ use cuttlefish::corpus_reviews::{Origin, Unplaced};
 use cuttlefish::game::Game;
 use cuttlefish::llm::{Role, Settings, Turn};
 use cuttlefish::review::{self as ai, ChatRequest, SourceRef, VideoContext};
-use cuttlefish::{corpus, corpus_reviews};
+use cuttlefish::situation::{self, Input, InputSource, SeenObject, Situation};
+use cuttlefish::{corpus, corpus_reviews, expert};
+use gameplay_data::labels::{self, Label};
 use gameplay_data::session::SessionInfo;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -327,6 +336,9 @@ pub struct Message {
     /// Knowledge an assistant message cites
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<SourceRef>,
+    /// Expert comments an assistant message was given, cited or not
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub experts: Vec<SourceRef>,
     /// Ids of the comments an assistant message added
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<String>,
@@ -469,6 +481,9 @@ pub struct Cuttlefish {
     /// The `cuttlefish` crate's store, shared by the reviewer and the
     /// knowledge view
     knowledge: Arc<Knowledge>,
+    /// The Predictor's runs (`[predictor] results`): their predictions give
+    /// the controller input of videos without a recording
+    predictions: PathBuf,
 }
 
 /// A reply before it becomes an HTTP response
@@ -502,6 +517,7 @@ impl Cuttlefish {
         inspector: Arc<Inspector>,
         reviews: PathBuf,
         knowledge: PathBuf,
+        predictions: PathBuf,
         settings: Settings,
         translate_model: Option<String>,
         auto_apply: AutoApply,
@@ -516,6 +532,7 @@ impl Cuttlefish {
             knowledge: Arc::new(
                 Knowledge::new(knowledge, settings, translate_model).with_auto_apply(auto_apply),
             ),
+            predictions,
         }
     }
 
@@ -723,12 +740,15 @@ impl Cuttlefish {
     }
 
     /// Start the job that turns the #vod-review archive into reviews, as
-    /// `cuttlefish corpus align` then `corpus reviews`: the corpus is built
-    /// from the knowledge folder, every VOD video on disk without a wave
-    /// table has its HUD read (1-2 s per minute of video; Stop ends it
-    /// after the video under way), and a review is created or updated for
-    /// every VOD whose video is on disk. Runs as a knowledge job, one at a
-    /// time with the imports; answers with the job.
+    /// `cuttlefish corpus align`, `corpus reviews` then `corpus index`: the
+    /// corpus is built from the knowledge folder, every VOD video on disk
+    /// without a wave table has its HUD read (1-2 s per minute of video;
+    /// Stop ends it after the video under way), a review is created or
+    /// updated for every VOD whose video is on disk, and every reviewer
+    /// comment is indexed as an expert comment ([`cuttlefish::expert`];
+    /// under the store's write lock, one VOD's document at a time, so chats
+    /// go on meanwhile; Stop keeps what is embedded). Runs as a knowledge
+    /// job, one at a time with the imports; answers with the job.
     pub fn community_reviews(&self) -> Result<Value, Status> {
         let reviews = self.reviews.clone();
         let writing = Arc::clone(&self.writing);
@@ -755,7 +775,35 @@ impl Cuttlefish {
                     corpus_reviews::write(&built, root, &reviews)?
                 };
                 knowledge.log(id, stats.to_string());
-                Ok(format!("done: {written}"))
+                knowledge.log(id, format!("reviews: {written}"));
+                let _lock = cuttlefish::lock::acquire(root, "procon studio expert comments")?;
+                let loaded = knowledge.loaded()?;
+                let plan = expert::plan(&loaded.store.read().unwrap(), &built)?;
+                let mut embedded = 0;
+                for doc in &plan.add {
+                    if knowledge.cancelled() {
+                        break;
+                    }
+                    loaded.store.write().unwrap().add(doc, &loaded.embedder)?;
+                    embedded += 1;
+                    if embedded % 10 == 0 {
+                        loaded.store.read().unwrap().save()?;
+                        knowledge.log(
+                            id,
+                            format!("expert comments: {embedded} of {} VODs embedded", plan.add.len()),
+                        );
+                    }
+                }
+                for doc_id in &plan.remove {
+                    loaded.store.write().unwrap().delete(doc_id)?;
+                }
+                loaded.store.read().unwrap().save()?;
+                ensure!(
+                    embedded == plan.add.len(),
+                    "stopped after {embedded} of {} VODs' expert comments; run it again for the rest",
+                    plan.add.len()
+                );
+                Ok(format!("done: {written}; {}", plan.counts))
             },
         )?;
         Ok(json!(job))
@@ -1109,7 +1157,8 @@ impl Cuttlefish {
     // --------------------------------------------------------------- chat
 
     /// The video context of a chat message: frames of `t_s`..`t_end_s` (or
-    /// of the moment around `t_s`) and the review's comments near it
+    /// of the moment around `t_s`), the review's comments near it and the
+    /// moment as text ([`Cuttlefish::situation`])
     fn video_context(
         &self,
         video: &VideoRef,
@@ -1127,6 +1176,7 @@ impl Cuttlefish {
             Some(id) if !id.is_empty() => self.review(id)?.comments,
             _ => Vec::new(),
         };
+        let situation = self.situation(video, review, &path, t_s, (start_s, end_s), t_end_s);
         Ok(VideoContext {
             video: match video.kind {
                 VideoKind::Youtube => format!(
@@ -1148,7 +1198,142 @@ impl Cuttlefish {
                     author: Some(c.author.clone()),
                 })
                 .collect(),
+            situation,
         })
+    }
+
+    /// The moment as text: the controller input over `range` (a session's
+    /// recording, else the Predictor's newest run on the video), the HUD at
+    /// `t_s` (at both ends of a range, `t_end_s`) when the video has a wave
+    /// table, and the boxes a person labelled on the session's frame at
+    /// `t_s`. What cannot be read is logged and left out; `None` when
+    /// nothing is known.
+    fn situation(
+        &self,
+        video: &VideoRef,
+        review: Option<&str>,
+        path: &Path,
+        t_s: f64,
+        (start_s, end_s): (f64, f64),
+        t_end_s: Option<f64>,
+    ) -> Option<Situation> {
+        let mut out = Situation::default();
+        let session = (video.kind == VideoKind::Session && video.file.is_none())
+            .then(|| {
+                let name = video.reference.split('/').next()?;
+                let segment = path.file_name()?.to_str()?;
+                Some((name.to_string(), segment.to_string()))
+            })
+            .flatten();
+        let input = match &session {
+            Some((name, segment)) => self.recorded_input(name, segment, start_s, end_s).map(Some),
+            None => self.predicted_input(video, review, start_s, end_s),
+        };
+        match input {
+            Ok(input) => out.input = input,
+            Err(e) => log::warn!("No controller input for the chat: {e:#}"),
+        }
+        let moments = match t_end_s {
+            Some(end) => vec![t_s, end],
+            None => vec![t_s],
+        };
+        for t in moments {
+            match situation::hud_at(path, t) {
+                Ok(hud) => out.hud.extend(hud),
+                Err(e) => log::warn!("No HUD for the chat: {e:#}"),
+            }
+        }
+        if let Some((name, segment)) = &session {
+            match self.labelled_objects(name, segment, t_s) {
+                Ok(objects) if !objects.is_empty() => {
+                    out.labelled = objects;
+                    out.objects_t_s = Some(t_s);
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("No labelled objects for the chat: {e:#}"),
+            }
+        }
+        (!out.is_empty()).then_some(out)
+    }
+
+    /// A session segment's recorded input over `start_s`..`end_s`
+    fn recorded_input(
+        &self,
+        session: &str,
+        segment: &str,
+        start_s: f64,
+        end_s: f64,
+    ) -> Result<Input> {
+        let fps = self.inspector.info(session, Some(segment))?["fps"]
+            .as_f64()
+            .context("no frame rate")?;
+        let frames = (start_s * fps).floor() as usize..(end_s * fps).ceil() as usize;
+        let mut value = self
+            .inspector
+            .labels(session, Some(segment), frames, None, None)?;
+        let truth: Vec<Label> = serde_json::from_value(value["truth"].take())?;
+        Ok(situation::summarize_input(
+            &truth,
+            fps,
+            InputSource::Recorded,
+        ))
+    }
+
+    /// The input the Predictor's newest finished run on this video predicts
+    /// over `start_s`..`end_s`; `None` without a run covering it
+    fn predicted_input(
+        &self,
+        video: &VideoRef,
+        review: Option<&str>,
+        start_s: f64,
+        end_s: f64,
+    ) -> Result<Option<Input>> {
+        let Some((dir, job)) = newest_prediction(&self.predictions, video, review) else {
+            return Ok(None);
+        };
+        let fps = job["fps"].as_f64().context("the run has no frame rate")?;
+        let offset = job["frame_offset"].as_u64().unwrap_or(0);
+        let frames = (start_s * fps).floor() as u64..(end_s * fps).ceil() as u64;
+        let predicted: Vec<Label> = labels::read_labels(&dir.join("pred.jsonl"))?
+            .into_iter()
+            .map(|label| Label {
+                frame: label.frame + offset,
+                ..label
+            })
+            .filter(|label| frames.contains(&label.frame))
+            .collect();
+        if predicted.is_empty() {
+            return Ok(None);
+        }
+        let model = job["checkpoint"].as_str().unwrap_or("?").to_string();
+        Ok(Some(situation::summarize_input(
+            &predicted,
+            fps,
+            InputSource::Predicted { model },
+        )))
+    }
+
+    /// Boxes a person drew on the session segment's frame at `t_s`
+    fn labelled_objects(&self, session: &str, segment: &str, t_s: f64) -> Result<Vec<SeenObject>> {
+        let fps = self.inspector.info(session, Some(segment))?["fps"]
+            .as_f64()
+            .context("no frame rate")?;
+        let frame = (t_s * fps).round() as u64;
+        let frames = self.inspector.annotations().read(session, segment)?;
+        Ok(frames
+            .get(&frame)
+            .map(|f| {
+                f.boxes
+                    .iter()
+                    .filter(|b| b.by != "model")
+                    .map(|b| SeenObject {
+                        class: b.class.clone(),
+                        x: b.x + b.w / 2.0,
+                        y: b.y + b.h / 2.0,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     /// Answer a chat message (`POST chat`, see the module doc): the reply's
@@ -1191,6 +1376,7 @@ impl Cuttlefish {
         Ok(json!({
             "text": reply.text,
             "sources": reply.sources,
+            "experts": reply.experts,
             "comments": comments,
         }))
     }
@@ -1549,6 +1735,42 @@ fn page_comment(comment: ai::AiComment) -> Value {
     })
 }
 
+/// The folder and `run.json` of the newest finished Predictor run on a
+/// video (`<results>/<video key>/<checkpoint>/`): its `play` names the same
+/// kind and reference, and the same review when it names one
+fn newest_prediction(
+    results: &Path,
+    video: &VideoRef,
+    review: Option<&str>,
+) -> Option<(PathBuf, Value)> {
+    let kind = serde_json::to_value(video.kind).ok()?;
+    let mut best: Option<(u64, PathBuf, Value)> = None;
+    for key in std::fs::read_dir(results).ok()?.flatten() {
+        let Ok(checkpoints) = std::fs::read_dir(key.path()) else {
+            continue;
+        };
+        for dir in checkpoints.flatten().map(|e| e.path()) {
+            let Some(job) = std::fs::read(dir.join("run.json"))
+                .ok()
+                .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            else {
+                continue;
+            };
+            let play = &job["play"];
+            let same = job["state"] == "done"
+                && play["kind"] == kind
+                && play["ref"].as_str() == Some(video.reference.as_str())
+                && play["r"].as_str().is_none_or(|r| Some(r) == review)
+                && dir.join("pred.jsonl").is_file();
+            let finished = job["finished_ms"].as_u64().unwrap_or(0);
+            if same && best.as_ref().is_none_or(|(t, ..)| finished > *t) {
+                best = Some((finished, dir, job));
+            }
+        }
+    }
+    best.map(|(_, dir, job)| (dir, job))
+}
+
 /// A review file
 fn read_review(path: &Path) -> Result<Review> {
     let text =
@@ -1893,11 +2115,70 @@ mod tests {
             inspector,
             dir.join("reviews"),
             dir.join("knowledge"),
+            dir.join("predictions"),
             Settings::default(),
             None,
             AutoApply::default(),
         );
         (dir, cuttlefish)
+    }
+
+    #[test]
+    fn chats_find_the_newest_prediction_of_their_video() {
+        let (dir, cuttlefish) = scratch("predictions");
+        let video = VideoRef {
+            kind: VideoKind::File,
+            reference: "/videos/run.mp4".into(),
+            start_s: None,
+            end_s: None,
+            file: None,
+            title: None,
+            channel: None,
+            upload_date: None,
+        };
+        // Two runs on the file, the older one done, the newer failed; one
+        // on a review of the same file
+        let run = |key: &str, ckpt: &str, state: &str, finished: u64, play: Value| {
+            let run_dir = dir.join("predictions").join(key).join(ckpt);
+            std::fs::create_dir_all(&run_dir).unwrap();
+            let job = json!({"state": state, "finished_ms": finished, "fps": 30.0,
+                "frame_offset": 300, "checkpoint": ckpt, "play": play});
+            std::fs::write(run_dir.join("run.json"), job.to_string()).unwrap();
+            // Frames 0-59 of the prediction are 10-12 s of the video, ZR held
+            let lines: String = (0..60)
+                .map(|n| format!("{{\"frame\":{n},\"valid\":true,\"buttons\":[\"zr\"]}}\n"))
+                .collect();
+            std::fs::write(run_dir.join("pred.jsonl"), lines).unwrap();
+        };
+        let file = json!({"kind": "file", "ref": "/videos/run.mp4"});
+        run("file-run-1", "v1", "done", 10, file.clone());
+        run("file-run-1", "v2", "failed", 20, file);
+        run(
+            "review-x",
+            "v3",
+            "done",
+            30,
+            json!({"kind": "file", "ref": "/videos/run.mp4", "r": "x"}),
+        );
+        let (found, job) = newest_prediction(&dir.join("predictions"), &video, None).unwrap();
+        assert!(found.ends_with("file-run-1/v1"));
+        assert_eq!(job["checkpoint"], "v1");
+        let (_, job) = newest_prediction(&dir.join("predictions"), &video, Some("x")).unwrap();
+        assert_eq!(job["checkpoint"], "v3");
+        let input = cuttlefish
+            .predicted_input(&video, None, 10.5, 11.0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(input.source, InputSource::Predicted { model: "v1".into() });
+        assert_eq!(input.lines, ["10.5\u{2013}11.0 s: ZR held (shooting)"]);
+        // Outside the predicted frames: nothing
+        assert!(
+            cuttlefish
+                .predicted_input(&video, None, 30.0, 31.0)
+                .unwrap()
+                .is_none()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -2071,6 +2352,7 @@ mod tests {
             t_s: Some(12.0),
             t_end_s: Some(20.0),
             sources: Vec::new(),
+            experts: Vec::new(),
             comments: Vec::new(),
             created_ms: 3,
         });
@@ -2247,7 +2529,8 @@ mod tests {
         assert!(
             last["lines"].as_array().unwrap().iter().any(|l| l
                 .as_str()
-                .is_some_and(|l| l.starts_with("done: 0 reviews created"))),
+                .is_some_and(|l| l.starts_with("done: 0 reviews created")
+                    && l.ends_with("0 expert comments of 0 VODs: 0 documents embedded, 0 unchanged, 0 removed"))),
             "{last}"
         );
         std::fs::remove_dir_all(&dir).unwrap();
@@ -2390,6 +2673,7 @@ mod tests {
                 url: Some(String::from("https://example.com")),
                 source: cuttlefish::doc::SourceKind::Guide,
                 license: None,
+                expert: None,
             }],
         };
         let page = page_comment(comment);

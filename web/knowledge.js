@@ -423,8 +423,9 @@
 
   /** Starts the job that builds the #vod-review corpus, reads the HUD of
    * the videos on disk and creates or updates a review for every VOD whose
-   * video is on disk (POST /api/cuttlefish/community-reviews: `cuttlefish
-   * corpus align` then `corpus reviews`); it shows in the jobs list above
+   * video is on disk, and indexes every comment as an expert comment (POST
+   * /api/cuttlefish/community-reviews: `cuttlefish corpus align`, `corpus
+   * reviews`, then `corpus index`); it shows in the jobs list above
    * the button, with Stop, and its last line holds the counts */
   $("k-corpus-go").onclick = async () => {
     const button = $("k-corpus-go");

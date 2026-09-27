@@ -203,6 +203,7 @@ I18N.zh = {
   "cf.chat.ctxNone": "不带画面",
   "cf.chat.at": "在 {time}",
   "cf.chat.sources": "来源",
+  "cf.chat.experts": "提供的专家评论",
   "cf.chat.commentsAdded": "添加了 {n} 条评论",
   "cf.chat.seek": "跳到 {time}",
   "cf.attach.title": "附加视频",
@@ -411,7 +412,7 @@ I18N.zh = {
   "k.docs.none": "还没有文档：请导入一些。",
   "k.corpus.go": "从 #vod-review 创建复盘",
   "k.corpus.note":
-    "先读取本机视频的 HUD，然后每个视频在本机的被点评 VOD 都会成为一个带社区评论的复盘；可随时重新运行",
+    "先读取本机视频的 HUD，然后每个视频在本机的被点评 VOD 都会成为一个带社区评论的复盘，每条评论也会成为聊天可以参考的专家评论；可随时重新运行",
   "k.corpus.failed": "无法开始：{error}",
 
   // Knowledge: the inbox, import reports, overview, assets

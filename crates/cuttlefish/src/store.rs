@@ -338,8 +338,25 @@ impl Store {
         Ok(existed || self.index.len() != chunks)
     }
 
+    /// A document's chunks: its text's ([`chunk_text`]), or one per expert
+    /// comment headed by its label ([`crate::expert`])
+    fn doc_chunks(&self, doc: &Document) -> Vec<Chunk> {
+        if doc.expert_comments.is_empty() {
+            return chunk_text(&doc.text, &self.chunking);
+        }
+        doc.expert_comments
+            .iter()
+            .enumerate()
+            .map(|(i, c)| Chunk {
+                ordinal: i as u32,
+                heading: c.expert.label(),
+                text: c.text.clone(),
+            })
+            .collect()
+    }
+
     fn index_doc(&mut self, doc: &Document, embedder: &dyn Embedder) -> Result<usize> {
-        let chunks = chunk_text(&doc.text, &self.chunking);
+        let chunks = self.doc_chunks(doc);
         self.index_chunks(doc, &chunks, embedder, &mut |_| true)?;
         Ok(chunks.len())
     }
@@ -364,18 +381,22 @@ impl Store {
             let refs: Vec<&str> = inputs.iter().map(String::as_str).collect();
             let vectors = embedder.embed(&refs, Role::Passage)?;
             for (c, v) in group.iter().zip(vectors) {
+                let comment = doc.expert_comments.get(c.ordinal as usize);
                 let entry = Entry {
                     doc_id: doc.id.clone(),
                     ordinal: c.ordinal,
                     title: doc.title.clone(),
                     heading: c.heading.clone(),
-                    url: doc.url.clone(),
+                    url: comment.map(|c| c.url.clone()).or_else(|| doc.url.clone()),
                     source: doc.source,
                     license: doc.license.clone(),
                     language: doc.language.clone(),
                     weight: doc.weight,
                     game: doc.era(),
-                    video: doc.video().map(String::from),
+                    video: comment
+                        .map(|c| c.expert.video.clone())
+                        .or_else(|| doc.video().map(String::from)),
+                    expert: comment.map(|c| c.expert.clone()),
                     text: c.text.clone(),
                 };
                 self.index.add(entry, v)?;
@@ -426,7 +447,7 @@ impl Store {
                 step(&line);
                 continue;
             }
-            let chunks = chunk_text(&doc.text, &self.chunking);
+            let chunks = self.doc_chunks(&doc);
             todo.push((doc, chunks));
         }
         let total: usize = todo.iter().map(|(_, c)| c.len()).sum();
@@ -486,6 +507,18 @@ impl Store {
     /// The `k` best chunks for a query; the query is expanded with the
     /// other-language names of glossary terms it mentions
     pub fn search(&self, query: &str, k: usize, embedder: &dyn Embedder) -> Result<Vec<Hit>> {
+        self.search_where(query, k, embedder, &|_| true)
+    }
+
+    /// The `k` best chunks for a query among those `keep` accepts (see
+    /// [`Store::search`])
+    pub fn search_where(
+        &self,
+        query: &str,
+        k: usize,
+        embedder: &dyn Embedder,
+        keep: &dyn Fn(&Entry) -> bool,
+    ) -> Result<Vec<Hit>> {
         if self.index.is_empty() {
             return Ok(Vec::new());
         }
@@ -493,7 +526,7 @@ impl Store {
         let v = embedder.embed(&[&q], Role::Query)?.remove(0);
         Ok(self
             .index
-            .search(&v, k)
+            .search_where(&v, k, keep)
             .into_iter()
             .map(|(e, score)| Hit {
                 score,

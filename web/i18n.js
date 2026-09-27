@@ -229,6 +229,7 @@ const I18N = {
     "cf.chat.ctxNone": "no frames",
     "cf.chat.at": "at {time}",
     "cf.chat.sources": "Sources",
+    "cf.chat.experts": "Expert comments given",
     "cf.chat.commentsAdded": ({ n }) =>
       n === 1 ? "1 comment added" : `${n} comments added`,
     "cf.chat.seek": "Go to {time}",
@@ -454,7 +455,7 @@ const I18N = {
     "k.docs.none": "No documents yet: import some.",
     "k.corpus.go": "Create reviews from #vod-review",
     "k.corpus.note":
-      "reads the HUD of the videos on disk, then each reviewed VOD with its video becomes a review with the community's comments; re-run any time",
+      "reads the HUD of the videos on disk, then each reviewed VOD with its video becomes a review with the community's comments, and every comment becomes an expert comment the chat can draw on; re-run any time",
     "k.corpus.failed": "Could not start: {error}",
 
     // Knowledge: the inbox, import reports, overview, assets
