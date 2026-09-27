@@ -152,7 +152,7 @@ pub struct Request<'a> {
 }
 
 /// The session being recorded under `root`, if any: its `session.json`
-/// has no `stopped_at_unix_ms` yet
+/// has no `stopped_at_unix_ms` yet (missing or null)
 pub fn recording_in_progress(root: &Path) -> Option<String> {
     let mut names: Vec<String> = std::fs::read_dir(root)
         .ok()?
@@ -164,7 +164,7 @@ pub fn recording_in_progress(root: &Path) -> Option<String> {
         std::fs::read(root.join(name).join("session.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .is_some_and(|info| info.get("stopped_at_unix_ms").is_none())
+            .is_some_and(|info| info.get("stopped_at_unix_ms").is_none_or(Value::is_null))
     })
 }
 
@@ -449,6 +449,13 @@ detector_dir = "../AgentZero""#,
         assert_eq!(
             recording_in_progress(&root).as_deref(),
             Some("2026-09-27_10-00-00")
+        );
+        // What the studio writes while recording
+        std::fs::remove_dir_all(root.join("2026-09-27_10-00-00")).unwrap();
+        session("2026-09-27_11-00-00", r#"{"stopped_at_unix_ms": null}"#);
+        assert_eq!(
+            recording_in_progress(&root).as_deref(),
+            Some("2026-09-27_11-00-00")
         );
         let _ = std::fs::remove_dir_all(&root);
     }
