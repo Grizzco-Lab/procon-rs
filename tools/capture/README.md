@@ -223,6 +223,8 @@ cd ~/Developing/procon-rs                   # where config.toml is: the knowledg
 
 # 1. Once: log in, in the window that opens (a code to scan with the app); close the window when done
 node tools/capture/rednote.mjs login
+# Outside China the site sends you to rednote.com: give every command where you log in
+#   --site https://www.rednote.com
 
 # 2. A dry run: the following list, a creator's notes, a note or two, printed; nothing written
 node tools/capture/rednote.mjs run --dry-run --max-actions 20

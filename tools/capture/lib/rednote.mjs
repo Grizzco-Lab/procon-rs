@@ -71,8 +71,15 @@ export function challenge(url, text) {
   const lower = (url ?? "").toLowerCase();
   const inUrl = MARKERS.url.find((m) => lower.includes(m));
   if (inUrl) return `the page address holds "${inUrl}": ${url}`;
-  const inText = MARKERS.text.find((m) => (text ?? "").includes(m));
-  return inText ? `the page says "${inText}"` : null;
+  const page = text ?? "";
+  const inText = MARKERS.text.find((m) => page.includes(m));
+  if (!inText) return null;
+  // The words around it, to tell a challenge from a page that mentions one
+  const at = page.indexOf(inText);
+  const around = page
+    .slice(Math.max(0, at - 40), at + inText.length + 40)
+    .replace(/\s+/g, " ");
+  return `the page says "${inText}" (…${around}…)`;
 }
 
 /** Whether a JSON answer's code means the session is not accepted */

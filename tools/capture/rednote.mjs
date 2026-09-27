@@ -64,6 +64,7 @@ Browser:
 
 What to read (run):
   --me <user id>           your account's id, when the page does not tell
+  --site <origin>          where the account logs in (default ${rn.SITE}; https://www.rednote.com outside China)
   --creators <a,b,...>     only these creators (profile links or ids; @<file> with one per line), instead of the following list
   --refresh-following      read the following list again now
   --match <title|detail>   what decides that a note is about Salmon Run: its title in the list (default), or the whole note (every new note is opened)
@@ -97,6 +98,7 @@ const { values: o, positionals } = parseArgs({
     "keep-open": { type: "boolean", default: false },
     headless: { type: "boolean", default: false },
     me: { type: "string" },
+    site: { type: "string", default: rn.SITE },
     creators: { type: "string", multiple: true },
     "refresh-following": { type: "boolean", default: false },
     match: { type: "string", default: "title" },
@@ -200,6 +202,16 @@ const openPage = () => cdp.openPage(port, { keep: rn.isSiteApi });
 /** Whether the page shows a logged-in account: the site's `user/me`
  * answer among those drained, else the page state; undefined when
  * nothing tells */
+/** The `--site` origin, checked to be one of the site's */
+function site() {
+  const origin = rn.originOf(o.site);
+  if (!origin) {
+    console.error(`--site ${o.site}: not an address of the site`);
+    process.exit(2);
+  }
+  return origin;
+}
+
 let shownFields = false;
 async function loggedIn(page) {
   let known;
@@ -229,7 +241,7 @@ async function login() {
   const b = await browser();
   const page = await openPage();
   try {
-    await page.goto(rn.SITE);
+    await page.goto(site());
     await page.waitFor((r) => /user\/me/.test(r.url), 6000);
     let ok = await loggedIn(page);
     if (ok) log("already logged in");
@@ -276,6 +288,7 @@ async function run() {
     maxMinutes: o["max-minutes"] == null ? null : Number(o["max-minutes"]),
   };
   const options = {
+    site: site(),
     me: o.me,
     creators: creatorsOf(o.creators),
     refreshFollowing: o["refresh-following"],

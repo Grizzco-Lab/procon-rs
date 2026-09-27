@@ -59,13 +59,13 @@ export class Crawl {
    */
   constructor(page, deps) {
     this.page = page;
-    /** The site's origin the home page landed on */
-    this.origin = rn.SITE;
     this.pace = deps.pace;
     this.state = deps.state;
     this.dir = deps.dir;
     this.log = deps.log ?? (() => {});
     this.options = { ...DEFAULTS, ...deps.options };
+    /** The site's origin the home page landed on */
+    this.origin = this.options.site ?? rn.SITE;
     this.now = deps.now ?? (() => new Date());
     this.summary = {
       creators: 0,
@@ -144,9 +144,9 @@ export class Crawl {
    * `user/me` answer, else the page state); a guest stops the run */
   async start() {
     const payloads = await this.action(async () => {
-      await this.page.goto(rn.SITE);
+      await this.page.goto(this.origin);
       await this.page.waitFor((r) => /user\/me/.test(r.url), 8000);
-      this.origin = rn.originOf(await this.page.location()) ?? rn.SITE;
+      this.origin = rn.originOf(await this.page.location()) ?? this.origin;
       return this.drain();
     });
     // undefined: nothing told; null: a guest; a string: the account's id
