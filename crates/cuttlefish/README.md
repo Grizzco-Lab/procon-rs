@@ -70,7 +70,10 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
 ```
 
 Ingesting the same url again replaces its document (`--refresh` refetches
-pages already stored). `cuttlefish reindex` re-embeds everything after a
+pages already stored). Opening the store embeds the documents the index
+lacks, 32 chunks at a time; the studio shows "embedding N of M chunks" in the
+running import and stops when the import is cancelled (what was embedded is
+kept, the rest waits for the next opening). `cuttlefish reindex` re-embeds everything after a
 change of embedder or chunk sizes; `cuttlefish delete <id>` removes a document.
 
 The data folder can be a synced folder (Dropbox, rclone mount). Every file is
@@ -153,9 +156,43 @@ what was taken as what, skipped and why, failed, gone.
 | Guides ("Overfishing Fundamentals", Lenny, ...) | `ingest file` (md, txt, html, pdf) or `ingest url` | `--source guide` (weight 1.15); record the license with `--license` |
 | Inkipedia, other MediaWiki wikis | `ingest url --mediawiki <api.php> --category ...` | Article content through the API; the site's license is read from `siteinfo` (Inkipedia: CC BY-NC-SA) and kept per document. See the note below |
 | Other sites, stat.ink docs | `ingest url` (urls, `--list`, `--sitemap`) | robots.txt obeyed, one request per site every 3 s or the site's `Crawl-delay` |
+| Google Docs, Sheets, Slides | `ingest url <the address you share>` | Read through their exports (see below); only files shared as "Anyone with the link can view" |
 | YouTube | `ingest youtube <video/playlist/channel>` | `yt-dlp` fetches subtitles and metadata only; uploaded subtitles preferred over auto captions |
 | Discord #vod-review | `ingest discord-export` or `ingest discord-bot` | Never with a user token (against Discord's terms). See below |
 | Twitter/X, Twitch | not automated | X's API terms and pricing rule out scraping; save the posts or threads you value as text and `ingest file`. Twitch VODs have no subtitles (a speech-to-text step would be needed) |
+
+**Google Docs, Sheets and Slides.** Their pages are drawn by JavaScript, so
+the page itself holds only a shell ("This browser version is no longer
+supported... File Edit View"). An address on `docs.google.com`
+(`/document/d/<id>/...`, `/spreadsheets/d/<id>/...`, `/presentation/d/<id>/...`)
+is read through its export instead (`google.rs`): a document as Markdown
+(`export?format=md`; headings kept for the chunker, embedded images, heading
+anchors and the table of contents dropped), else plain text, else `.docx`; a
+sheet as CSV (`export?format=csv`, the sheet of the address's `gid`, else the
+first), which becomes a name table in the glossary when it holds names in
+several languages and a text document otherwise, like a CSV in the inbox;
+slides as text (`export/txt`). The document is stored under the address you
+gave, so importing it again with `--refresh` (in the studio: **Again if
+stored**) replaces it. Exports work only for files shared publicly: in Google
+Docs, **Share > General access > Anyone with the link** (Viewer is enough).
+A file shared only with some people answers with Google's sign-in page or
+401/403; the import then says "the doc isn't shared publicly" and stores
+nothing. Such a file can still be imported by downloading it (File >
+Download > Markdown, `.docx` or CSV) and importing that file. Published
+copies (`/d/e/.../pub`) are ordinary pages.
+
+**Pages drawn by JavaScript.** Other sites that send only a shell (a page
+whose text says "enable JavaScript" or "This browser version is no longer
+supported", or has almost no text in a large page) are skipped with the
+reason rather than stored; save such a page from the browser and import the
+file.
+
+**Local files.** `ingest file` (the studio's **Files**) reads the prose
+formats above. A folder or an archive (by its name or first bytes) is
+copied into the inbox (`inbox/<its name>`) and taken as the inbox takes it:
+unpacked, sorted, deduplicated. Other binary files are refused with the
+reason, and the store never takes a document whose text is binary data
+(opening the store skips such a document with a warning; delete it).
 
 **Discord.** Two supported ways, both needing the server's consent:
 1. *Export file*: someone with access runs DiscordChatExporter (JSON format)

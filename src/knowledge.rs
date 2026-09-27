@@ -55,9 +55,10 @@ use anyhow::{Context, Result, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
 use cuttlefish::assets::{self, Catalogue};
 use cuttlefish::discord::Bot;
-use cuttlefish::doc::Document;
+use cuttlefish::doc::{Document, SourceKind};
 use cuttlefish::embed::{E5Embedder, Embedder};
 use cuttlefish::glossary::{Glossary, Term};
+use cuttlefish::google::{self, GoogleFile};
 use cuttlefish::ingest::{self, Meta, Web};
 use cuttlefish::llm::{Client, Settings};
 use cuttlefish::review::{self, ChatReply, ChatRequest};
@@ -376,8 +377,9 @@ pub struct IngestJob {
     pub summary: Option<String>,
 }
 
-/// A document's format for the overview: the extension of its file, `web`
-/// for pages, videos and messages with an address, else `other`
+/// A document's format for the overview: the extension of its file;
+/// for an address `google-doc`, `google-sheet` or `google-slides`,
+/// `subtitles` (videos), `messages` (Discord) or `html`; else `other`
 fn format_of(d: &Document) -> String {
     match (&d.path, &d.url) {
         (Some(path), _) => path
@@ -385,7 +387,15 @@ fn format_of(d: &Document) -> String {
             .map(|(_, ext)| ext.to_lowercase())
             .filter(|ext| !ext.contains('/'))
             .unwrap_or_else(|| "file".to_string()),
-        (None, Some(_)) => "web".to_string(),
+        (None, Some(url)) => match (d.source, google::recognise(url)) {
+            (SourceKind::Video, _) => "subtitles",
+            (SourceKind::Discord | SourceKind::DiscordVodReview, _) => "messages",
+            (_, Some(GoogleFile::Doc(_))) => "google-doc",
+            (_, Some(GoogleFile::Sheet { .. })) => "google-sheet",
+            (_, Some(GoogleFile::Slides(_))) => "google-slides",
+            (_, None) => "html",
+        }
+        .to_string(),
         (None, None) => "other".to_string(),
     }
 }

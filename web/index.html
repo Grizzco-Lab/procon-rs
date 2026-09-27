@@ -1851,7 +1851,8 @@
               </div>
               <label class="field" data-for="web">
                 <span class="readout-label" data-i18n="k.f.urls"
-                  >Page addresses, one per line</span
+                  >Page addresses, one per line (Google Docs, Sheets and Slides
+                  shared by link too)</span
                 >
                 <textarea
                   class="select cf-question"
@@ -1940,7 +1941,8 @@
               >
               <label class="field" data-for="file export">
                 <span class="readout-label" data-i18n="k.f.paths"
-                  >Files on this machine, full paths, one per line</span
+                  >Files or folders on this machine, full paths, one per line
+                  (folders and archives go through the inbox)</span
                 >
                 <textarea
                   class="select cf-question"
@@ -2018,7 +2020,10 @@
                   data-i18n-placeholder="k.f.license"
                   data-i18n-aria-label="k.f.licenseLabel"
                 />
-                <label class="check"
+                <label
+                  class="check"
+                  title="Import again even if stored: replaces the document (a page that came in empty, say)"
+                  data-i18n-title="k.f.refreshTitle"
                   ><input type="checkbox" id="k-refresh" />
                   <span data-i18n="k.f.refresh">Again if stored</span></label
                 >

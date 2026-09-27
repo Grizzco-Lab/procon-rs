@@ -4430,13 +4430,18 @@ body {
 
 .cf-downloads {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* One column no wider than the list, so a long address is cut, not the
+ * card stretched past its panel */
 .cf-download {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   padding: 10px;
   border: 1px solid var(--inset-border);
   border-radius: var(--radius-sm);
@@ -4456,6 +4461,10 @@ body {
   justify-content: space-between;
   gap: 8px;
   font-size: 12.5px;
+}
+
+.cf-download-head .num {
+  flex: none;
 }
 
 .cf-download-url {
@@ -4674,6 +4683,10 @@ body {
   display: flex;
   gap: 2px;
   min-width: 0;
+  /* Never wider than the page: scrolled sideways on a very narrow one */
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
   padding: 3px;
   border: 1px solid var(--nav-track-border);
   border-radius: calc(var(--radius-sm) + 3px);
@@ -4727,6 +4740,18 @@ body {
 
 .cf-view[aria-current="page"] .cf-view-icon {
   color: var(--accent);
+}
+
+:root[data-layout="phone"] .cf-view {
+  gap: 6px;
+  padding: 0 10px 0 8px;
+}
+
+@media (max-width: 480px) {
+  .cf-view {
+    gap: 6px;
+    padding: 0 10px 0 8px;
+  }
 }
 
 /* As wide as the view below them: the knowledge view is wider than the
@@ -4968,6 +4993,9 @@ body {
   max-width: 1600px;
   margin: 0 auto;
   align-items: start;
+  /* Not the Studio's areas of .layout, whose two columns at medium widths
+   * would squeeze the first one to nothing */
+  grid-template-areas: none;
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
 }
 
@@ -4975,6 +5003,7 @@ body {
  * opens no gap on the other */
 .k-col {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--gap);
   min-width: 0;
 }
@@ -5118,6 +5147,11 @@ body {
   width: 72px;
 }
 
+/* The license field takes a line of its own when the row is narrow */
+#k-license {
+  flex: 1 1 12em;
+}
+
 .k-log {
   max-height: 9em;
   margin: 0;
@@ -5133,6 +5167,30 @@ body {
 .k-docs-wrap {
   max-height: 560px;
   overflow: auto;
+}
+
+/* Titles, paths and licenses wrap, so the table fits its panel; on a phone
+ * the license and the date give way */
+.k-docs-wrap td:first-child,
+.k-docs-wrap td:nth-child(4) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.k-docs-wrap td:first-child {
+  min-width: 7em;
+}
+
+:root[data-layout="phone"]
+  .k-docs-wrap
+  :is(th, td):is(:nth-child(4), :nth-child(5)) {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .k-docs-wrap :is(th, td):is(:nth-child(4), :nth-child(5)) {
+    display: none;
+  }
 }
 
 .p-k-docs .panel-head .select {
@@ -5179,6 +5237,7 @@ body {
 
 .k-upload {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 
@@ -5247,6 +5306,7 @@ body {
 }
 
 .k-ov-block h3,
+.k-ov-block p,
 .k-report h3 {
   margin: 0;
 }
@@ -5257,8 +5317,18 @@ body {
   gap: 4px 12px;
 }
 
+.k-count {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .k-count b {
   color: var(--text);
+}
+
+/* "By source", "By format" before their counts */
+.k-counts-label {
+  color: var(--text-3);
 }
 
 /* Asset browser */

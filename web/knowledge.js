@@ -24,6 +24,23 @@
     file: "k.source.file",
   };
 
+  /** Document formats as shown: names, or i18n keys (`k.`); others are
+   * file extensions, shown in capitals */
+  const FORMATS = {
+    html: "HTML",
+    md: "Markdown",
+    markdown: "Markdown",
+    txt: "k.format.text",
+    docx: "Word",
+    "google-doc": "k.format.googleDoc",
+    "google-sheet": "k.format.googleSheet",
+    "google-slides": "k.format.googleSlides",
+    subtitles: "k.format.subtitles",
+    messages: "k.format.messages",
+    file: "k.source.file",
+    other: "k.format.other",
+  };
+
   const k = {
     /** Whether the view is shown */
     shown: false,
@@ -85,6 +102,12 @@
 
   const sourceName = (source) =>
     SOURCES[source] ? t(SOURCES[source]) : source;
+
+  function formatName(format) {
+    const name = FORMATS[format];
+    if (!name) return format.toUpperCase();
+    return name.startsWith("k.") ? t(name) : name;
+  }
 
   /** A title linked to its url when it has one */
   function titleLink(title, url) {
@@ -291,7 +314,7 @@
             : t(`k.job.${job.state}`);
         const log = job.lines.slice(-LOG_SHOWN).map(escapeHtml).join("\n");
         li.innerHTML = `
-          <div class="cf-download-head"><span class="cf-download-url">${escapeHtml(job.what)}</span><span class="num">${escapeHtml(state)} · ${escapeHtml(t("k.job.added", { n: job.added }))}</span></div>
+          <div class="cf-download-head"><span class="cf-download-url" title="${escapeHtml(job.what)}">${escapeHtml(job.what)}</span><span class="num">${escapeHtml(state)} · ${escapeHtml(t("k.job.added", { n: job.added }))}</span></div>
           <div class="meter-track"><div class="meter-fill" style="width:${percent}%"></div></div>
           ${job.error ? `<span class="panel-note level-critical">${escapeHtml(job.error)}</span>` : ""}
           ${job.summary ? `<span class="panel-note">${escapeHtml(job.summary)}</span>` : ""}
@@ -427,6 +450,7 @@
     let failed = 0;
     const show = (done, current) => {
       $("k-upload-what").textContent = current ?? t("k.upload.done");
+      $("k-upload-what").title = current ?? "";
       $("k-upload-count").textContent = t("k.upload.count", {
         done,
         total: queue.length,
@@ -585,17 +609,24 @@
 
   // ------------------------------------------------------------- overview
 
-  /** `name count` chips from an object of counts, largest first */
-  function counts(object, name = (key) => key) {
+  /** `name count` chips from an object of counts, largest first, after a
+   * label when given */
+  function counts(object, name = (key) => key, label = "") {
     const entries = Object.entries(object).sort((a, b) => b[1] - a[1]);
-    return entries.length
-      ? entries
-          .map(
-            ([key, n]) =>
-              `<span class="k-count">${escapeHtml(name(key))} <b class="num">${n}</b></span>`,
-          )
-          .join("")
-      : `<span class="panel-note">${escapeHtml(t("k.none"))}</span>`;
+    const head = label
+      ? `<span class="k-counts-label">${escapeHtml(label)}</span>`
+      : "";
+    return (
+      head +
+      (entries.length
+        ? entries
+            .map(
+              ([key, n]) =>
+                `<span class="k-count" title="${escapeHtml(name(key))}">${escapeHtml(name(key))} <b class="num">${n}</b></span>`,
+            )
+            .join("")
+        : `<span class="panel-note">${escapeHtml(t("k.none"))}</span>`)
+    );
   }
 
   async function loadOverview() {
@@ -633,8 +664,8 @@
       .join("");
     $("k-overview").innerHTML = `${aside}
       <div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.documents"))} <b class="num">${o.documents.total}</b></h3>
-        <div class="k-counts">${counts(o.documents.sources, sourceName)}</div>
-        <div class="k-counts">${counts(o.documents.formats)}</div></div>
+        <div class="k-counts">${counts(o.documents.sources, sourceName, t("k.ov.bySource"))}</div>
+        <div class="k-counts">${counts(o.documents.formats, formatName, t("k.ov.byFormat"))}</div></div>
       <div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.glossary"))} <b class="num">${o.glossary.terms}</b> · ${escapeHtml(t("k.ov.imported", { n: o.glossary.imported }))}</h3>
         <div class="k-counts">${counts(o.glossary.languages)}</div>
         ${tables ? `<ul class="k-tables">${tables}</ul>` : `<p class="panel-note">${escapeHtml(t("k.ov.noTables"))}</p>`}</div>
