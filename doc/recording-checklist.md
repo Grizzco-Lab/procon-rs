@@ -15,8 +15,11 @@ The README's "Studio" and "Recordings" sections explain each setting.
    device means OBS (or another program) holds it; close it.
 3. **Sound.** "Record sound" is on and its note says "Sound arriving". Without
    sound arriving the files are recorded without a sound track.
-4. **Quality.** The recorded size and rate are the dataset's (360p, 30 fps so
-   far); change them only between sessions.
+4. **Quality.** Record at **1080p, 30 fps** (from 2026-09-28; the first
+   sessions were 360p). The IDM still trains on frames scaled to 640x360, but
+   labeling, detection, the HUD reader and the AI reviewer all need the full
+   picture: small objects such as golden eggs and far bosses are unreadable at
+   360p. About 4 GB per hour. Change it only between sessions.
 5. **Game settings.** Motion controls on, motion sensitivity **4.5**, stick
    sensitivity **5**, no inversion, matching Splatoon 3's options. They are
    saved into each session's `session.json` and cannot change while recording.
