@@ -53,6 +53,12 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
   (`-enc_time_base demux`); 200 random windows decode, and a window's frames
   match those decoded from the start.
 
+## Tests
+
+- **Flaky lock tests** (`crates/cuttlefish` `lock::tests`, e.g.
+  `one_writer_at_a_time_and_who_it_is`, `records_left_behind`) sometimes fail
+  under full parallel load and pass alone. Make them independent of timing.
+
 ## Process
 
 - Test studios use `[video] input = ""` and scratch on disk
