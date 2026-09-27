@@ -11,7 +11,9 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 use core::sync::atomic::{AtomicBool, Ordering};
 use cuttlefish::discord;
-use cuttlefish::discord_fetch::{self, Https, Interruptible, Options, Pace, Range, TOKEN_VAR};
+use cuttlefish::discord_fetch::{
+    self, Browser, Https, Interruptible, Options, Pace, Range, TOKEN_VAR,
+};
 use cuttlefish::doc::Document;
 use cuttlefish::embed::E5Embedder;
 use cuttlefish::eval::EvalSet;
@@ -239,13 +241,20 @@ enum Fetch {
     /// Discord's terms: the account can be banned. Read-only, only the
     /// given channels and their threads; resumes where it stopped
     Discord {
-        /// Channel ids (repeatable; Discord: developer mode, right-click the
-        /// channel, Copy ID)
+        /// The channel's link (right-click the channel > Copy Link:
+        /// https://discord.com/channels/<server id>/<channel id>), or
+        /// <server id>/<channel id>, or its id (repeatable)
         #[arg(long, required = true)]
-        channel: Vec<String>,
-        /// Server id, for the active-threads listing (default: the channel's)
+        channel: Vec<discord_fetch::ChannelRef>,
+        /// Server id, for the active-threads listing and the search of
+        /// --count (default: the one the links name, else the channel's)
         #[arg(long)]
         guild: Option<String>,
+        /// Only count: the channel's messages through Discord's search (a
+        /// forum's posts through its listing too) and the time a whole
+        /// fetch would take at this pace; reads no message
+        #[arg(long)]
+        count: bool,
         /// Folder for the channels' files themselves. By default each channel
         /// goes to <knowledge>/inbox/discord/<guild>/<channel>/, the
         /// knowledge folder being the studio's (see --config), where the
@@ -628,6 +637,7 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
         Fetch::Discord {
             channel,
             guild,
+            count,
             out,
             no_threads,
             delay,
@@ -657,12 +667,14 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
                         "{TOKEN_VAR} is not set: put it in the env file (~/.config/procon/env, chmod 600), see the README"
                     )
                 })?;
+            let guild = discord_fetch::guild_of(guild, &channel)?;
             let stop = Arc::new(AtomicBool::new(false));
             let flag = stop.clone();
             ctrlc::set_handler(move || flag.store(true, Ordering::Relaxed))
                 .context("setting the Ctrl+C handler")?;
             println!(
-                "Reading {} channel(s) with your own account, against Discord's terms: at your own risk. Ctrl+C stops after the request under way.",
+                "{} {} channel(s) with your own account, against Discord's terms: at your own risk. Ctrl+C stops after the request under way.",
+                if count { "Counting" } else { "Reading" },
                 channel.len()
             );
             println!(
@@ -672,11 +684,14 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
                     .map_or_else(String::new, |n| format!(", at most {n} requests this run")),
                 max_minutes.map_or_else(String::new, |n| format!(", at most {n} minutes this run")),
             );
+            let browser = Browser::from_env();
+            println!("{}", browser.describe());
             let options = Options {
-                channels: channel,
+                channels: channel.into_iter().map(|c| c.channel).collect(),
                 guild,
                 threads: !no_threads,
                 flat,
+                count,
                 pace: Pace {
                     delay,
                     pause_every,
@@ -685,7 +700,9 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
                     max_requests,
                     max_minutes,
                 },
+                browser,
             };
+            let pace = options.pace.clone();
             let mut http = Https::default();
             let mut clock = Interruptible {
                 stop,
@@ -695,6 +712,9 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
                 discord_fetch::run(&mut http, &mut clock, token, &root, options, &mut |line| {
                     println!("{line}")
                 })?;
+            for c in &summary.counts {
+                print_count(c, &pace);
+            }
             println!(
                 "{} requests, {} messages added, {} channels and threads under {}{}",
                 summary.requests,
@@ -709,6 +729,50 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
             Ok(())
         }
     }
+}
+
+/// Hours and minutes (`3 h 05 min`), or minutes
+fn hours(d: core::time::Duration) -> String {
+    let minutes = (d.as_secs_f64() / 60.0).round() as u64;
+    if minutes >= 60 {
+        format!("{} h {:02} min", minutes / 60, minutes % 60)
+    } else {
+        format!("{minutes} min")
+    }
+}
+
+/// Prints what `fetch discord --count` found and how long a fetch takes
+fn print_count(c: &discord_fetch::Count, pace: &Pace) {
+    let posts = c.posts.map(|p| format!(", {p} posts")).unwrap_or_default();
+    let Some(messages) = c.messages else {
+        println!("#{} ({}): message count unknown{posts}", c.name, c.id);
+        return;
+    };
+    println!(
+        "#{} ({}): {messages} messages by Discord's search{posts}",
+        c.name, c.id
+    );
+    let Some(requests) = c.requests() else {
+        return;
+    };
+    let days = pace
+        .daily_cap
+        .map(|cap| {
+            format!(
+                ", {} days at {cap} a day",
+                requests.div_ceil(u64::from(cap.max(1)))
+            )
+        })
+        .unwrap_or_default();
+    println!(
+        "  a whole fetch: about {requests} requests, {} at this pace{days}{}",
+        hours(discord_fetch::estimate(requests, pace)),
+        if c.forum {
+            ""
+        } else {
+            "; each thread adds a request or more"
+        }
+    );
 }
 
 /// Prints an inbox import's report

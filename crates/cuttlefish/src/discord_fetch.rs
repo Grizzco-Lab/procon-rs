@@ -9,13 +9,18 @@
 //! - **Scope lock**: only the given channels and the threads in them; every
 //!   request is checked against that list ([`in_scope`]). Read-only GETs:
 //!   the channel object, messages 100 at a time with `before`/`after`, the
-//!   thread listings (active, archived public). No gateway, no typing, no
-//!   writes.
-//! - **Pace**: a minimum delay between requests (4 s by default) with
-//!   random jitter, 429 `retry_after` and the `X-RateLimit-*` headers
-//!   obeyed, exponential backoff on server errors, a stop on 401 and 403,
-//!   and an optional cap on requests per day. A desktop browser's
-//!   User-Agent.
+//!   thread listings (active, archived public), and for `--count` the
+//!   server's message search limited to the channel. No gateway, no
+//!   typing, no writes.
+//! - **Pace**: a random delay between requests (3 to 8 s by default),
+//!   longer pauses now and then, 429 `retry_after` and the `X-RateLimit-*`
+//!   headers obeyed, exponential backoff on server errors, a stop on 401
+//!   and 403, and an optional cap on requests per day.
+//! - **Headers** of the user's own browser when given ([`Browser`]:
+//!   `DISCORD_USER_AGENT`, `DISCORD_SUPER_PROPERTIES`, `DISCORD_LOCALE`,
+//!   `DISCORD_TIMEZONE`), else a current desktop browser's User-Agent with
+//!   the system's language and timezone. `X-Super-Properties` is sent only
+//!   as the user gave it, never made up.
 //! - **Resumable**: the API's JSON is kept as received in the output folder
 //!   (`<id>.channel.json`, `<id>.messages.jsonl` appended, threads in
 //!   `threads/`) with the cursors in `state.json`, so a run continues: new
@@ -48,9 +53,19 @@ use std::time::Instant;
 pub const TOKEN_VAR: &str = "DISCORD_USER_TOKEN";
 /// Written into `state.json`, so the inbox knows the file is ours
 pub const TOOL: &str = "cuttlefish fetch discord";
-/// A desktop browser
-pub const USER_AGENT: &str =
-    "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0";
+/// A current desktop browser (Firefox of September 2026 on Linux), when
+/// the user gives none of their own; Firefox sends no client hints, so the
+/// other headers stay consistent with it
+pub const DEFAULT_USER_AGENT: &str =
+    "Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0";
+/// The user's browser's `User-Agent`, copied from its DevTools
+pub const USER_AGENT_VAR: &str = "DISCORD_USER_AGENT";
+/// The user's browser's `X-Super-Properties`, copied from its DevTools
+pub const SUPER_PROPERTIES_VAR: &str = "DISCORD_SUPER_PROPERTIES";
+/// `X-Discord-Locale`, by default the system's language
+pub const LOCALE_VAR: &str = "DISCORD_LOCALE";
+/// `X-Discord-Timezone`, by default the system's timezone
+pub const TIMEZONE_VAR: &str = "DISCORD_TIMEZONE";
 /// Messages per page, the API's maximum
 pub const PAGE: usize = 100;
 /// Longest wait taken from a rate-limit answer or backoff
@@ -85,11 +100,11 @@ impl Response {
 
 /// GET requests; tests use a fake
 pub trait Http {
-    /// GETs `url` with the token as `Authorization`
-    fn get(&mut self, url: &str, token: &str) -> Result<Response>;
+    /// GETs `url` with exactly these headers (names and values)
+    fn get(&mut self, url: &str, headers: &[(String, String)]) -> Result<Response>;
 }
 
-/// HTTPS through ureq, as a desktop browser
+/// HTTPS through ureq, with no headers of its own but the transfer's
 pub struct Https {
     agent: ureq::Agent,
 }
@@ -97,7 +112,8 @@ pub struct Https {
 impl Default for Https {
     fn default() -> Self {
         let agent = ureq::Agent::config_builder()
-            .user_agent(USER_AGENT)
+            .user_agent(ureq::config::AutoHeaderValue::None)
+            .accept(ureq::config::AutoHeaderValue::None)
             .timeout_global(Some(Duration::from_secs(60)))
             .http_status_as_error(false)
             .build()
@@ -107,12 +123,12 @@ impl Default for Https {
 }
 
 impl Http for Https {
-    fn get(&mut self, url: &str, token: &str) -> Result<Response> {
-        let mut resp = self
-            .agent
-            .get(url)
-            .header("Authorization", token)
-            .header("Accept", "application/json")
+    fn get(&mut self, url: &str, headers: &[(String, String)]) -> Result<Response> {
+        let mut request = self.agent.get(url);
+        for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+        let mut resp = request
             .call()
             .with_context(|| alloc::format!("GET {url}"))?;
         let status = resp.status().as_u16();
@@ -133,6 +149,275 @@ impl Http for Https {
             body,
         })
     }
+}
+
+/// Where a header's value came from, for the start line (never the value)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeaderSource {
+    /// The environment variable of that name (the env file)
+    Var(&'static str),
+    /// The `browser_user_agent` inside `DISCORD_SUPER_PROPERTIES`
+    SuperProperties,
+    /// This machine's settings
+    System,
+    /// The built-in value
+    BuiltIn,
+}
+
+impl fmt::Display for HeaderSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HeaderSource::Var(name) => write!(f, "{name}"),
+            HeaderSource::SuperProperties => {
+                write!(f, "{SUPER_PROPERTIES_VAR} (its browser_user_agent)")
+            }
+            HeaderSource::System => write!(f, "the system"),
+            HeaderSource::BuiltIn => write!(f, "built in"),
+        }
+    }
+}
+
+/// The headers a Discord web client sends with each API request, taken
+/// from the user's own browser where given (copied from DevTools into the
+/// env file) and sent exactly as given
+#[derive(Clone, Debug, PartialEq)]
+pub struct Browser {
+    pub user_agent: (String, HeaderSource),
+    /// `X-Super-Properties`: only what the user gave, never made up
+    pub super_properties: Option<String>,
+    /// `X-Discord-Locale` (`en-US`), also the base of `Accept-Language`
+    pub locale: (String, HeaderSource),
+    /// `X-Discord-Timezone` (`Europe/Berlin`), when known
+    pub timezone: Option<(String, HeaderSource)>,
+}
+
+impl Default for Browser {
+    /// The built-in browser, in American English, without a timezone
+    fn default() -> Self {
+        Browser {
+            user_agent: (String::from(DEFAULT_USER_AGENT), HeaderSource::BuiltIn),
+            super_properties: None,
+            locale: (String::from("en-US"), HeaderSource::BuiltIn),
+            timezone: None,
+        }
+    }
+}
+
+/// A locale as Discord writes it (`en-US`, `ja`) from a POSIX one
+/// (`en_US.UTF-8`); `C` and `POSIX` are none
+fn discord_locale(posix: &str) -> Option<String> {
+    let base = posix.split(['.', '@']).next()?.trim();
+    if base.is_empty() || base == "C" || base == "POSIX" {
+        return None;
+    }
+    Some(base.replace('_', "-"))
+}
+
+/// The system's timezone: `TZ` when it names a zone, else `/etc/timezone`,
+/// else where `/etc/localtime` points in the zoneinfo tree
+fn system_timezone() -> Option<String> {
+    let zone = |s: &str| {
+        let s = s.trim().trim_start_matches(':');
+        (s.contains('/') && !s.starts_with('/')).then(|| String::from(s))
+    };
+    std::env::var("TZ")
+        .ok()
+        .and_then(|tz| zone(&tz))
+        .or_else(|| zone(&std::fs::read_to_string("/etc/timezone").ok()?))
+        .or_else(|| {
+            let target = std::fs::read_link("/etc/localtime").ok()?;
+            let target = target.to_string_lossy();
+            zone(target.split_once("zoneinfo/")?.1)
+        })
+}
+
+impl Browser {
+    /// From the environment (the env file) and the system
+    pub fn from_env() -> Self {
+        let var = |name: &str| std::env::var(name).ok();
+        let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .iter()
+            .find_map(|v| var(v).filter(|s| !s.is_empty()))
+            .and_then(|l| discord_locale(&l));
+        Browser::from_vars(var, locale, system_timezone())
+    }
+
+    /// From variables looked up with `var`, and the system's locale and
+    /// timezone
+    pub fn from_vars(
+        var: impl Fn(&str) -> Option<String>,
+        system_locale: Option<String>,
+        system_timezone: Option<String>,
+    ) -> Self {
+        let var = |name: &'static str| {
+            var(name)
+                .map(|v| String::from(v.trim()))
+                .filter(|v| !v.is_empty())
+                .map(|v| (v, HeaderSource::Var(name)))
+        };
+        let super_properties = var(SUPER_PROPERTIES_VAR).map(|(v, _)| v);
+        // The agent the super properties name, so the two agree
+        let named = super_properties.as_deref().and_then(|p| {
+            use base64::Engine;
+            let json = base64::engine::general_purpose::STANDARD.decode(p).ok()?;
+            let value: Value = serde_json::from_slice(&json).ok()?;
+            let agent = value["browser_user_agent"].as_str()?;
+            (!agent.is_empty()).then(|| (String::from(agent), HeaderSource::SuperProperties))
+        });
+        let builtin = Browser::default();
+        Browser {
+            user_agent: var(USER_AGENT_VAR).or(named).unwrap_or(builtin.user_agent),
+            super_properties,
+            locale: var(LOCALE_VAR)
+                .or_else(|| system_locale.map(|l| (l, HeaderSource::System)))
+                .unwrap_or(builtin.locale),
+            timezone: var(TIMEZONE_VAR)
+                .or_else(|| system_timezone.map(|t| (t, HeaderSource::System))),
+        }
+    }
+
+    /// `Accept-Language` as Firefox writes it: `en-US,en;q=0.5`
+    fn accept_language(&self) -> String {
+        let locale = &self.locale.0;
+        match locale.split_once('-') {
+            Some((lang, _)) => alloc::format!("{locale},{lang};q=0.5"),
+            None => locale.clone(),
+        }
+    }
+
+    /// The headers of a request made from the page `referer` (none when
+    /// the server is not known yet), with the token
+    pub fn headers(&self, token: &str, referer: Option<&str>) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let mut add = |k: &str, v: &str| out.push((String::from(k), String::from(v)));
+        add("User-Agent", &self.user_agent.0);
+        add("Accept", "*/*");
+        add("Accept-Language", &self.accept_language());
+        add("Authorization", token);
+        if let Some(p) = &self.super_properties {
+            add("X-Super-Properties", p);
+        }
+        add("X-Discord-Locale", &self.locale.0);
+        if let Some((tz, _)) = &self.timezone {
+            add("X-Discord-Timezone", tz);
+        }
+        if let Some(r) = referer {
+            add("Referer", r);
+        }
+        add("Sec-Fetch-Dest", "empty");
+        add("Sec-Fetch-Mode", "cors");
+        add("Sec-Fetch-Site", "same-origin");
+        out
+    }
+
+    /// Where each header comes from, without the values
+    pub fn describe(&self) -> String {
+        let mut text = alloc::format!(
+            "Headers: User-Agent from {}; X-Super-Properties {}; locale from {}; timezone {}",
+            self.user_agent.1,
+            if self.super_properties.is_some() {
+                alloc::format!("from {SUPER_PROPERTIES_VAR}")
+            } else {
+                alloc::format!("not sent (set {SUPER_PROPERTIES_VAR} to send your browser's)")
+            },
+            self.locale.1,
+            self.timezone.as_ref().map_or_else(
+                || String::from("not sent (unknown)"),
+                |(_, from)| alloc::format!("from {from}")
+            ),
+        );
+        if self.super_properties.is_some() && self.user_agent.1 == HeaderSource::BuiltIn {
+            text.push_str(&alloc::format!(
+                "; {SUPER_PROPERTIES_VAR} names no browser: set {USER_AGENT_VAR} to that browser's"
+            ));
+        }
+        text
+    }
+}
+
+/// A channel as given: an id, `<server id>/<channel id>`, or a channel's
+/// link (`https://discord.com/channels/<server>/<channel>[/<message>]`,
+/// also on `ptb.`, `canary.` and `discordapp.com`); the server, when the
+/// form names it
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChannelRef {
+    pub guild: Option<String>,
+    pub channel: String,
+}
+
+impl core::str::FromStr for ChannelRef {
+    type Err = String;
+
+    fn from_str(s: &str) -> core::result::Result<Self, String> {
+        let text = s.trim();
+        let bad = |why: &str| {
+            alloc::format!(
+                "{text:?} {why}. Give the channel as one of:\n  \
+                 its link   https://discord.com/channels/<server id>/<channel id>  (right-click the channel > Copy Link)\n  \
+                 two ids    <server id>/<channel id>\n  \
+                 its id     <channel id>  (Developer Mode, right-click the channel > Copy Channel ID)"
+            )
+        };
+        let id = |t: &str| {
+            (!t.is_empty() && t.len() <= 20 && t.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| String::from(t))
+        };
+        let parts: Vec<&str> = match text
+            .strip_prefix("https://")
+            .or_else(|| text.strip_prefix("http://"))
+        {
+            Some(rest) => {
+                let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+                let host = host.to_lowercase();
+                let host = ["www.", "ptb.", "canary."]
+                    .iter()
+                    .find_map(|p| host.strip_prefix(p))
+                    .unwrap_or(&host);
+                if host != "discord.com" && host != "discordapp.com" {
+                    return Err(bad("is not a Discord link"));
+                }
+                let path = path.split(['?', '#']).next().unwrap_or_default();
+                let Some(path) = path.strip_prefix("channels/") else {
+                    return Err(bad("is not a channel's link"));
+                };
+                let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+                if parts.first() == Some(&"@me") {
+                    return Err(bad("is a direct message; only server channels are read"));
+                }
+                match parts[..] {
+                    [g, c] | [g, c, _] => alloc::vec![g, c],
+                    _ => return Err(bad("is not a channel's link")),
+                }
+            }
+            None => text.split('/').collect(),
+        };
+        match parts[..] {
+            [c] => Ok(ChannelRef {
+                guild: None,
+                channel: id(c).ok_or_else(|| bad("is not a channel id"))?,
+            }),
+            [g, c] => Ok(ChannelRef {
+                guild: Some(id(g).ok_or_else(|| bad("does not start with a server id"))?),
+                channel: id(c).ok_or_else(|| bad("does not end with a channel id"))?,
+            }),
+            _ => Err(bad("is not a channel")),
+        }
+    }
+}
+
+/// The server of the given channels: `--guild`, else the one their links
+/// name; an error when they name different ones
+pub fn guild_of(guild: Option<String>, channels: &[ChannelRef]) -> Result<Option<String>> {
+    let named: BTreeSet<&str> = channels.iter().filter_map(|c| c.guild.as_deref()).collect();
+    if let Some(g) = &guild
+        && let Some(other) = named.iter().find(|n| **n != g)
+    {
+        bail!("--guild {g} but a channel's link names server {other}");
+    }
+    if named.len() > 1 {
+        bail!("the channels are in different servers; fetch one server at a time");
+    }
+    Ok(guild.or_else(|| named.first().map(|g| String::from(*g))))
 }
 
 /// Waiting and the date; tests use a fake that does not sleep
@@ -262,7 +547,45 @@ pub struct Options {
     /// Every channel's files in the root itself (`--out`) rather than in
     /// `<guild>/<channel>/` below it
     pub flat: bool,
+    /// Only count the channels' messages (and a forum's posts); read no
+    /// message ([`Count`])
+    pub count: bool,
     pub pace: Pace,
+    /// The headers sent
+    pub browser: Browser,
+}
+
+/// What `--count` found out about a channel
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Count {
+    pub id: String,
+    pub name: String,
+    /// A forum or media channel, whose posts are threads
+    pub forum: bool,
+    /// Messages Discord's search counts in the channel; `None` when it
+    /// could not tell (no server, not indexed yet, not allowed)
+    pub messages: Option<u64>,
+    /// Posts of a forum, when its post listing tells
+    pub posts: Option<u64>,
+}
+
+impl Count {
+    /// Requests a whole fetch takes, about: the channel object, a page per
+    /// 100 messages, and for a forum a listing page per 100 posts and at
+    /// least one page per post
+    pub fn requests(&self) -> Option<u64> {
+        let messages = self.messages?;
+        let posts = self.posts.unwrap_or(0);
+        Some(1 + messages.div_ceil(PAGE as u64) + posts + posts.div_ceil(PAGE as u64))
+    }
+}
+
+/// How long `requests` take at `pace`, on average: the mean delay each,
+/// plus a mean pause every mean number of requests between pauses
+pub fn estimate(requests: u64, pace: &Pace) -> Duration {
+    let mean = |r: Range| (r.min + r.max) / 2.0;
+    let pauses = (requests as f64 / mean(pace.pause_every).max(1.0)).floor();
+    Duration::from_secs_f64(requests as f64 * mean(pace.delay) + pauses * mean(pace.pause))
 }
 
 /// Where a conversation's archive stands
@@ -361,19 +684,31 @@ pub struct Summary {
     pub conversations: usize,
     /// Set when the run ended before the end
     pub stopped: Option<Stop>,
+    /// What `--count` found, a channel each
+    pub counts: Vec<Count>,
 }
 
 /// Whether a request path is within the archive's scope: a channel or
-/// thread in `allowed`, or the active-threads listing of `guild`
+/// thread in `allowed`, the active-threads listing of `guild`, or its
+/// message search limited to channels in `allowed` (every `channel_id`
+/// given is one, and at least one is given)
 pub fn in_scope(path: &str, allowed: &BTreeSet<String>, guild: Option<&str>) -> bool {
+    let (path, query) = path.split_once('?').unwrap_or((path, ""));
     let parts: Vec<&str> = path
         .trim_start_matches('/')
-        .split(['/', '?'])
+        .split('/')
         .filter(|p| !p.is_empty())
         .collect();
     match parts.as_slice() {
         ["channels", id, ..] => allowed.contains(*id),
         ["guilds", g, "threads", "active"] => guild == Some(*g),
+        ["guilds", g, "messages", "search"] => {
+            let mut channels = query
+                .split('&')
+                .filter_map(|kv| kv.strip_prefix("channel_id="))
+                .peekable();
+            guild == Some(*g) && channels.peek().is_some() && channels.all(|c| allowed.contains(c))
+        }
         _ => false,
     }
 }
@@ -413,6 +748,10 @@ struct Fetcher<'a> {
     backoff: Duration,
     /// The last wait before a request, for progress lines
     delay: Duration,
+    /// The last answer's HTTP status
+    status: u16,
+    /// The channel or thread being read, for `Referer`
+    viewing: Option<String>,
     rng: u64,
     report: &'a mut dyn FnMut(&str),
 }
@@ -460,11 +799,18 @@ pub fn run(
         rate_wait: Duration::ZERO,
         backoff: Duration::ZERO,
         delay: Duration::ZERO,
+        status: 0,
+        viewing: None,
         rng: seed.max(1),
         report,
     };
     f.until_pause = f.draw(f.options.pace.pause_every).round() as u32;
-    let result = f.fetch_all();
+    let mut counts = Vec::new();
+    let result = if f.options.count {
+        f.count_all(&mut counts)
+    } else {
+        f.fetch_all()
+    };
     f.state.save(root)?;
     let stopped = match result {
         Ok(()) => None,
@@ -478,6 +824,7 @@ pub fn run(
         messages: f.added,
         conversations: f.state.conversations.len(),
         stopped,
+        counts,
     })
 }
 
@@ -556,7 +903,15 @@ impl Fetcher<'_> {
             self.state.requests_today += 1;
             attempts += 1;
             let url = alloc::format!("{API}{path}");
-            let resp = match self.http.get(&url, &self.token) {
+            let referer = match (&self.guild, &self.viewing) {
+                (Some(g), Some(c)) => Some(alloc::format!("https://discord.com/channels/{g}/{c}")),
+                _ => None,
+            };
+            let headers = self
+                .options
+                .browser
+                .headers(&self.token, referer.as_deref());
+            let resp = match self.http.get(&url, &headers) {
                 Ok(r) => r,
                 Err(e) if attempts < ATTEMPTS => {
                     self.backoff = (self.backoff * 2).clamp(FIRST_BACKOFF, MAX_WAIT);
@@ -573,6 +928,7 @@ impl Fetcher<'_> {
                 self.rate_wait = Duration::from_secs_f64(reset.clamp(0.0, MAX_WAIT.as_secs_f64()));
             }
             let body: Value = serde_json::from_str(&resp.body).unwrap_or(Value::Null);
+            self.status = resp.status;
             match resp.status {
                 200..=299 => {
                     self.backoff = Duration::ZERO;
@@ -643,9 +999,75 @@ impl Fetcher<'_> {
             .or_default()
     }
 
+    /// Counts each given channel's messages through the server's search
+    /// (limited to the channel), and a forum's posts through its post
+    /// listing: the channel object and one or two requests more
+    fn count_all(&mut self, counts: &mut Vec<Count>) -> Result<()> {
+        for id in self.options.channels.clone() {
+            self.viewing = Some(id.clone());
+            let info = self.get(&alloc::format!("/channels/{id}"))?;
+            if self.guild.is_none() {
+                self.guild = info["guild_id"].as_str().map(String::from);
+            }
+            let forum = info["type"]
+                .as_u64()
+                .is_some_and(|t| FORUM_TYPES.contains(&t));
+            let mut count = Count {
+                name: String::from(info["name"].as_str().unwrap_or(&id)),
+                id: id.clone(),
+                forum,
+                ..Count::default()
+            };
+            match self.guild.clone() {
+                Some(g) => count.messages = self.search_count(&g, &id)?,
+                None => (self.report)("no server known: Discord's search needs one (--guild)"),
+            }
+            if forum
+                && let Some(posts) = self.request(
+                    &alloc::format!(
+                        "/channels/{id}/threads/search?archived=true&sort_by=last_message_time&sort_order=desc&limit=25&offset=0"
+                    ),
+                    true,
+                )?
+            {
+                count.posts = posts["total_results"].as_u64();
+            }
+            counts.push(count);
+        }
+        Ok(())
+    }
+
+    /// Messages in a channel by the server's search; `None` when the
+    /// search is not allowed or still not indexed after two more tries
+    /// (Discord answers 202 with `retry_after` while it indexes)
+    fn search_count(&mut self, guild: &str, id: &str) -> Result<Option<u64>> {
+        let path = alloc::format!("/guilds/{guild}/messages/search?channel_id={id}");
+        for attempt in 0..3 {
+            let Some(body) = self.request(&path, true)? else {
+                return Ok(None);
+            };
+            if self.status != 202
+                && let Some(n) = body["total_results"].as_u64()
+            {
+                return Ok(Some(n));
+            }
+            if attempt == 2 {
+                break;
+            }
+            let wait = body["retry_after"].as_f64().unwrap_or(2.0).clamp(1.0, 60.0);
+            (self.report)(&alloc::format!(
+                "Discord is still indexing the channel for search; asking again in {wait:.0} s"
+            ));
+            self.rate_wait = Duration::from_secs_f64(wait);
+        }
+        (self.report)("the channel is not indexed for search yet; try --count again later");
+        Ok(None)
+    }
+
     /// Every given channel, then its threads
     fn fetch_all(&mut self) -> Result<()> {
         for id in self.options.channels.clone() {
+            self.viewing = Some(id.clone());
             let info = self.get(&alloc::format!("/channels/{id}"))?;
             if self.guild.is_none() {
                 self.guild = info["guild_id"].as_str().map(String::from);
@@ -689,6 +1111,7 @@ impl Fetcher<'_> {
                 let cursor = self.cursor(tid);
                 cursor.name = String::from(t["name"].as_str().unwrap_or(tid));
                 cursor.parent = Some(id.clone());
+                self.viewing = Some(String::from(tid));
                 self.fetch_messages(tid, &dir, t["last_message_id"].as_str())?;
             }
         }
@@ -858,10 +1281,12 @@ mod tests {
     use alloc::collections::VecDeque;
     use serde_json::json;
 
-    /// Answers scripted requests in order, checking each path
+    /// Answers scripted requests in order, checking each path; keeps the
+    /// headers sent
     struct Fake {
         expected: VecDeque<(String, Response)>,
         log: Vec<String>,
+        headers: Vec<Vec<(String, String)>>,
     }
 
     impl Fake {
@@ -872,13 +1297,23 @@ mod tests {
                     .map(|(p, r)| (String::from(p), r))
                     .collect(),
                 log: Vec::new(),
+                headers: Vec::new(),
             }
+        }
+
+        /// A header of the n-th request
+        fn header(&self, n: usize, name: &str) -> Option<&str> {
+            self.headers[n]
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
         }
     }
 
     impl Http for Fake {
-        fn get(&mut self, url: &str, token: &str) -> Result<Response> {
-            assert_eq!(token, "sekrit-9f8e7d");
+        fn get(&mut self, url: &str, headers: &[(String, String)]) -> Result<Response> {
+            let token = headers.iter().find(|(k, _)| k == "Authorization");
+            assert_eq!(token.map(|(_, v)| v.as_str()), Some("sekrit-9f8e7d"));
             let path = url.strip_prefix(API).expect("the API base");
             let (want, resp) = self
                 .expected
@@ -886,6 +1321,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("unexpected request {path}"));
             assert_eq!(path, want);
             self.log.push(String::from(path));
+            self.headers.push(headers.to_vec());
             Ok(resp)
         }
     }
@@ -961,10 +1397,12 @@ mod tests {
             guild: None,
             threads,
             flat: true,
+            count: false,
             pace: Pace {
                 pause_every: Range::new(1e9, 1e9),
                 ..Pace::default()
             },
+            browser: Browser::default(),
         }
     }
 
@@ -1168,6 +1606,18 @@ mod tests {
         assert!(!in_scope("/guilds/1/threads/active", &allowed, None));
         assert!(in_scope("/guilds/1/threads/active", &allowed, Some("1")));
         assert!(!in_scope("/guilds/1/channels", &allowed, Some("1")));
+        // The search only within the given channels, on their server
+        let search = |q: &str| alloc::format!("/guilds/1/messages/search{q}");
+        assert!(in_scope(&search("?channel_id=2"), &allowed, Some("1")));
+        assert!(!in_scope(&search("?channel_id=2"), &allowed, Some("7")));
+        assert!(!in_scope(&search("?channel_id=9"), &allowed, Some("1")));
+        assert!(!in_scope(
+            &search("?channel_id=2&channel_id=9"),
+            &allowed,
+            Some("1")
+        ));
+        assert!(!in_scope(&search("?content=eggs"), &allowed, Some("1")));
+        assert!(!in_scope(&search(""), &allowed, Some("1")));
 
         // A forum: no messages of its own; only its threads are read, even
         // when the server's listing names threads of other channels. Not
@@ -1352,6 +1802,263 @@ mod tests {
         assert_eq!(summary.stopped, Some(Stop::DailyCap(1)));
         assert_eq!(summary.requests, 1);
         assert_eq!(State::load(&out).unwrap().requests_today, 1);
+        std::fs::remove_dir_all(&out).unwrap();
+    }
+
+    #[test]
+    fn channels_as_ids_pairs_and_links() {
+        let parse = |s: &str| s.parse::<ChannelRef>();
+        let both = |g: &str, c: &str| ChannelRef {
+            guild: Some(String::from(g)),
+            channel: String::from(c),
+        };
+        let (g, c) = ("737359708276654121", "737962428553232465");
+        assert_eq!(
+            parse(c),
+            Ok(ChannelRef {
+                guild: None,
+                channel: String::from(c)
+            })
+        );
+        assert_eq!(parse(&alloc::format!(" {g}/{c} ")), Ok(both(g, c)));
+        for link in [
+            alloc::format!("https://discord.com/channels/{g}/{c}"),
+            alloc::format!("https://discord.com/channels/{g}/{c}/"),
+            alloc::format!("https://discord.com/channels/{g}/{c}/1300000000000000000"),
+            alloc::format!("https://ptb.discord.com/channels/{g}/{c}"),
+            alloc::format!("https://canary.discord.com/channels/{g}/{c}?x=1"),
+            alloc::format!("https://discordapp.com/channels/{g}/{c}"),
+            alloc::format!("http://www.Discord.com/channels/{g}/{c}#top"),
+        ] {
+            assert_eq!(parse(&link), Ok(both(g, c)), "{link}");
+        }
+        for bad in [
+            "",
+            "vod-review",
+            "https://example.com/channels/1/2",
+            "https://discord.com/channels/@me/2",
+            "https://discord.com/invite/abc",
+            "https://discord.com/channels/1",
+            "1/2/3",
+            "1/x",
+            "123456789012345678901",
+        ] {
+            let err = parse(bad).unwrap_err();
+            assert!(err.contains("https://discord.com/channels/<server id>/<channel id>"));
+            assert!(err.contains("<server id>/<channel id>"), "{err}");
+        }
+        assert!(
+            parse("https://discord.com/channels/@me/2")
+                .unwrap_err()
+                .contains("direct message")
+        );
+
+        let refs = [both("1", "2"), both("1", "3")];
+        assert_eq!(guild_of(None, &refs).unwrap().as_deref(), Some("1"));
+        assert_eq!(
+            guild_of(Some(String::from("1")), &refs).unwrap().as_deref(),
+            Some("1")
+        );
+        assert!(guild_of(Some(String::from("5")), &refs).is_err());
+        assert!(guild_of(None, &[both("1", "2"), both("4", "3")]).is_err());
+        assert_eq!(guild_of(None, &[parse("2").unwrap()]).unwrap(), None);
+    }
+
+    #[test]
+    fn counts_through_the_search_waiting_for_the_index() {
+        let out = temp("count");
+        let indexing = Response {
+            status: 202,
+            headers: Vec::new(),
+            body: String::from(
+                r#"{"message": "Index not yet available. Try again later", "code": 110000, "retry_after": 2}"#,
+            ),
+        };
+        let mut fake = Fake::new(alloc::vec![
+            ("/channels/2", ok(channel("2", 0, 300))),
+            ("/guilds/1/messages/search?channel_id=2", indexing),
+            (
+                "/guilds/1/messages/search?channel_id=2",
+                ok(json!({"total_results": 12345, "messages": []}))
+            ),
+        ]);
+        let mut opts = options(true);
+        opts.count = true;
+        opts.pace.delay = Range::new(1.0, 1.0);
+        let mut clock = FakeClock::default();
+        let (summary, lines) = go(&mut fake, &mut clock, &out, opts.clone()).unwrap();
+        assert!(fake.expected.is_empty());
+        assert_eq!(summary.messages, 0);
+        let count = &summary.counts[0];
+        assert_eq!(count.name, "c2");
+        assert_eq!(count.messages, Some(12345));
+        assert_eq!(count.posts, None);
+        assert_eq!(count.requests(), Some(125));
+        // The wait asked for (2 s, over the 1 s pace)
+        let secs: Vec<f64> = clock.slept.iter().map(Duration::as_secs_f64).collect();
+        assert_eq!(secs, [1.0, 2.0]);
+        assert!(lines.iter().any(|l| l.contains("indexing")));
+        // No messages read, nothing but the state written
+        assert!(!out.join("2.messages.jsonl").exists());
+        assert_eq!(State::load(&out).unwrap().requests_today, 3);
+
+        // A forum: its posts from its listing; the index never ready
+        let not_yet = || Response {
+            status: 202,
+            headers: Vec::new(),
+            body: String::from(r#"{"retry_after": 0.5}"#),
+        };
+        let search = "/guilds/1/messages/search?channel_id=2";
+        let mut fake = Fake::new(alloc::vec![
+            ("/channels/2", ok(channel("2", 15, 0))),
+            (search, not_yet()),
+            (search, not_yet()),
+            (search, not_yet()),
+            (
+                "/channels/2/threads/search?archived=true&sort_by=last_message_time&sort_order=desc&limit=25&offset=0",
+                ok(json!({"threads": [], "total_results": 300}))
+            ),
+        ]);
+        let (summary, lines) = go(&mut fake, &mut FakeClock::default(), &out, opts).unwrap();
+        assert!(fake.expected.is_empty());
+        let count = &summary.counts[0];
+        assert!(count.forum);
+        assert_eq!((count.messages, count.posts), (None, Some(300)));
+        assert!(lines.iter().any(|l| l.contains("not indexed")));
+        // The server's search is only asked with the server known
+        assert_eq!(
+            fake.header(1, "Referer"),
+            Some("https://discord.com/channels/1/2")
+        );
+        std::fs::remove_dir_all(&out).unwrap();
+
+        // 20,000 messages at 3-8 s, a 60-300 s pause every 40-120: 201
+        // requests at 5.5 s and 2 pauses of 180 s
+        let pace = Pace::default();
+        let n = Count {
+            messages: Some(20_000),
+            ..Count::default()
+        };
+        assert_eq!(n.requests(), Some(201));
+        let secs = estimate(201, &pace).as_secs_f64();
+        assert!((secs - (201.0 * 5.5 + 2.0 * 180.0)).abs() < 1e-6, "{secs}");
+    }
+
+    #[test]
+    fn browser_headers() {
+        let vars = |pairs: &[(&str, &str)]| {
+            let pairs: Vec<(String, String)> = pairs
+                .iter()
+                .map(|(k, v)| (String::from(*k), String::from(*v)))
+                .collect();
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| v.clone())
+            }
+        };
+        let get = |h: &[(String, String)], name: &str| {
+            h.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+        };
+        // Nothing given: the built-in agent, the system's locale and zone,
+        // no super properties
+        let b = Browser::from_vars(
+            vars(&[]),
+            Some(String::from("de-DE")),
+            Some(String::from("Europe/Berlin")),
+        );
+        let h = b.headers("tok", Some("https://discord.com/channels/1/2"));
+        assert_eq!(get(&h, "User-Agent").as_deref(), Some(DEFAULT_USER_AGENT));
+        assert_eq!(get(&h, "Authorization").as_deref(), Some("tok"));
+        assert_eq!(get(&h, "X-Super-Properties"), None);
+        assert_eq!(get(&h, "X-Discord-Locale").as_deref(), Some("de-DE"));
+        assert_eq!(
+            get(&h, "Accept-Language").as_deref(),
+            Some("de-DE,de;q=0.5")
+        );
+        assert_eq!(
+            get(&h, "X-Discord-Timezone").as_deref(),
+            Some("Europe/Berlin")
+        );
+        assert_eq!(
+            get(&h, "Referer").as_deref(),
+            Some("https://discord.com/channels/1/2")
+        );
+        let text = b.describe();
+        assert!(text.contains("User-Agent from built in"), "{text}");
+        assert!(text.contains("X-Super-Properties not sent"), "{text}");
+        assert!(
+            !text.contains("Europe/Berlin") && !text.contains("de-DE"),
+            "{text}"
+        );
+        // Neither locale nor zone known
+        let h = Browser::from_vars(vars(&[]), None, None).headers("tok", None);
+        assert_eq!(get(&h, "X-Discord-Locale").as_deref(), Some("en-US"));
+        assert_eq!(get(&h, "X-Discord-Timezone"), None);
+        assert_eq!(get(&h, "Referer"), None);
+
+        // All given: sent exactly as given, over the system's
+        let b = Browser::from_vars(
+            vars(&[
+                (
+                    USER_AGENT_VAR,
+                    " Mozilla/5.0 (Windows NT 10.0) Chrome/150.0 ",
+                ),
+                (SUPER_PROPERTIES_VAR, "eyJvcyI6IldpbmRvd3MifQ=="),
+                (LOCALE_VAR, "ja"),
+                (TIMEZONE_VAR, "Asia/Tokyo"),
+            ]),
+            Some(String::from("de-DE")),
+            Some(String::from("Europe/Berlin")),
+        );
+        let h = b.headers("tok", None);
+        assert_eq!(
+            get(&h, "User-Agent").as_deref(),
+            Some("Mozilla/5.0 (Windows NT 10.0) Chrome/150.0")
+        );
+        assert_eq!(
+            get(&h, "X-Super-Properties").as_deref(),
+            Some("eyJvcyI6IldpbmRvd3MifQ==")
+        );
+        assert_eq!(get(&h, "X-Discord-Locale").as_deref(), Some("ja"));
+        assert_eq!(get(&h, "Accept-Language").as_deref(), Some("ja"));
+        assert_eq!(get(&h, "X-Discord-Timezone").as_deref(), Some("Asia/Tokyo"));
+        let text = b.describe();
+        assert!(text.contains(&alloc::format!("User-Agent from {USER_AGENT_VAR}")));
+        assert!(text.contains(&alloc::format!("locale from {LOCALE_VAR}")));
+        assert!(!text.contains("Chrome") && !text.contains("eyJ"), "{text}");
+        // Only the super properties: the agent they name, so both agree
+        use base64::Engine;
+        let props = base64::engine::general_purpose::STANDARD
+            .encode(br#"{"os": "Linux", "browser_user_agent": "Mozilla/5.0 Firefox/154.0"}"#);
+        let b = Browser::from_vars(vars(&[(SUPER_PROPERTIES_VAR, &props)]), None, None);
+        assert_eq!(b.user_agent.0, "Mozilla/5.0 Firefox/154.0");
+        assert_eq!(b.user_agent.1, HeaderSource::SuperProperties);
+
+        assert_eq!(discord_locale("en_US.UTF-8").as_deref(), Some("en-US"));
+        assert_eq!(discord_locale("ja_JP.utf8@x").as_deref(), Some("ja-JP"));
+        assert_eq!(discord_locale("C.UTF-8"), None);
+        assert_eq!(discord_locale("POSIX"), None);
+    }
+
+    #[test]
+    fn requests_carry_the_page_as_referer() {
+        let out = temp("referer");
+        let mut opts = options(false);
+        opts.guild = Some(String::from("1"));
+        let mut fake = Fake::new(alloc::vec![
+            ("/channels/2", ok(channel("2", 0, 3))),
+            ("/channels/2/messages?limit=100", ok(messages(1..=3))),
+        ]);
+        go(&mut fake, &mut FakeClock::default(), &out, opts).unwrap();
+        for n in 0..2 {
+            assert_eq!(
+                fake.header(n, "Referer"),
+                Some("https://discord.com/channels/1/2")
+            );
+            assert_eq!(fake.header(n, "User-Agent"), Some(DEFAULT_USER_AGENT));
+        }
         std::fs::remove_dir_all(&out).unwrap();
     }
 }
