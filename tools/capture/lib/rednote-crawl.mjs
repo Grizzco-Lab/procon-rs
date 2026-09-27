@@ -36,6 +36,9 @@ export const DEFAULTS = Object.freeze({
   listScrolls: 40,
   /** Scrolls down a note's comments, at most */
   commentScrolls: 15,
+  /** Scrolls of a creator's list toward a note's tile, at most, before the
+   * note is opened by its address instead */
+  tileScrolls: 8,
   /** The following list is read again after this many days */
   followingTtlDays: 7,
 });
@@ -332,9 +335,30 @@ export class Crawl {
         continue;
       }
       if (this.summary.kept >= this.options.maxNotes) break;
-      await this.note(id, record, l, byTitle, profile);
+      await this.note(id, record, l, byTitle, profile, [...listed.keys()]);
     }
     this.save();
+  }
+
+  /** Clicks the tile of note `id` on the creator's page. The list draws
+   * only the tiles near the viewport, so when the tile is not drawn the
+   * page is scrolled toward it first, by the note's place in `order` (the
+   * list top to bottom) against the tiles drawn. False when it is not
+   * reached. */
+  async openTile(id, order) {
+    for (let i = 0; i <= this.options.tileScrolls; i++) {
+      const drawn = rn
+        .listedFromLinks(await this.page.evaluate(rn.JS_LINKS))
+        .map((l) => order.indexOf(l.id))
+        .filter((n) => n >= 0);
+      const want = order.indexOf(id);
+      if (!drawn.length || drawn.includes(want))
+        return this.action(() => this.page.click(`a[href*="${id}"]`));
+      if (i === this.options.tileScrolls) break;
+      const up = want < Math.min(...drawn);
+      await this.action(() => this.page.scroll({ up }));
+    }
+    return false;
   }
 
   /** Adds the comments of the answers about note `id` to `roots` (a page
@@ -370,11 +394,11 @@ export class Crawl {
    * address), read from the page state, the feed answer or the DOM, its
    * comments scrolled and reply threads unfolded within the caps, kept
    * when about Salmon Run, then closed */
-  async note(creator, record, l, byTitle, profile) {
+  async note(creator, record, l, byTitle, profile, order = [l.id]) {
     const id = l.id;
     let opened = false;
     if ((await this.page.location()).includes(creator)) {
-      opened = await this.action(() => this.page.click(`a[href*="${id}"]`));
+      opened = await this.openTile(id, order);
       if (opened) opened = (await this.page.location()).includes(id);
     }
     if (!opened) {

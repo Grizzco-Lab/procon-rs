@@ -181,7 +181,10 @@ a captcha**: anything that wants a person stops the run at once.
   again, `--creators` gives creators yourself as profile links, ids or
   `@<file>`), each creator's profile, scrolling the notes list until it
   ends or, on later visits, until it shows only notes seen before, and each
-  new note about Salmon Run: its tile is clicked, the comments pane
+  new note about Salmon Run: its tile is clicked (the list draws only the
+  tiles near the viewport, so the page is scrolled toward the tile first;
+  a tile not reached within `--tile-scrolls` (8) gives way to the note's
+  address), the comments pane
   (`.note-scroller`) scrolled while the site says there are more
   (`--max-comments`, 200), folded reply threads unfolded (`--max-replies`,
   10), then Escape closes it.

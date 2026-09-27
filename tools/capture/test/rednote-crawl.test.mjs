@@ -83,10 +83,15 @@ class FakePage {
     this.scrolls = 0;
     this.queue.push(...(this.entry().responses ?? []));
   }
-  async scroll({ selector } = {}) {
-    this.visited.push(selector ? `scroll ${selector}` : "scroll");
+  async scroll({ selector, up = false } = {}) {
+    this.visited.push(
+      selector ? `scroll ${selector}` : up ? "scroll up" : "scroll",
+    );
     const batches = this.entry().scrolls ?? [];
     this.queue.push(...(batches[this.scrolls++] ?? []));
+    // The links the page draws after scrolling up, when the script says
+    if (up && this.entry().linksAfterScrollUp)
+      this.entry().links = this.entry().linksAfterScrollUp;
   }
   async click(selector) {
     this.visited.push(`click ${selector}`);
@@ -371,6 +376,49 @@ test("a dry run browses but writes only the day's action count", async () => {
   await crawl(new FakePage(firstVisit()), dir, { creators: [A] }).run();
   assert.equal(state.load(dir, rn.TOOL).day.actions, 22);
   rmSync(dir, { recursive: true });
+});
+
+test("a tile the list no longer draws is scrolled toward, else the note is opened by its address", async () => {
+  const dir = scratch();
+  const script = firstVisit();
+  const tile = (id) => [`${SITE}/user/profile/${A}/${id}?xsec_token=t`, ""];
+  // After the list's scroll, only the last notes' tiles are drawn: the
+  // first note is above them, so the page is scrolled up until its tile
+  // shows; the second is drawn already
+  script[PROFILE_A].links = [tile(SR2), tile(CAT)];
+  script[PROFILE_A].linksAfterScrollUp = [tile(SR), tile(SR2), tile(CAT)];
+  const page = new FakePage(script);
+  const c = crawl(page, dir, { creators: [A] });
+  const s = await c.run();
+  assert.equal(s.stopped, undefined, c.lines.join("\n"));
+  assert.equal(s.kept, 2);
+  assert.deepEqual(page.visited.slice(2, 6), [
+    "scroll",
+    "scroll up",
+    `click a[href*="${SR}"]`,
+    "scroll .note-scroller",
+  ]);
+  assert.ok(page.visited.includes(`click a[href*="${SR2}"]`));
+  assert.ok(!c.lines.some((l) => l.includes("did not open")));
+
+  // Never drawn within the scrolls: opened by its address, on the origin
+  const stuck = firstVisit();
+  stuck[PROFILE_A].links = [tile(SR2), tile(CAT)];
+  stuck[NOTE(SR)].location = `${SITE}/explore/${SR}`;
+  stuck[rn.noteUrl(SR, `tok-${SR}`)] = stuck[NOTE(SR)];
+  const page2 = new FakePage(stuck);
+  const dir2 = scratch();
+  const c2 = crawl(page2, dir2, { creators: [A], tileScrolls: 2 });
+  await c2.run();
+  assert.deepEqual(page2.visited.slice(2, 6), [
+    "scroll",
+    "scroll up",
+    "scroll up",
+    rn.noteUrl(SR, `tok-${SR}`),
+  ]);
+  assert.ok(c2.lines.some((l) => l.includes("did not open")));
+  rmSync(dir, { recursive: true });
+  rmSync(dir2, { recursive: true });
 });
 
 test("detail matching opens every new note and keeps the relevant ones", async () => {

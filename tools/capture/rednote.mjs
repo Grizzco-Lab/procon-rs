@@ -72,6 +72,7 @@ What to read (run):
   --max-comments <n>       comments (with replies) loaded per note (default ${CRAWL.maxComments})
   --max-replies <n>        reply threads unfolded per note (default ${CRAWL.maxReplies})
   --list-scrolls <n>       scrolls down a creator's list, at most (default ${CRAWL.listScrolls})
+  --tile-scrolls <n>       scrolls of the list toward a note's tile before its address is used instead (default ${CRAWL.tileScrolls})
   --dry-run                browse and print; write nothing but the day's action count
 
 Pace (run):
@@ -106,6 +107,7 @@ const { values: o, positionals } = parseArgs({
     "max-comments": { type: "string" },
     "max-replies": { type: "string" },
     "list-scrolls": { type: "string" },
+    "tile-scrolls": { type: "string" },
     "dry-run": { type: "boolean", default: false },
     delay: { type: "string" },
     "pause-every": { type: "string" },
@@ -297,6 +299,7 @@ async function run() {
     maxComments: integer("max-comments", CRAWL.maxComments),
     maxReplies: integer("max-replies", CRAWL.maxReplies),
     listScrolls: integer("list-scrolls", CRAWL.listScrolls),
+    tileScrolls: integer("tile-scrolls", CRAWL.tileScrolls),
     dryRun: o["dry-run"],
   };
   // Ctrl+C: the action under way finishes, the state is saved

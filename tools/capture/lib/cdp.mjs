@@ -276,9 +276,10 @@ export class Page {
     );
   }
 
-  /** Scrolls down like a wheel: a few notches with short gaps, over the
-   * element `selector` names (a scrolling pane) or the page */
-  async scroll({ selector } = {}) {
+  /** Scrolls down (up with `up`) like a wheel: a few notches with short
+   * gaps, over the element `selector` names (a scrolling pane) or the
+   * page */
+  async scroll({ selector, up = false } = {}) {
     let x;
     let y;
     const point = selector ? await this.evaluate(boxOf(selector)) : null;
@@ -295,7 +296,7 @@ export class Page {
         x,
         y,
         deltaX: 0,
-        deltaY: 250 + Math.round(Math.random() * 400),
+        deltaY: (up ? -1 : 1) * (250 + Math.round(Math.random() * 400)),
       });
       await sleep(90 + Math.random() * 220);
     }
