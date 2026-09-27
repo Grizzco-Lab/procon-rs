@@ -70,6 +70,11 @@ impl Meta {
 pub trait Sink {
     /// Whether the document of this url or path is stored already
     fn has(&self, key: &str) -> bool;
+    /// Whether the name table of this url (a Google Sheet's tab) is stored
+    /// already ([`crate::tables::has`])
+    fn has_table(&self, _key: &str) -> bool {
+        false
+    }
     /// The source revision the stored document of this url was made from
     /// ([`Document::revision`]), if any
     fn revision(&self, _key: &str) -> Option<u64> {
@@ -171,7 +176,7 @@ pub fn web(sink: &mut dyn Sink, web: &Web, meta: &Meta) -> Result<usize> {
     for (i, url) in all.iter().enumerate() {
         check(sink)?;
         sink.progress(i, all.len());
-        if !meta.refresh && sink.has(url) {
+        if !meta.refresh && (sink.has(url) || sink.has_table(url)) {
             sink.note(&alloc::format!("already stored: {url}"));
             continue;
         }
@@ -535,11 +540,16 @@ mod tests {
         notes: Vec<String>,
         root: PathBuf,
         stop_after: Option<usize>,
+        /// Urls stored as name tables
+        tables: Vec<String>,
     }
 
     impl Sink for Memory {
         fn has(&self, key: &str) -> bool {
             self.docs.iter().any(|d| d.id == doc_id(key))
+        }
+        fn has_table(&self, key: &str) -> bool {
+            self.tables.iter().any(|t| t == key)
         }
         fn add(&mut self, doc: &Document) -> Result<usize> {
             self.docs.push(doc.clone());
@@ -554,6 +564,26 @@ mod tests {
         fn cancelled(&self) -> bool {
             self.stop_after.is_some_and(|n| self.docs.len() >= n)
         }
+    }
+
+    #[test]
+    fn stored_name_tables_are_not_fetched_again() {
+        // A sheet's tab that became a name table: no request at all
+        let tab = "https://docs.google.com/spreadsheets/d/abc/edit#gid=7";
+        let mut sink = Memory {
+            tables: alloc::vec![String::from(tab)],
+            ..Default::default()
+        };
+        let pages = Web {
+            urls: alloc::vec![String::from(tab)],
+            ..Web::default()
+        };
+        assert_eq!(web(&mut sink, &pages, &Meta::default()).unwrap(), 0);
+        assert!(
+            sink.notes
+                .iter()
+                .any(|n| n == &alloc::format!("already stored: {tab}"))
+        );
     }
 
     #[test]

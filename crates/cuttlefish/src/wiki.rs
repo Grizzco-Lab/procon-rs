@@ -8,14 +8,17 @@
 //! is fetched rendered (`action=parse`) and turned into text with headings
 //! ([`html::fragment_text`]); its document records the url, the revision
 //! and the wiki's license, credited to the wiki's contributors. A re-run
-//! fetches only the pages whose revision changed.
+//! fetches only the pages whose revision changed, and the page cap counts
+//! only pages fetched, so a run stopped early or capped continues.
 //!
 //! [`Site`]: from a start address, the pages on the same host that its
-//! links and its sitemaps reach, up to a cap. Assets (images, scripts,
-//! styles, fonts, feeds) and the path prefixes given are skipped, and a page
-//! drawn with JavaScript is noted and not kept ([`html::shell_reason`]). A
-//! re-run takes the links of stored pages from their raw copy instead of
-//! fetching them again.
+//! links and its sitemaps reach, up to a cap of pages fetched. Assets
+//! (images, scripts, styles, fonts, feeds) and the path prefixes given are
+//! skipped, and a page drawn with JavaScript is noted and not kept
+//! ([`html::shell_reason`]). Every page fetched is kept raw; a re-run reads
+//! a page with a raw copy from it (links, and the document when it is not
+//! stored yet) instead of fetching it again, so it continues where the last
+//! one stopped.
 //!
 //! Both are polite ([`crate::crawl::Fetcher`]): one request at a time, the
 //! given delay or the site's `Crawl-delay` when longer, every `robots.txt`
@@ -67,7 +70,8 @@ pub struct Wiki {
     /// (any case; repeatable)
     #[arg(long = "link-match", value_name = "WORD")]
     pub link_match: Vec<String>,
-    /// At most this many pages
+    /// At most this many pages fetched a run; stored pages whose revision
+    /// is unchanged do not count, so the next run continues with the rest
     #[arg(long, default_value_t = 500)]
     pub max_pages: usize,
     /// Seconds between requests (the wiki's Crawl-delay when longer); at
@@ -105,7 +109,8 @@ pub struct Site {
     /// Path prefix skipped besides assets (`/map/`; repeatable)
     #[arg(long, value_name = "PREFIX")]
     pub skip: Vec<String>,
-    /// At most this many pages visited
+    /// At most this many pages fetched a run; pages read from their raw
+    /// copies do not count, so the next run continues past them
     #[arg(long, default_value_t = 100)]
     pub max_pages: usize,
     /// Seconds between requests (the site's Crawl-delay when longer); at
@@ -328,15 +333,7 @@ pub fn wiki_with(
         info.name,
         info.license.as_deref().unwrap_or("not given")
     ));
-    let (mut pages, categories) = scope(sink, fetcher, &wiki, spec, &starts)?;
-    let listed = pages.len();
-    if listed > spec.max_pages {
-        sink.note(&alloc::format!(
-            "{listed} pages in scope; the first {} are taken (raise the page limit for all)",
-            spec.max_pages
-        ));
-        pages.truncate(spec.max_pages);
-    }
+    let (pages, categories) = scope(sink, fetcher, &wiki, spec, &starts)?;
     let mut refused = Vec::new();
     let mut todo = Vec::new();
     let (mut new, mut changed, mut unchanged) = (Vec::new(), Vec::new(), 0);
@@ -364,6 +361,16 @@ pub fn wiki_with(
     }
     if !refused.is_empty() {
         note_titles(sink, "robots.txt disallows", &refused);
+    }
+    // The limit is on pages fetched: stored pages do not count, so the
+    // next run takes the next ones
+    let waiting = todo.len();
+    if waiting > spec.max_pages {
+        sink.note(&alloc::format!(
+            "{waiting} pages to fetch; the first {} this run, the next run continues with the rest",
+            spec.max_pages
+        ));
+        todo.truncate(spec.max_pages);
     }
     let pace = fetcher.pace(&api)?;
     if spec.dry_run {
@@ -632,22 +639,27 @@ pub fn site_with(
     let mut sections: BTreeMap<String, usize> = BTreeMap::new();
     let (mut visited, mut added, mut kept, mut fetched, mut refused) = (0, 0, 0, 0, 0);
     while let Some(url) = queue.pop_front() {
-        if visited >= spec.max_pages {
-            queue.push_front(url);
-            break;
-        }
         check(sink)?;
         if !fetcher.allowed(&url)? {
             refused += 1;
             continue;
         }
-        sink.progress(visited, (visited + queue.len() + 1).min(spec.max_pages));
-        visited += 1;
         let stored = !meta.refresh && sink.has(&url);
+        // A page fetched before is read from its raw copy, stored or not
+        // (the shell of an app, or a run stopped before storing it)
         let copy = raw.join(alloc::format!("{}.html", doc_id(&url)));
-        let (page, base) = match std::fs::read_to_string(&copy) {
-            Ok(page) if stored => (page, url.clone()),
-            _ => {
+        let kept_copy = (!meta.refresh)
+            .then(|| std::fs::read_to_string(&copy).ok())
+            .flatten();
+        if kept_copy.is_none() && fetched >= spec.max_pages {
+            queue.push_front(url);
+            break;
+        }
+        sink.progress(visited, visited + queue.len() + 1);
+        visited += 1;
+        let (page, base) = match kept_copy {
+            Some(page) => (page, url.clone()),
+            None => {
                 fetched += 1;
                 let got = match fetcher.fetch(&url) {
                     Ok(got) => got,
@@ -671,7 +683,11 @@ pub fn site_with(
                     ));
                     continue;
                 }
-                (got.text(), got.final_url)
+                let page = got.text();
+                if !spec.dry_run {
+                    save_raw(&raw, &url, "html", page.as_bytes())?;
+                }
+                (page, got.final_url)
             }
         };
         *sections.entry(section(&url)).or_default() += 1;
@@ -708,7 +724,6 @@ pub fn site_with(
             ));
             continue;
         }
-        save_raw(&raw, &url, "html", page.as_bytes())?;
         let title = converted.title.clone().unwrap_or_else(|| url.clone());
         let mut doc = Document::new(SourceKind::Web, &url, title, converted.text);
         doc.url = Some(url.clone());
@@ -978,6 +993,47 @@ mod tests {
             .filter(|u| param(u, "action").as_deref() == Some("parse"))
             .map(|u| param(u, "page").unwrap())
             .collect()
+    }
+
+    #[test]
+    fn a_capped_topic_continues_on_the_next_run() {
+        let mut sink = Memory {
+            root: temp("topic-capped"),
+            ..Default::default()
+        };
+        // The start page and the page it links to (not the pages the
+        // other test's server fails once)
+        let one = Wiki {
+            start: alloc::vec![String::from("https://w.test/wiki/Salmon_Run")],
+            link_match: alloc::vec![String::from("grizzco")],
+            max_pages: 1,
+            ..Wiki::default()
+        };
+        let (mut f, first) = fetcher(wiki_server);
+        assert_eq!(
+            wiki_with(&mut sink, &mut f, &one, &Meta::default()).unwrap(),
+            1
+        );
+        assert!(sink.notes.iter().any(|n| n.starts_with(
+            "2 pages to fetch; the first 1 this run, the next run continues with the rest"
+        )));
+        let (mut f, second) = fetcher(wiki_server);
+        assert_eq!(
+            wiki_with(&mut sink, &mut f, &one, &Meta::default()).unwrap(),
+            1
+        );
+        assert!(
+            sink.notes
+                .iter()
+                .any(|n| n.contains("1 new, 0 changed, 1 unchanged")),
+            "{:#?}",
+            sink.notes
+        );
+        let (first, second) = (parsed(&first), parsed(&second));
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), 1);
+        assert_ne!(first, second);
+        std::fs::remove_dir_all(&sink.root).unwrap();
     }
 
     #[test]
@@ -1254,8 +1310,7 @@ mod tests {
         );
         assert_eq!(seen.borrow().sleeps.len(), 5);
 
-        // Again: stored pages are read from their raw copies; only the page
-        // not kept is fetched
+        // Again: every page is read from its raw copy, the one not kept too
         let (mut f, seen) = fetcher(site_server);
         assert_eq!(
             site_with(&mut sink, &mut f, &spec, &Meta::default()).unwrap(),
@@ -1264,18 +1319,40 @@ mod tests {
         let asked = seen.borrow().urls.clone();
         assert_eq!(
             asked,
-            [
-                "https://s.test/robots.txt",
-                "https://s.test/sitemap.xml",
-                "https://s.test/app/"
-            ]
+            ["https://s.test/robots.txt", "https://s.test/sitemap.xml"]
         );
         assert!(
             sink.notes
                 .last()
                 .unwrap()
-                .contains("4 pages visited (1 fetched, 3 already stored)")
+                .contains("4 pages visited (0 fetched, 3 already stored)")
         );
+
+        // A capped crawl: the next run goes on past what the last fetched
+        let mut capped = Memory {
+            root: temp("site-capped"),
+            ..Default::default()
+        };
+        let two = Site {
+            max_pages: 2,
+            ..spec.clone()
+        };
+        let (mut f, _) = fetcher(site_server);
+        assert_eq!(
+            site_with(&mut capped, &mut f, &two, &Meta::default()).unwrap(),
+            2
+        );
+        let (mut f, seen) = fetcher(site_server);
+        assert_eq!(
+            site_with(&mut capped, &mut f, &two, &Meta::default()).unwrap(),
+            1
+        );
+        assert_eq!(
+            seen.borrow().urls[2..],
+            ["https://s.test/guide/eggs/", "https://s.test/app/"]
+        );
+        assert_eq!(capped.docs.len(), 3);
+        std::fs::remove_dir_all(&capped.root).unwrap();
 
         // A dry run on a fresh store keeps nothing; the page cap holds
         let mut fresh = Memory {

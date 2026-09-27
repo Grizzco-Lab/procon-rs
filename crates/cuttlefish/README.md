@@ -31,7 +31,7 @@ cuttlefish ingest site https://example.org/ --skip /app/ --max-pages 50 --dry-ru
 cuttlefish ingest youtube https://www.youtube.com/playlist?list=...
 cuttlefish ingest discord-export vod-review.json
 DISCORD_BOT_TOKEN=... cuttlefish ingest discord-bot --channel 123456789012345678
-cuttlefish fetch discord --channel 123456789012345678   # your own account: against Discord's terms, see below
+cuttlefish fetch discord --channel https://discord.com/channels/<server>/<channel> --count   # your own account: against Discord's terms, see below
 
 cuttlefish search "バクダンの処理"          # top-k chunks with sources; any language
 cuttlefish glossary "Steelhead"            # a term's names and definition
@@ -267,21 +267,49 @@ reason, and the store never takes a document whose text is binary data
    `DISCORD_BOT_TOKEN` (never stored). Threads and forum posts are read
    too unless `--no-threads`.
 
-Channel messages are grouped into conversations (split at 2-hour gaps);
-threads stay whole. Each message line carries its time and author
-(`[2024-05-01 10:05 UTC] Alice: ...`), the authors are the document's
-attribution. Clips stay as links; they are not downloaded. A channel
-named `vod-review` (or its threads) gets the highest weight (1.2).
+Threads and forum posts stay whole, one document each. A plain channel's
+messages are grouped into **conversations**: a message with a video of its
+own (a YouTube link or a video attachment: a VOD post) starts one, a reply
+joins the conversation of the message it replies to, and any other message
+joins the one before it unless 2 hours passed. Each message line carries its
+time and author, and whom it replies to (`[2024-05-01 10:05 UTC] souper ↪
+Ben: ...`); the authors are the document's attribution. Clips stay as links;
+they are not downloaded. A channel named `vod-review` (or its threads) gets
+the highest weight (1.2).
 
-Every Discord document also keeps the **moments** its messages point at, as
-`moments` in the document's JSON, for aligning comments with a video later:
-YouTube links (with the `t=` start when there is one), waves and times
-written in the text ("W1 :50", "wave 2 at 1:20", "86s", "1:02:03", "wave
-3"). Each moment has the text as written (`raw`), the message id, author
-and time it came from, and a guess of what it means (`kind`): the wave
-timer counts down from 100 s, so a bare number of seconds up to 100 and any
-time named with a wave is `wave_timer`; `m:ss` and `1m20s` forms and
+Every Discord document also keeps its messages as a table, `messages` in
+the document's JSON, for aligning comments with a video later:
+
+```json
+{"id": "1290000000000000102", "author": "Ben", "time": "2024-05-01T10:02:00Z",
+ "reply_to": "1290000000000000100", "reply_author": "souper",
+ "thread": "1290000000000000090",
+ "video_url": "https://youtu.be/abc", "video_t": 80.0, "video_from": "reply",
+ "moments": [{"raw": "1:20", "kind": "video_time", "seconds": 80.0,
+              "url": "https://youtu.be/abc", "message_id": "...", "author": "Ben", "at": "..."}]}
+```
+
+`reply_to` is the replied-to message (`reply_author` its author, from the
+file or from the copy Discord sends along with a reply), `thread` the thread
+or forum post the message is in. `video_url` is the video the message is
+about, and `video_from` says how it was found, first match wins: `own` (a
+YouTube link or video attachment in the message; `video_t` is the link's
+`t=` start), `reply` (in the message it replies to, following the chain of
+replies up), `starter` (the thread's or post's starter message), or
+`earlier-post` (the replied-to author's nearest earlier video post in the
+channel: people reply to a comment under their VOD post). `video_t`
+otherwise is the first video time written in the message.
+
+The **moments** are what a message points at: YouTube links (with the `t=`
+start when there is one), waves and times written in the text ("W1 :50",
+"wave 2 at 1:20", "86s", "1:02:03", "wave 3"). Each has the text as written
+(`raw`), the message id, author and time it came from, the message's video
+as its `url` when it names none, and a guess of what it means (`kind`): the
+wave timer counts down from 100 s, so a bare number of seconds up to 100 and
+any time named with a wave is `wave_timer`; `m:ss` and `1m20s` forms and
 anything over 100 s are `video_time`; a wave with no time is `unknown`.
+Documents imported before this table keep a flat `moments` list instead;
+import them again to get it (`ingest inbox --reimport <path>`).
 
 ### Fetching #vod-review with your own account
 
@@ -298,7 +326,8 @@ What it does, and does not do:
   messages 100 at a time (`before`/`after`), and its threads and forum
   posts (the archived-threads listing of the channel; the server's
   active-threads listing when the account has it, filtered to the channel;
-  threads started by its messages). Every request is checked against that
+  threads started by its messages); with `--count`, the server's message
+  search limited to the channel. Every request is checked against that
   scope before it is made. No gateway or websocket, no typing, no writes.
 - **Slow.** A random delay between requests, 3 to 8 s by default (`--delay
   3-8`); every 40 to 120 requests (`--pause-every`) a longer pause of 1 to
@@ -307,7 +336,9 @@ What it does, and does not do:
   errors back off exponentially; a 401 or 403 stops the run with a clear
   message and nothing else is tried. `--daily-cap N` stops after N requests
   in a day (UTC); `--max-requests N` and `--max-minutes M` end a run early,
-  the next run continues. The User-Agent is a desktop browser's.
+  the next run continues.
+- **Your browser's headers** when you give them (below), else a current
+  desktop Firefox's User-Agent with your system's language and timezone.
 - **Resumable and incremental.** The API's JSON is kept as received:
   `<id>.channel.json` (the channel object), `<id>.messages.jsonl` (one
   message per line, appended), the threads in `threads/` the same way, and
@@ -335,22 +366,74 @@ itself instead.
 CLI loads from the same env file as `scripts/run.sh` (`$PROCON_ENV`, else
 `~/.config/procon/env`, else `.env`; `set -a; . ~/.config/procon/env` does
 the same in a shell). Put it there yourself, with the file readable by you
-only; the tool never prints or writes it. **The channel id**: in Discord,
-User Settings > Advanced > Developer Mode, then right-click the channel (or
-the server for `--guild`) > Copy Channel ID.
+only; the tool never prints or writes it.
+
+**The channel** (`--channel`, repeatable) is easiest as its link: in
+Discord, right-click the channel > Copy Link, which gives
+`https://discord.com/channels/<server id>/<channel id>`. The fetcher takes
+the server from it. Also accepted: a message's link (the channel is taken
+from it), `ptb.`/`canary.discord.com` and `discordapp.com` links,
+`<server id>/<channel id>`, or the channel id alone (User Settings >
+Advanced > Developer Mode, then right-click the channel > Copy Channel ID).
+Anything else is refused with these forms. `--guild` gives the server when
+only an id is given.
+
+**The browser's headers.** The Discord web client sends more than a
+User-Agent with each request, and a request with a made-up or stale set
+stands out. Copy yours from your own browser, the one you use Discord in:
+open discord.com in it, open DevTools (F12) > Network, click any request to
+`discord.com/api/...` (reload the page, or open a channel, if there is none),
+and under Request Headers copy the values of `User-Agent` and
+`X-Super-Properties` into the env file:
 
 ```bash
-# The token in the env file, readable by you only
+# Exactly as the request shows them, in single quotes (comments on lines of their own)
+DISCORD_USER_AGENT='Mozilla/5.0 (...) ...'
+DISCORD_SUPER_PROPERTIES='eyJvcyI6...'
+# Optional: X-Discord-Locale and X-Discord-Timezone, when not the system's
+DISCORD_LOCALE=en-US
+DISCORD_TIMEZONE=Europe/Berlin
+```
+
+They are sent exactly as given. `X-Super-Properties` describes your
+browser and client build; it is sent only when you give it, never made up.
+Without `DISCORD_USER_AGENT` the agent named inside your super properties is
+used (so the two agree), else a current desktop Firefox's. The locale and
+the timezone default to the system's (`LANG`, `TZ` or `/etc/localtime`);
+`Accept-Language` follows the locale, and `Referer` is the channel's page
+(`https://discord.com/channels/<server>/<channel>`). The first lines of a
+run say where each header comes from, without the values. Copy them again
+when your browser updates. None of this makes automating an account
+allowed: it is still against Discord's terms and can get the account
+banned; it only keeps the requests from looking like something they are
+not.
+
+**Counting first.** `--count` asks Discord how big the channel is, reading
+no message: the channel object, then the server's message search limited to
+the channel (`GET /guilds/<server>/messages/search?channel_id=<channel>`,
+whose `total_results` is the count; Discord has no message count
+otherwise), and for a forum its post listing (`total_results` of its posts).
+A channel not indexed for search yet answers 202 with a `retry_after`; the
+count waits as asked and tries twice more, then says to try later. It prints
+the estimated requests and time of a whole fetch at the pace given (and days
+at `--daily-cap`); a text channel's threads add a request or more each. The
+count's requests count toward the daily cap like any other.
+
+```bash
+# The token (and, best, your browser's headers) in the env file, readable by you only
 chmod 600 ~/.config/procon/env      # after adding: DISCORD_USER_TOKEN=...
 
+# How big is it, and how long would it take? Two or three requests, no messages
+cuttlefish fetch discord --channel https://discord.com/channels/737359708276654121/737962428553232465 --count
+
 # A check run: the channel object and one page of messages, then stop
-cuttlefish fetch discord --channel 123456789012345678 --max-requests 2
+cuttlefish fetch discord --channel https://discord.com/channels/737359708276654121/737962428553232465 --max-requests 2
 
 # The archive: newer messages first, then older history; run it again any time
-cuttlefish fetch discord --channel 123456789012345678
+cuttlefish fetch discord --channel https://discord.com/channels/737359708276654121/737962428553232465
 
 # Gentler still: two hours a run, at most 600 requests a day
-cuttlefish fetch discord --channel 123456789012345678 --max-minutes 120 --daily-cap 600
+cuttlefish fetch discord --channel 737359708276654121/737962428553232465 --max-minutes 120 --daily-cap 600
 
 cuttlefish ingest inbox             # the archive into the store
 ```
@@ -358,7 +441,7 @@ cuttlefish ingest inbox             # the archive into the store
 At the default pace a page of 100 messages takes about 5.5 s plus the
 pauses, so 20,000 messages (200 pages) take roughly 20 to 30 minutes, and
 each thread or forum post at least one more request; a forum with 300 posts
-adds about half an hour.
+adds about half an hour. `--count` does this sum for a channel.
 
 **Whole wikis and sites** (`wiki.rs`). Both are as polite as the rest: one
 request at a time, `--delay-s` (default 2 s, at least 1) or the site's
@@ -379,20 +462,34 @@ stores nothing. Progress and **Cancel** work as for any import.
   navigation boxes, edit links and references dropped). Each document
   records its url, `revision`, the wiki's license and "<wiki> contributors";
   a re-run fetches only the pages whose revision changed (`--refresh`
-  fetches all). Every request carries `maxlag=5`: a lagging or busy wiki
-  is left alone for the time it asks (or half a minute) and asked again.
-  Raw pages go to `raw/wiki/`.
+  fetches all). `--max-pages` (default 500) caps the pages *fetched* in a
+  run, so a capped run, or one stopped early (Cancel, the studio closed),
+  continues with the rest when run again. Every request carries
+  `maxlag=5`: a lagging or busy wiki is left alone for the time it asks
+  (or half a minute) and asked again. Raw pages go to `raw/wiki/`.
 - *Whole site* (`ingest site`): from a start address, the pages on the same
   host reached through links and through the sitemaps `robots.txt` names
-  (else `/sitemap.xml`), up to `--max-pages` (default 100). Images,
-  scripts, styles, fonts and feeds are skipped, and so are the path
-  prefixes given with `--skip` (an app such as a map viewer). A page drawn
-  by JavaScript is noted and not kept. The notes end with the sections
-  found (pages per first path segment). A re-run reads the links of pages
-  already stored from their raw copy (`raw/web/`) instead of fetching them
-  again; `--refresh` fetches everything. A dry run needs no page when the
-  site has a sitemap; without one it still fetches pages to find links,
-  but keeps nothing.
+  (else `/sitemap.xml`), up to `--max-pages` pages fetched in a run
+  (default 100). Images, scripts, styles, fonts and feeds are skipped, and
+  so are the path prefixes given with `--skip` (an app such as a map
+  viewer). A page drawn by JavaScript is noted and not kept. The notes end
+  with the sections found (pages per first path segment). Every page
+  fetched is kept raw (`raw/web/`), and a re-run reads a page with a raw
+  copy from it (its links, and its document when not stored yet) instead
+  of fetching it again, so it goes on past where the last run stopped;
+  `--refresh` fetches everything. A dry run needs no page when the site has
+  a sitemap; without one it still fetches pages to find links, but keeps
+  nothing.
+
+**Stopping and running again.** Every import stores each document as soon
+as it is made, and the index follows the documents (opening the store embeds
+the ones it lacks), so an import stopped halfway (Cancel, Ctrl+C, the studio
+closed) loses at most the page under way. Running it again continues: `ingest
+url` and `ingest youtube` skip what is stored (a Google Sheet's tab kept as a
+name table too), wikis fetch only new or changed revisions, sites read their
+raw copies. What is fetched again: the listings (a wiki's categories, a
+site's `robots.txt` and sitemaps, a sheet's tab list), and pages that failed
+or had no text.
 
 **Inkipedia.** Its `robots.txt` allows general crawlers (`*`) on articles and
 `api.php` (it disallows `/w/index.php`, `Help:` and `MediaWiki:` pages and

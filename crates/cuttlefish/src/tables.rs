@@ -772,6 +772,13 @@ fn dir(root: &Path) -> std::path::PathBuf {
     root.join("terms")
 }
 
+/// Whether the table of this source (its file or address) is stored
+pub fn has(root: &Path, source: &str) -> bool {
+    dir(root)
+        .join(alloc::format!("{}.json", doc_id(source)))
+        .is_file()
+}
+
 /// Writes a table into the data folder
 pub fn save(root: &Path, table: &Table) -> Result<()> {
     write_atomic(

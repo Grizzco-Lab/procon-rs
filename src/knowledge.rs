@@ -1095,6 +1095,10 @@ impl ingest::Sink for JobSink<'_> {
         self.loaded.store.read().unwrap().has(key)
     }
 
+    fn has_table(&self, key: &str) -> bool {
+        tables::has(&self.knowledge.root, key)
+    }
+
     fn revision(&self, key: &str) -> Option<u64> {
         self.loaded.store.read().unwrap().document(key)?.revision
     }

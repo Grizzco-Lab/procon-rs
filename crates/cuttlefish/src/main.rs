@@ -352,6 +352,10 @@ impl ingest::Sink for Sink {
         self.store.has(key)
     }
 
+    fn has_table(&self, key: &str) -> bool {
+        tables::has(self.store.root(), key)
+    }
+
     fn revision(&self, key: &str) -> Option<u64> {
         self.store.document(key)?.revision
     }
