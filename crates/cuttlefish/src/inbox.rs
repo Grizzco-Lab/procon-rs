@@ -38,6 +38,7 @@
 //! deleted. Each import writes a [`Report`] to `<data>/reports/`.
 
 use crate::assets::{self, Asset, Catalogue};
+use crate::discord_media::{self, Manifest as MediaManifest};
 use crate::doc::{Document, SourceKind, doc_id};
 use crate::ingest::{Meta, Sink};
 use crate::messages::{self, Category};
@@ -604,6 +605,22 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>, notes: &mut 
     }
 }
 
+/// The media folder of a fetched channel's file in the inbox
+/// (`discord/<guild>/<channel>/...`, see [`crate::discord_fetch`]):
+/// `<root>/media/discord/<guild>/<channel>`, and that path from the
+/// knowledge folder
+fn media_folder(root: &Path, rel: &str) -> Option<(PathBuf, String)> {
+    let mut parts = rel.split('/');
+    let (first, guild, channel) = (parts.next()?, parts.next()?, parts.next()?);
+    // A file below the channel's folder
+    parts.next()?;
+    if first != "discord" {
+        return None;
+    }
+    let below = alloc::format!("{}/discord/{guild}/{channel}", discord_media::MEDIA);
+    Some((root.join(&below), below))
+}
+
 /// Modification time in Unix seconds
 fn modified(meta: &std::fs::Metadata) -> i64 {
     meta.modified()
@@ -681,13 +698,24 @@ impl Import<'_> {
         let again = self.meta.refresh
             || self.forced.contains(&found.rel)
             || old.as_ref().is_some_and(|s| s.version < version);
+        // A fetched channel's documents also change when its files were
+        // downloaded, so its manifest is hashed with the messages
+        let media = (route == Route::DiscordArchive)
+            .then(|| media_folder(&self.root, &found.rel))
+            .flatten()
+            .map(|(dir, _)| dir.join(discord_media::MANIFEST))
+            .filter(|m| m.is_file());
         let quick = old
             .as_ref()
-            .filter(|s| !again && s.bytes == bytes && s.modified == modified);
+            .filter(|s| !again && media.is_none() && s.bytes == bytes && s.modified == modified);
         let (hash, unchanged) = match quick {
             Some(s) => (s.hash.clone(), true),
             None => {
-                let hash = hash_file(&found.path)?;
+                let mut hash = hash_file(&found.path)?;
+                if let Some(m) = &media {
+                    hash.push('+');
+                    hash.push_str(&hash_file(m)?);
+                }
                 let same = old.as_ref().is_some_and(|s| s.hash == hash);
                 (hash, same && !again)
             }
@@ -791,7 +819,27 @@ impl Import<'_> {
             seen.kind = String::from("empty");
             return Ok(());
         }
-        let docs = discord::to_documents(&channel, &messages, channel.thread);
+        let mut docs = discord::to_documents(&channel, &messages, channel.thread);
+        // The videos the fetcher downloaded, by their path from the
+        // knowledge folder
+        let mut local = 0;
+        if route == Route::DiscordArchive
+            && let Some((dir, below)) = media_folder(&self.root, &found.rel)
+        {
+            let manifest = MediaManifest::load(&dir)?;
+            if !manifest.is_empty() {
+                discord::link_media(&mut docs, &|id| {
+                    manifest
+                        .get(id)
+                        .map(|e| alloc::format!("{below}/{}", e.path))
+                });
+                local = docs
+                    .iter()
+                    .flat_map(|d| &d.messages)
+                    .filter(|r| r.video_local.is_some())
+                    .count();
+            }
+        }
         for mut doc in docs.iter().cloned() {
             self.meta.apply(&mut doc);
             self.sink.add(&doc)?;
@@ -802,10 +850,15 @@ impl Import<'_> {
             docs.len()
         ));
         let detail = alloc::format!(
-            "#{}: {} messages in {} conversations",
+            "#{}: {} messages in {} conversations{}",
             channel.name,
             messages.len(),
-            docs.len()
+            docs.len(),
+            if local > 0 {
+                alloc::format!(", {local} messages with their video on disk")
+            } else {
+                String::new()
+            }
         );
         self.report.take(&found.rel, "discord", detail);
         seen.kind = String::from("discord");
@@ -1945,10 +1998,9 @@ mod tests {
         let mut more =
             std::fs::read_to_string(root.join(INBOX).join(dir).join("threads/3.messages.jsonl"))
                 .unwrap();
-        more.push_str(&msg(
-            "12",
-            "2024-05-01T10:10:00+00:00",
-            "86s two Steelheads",
+        more.push_str(&msg("12", "2024-05-01T10:10:00+00:00", "86s two Steelheads").replace(
+            r#""content""#,
+            r#""attachments": [{"id": "700", "filename": "run.mp4", "size": 5, "content_type": "video/mp4", "url": "https://cdn.discordapp.com/attachments/3/700/run.mp4?ex=1&is=1&hm=a"}], "content""#,
         ));
         more.push('\n');
         write(
@@ -1961,6 +2013,42 @@ mod tests {
         assert_eq!(sink.docs.len(), 1);
         let rows = &sink.docs[0].messages;
         assert_eq!(rows.iter().map(|r| r.moments.len()).sum::<usize>(), 3);
+        // The video is its own message's; not downloaded yet
+        assert_eq!(
+            rows[2].video_url.as_deref(),
+            Some("https://cdn.discordapp.com/attachments/3/700/run.mp4?ex=1&is=1&hm=a")
+        );
+        assert_eq!(rows[2].video_local, None);
+        assert!(!report.taken[0].detail.contains("on disk"), "{report:#?}");
+
+        // Unchanged messages, but the fetcher downloaded the video: the
+        // channel is read again and the row points at the file
+        let media = root.join("media/discord/1/2");
+        std::fs::create_dir_all(media.join("12")).unwrap();
+        std::fs::write(media.join("12/run.mp4"), b"12345").unwrap();
+        std::fs::write(
+            media.join(discord_media::MANIFEST),
+            r#"{"message_id": "12", "attachment_id": "700", "filename": "run.mp4", "size": 5, "content_type": "video/mp4", "path": "12/run.mp4", "sha256": "x"}
+"#,
+        )
+        .unwrap();
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert_eq!(report.count("discord"), 1, "{report:#?}");
+        assert!(
+            report.taken[0]
+                .detail
+                .ends_with(", 1 messages with their video on disk"),
+            "{report:#?}"
+        );
+        assert_eq!(sink.docs.len(), 1);
+        assert_eq!(
+            sink.docs[0].messages[2].video_local.as_deref(),
+            Some("media/discord/1/2/12/run.mp4")
+        );
+        // And once more: unchanged now
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert_eq!(report.count("discord"), 0);
+        assert_eq!(report.unchanged, 2, "{report:#?}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

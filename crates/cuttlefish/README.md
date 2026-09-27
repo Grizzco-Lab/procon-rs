@@ -32,6 +32,7 @@ cuttlefish ingest youtube https://www.youtube.com/playlist?list=...
 cuttlefish ingest discord-export vod-review.json
 DISCORD_BOT_TOKEN=... cuttlefish ingest discord-bot --channel 123456789012345678
 cuttlefish fetch discord --channel https://discord.com/channels/<server>/<channel> --count   # your own account: against Discord's terms, see below
+cuttlefish fetch discord --channel ... --attachments videos    # also download the uploaded VODs (see "Downloading the VODs")
 
 cuttlefish search "バクダンの処理"          # top-k chunks with sources; any language
 cuttlefish glossary "Steelhead"            # a term's names and definition
@@ -68,6 +69,9 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   assets.json        images and icons from the inbox
   reports/<t>.json   one report per inbox import (the last 30)
   digest.md          curated fundamentals, sent with every request (optional)
+  media/discord/<guild>/<channel>/<message id>/<file>
+                     VODs and images downloaded by `fetch discord --attachments`,
+                     with a media.jsonl manifest per channel (large: see below)
   raw/<kind>/        pages, subtitles, exports as received
   docs/<id>.json     processed documents with source, url or inbox path, title,
                      language, license, attribution, revision (wiki pages),
@@ -292,7 +296,10 @@ the document's JSON, for aligning comments with a video later:
 `reply_to` is the replied-to message (`reply_author` its author, from the
 file or from the copy Discord sends along with a reply), `thread` the thread
 or forum post the message is in. `video_url` is the video the message is
-about, and `video_from` says how it was found, first match wins: `own` (a
+about, `video_local` its file in the knowledge folder when `fetch discord
+--attachments` downloaded it (`media/discord/<guild>/<channel>/<message
+id>/<file name>`; a review can then open the file instead of the expired
+link), and `video_from` says how it was found, first match wins: `own` (a
 YouTube link or video attachment in the message; `video_t` is the link's
 `t=` start), `reply` (in the message it replies to, following the chain of
 replies up), `starter` (the thread's or post's starter message), or
@@ -345,8 +352,9 @@ What it does, and does not do:
   `state.json` with the cursors and the day's count. A run first fetches
   what is newer than the last one (skipped when the channel's last message
   is known), then keeps backfilling older history until the first message.
-  Ctrl+C finishes the request under way, saves and stops. Attachments and
-  embeds stay as links in the JSON; nothing is downloaded.
+  Ctrl+C finishes the request under way, saves and stops. Embeds stay as
+  links in the JSON; attachments are only counted unless asked for (see
+  "Downloading the VODs").
 - Progress after each page: `#vod-review: 1300 messages, oldest 2024-03-02;
   14 requests this run, 14 today; delay 5.3 s`, and a line for each pause
   or wait.
@@ -443,13 +451,70 @@ pauses, so 20,000 messages (200 pages) take roughly 20 to 30 minutes, and
 each thread or forum post at least one more request; a forum with 300 posts
 adds about half an hour. `--count` does this sum for a channel.
 
+#### Downloading the VODs
+
+Most VODs in #vod-review are uploaded to Discord as files, and their links
+in the messages (`cdn.discordapp.com`, `media.discordapp.net`) are signed
+and expire after about a day. So the fetcher can download them itself,
+right after the messages, with `--attachments`:
+
+- `list` (the default): counts the channel's attachments and adds up their
+  sizes from the messages, downloads nothing, and prints what `videos` and
+  `media` would take: `Attachments in the archive: 1830 videos (412.5 GB),
+  120 images (0.3 GB), 5 other files (0 MB)`. **Run this first**: the
+  files go into the knowledge folder, and if that is a synced folder
+  (Dropbox), so does their space. `none` does not even count.
+- `videos` downloads the video attachments (by content type or extension:
+  mp4, mov, webm, mkv, m4v, avi), `media` the videos and the images.
+  Sequential, one file at a time, with the same random delays and pauses
+  as the requests (`--delay`, `--pause-every`, `--pause`; Ctrl+C stops
+  after the file under way, `--max-minutes` counts), with the browser's
+  User-Agent and the channel page as `Referer`, never the token. Only
+  links on Discord's CDN, and only those of the messages in the archive,
+  are followed.
+- `--max-file-mb N` skips files larger than N MB; `--max-total-gb G` stops
+  downloading when a channel's media folder would grow past G GB. Neither
+  has a default: nothing is skipped unless asked, and nothing asks for
+  confirmation, so give `--max-total-gb` when the space is limited.
+
+The files land in `<knowledge>/media/discord/<guild id>/<channel
+id>/<message id>/<file name>` (with `--out`, in `<out>/media/...`), newest
+message first, and `media.jsonl` in the channel's folder records each one:
+message id, attachment id, file name, size, content type, path and SHA-256.
+A run is **resumable**: a file the manifest names with its full size is
+skipped, a partial download (`<file name>.part`) is continued with a
+`Range` request, and one that came back with the wrong size is discarded
+and tried again next time. A link that expired (its `ex` parameter, about
+24 h) or that answers 404 has its message's page read again, an ordinary
+paced message GET (`before=<message id + 1>`, read-only, no refresh
+endpoint), which gives fresh links for every wanted file on that page. The
+run ends with what was done: `downloaded 12 files (3.4 GB) into ...; 1818
+already there; 2 pages read again for fresh links`. Files are downloaded
+after a run that read all the messages; a run stopped by a cap or a limit
+only lists them, and the next complete run downloads.
+
+The inbox import then points each message's `video_local` at the file
+(`messages` in the document's JSON): a channel whose manifest changed is
+read again although its messages did not.
+
+```bash
+# First: how much is there? Nothing is downloaded
+cuttlefish fetch discord --channel https://discord.com/channels/737359708276654121/737962428553232465
+
+# Then the videos, with a cap on the folder's growth; run again any time to continue
+cuttlefish fetch discord --channel https://discord.com/channels/737359708276654121/737962428553232465 \
+  --attachments videos --max-total-gb 200
+
+cuttlefish ingest inbox             # the rows now carry video_local
+```
+
 **Whole wikis and sites** (`wiki.rs`). Both are as polite as the rest: one
 request at a time, `--delay-s` (default 2 s, at least 1) or the site's
 `Crawl-delay` when longer, every `robots.txt` rule for `Cuttlefish` (else
 `*`), and a `robots.txt` answering with a server error stops the import. A
 `--dry-run` (the studio's **Dry run: count the pages first**, on by
 default) tells what is in scope and how long fetching it would take, and
-stores nothing. Progress and **Cancel** work as for any import.
+stores nothing. Progress and **Stop** work as for any import.
 
 - *MediaWiki topic* (`ingest wiki`): start pages and categories, as titles
   or `/wiki/` addresses (the API is `/w/api.php` on that host unless
@@ -483,8 +548,10 @@ stores nothing. Progress and **Cancel** work as for any import.
 
 **Stopping and running again.** Every import stores each document as soon
 as it is made, and the index follows the documents (opening the store embeds
-the ones it lacks), so an import stopped halfway (Cancel, Ctrl+C, the studio
-closed) loses at most the page under way. Running it again continues: `ingest
+the ones it lacks), so an import stopped halfway (the studio's **Stop
+(continue later)** button on the running job, shown from "loading the
+knowledge store" on, embedding included; Ctrl+C; the studio closed) loses
+at most the page under way. Running it again continues: `ingest
 url` and `ingest youtube` skip what is stored (a Google Sheet's tab kept as a
 name table too), wikis fetch only new or changed revisions, sites read their
 raw copies. What is fetched again: the listings (a wiki's categories, a

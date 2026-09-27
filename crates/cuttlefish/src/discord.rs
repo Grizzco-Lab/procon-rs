@@ -104,6 +104,11 @@ pub struct MessageRow {
     /// How the video was found
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video_from: Option<VideoFrom>,
+    /// The video's file in the knowledge folder, when it was downloaded
+    /// (`media/discord/<guild>/<channel>/<message id>/<file name>`,
+    /// [`link_media`])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_local: Option<String>,
     /// The moments it points at, with the video as their `url` when they
     /// name none
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -278,7 +283,7 @@ pub fn parse_export(json: &str) -> Result<(Channel, Vec<Message>)> {
 }
 
 /// Extensions of video attachments
-const VIDEO_EXTENSIONS: [&str; 6] = ["mp4", "mov", "webm", "mkv", "m4v", "avi"];
+pub const VIDEO_EXTENSIONS: [&str; 6] = ["mp4", "mov", "webm", "mkv", "m4v", "avi"];
 
 /// A message's text with its links, where moments and videos are looked for
 fn with_links(m: &Message) -> String {
@@ -414,10 +419,40 @@ pub fn rows(channel: &Channel, messages: &[Message]) -> Vec<MessageRow> {
                 video_url,
                 video_t,
                 video_from,
+                video_local: None,
                 moments: found,
             }
         })
         .collect()
+}
+
+/// The attachment id in a CDN attachment link
+/// (`https://cdn.discordapp.com/attachments/<channel>/<id>/<name>?...`)
+pub fn attachment_id(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("https://")?;
+    let (host, path) = rest.split_once('/')?;
+    if !crate::discord_media::CDN_HOSTS.contains(&host.to_lowercase().as_str()) {
+        return None;
+    }
+    let mut parts = path.strip_prefix("attachments/")?.split('/');
+    parts.next()?;
+    let id = parts.next()?;
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+}
+
+/// Points each message's `video_local` at the downloaded file of its
+/// video, when `local` knows the attachment id (the channel's media
+/// manifest, see [`crate::discord_media`])
+pub fn link_media(docs: &mut [Document], local: &dyn Fn(&str) -> Option<String>) {
+    for doc in docs {
+        for row in &mut doc.messages {
+            row.video_local = row
+                .video_url
+                .as_deref()
+                .and_then(attachment_id)
+                .and_then(local);
+        }
+    }
 }
 
 /// Conversations of a plain channel's messages (oldest first), as lists of

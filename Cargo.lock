@@ -640,6 +640,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha2",
  "texting_robots",
  "tokenizers",
  "toml 1.1.6+spec-1.1.0",

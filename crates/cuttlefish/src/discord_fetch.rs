@@ -26,6 +26,16 @@
 //!   `threads/`) with the cursors in `state.json`, so a run continues: new
 //!   messages since the last run first, then older history until the
 //!   start. Ctrl+C finishes the request under way and saves.
+//! - **Attachments** ([`crate::discord_media`]): after the messages, the
+//!   channel's uploaded files are counted (`--attachments list`, the
+//!   default) or downloaded (`videos`, `media`), one at a time at the same
+//!   pace, without the token, only from Discord's CDN and only the files
+//!   of the messages read. Their signed links expire after about a day, so
+//!   a message whose link expired has its page read again (an ordinary
+//!   paced message GET) for a fresh one. Files land in
+//!   `<media>/<guild>/<channel>/<message id>/<file name>` with a
+//!   `media.jsonl` manifest; a file already there is skipped, a partial
+//!   one continued.
 //!
 //! The token comes from `DISCORD_USER_TOKEN` in the environment (the env
 //! file, [`crate::env_file`]) and is never logged or written. The inbox
@@ -33,6 +43,7 @@
 
 use crate::crawl::encode;
 use crate::discord::{API, FORUM_TYPES, snowflake};
+use crate::discord_media::{self, Attachment, Attachments, Entry, Listing, Manifest, Tally};
 use crate::store::write_atomic;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
@@ -102,6 +113,16 @@ impl Response {
 pub trait Http {
     /// GETs `url` with exactly these headers (names and values)
     fn get(&mut self, url: &str, headers: &[(String, String)]) -> Result<Response>;
+
+    /// GETs `url` with these headers and streams the body into `out` when
+    /// the status is 200 or 206 (the answer's `body` is then empty); with
+    /// any other status the body is returned, not written
+    fn download(
+        &mut self,
+        url: &str,
+        headers: &[(String, String)],
+        out: &mut dyn Write,
+    ) -> Result<Response>;
 }
 
 /// HTTPS through ureq, with no headers of its own but the transfer's
@@ -143,6 +164,45 @@ impl Http for Https {
             })
             .collect();
         let body = resp.body_mut().read_to_string().unwrap_or_default();
+        Ok(Response {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    fn download(
+        &mut self,
+        url: &str,
+        headers: &[(String, String)],
+        out: &mut dyn Write,
+    ) -> Result<Response> {
+        let mut request = self.agent.get(url);
+        for (name, value) in headers {
+            request = request.header(name.as_str(), value.as_str());
+        }
+        let mut resp = request
+            .call()
+            .with_context(|| alloc::format!("GET {url}"))?;
+        let status = resp.status().as_u16();
+        let headers = resp
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    String::from(k.as_str()),
+                    String::from(v.to_str().unwrap_or_default()),
+                )
+            })
+            .collect();
+        let body = if matches!(status, 200 | 206) {
+            // Unlimited: a file of any size, straight to disk
+            std::io::copy(&mut resp.body_mut().as_reader(), out)
+                .with_context(|| alloc::format!("downloading {url}"))?;
+            String::new()
+        } else {
+            resp.body_mut().read_to_string().unwrap_or_default()
+        };
         Ok(Response {
             status,
             headers,
@@ -310,6 +370,21 @@ impl Browser {
         out
     }
 
+    /// The headers of a file download from the page `referer`: the same
+    /// browser, without the token (the CDN never gets it)
+    pub fn media_headers(&self, referer: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let mut add = |k: &str, v: &str| out.push((String::from(k), String::from(v)));
+        add("User-Agent", &self.user_agent.0);
+        add("Accept", "*/*");
+        add("Accept-Language", &self.accept_language());
+        add("Referer", referer);
+        add("Sec-Fetch-Dest", "empty");
+        add("Sec-Fetch-Mode", "cors");
+        add("Sec-Fetch-Site", "cross-site");
+        out
+    }
+
     /// Where each header comes from, without the values
     pub fn describe(&self) -> String {
         let mut text = alloc::format!(
@@ -432,6 +507,33 @@ pub trait Clock {
     fn today(&self) -> String {
         Utc::now().format("%Y-%m-%d").to_string()
     }
+    /// The time (Unix seconds), for the expiry of attachment links
+    fn now(&self) -> i64 {
+        Utc::now().timestamp()
+    }
+}
+
+/// A file being written, which stops when the run is told to (the partial
+/// file stays for the next run)
+struct Stopping<'a> {
+    file: std::fs::File,
+    clock: &'a dyn Clock,
+}
+
+impl Write for Stopping<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.clock.stopped() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "stopped",
+            ));
+        }
+        self.file.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
 }
 
 /// Real time, interrupted by a flag (set by Ctrl+C)
@@ -553,6 +655,48 @@ pub struct Options {
     pub pace: Pace,
     /// The headers sent
     pub browser: Browser,
+    /// What to do with the messages' attachments after the messages
+    pub attachments: Attachments,
+    /// Files larger than this many MB are not downloaded
+    pub max_file_mb: Option<u64>,
+    /// A channel's media folder is not grown past this many GB
+    pub max_total_gb: Option<f64>,
+    /// The media root: files go to `<media>/<guild>/<channel>/`
+    pub media: PathBuf,
+}
+
+/// What a run did about attachments ([`Options::attachments`])
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Media {
+    /// What the channels' messages carry
+    pub listing: Listing,
+    /// Files downloaded this run
+    pub downloaded: Tally,
+    /// Wanted files that were already there
+    pub present: usize,
+    /// Wanted files larger than `--max-file-mb`
+    pub skipped_size: Tally,
+    /// Wanted files that would grow the folder past `--max-total-gb`
+    pub skipped_total: Tally,
+    /// Pages read again for fresh links
+    pub refreshed: u32,
+    /// Downloads that failed (reported as they happened)
+    pub failed: usize,
+    /// Links not on Discord's CDN, not downloaded
+    pub out_of_scope: usize,
+}
+
+/// How one download ended
+enum Outcome {
+    /// The file is whole, with this many bytes taken this run
+    Fetched(u64),
+    /// 403, 404 or 410: the link expired or the file is gone
+    Gone,
+    /// The server sent the whole file although a part was asked for; the
+    /// part was removed, so the next attempt starts over
+    Restart,
+    /// Anything else, with the reason
+    Failed(String),
 }
 
 /// What `--count` found out about a channel
@@ -686,6 +830,9 @@ pub struct Summary {
     pub stopped: Option<Stop>,
     /// What `--count` found, a channel each
     pub counts: Vec<Count>,
+    /// What was done about attachments; `None` with `--attachments none`,
+    /// `--count`, or a run stopped by Ctrl+C
+    pub media: Option<Media>,
 }
 
 /// Whether a request path is within the archive's scope: a channel or
@@ -752,6 +899,9 @@ struct Fetcher<'a> {
     status: u16,
     /// The channel or thread being read, for `Referer`
     viewing: Option<String>,
+    /// The channels read this run: id, server and archive folder, for
+    /// their attachments
+    channels_read: Vec<(String, String, PathBuf)>,
     rng: u64,
     report: &'a mut dyn FnMut(&str),
 }
@@ -801,6 +951,7 @@ pub fn run(
         delay: Duration::ZERO,
         status: 0,
         viewing: None,
+        channels_read: Vec::new(),
         rng: seed.max(1),
         report,
     };
@@ -811,20 +962,40 @@ pub fn run(
     } else {
         f.fetch_all()
     };
-    f.state.save(root)?;
-    let stopped = match result {
-        Ok(()) => None,
-        Err(e) => match e.downcast_ref::<Stop>() {
-            Some(stop) => Some(*stop),
-            None => return Err(e),
-        },
+    // A stop ends the run early; any other error ends it
+    let stop_of = |e: anyhow::Error| match e.downcast_ref::<Stop>() {
+        Some(stop) => Ok(*stop),
+        None => Err(e),
     };
+    let mut stopped = match result {
+        Ok(()) => None,
+        Err(e) => {
+            f.state.save(root)?;
+            Some(stop_of(e)?)
+        }
+    };
+    // The attachments: listed after any run but one interrupted, and
+    // downloaded after a run that read everything
+    let mut media = None;
+    if !f.options.count
+        && f.options.attachments != Attachments::None
+        && stopped != Some(Stop::Interrupted)
+    {
+        let mut done = Media::default();
+        if let Err(e) = f.media(&mut done, stopped.is_none()) {
+            f.state.save(root)?;
+            stopped = stopped.or(Some(stop_of(e)?));
+        }
+        media = Some(done);
+    }
+    f.state.save(root)?;
     Ok(Summary {
         requests: f.requests,
         messages: f.added,
         conversations: f.state.conversations.len(),
         stopped,
         counts,
+        media,
     })
 }
 
@@ -1081,6 +1252,11 @@ impl Fetcher<'_> {
             keep(&folder.join(alloc::format!("{id}.channel.json")), &info)?;
             let name = String::from(info["name"].as_str().unwrap_or(&id));
             self.cursor(&id).name = name.clone();
+            self.channels_read.push((
+                id.clone(),
+                String::from(info["guild_id"].as_str().unwrap_or("guild")),
+                folder.clone(),
+            ));
             (self.report)(&alloc::format!("#{name} ({id}) into {}", folder.display()));
             let mut threads = Vec::new();
             let forum = info["type"]
@@ -1273,6 +1449,270 @@ impl Fetcher<'_> {
         (self.report)(&line);
         Ok(messages.len())
     }
+
+    /// The attachments of every channel read this run: counted, and with
+    /// `download` the wanted ones fetched into their media folder, newest
+    /// message first
+    fn media(&mut self, media: &mut Media, download: bool) -> Result<()> {
+        let which = self.options.attachments;
+        let cap = self.options.max_file_mb.map(|mb| mb * 1_000_000);
+        let total_cap = self.options.max_total_gb.map(|gb| (gb * 1e9) as u64);
+        for (id, guild, folder) in self.channels_read.clone() {
+            let attachments = discord_media::in_channel_folder(&folder, &id)?;
+            let listing = Listing::of(&attachments, which, cap);
+            media.listing.extend(&listing);
+            let name = self.cursor(&id).name.clone();
+            (self.report)(&alloc::format!(
+                "#{name}: {listing}{}",
+                if listing.over_cap.files > 0 {
+                    alloc::format!(
+                        "; {} wanted files over {} MB",
+                        listing.over_cap.files,
+                        self.options.max_file_mb.unwrap_or_default()
+                    )
+                } else {
+                    String::new()
+                }
+            ));
+            if !download || !matches!(which, Attachments::Videos | Attachments::Media) {
+                continue;
+            }
+            let dir = self.options.media.join(&guild).join(&id);
+            let mut manifest = Manifest::load(&dir)?;
+            let mut total = manifest.bytes();
+            let mut pending: Vec<Attachment> = attachments
+                .into_iter()
+                .filter(|a| a.wanted(which))
+                .collect();
+            pending.sort_by_key(|a| core::cmp::Reverse(snowflake(&a.message_id)));
+            let ids: BTreeSet<String> = pending.iter().map(|a| a.id.clone()).collect();
+            // Links from pages read again this run, by attachment id
+            let mut fresh: BTreeMap<String, String> = BTreeMap::new();
+            let n = pending.len();
+            for (i, a) in pending.iter().enumerate() {
+                if manifest.has(a) {
+                    media.present += 1;
+                    continue;
+                }
+                if cap.is_some_and(|c| a.size > c) {
+                    media.skipped_size.add(a.size);
+                    continue;
+                }
+                if !discord_media::in_scope(&a.url) {
+                    media.out_of_scope += 1;
+                    (self.report)(&alloc::format!(
+                        "{} of message {} is not on Discord's CDN; not downloaded",
+                        a.filename,
+                        a.message_id
+                    ));
+                    continue;
+                }
+                if total_cap.is_some_and(|c| total + a.size > c) {
+                    media.skipped_total.add(a.size);
+                    continue;
+                }
+                let mut url = fresh.remove(&a.id).unwrap_or_else(|| a.url.clone());
+                let mut refreshed = false;
+                if discord_media::expired(&url, self.clock.now()) {
+                    refreshed = true;
+                    media.refreshed += 1;
+                    match self.refresh(a, &ids, &mut fresh)? {
+                        Some(u) => url = u,
+                        None => {
+                            media.failed += 1;
+                            (self.report)(&alloc::format!(
+                                "{} is no longer on message {}; not downloaded",
+                                a.filename,
+                                a.message_id
+                            ));
+                            continue;
+                        }
+                    }
+                }
+                let mut restarted = false;
+                loop {
+                    match self.download(a, &url, &dir, &guild)? {
+                        Outcome::Fetched(bytes) => {
+                            let path = dir.join(a.relative_path());
+                            manifest.add(Entry {
+                                message_id: a.message_id.clone(),
+                                attachment_id: a.id.clone(),
+                                filename: a.filename.clone(),
+                                size: a.size,
+                                content_type: a.content_type.clone(),
+                                path: a.relative_path(),
+                                sha256: discord_media::sha256_file(&path)?,
+                            })?;
+                            total += a.size;
+                            media.downloaded.add(bytes);
+                            (self.report)(&alloc::format!(
+                                "{} ({}) of message {}: {} of {} files of #{name}; delay {:.1} s",
+                                a.safe_name(),
+                                discord_media::size(a.size),
+                                a.message_id,
+                                i + 1,
+                                n,
+                                self.delay.as_secs_f64()
+                            ));
+                            break;
+                        }
+                        Outcome::Gone if !refreshed => {
+                            refreshed = true;
+                            media.refreshed += 1;
+                            match self.refresh(a, &ids, &mut fresh)? {
+                                Some(u) => url = u,
+                                None => {
+                                    media.failed += 1;
+                                    (self.report)(&alloc::format!(
+                                        "{} is no longer on message {}; not downloaded",
+                                        a.filename,
+                                        a.message_id
+                                    ));
+                                    break;
+                                }
+                            }
+                        }
+                        Outcome::Gone => {
+                            media.failed += 1;
+                            (self.report)(&alloc::format!(
+                                "{} of message {}: gone even with a fresh link; skipped",
+                                a.filename,
+                                a.message_id
+                            ));
+                            break;
+                        }
+                        Outcome::Restart if !restarted => restarted = true,
+                        Outcome::Restart => {
+                            media.failed += 1;
+                            (self.report)(&alloc::format!(
+                                "{} of message {}: the server does not continue partial files; skipped",
+                                a.filename,
+                                a.message_id
+                            ));
+                            break;
+                        }
+                        Outcome::Failed(why) => {
+                            media.failed += 1;
+                            (self.report)(&alloc::format!(
+                                "{} of message {}: {why}; skipped, the next run tries again",
+                                a.filename,
+                                a.message_id
+                            ));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads the page of messages ending at `a`'s message again, an
+    /// ordinary paced GET, and keeps the links of every wanted attachment
+    /// on it in `fresh`; returns `a`'s fresh link, none when the message or
+    /// the file is no longer there
+    fn refresh(
+        &mut self,
+        a: &Attachment,
+        wanted: &BTreeSet<String>,
+        fresh: &mut BTreeMap<String, String>,
+    ) -> Result<Option<String>> {
+        self.viewing = Some(a.conversation.clone());
+        let before = snowflake(&a.message_id).saturating_add(1);
+        let page = self.get(&alloc::format!(
+            "/channels/{}/messages?limit={PAGE}&before={before}",
+            a.conversation
+        ))?;
+        for m in page.as_array().into_iter().flatten() {
+            for found in Attachment::from_message(m, &a.conversation) {
+                if wanted.contains(&found.id) && discord_media::in_scope(&found.url) {
+                    fresh.insert(found.id, found.url);
+                }
+            }
+        }
+        Ok(fresh.remove(&a.id))
+    }
+
+    /// The wait before a download: paced like a request, stopped like one
+    /// (Ctrl+C, the run's minutes). Downloads are not requests to the API,
+    /// so the request caps do not count them.
+    fn wait(&mut self) -> Result<()> {
+        if self.clock.stopped() {
+            return Err(Stop::Interrupted.into());
+        }
+        if let Some(minutes) = self.options.pace.max_minutes
+            && self.clock.elapsed().as_secs_f64() >= minutes * 60.0
+        {
+            return Err(Stop::MaxMinutes(minutes.round() as u32).into());
+        }
+        let wait = self.paced();
+        self.delay = wait;
+        if !wait.is_zero() && !self.clock.sleep(wait) {
+            return Err(Stop::Interrupted.into());
+        }
+        self.since_pause += 1;
+        Ok(())
+    }
+
+    /// Downloads `a` from `url` into `dir/<message id>/<file name>`,
+    /// through `<file name>.part`, which a later run continues with a
+    /// `Range` request. Ctrl+C stops the run and keeps the part.
+    fn download(&mut self, a: &Attachment, url: &str, dir: &Path, guild: &str) -> Result<Outcome> {
+        self.wait()?;
+        let path = dir.join(a.relative_path());
+        let part = dir.join(alloc::format!("{}.part", a.relative_path()));
+        std::fs::create_dir_all(path.parent().context("no folder")?)?;
+        let mut offset = std::fs::metadata(&part).map_or(0, |m| m.len());
+        if offset > a.size {
+            std::fs::remove_file(&part)?;
+            offset = 0;
+        }
+        let referer = alloc::format!("https://discord.com/channels/{guild}/{}", a.conversation);
+        let mut headers = self.options.browser.media_headers(&referer);
+        if offset > 0 && offset < a.size {
+            headers.push((String::from("Range"), alloc::format!("bytes={offset}-")));
+        }
+        let status = if offset == a.size && a.size > 0 {
+            // Left whole by an interrupted run, only the rename missing
+            206
+        } else {
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&part)
+                .with_context(|| alloc::format!("opening {}", part.display()))?;
+            let mut out = Stopping {
+                file,
+                clock: &*self.clock,
+            };
+            match self.http.download(url, &headers, &mut out) {
+                Ok(resp) => resp.status,
+                Err(_) if self.clock.stopped() => return Err(Stop::Interrupted.into()),
+                Err(e) => return Ok(Outcome::Failed(alloc::format!("{e:#}"))),
+            }
+        };
+        match status {
+            200 if offset > 0 => {
+                std::fs::remove_file(&part)?;
+                Ok(Outcome::Restart)
+            }
+            200 | 206 => {
+                let len = std::fs::metadata(&part).map_or(0, |m| m.len());
+                if len != a.size {
+                    std::fs::remove_file(&part)?;
+                    return Ok(Outcome::Failed(alloc::format!(
+                        "got {len} bytes, the attachment has {}",
+                        a.size
+                    )));
+                }
+                std::fs::rename(&part, &path)
+                    .with_context(|| alloc::format!("renaming {}", part.display()))?;
+                Ok(Outcome::Fetched(a.size - offset))
+            }
+            403 | 404 | 410 => Ok(Outcome::Gone),
+            s => Ok(Outcome::Failed(alloc::format!("HTTP {s}"))),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1282,11 +1722,14 @@ mod tests {
     use serde_json::json;
 
     /// Answers scripted requests in order, checking each path; keeps the
-    /// headers sent
+    /// headers sent. Downloads are scripted apart (`downloads`: the link,
+    /// the answer and the bytes of its body), with their headers kept too
     struct Fake {
         expected: VecDeque<(String, Response)>,
         log: Vec<String>,
         headers: Vec<Vec<(String, String)>>,
+        downloads: VecDeque<(String, Response, Vec<u8>)>,
+        download_headers: Vec<Vec<(String, String)>>,
     }
 
     impl Fake {
@@ -1298,7 +1741,14 @@ mod tests {
                     .collect(),
                 log: Vec::new(),
                 headers: Vec::new(),
+                downloads: VecDeque::new(),
+                download_headers: Vec::new(),
             }
+        }
+
+        fn expect_download(&mut self, url: &str, resp: Response, body: &[u8]) {
+            self.downloads
+                .push_back((String::from(url), resp, body.to_vec()));
         }
 
         /// A header of the n-th request
@@ -1324,6 +1774,24 @@ mod tests {
             self.headers.push(headers.to_vec());
             Ok(resp)
         }
+
+        fn download(
+            &mut self,
+            url: &str,
+            headers: &[(String, String)],
+            out: &mut dyn Write,
+        ) -> Result<Response> {
+            let (want, resp, body) = self
+                .downloads
+                .pop_front()
+                .unwrap_or_else(|| panic!("unexpected download {url}"));
+            assert_eq!(url, want);
+            self.download_headers.push(headers.to_vec());
+            if matches!(resp.status, 200 | 206) {
+                out.write_all(&body)?;
+            }
+            Ok(resp)
+        }
     }
 
     /// Records sleeps instead of sleeping; can stop at the n-th
@@ -1332,6 +1800,8 @@ mod tests {
         slept: Vec<Duration>,
         stop_at: Option<usize>,
         day: String,
+        /// The time, Unix seconds
+        now: i64,
     }
 
     impl Clock for FakeClock {
@@ -1347,6 +1817,9 @@ mod tests {
         }
         fn today(&self) -> String {
             self.day.clone()
+        }
+        fn now(&self) -> i64 {
+            self.now
         }
     }
 
@@ -1390,7 +1863,8 @@ mod tests {
                "thread_metadata": {"archived": true, "archive_timestamp": "2024-05-01T00:00:00+00:00"}})
     }
 
-    /// One channel into a flat folder, without the longer pauses
+    /// One channel into a flat folder, without the longer pauses, its
+    /// attachments only counted
     fn options(threads: bool) -> Options {
         Options {
             channels: alloc::vec![String::from("2")],
@@ -1403,6 +1877,10 @@ mod tests {
                 ..Pace::default()
             },
             browser: Browser::default(),
+            attachments: Attachments::List,
+            max_file_mb: None,
+            max_total_gb: None,
+            media: std::env::temp_dir().join("cuttlefish-fetch-unused-media"),
         }
     }
 
@@ -2040,6 +2518,250 @@ mod tests {
         assert_eq!(discord_locale("ja_JP.utf8@x").as_deref(), Some("ja-JP"));
         assert_eq!(discord_locale("C.UTF-8"), None);
         assert_eq!(discord_locale("POSIX"), None);
+    }
+
+    /// A message with attachments: `files` are (attachment id, name, size,
+    /// expiry as Unix seconds or none)
+    fn with_files(id: u64, files: &[(&str, &str, u64, Option<i64>)]) -> Value {
+        let mut m = message(id);
+        m["attachments"] = files
+            .iter()
+            .map(|(aid, name, size, ex)| {
+                let url = match ex {
+                    Some(ex) => alloc::format!(
+                        "https://cdn.discordapp.com/attachments/2/{aid}/{name}?ex={ex:x}&is=1&hm=abc"
+                    ),
+                    None => alloc::format!("https://cdn.discordapp.com/attachments/2/{aid}/{name}"),
+                };
+                let content_type = match name.rsplit_once('.').map(|(_, e)| e) {
+                    Some("png") => "image/png",
+                    Some("mp4") => "video/mp4",
+                    _ => "text/plain",
+                };
+                json!({"id": aid, "filename": name, "size": size, "url": url,
+                       "content_type": content_type})
+            })
+            .collect();
+        m
+    }
+
+    #[test]
+    fn downloads_videos_with_fresh_links_and_resume() {
+        let out = temp("media");
+        let media = out.join("media");
+        let now: i64 = 1_700_000_000;
+        let (fresh, stale) = (now + 86_400, now - 10);
+        let cdn = |aid: &str, name: &str, ex: i64| {
+            alloc::format!(
+                "https://cdn.discordapp.com/attachments/2/{aid}/{name}?ex={ex:x}&is=1&hm=abc"
+            )
+        };
+        let mut opts = options(false);
+        opts.attachments = Attachments::Videos;
+        opts.max_file_mb = Some(500);
+        opts.media = media.clone();
+        let mut clock = FakeClock {
+            now,
+            ..FakeClock::default()
+        };
+
+        // Newest first: 103's link is fresh; 102 has an image and a text
+        // file (not wanted); 101's link expired, so its page is read again;
+        // 100's file is over the cap; 99's link is not Discord's CDN
+        let mut foreign = message(99);
+        foreign["attachments"] = json!([{"id": "69", "filename": "x.mp4", "size": 3, "url": "https://evil.example/attachments/2/69/x.mp4"}]);
+        let page = Value::Array(alloc::vec![
+            with_files(103, &[("73", "run3.mp4", 5, Some(fresh))]),
+            with_files(
+                102,
+                &[
+                    ("72", "shot.png", 2, Some(fresh)),
+                    ("74", "notes.txt", 1, None)
+                ]
+            ),
+            with_files(101, &[("71", "run1.mp4", 6, Some(stale))]),
+            with_files(100, &[("70", "big.mp4", 900_000_000, Some(fresh))]),
+            foreign,
+        ]);
+        let mut fake = Fake::new(alloc::vec![
+            ("/channels/2", ok(channel("2", 0, 103))),
+            ("/channels/2/messages?limit=100", ok(page)),
+            (
+                "/channels/2/messages?limit=100&before=102",
+                ok(Value::Array(alloc::vec![with_files(
+                    101,
+                    &[("71", "run1.mp4", 6, Some(fresh))]
+                )]))
+            ),
+        ]);
+        fake.expect_download(&cdn("73", "run3.mp4", fresh), ok(json!(null)), b"hello");
+        fake.expect_download(&cdn("71", "run1.mp4", fresh), ok(json!(null)), b"hello!");
+        let (summary, lines) = go(&mut fake, &mut clock, &out, opts.clone()).unwrap();
+        assert!(fake.expected.is_empty() && fake.downloads.is_empty());
+        assert_eq!(summary.stopped, None);
+        let m = summary.media.expect("media done");
+        assert_eq!(
+            m.listing.videos,
+            Tally {
+                files: 4,
+                bytes: 900_000_014
+            }
+        );
+        assert_eq!(m.listing.images, Tally { files: 1, bytes: 2 });
+        assert_eq!(m.listing.other, Tally { files: 1, bytes: 1 });
+        assert_eq!(
+            m.downloaded,
+            Tally {
+                files: 2,
+                bytes: 11
+            }
+        );
+        assert_eq!(
+            m.skipped_size,
+            Tally {
+                files: 1,
+                bytes: 900_000_000
+            }
+        );
+        assert_eq!(
+            (m.present, m.refreshed, m.failed, m.out_of_scope),
+            (0, 1, 0, 1)
+        );
+        let dir = media.join("1/2");
+        assert_eq!(std::fs::read(dir.join("103/run3.mp4")).unwrap(), b"hello");
+        assert_eq!(std::fs::read(dir.join("101/run1.mp4")).unwrap(), b"hello!");
+        let manifest = Manifest::load(&dir).unwrap();
+        assert_eq!(manifest.len(), 2);
+        let e = manifest.get("71").unwrap();
+        assert_eq!(
+            (e.message_id.as_str(), e.path.as_str(), e.size),
+            ("101", "101/run1.mp4", 6)
+        );
+        assert_eq!(e.content_type.as_deref(), Some("video/mp4"));
+        assert_eq!(
+            e.sha256,
+            discord_media::sha256_file(&dir.join("101/run1.mp4")).unwrap()
+        );
+        // The channel's page as referer, the browser's agent, never the
+        // token; paced like the requests (two pages, one refresh, two
+        // downloads: four waits)
+        for h in &fake.download_headers {
+            let get = |n: &str| h.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str());
+            assert_eq!(get("Referer"), Some("https://discord.com/channels/1/2"));
+            assert_eq!(get("User-Agent"), Some(DEFAULT_USER_AGENT));
+            assert_eq!(get("Authorization"), None);
+            assert_eq!(get("Range"), None);
+        }
+        assert_eq!(clock.slept.len(), 4);
+        assert!(
+            clock
+                .slept
+                .iter()
+                .all(|d| (3.0..=8.0).contains(&d.as_secs_f64()))
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("4 videos (900 MB)")),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("1 wanted files over 500 MB"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("run3.mp4 (0 MB) of message 103: 1 of 4 files"))
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("x.mp4 of message 99 is not on Discord's CDN"))
+        );
+
+        // Next run: a new message whose file is half there; its first
+        // download answers 404 (the link died), the page is read again and
+        // the rest of the file is asked for with a Range
+        std::fs::create_dir_all(dir.join("104")).unwrap();
+        std::fs::write(dir.join("104/run4.mp4.part"), b"abc").unwrap();
+        let mut fake = Fake::new(alloc::vec![
+            ("/channels/2", ok(channel("2", 0, 104))),
+            (
+                "/channels/2/messages?limit=100&after=103",
+                ok(Value::Array(alloc::vec![with_files(
+                    104,
+                    &[("76", "run4.mp4", 8, Some(fresh))]
+                )]))
+            ),
+            (
+                "/channels/2/messages?limit=100&before=105",
+                ok(Value::Array(alloc::vec![with_files(
+                    104,
+                    &[("76", "run4.mp4", 8, Some(fresh + 1))]
+                )]))
+            ),
+        ]);
+        fake.expect_download(&cdn("76", "run4.mp4", fresh), status(404, ""), b"");
+        let partial = Response {
+            status: 206,
+            headers: Vec::new(),
+            body: String::new(),
+        };
+        fake.expect_download(&cdn("76", "run4.mp4", fresh + 1), partial, b"defgh");
+        let (summary, _) = go(&mut fake, &mut clock, &out, opts.clone()).unwrap();
+        assert!(fake.expected.is_empty() && fake.downloads.is_empty());
+        let m = summary.media.unwrap();
+        assert_eq!(m.downloaded, Tally { files: 1, bytes: 5 });
+        assert_eq!((m.present, m.refreshed, m.failed), (2, 1, 0));
+        assert_eq!(
+            std::fs::read(dir.join("104/run4.mp4")).unwrap(),
+            b"abcdefgh"
+        );
+        assert!(!dir.join("104/run4.mp4.part").exists());
+        for h in &fake.download_headers {
+            let range = h
+                .iter()
+                .find(|(k, _)| k == "Range")
+                .map(|(_, v)| v.as_str());
+            assert_eq!(range, Some("bytes=3-"));
+        }
+        assert_eq!(Manifest::load(&dir).unwrap().len(), 3);
+
+        // A total cap the folder (19 bytes) is already past: nothing more
+        // is downloaded, the file is counted as skipped
+        opts.max_total_gb = Some(10e-9);
+        let mut fake = Fake::new(alloc::vec![
+            ("/channels/2", ok(channel("2", 0, 105))),
+            (
+                "/channels/2/messages?limit=100&after=104",
+                ok(Value::Array(alloc::vec![with_files(
+                    105,
+                    &[("77", "run5.mp4", 4, Some(fresh))]
+                )]))
+            ),
+        ]);
+        let (summary, _) = go(&mut fake, &mut clock, &out, opts.clone()).unwrap();
+        let m = summary.media.unwrap();
+        assert_eq!(m.skipped_total, Tally { files: 1, bytes: 4 });
+        assert_eq!(m.downloaded, Tally::default());
+        assert_eq!(m.present, 3);
+
+        // The default, list: counted, nothing downloaded; and none: not
+        // even counted
+        opts.attachments = Attachments::List;
+        let mut fake = Fake::new(alloc::vec![("/channels/2", ok(channel("2", 0, 105)))]);
+        let (summary, _) = go(&mut fake, &mut clock, &out, opts.clone()).unwrap();
+        let m = summary.media.unwrap();
+        assert_eq!(m.listing.videos.files, 6);
+        assert_eq!(m.downloaded, Tally::default());
+        // Every wait so far: 4, then a page, a failed download, the refresh
+        // and the download, then one page; the listing waits for nothing
+        assert_eq!(clock.slept.len(), 4 + 4 + 1);
+        opts.attachments = Attachments::None;
+        let mut fake = Fake::new(alloc::vec![("/channels/2", ok(channel("2", 0, 105)))]);
+        let (summary, _) = go(&mut fake, &mut clock, &out, opts).unwrap();
+        assert_eq!(summary.media, None);
+        std::fs::remove_dir_all(&out).unwrap();
     }
 
     #[test]

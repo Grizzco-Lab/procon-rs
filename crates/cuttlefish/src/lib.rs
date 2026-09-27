@@ -28,6 +28,7 @@ pub mod claude_cli;
 pub mod crawl;
 pub mod discord;
 pub mod discord_fetch;
+pub mod discord_media;
 pub mod doc;
 pub mod embed;
 pub mod env_file;

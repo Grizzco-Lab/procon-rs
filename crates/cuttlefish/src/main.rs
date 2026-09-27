@@ -14,6 +14,7 @@ use cuttlefish::discord;
 use cuttlefish::discord_fetch::{
     self, Browser, Https, Interruptible, Options, Pace, Range, TOKEN_VAR,
 };
+use cuttlefish::discord_media::{Attachments, MEDIA, size};
 use cuttlefish::doc::Document;
 use cuttlefish::embed::E5Embedder;
 use cuttlefish::eval::EvalSet;
@@ -265,6 +266,22 @@ enum Fetch {
         /// Skip the channels' threads and forum posts
         #[arg(long)]
         no_threads: bool,
+        /// The messages' uploaded files, after the messages: list counts
+        /// them and adds up their sizes; videos downloads the videos, media
+        /// the videos and images, one at a time at the same pace, into
+        /// <knowledge>/media/discord/<guild>/<channel>/<message id>/ (with
+        /// --out: <out>/media/...), skipping files already there and
+        /// continuing partial ones; a link that expired has its page read
+        /// again
+        #[arg(long, value_enum, default_value_t = Attachments::List)]
+        attachments: Attachments,
+        /// Do not download files larger than this many MB
+        #[arg(long, value_name = "MB")]
+        max_file_mb: Option<u64>,
+        /// Stop downloading when a channel's media folder would grow past
+        /// this many GB (a synced folder has limited space)
+        #[arg(long, value_name = "GB")]
+        max_total_gb: Option<f64>,
         /// Seconds between requests, drawn anew for each from this range
         #[arg(long, default_value_t = Pace::default().delay)]
         delay: Range,
@@ -652,6 +669,9 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
             count,
             out,
             no_threads,
+            attachments,
+            max_file_mb,
+            max_total_gb,
             delay,
             pause_every,
             pause,
@@ -659,16 +679,19 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
             max_requests,
             max_minutes,
         } => {
-            // The channels' own folder, or <knowledge>/inbox/discord with a
-            // folder per channel below it
-            let (root, flat) = match out {
-                Some(out) => (out, true),
-                None => (
-                    knowledge_folder(data, config)?
-                        .join(inbox::INBOX)
-                        .join("discord"),
-                    false,
-                ),
+            // The channels' own folder (their files in <out>/media), or
+            // <knowledge>/inbox/discord with a folder per channel below it
+            // (their files in <knowledge>/media/discord)
+            let (root, media, flat) = match out {
+                Some(out) => (out.clone(), out.join("media"), true),
+                None => {
+                    let knowledge = knowledge_folder(data, config)?;
+                    (
+                        knowledge.join(inbox::INBOX).join("discord"),
+                        knowledge.join(MEDIA).join("discord"),
+                        false,
+                    )
+                }
             };
             let token = std::env::var(TOKEN_VAR)
                 .ok()
@@ -698,6 +721,31 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
             );
             let browser = Browser::from_env();
             println!("{}", browser.describe());
+            if !count {
+                println!(
+                    "Attachments: {}",
+                    match attachments {
+                        Attachments::None => "not looked at".to_string(),
+                        Attachments::List =>
+                            "counted, not downloaded (--attachments videos or media downloads them)"
+                                .to_string(),
+                        Attachments::Videos | Attachments::Media => format!(
+                            "{} downloaded into {}{}{}",
+                            if attachments == Attachments::Videos {
+                                "videos"
+                            } else {
+                                "videos and images"
+                            },
+                            media.display(),
+                            max_file_mb
+                                .map_or_else(String::new, |mb| format!(", files up to {mb} MB")),
+                            max_total_gb.map_or_else(String::new, |gb| format!(
+                                ", up to {gb} GB per channel"
+                            )),
+                        ),
+                    }
+                );
+            }
             let options = Options {
                 channels: channel.into_iter().map(|c| c.channel).collect(),
                 guild,
@@ -713,6 +761,10 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
                     max_minutes,
                 },
                 browser,
+                attachments,
+                max_file_mb,
+                max_total_gb,
+                media: media.clone(),
             };
             let pace = options.pace.clone();
             let mut http = Https::default();
@@ -726,6 +778,9 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
                 })?;
             for c in &summary.counts {
                 print_count(c, &pace);
+            }
+            if let Some(m) = &summary.media {
+                print_media(m, attachments, max_file_mb, max_total_gb, &media);
             }
             println!(
                 "{} requests, {} messages added, {} channels and threads under {}{}",
@@ -785,6 +840,60 @@ fn print_count(c: &discord_fetch::Count, pace: &Pace) {
             "; each thread adds a request or more"
         }
     );
+}
+
+/// Prints what a run found out about attachments and what it downloaded
+fn print_media(
+    m: &discord_fetch::Media,
+    attachments: Attachments,
+    max_file_mb: Option<u64>,
+    max_total_gb: Option<f64>,
+    media: &Path,
+) {
+    println!("Attachments in the archive: {}", m.listing);
+    if !matches!(attachments, Attachments::Videos | Attachments::Media) {
+        println!(
+            "  --attachments videos downloads the videos ({}), --attachments media the images too ({}); a synced knowledge folder needs that much space",
+            size(m.listing.videos.bytes),
+            size(m.listing.videos.bytes + m.listing.images.bytes)
+        );
+        return;
+    }
+    let mut parts = vec![format!(
+        "downloaded {} files ({}) into {}",
+        m.downloaded.files,
+        size(m.downloaded.bytes),
+        media.display()
+    )];
+    if m.present > 0 {
+        parts.push(format!("{} already there", m.present));
+    }
+    if m.skipped_size.files > 0 {
+        parts.push(format!(
+            "{} skipped over {} MB ({})",
+            m.skipped_size.files,
+            max_file_mb.unwrap_or_default(),
+            size(m.skipped_size.bytes)
+        ));
+    }
+    if m.skipped_total.files > 0 {
+        parts.push(format!(
+            "{} skipped for the {} GB total ({})",
+            m.skipped_total.files,
+            max_total_gb.unwrap_or_default(),
+            size(m.skipped_total.bytes)
+        ));
+    }
+    if m.refreshed > 0 {
+        parts.push(format!("{} pages read again for fresh links", m.refreshed));
+    }
+    if m.failed > 0 {
+        parts.push(format!("{} failed (see above)", m.failed));
+    }
+    if m.out_of_scope > 0 {
+        parts.push(format!("{} not on Discord's CDN", m.out_of_scope));
+    }
+    println!("  {}", parts.join("; "));
 }
 
 /// Prints an inbox import's report
