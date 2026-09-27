@@ -22,6 +22,7 @@ use cuttlefish::ingest::{self, Meta};
 use cuttlefish::llm::{Backend, Client, Settings};
 use cuttlefish::lock::{self, WriteLock};
 use cuttlefish::review::{Reviewer, translate};
+use cuttlefish::slang::{self, UserGlossary};
 use cuttlefish::store::{self, Store};
 use cuttlefish::{assets, env_file, inbox, tables};
 use cuttlefish::{corpus, corpus_reviews, corpus_videos};
@@ -116,6 +117,45 @@ enum Command {
     },
     /// Re-chunk and re-embed every stored document
     Reindex,
+    /// Slang suggestions from the community documents, as the studio's
+    /// Slang panel makes them (the studio reads the file on each request;
+    /// its chat picks the changes up on the next slang change or restart)
+    #[command(subcommand)]
+    Slang(Slang),
+}
+
+#[derive(Subcommand)]
+enum Slang {
+    /// Ask the model for aliases and new terms in the text not read yet
+    Suggest {
+        /// Read everything not read yet, in as many batches as it takes
+        #[arg(long)]
+        all: bool,
+        /// Batches at most (5 by default; with --all, no limit unless given)
+        #[arg(long)]
+        max_batches: Option<usize>,
+        /// Batches sent at once (at most 8)
+        #[arg(long, default_value_t = slang::DEFAULT_PARALLEL)]
+        parallel: usize,
+        /// Leave every suggestion pending, for review in the studio
+        #[arg(long)]
+        no_auto_apply: bool,
+        /// Confidence from which a suggestion is approved at once
+        #[arg(long, default_value_t = slang::DEFAULT_THRESHOLD)]
+        threshold: f32,
+        /// Only tell what a run would read
+        #[arg(long)]
+        dry_run: bool,
+        #[command(flatten)]
+        model: ModelArgs,
+    },
+    /// Move old aliases to the new terms that claim their text (the Flyfish's
+    /// "missiles" to "Flyfish missiles")
+    Move {
+        /// Only list them
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Args)]
@@ -735,6 +775,7 @@ fn main() -> Result<()> {
             println!("{n} chunks indexed");
             Ok(())
         }
+        Command::Slang(s) => slang_command(&data, s),
     }
 }
 
@@ -868,6 +909,86 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
                     .stopped
                     .map(|s| format!("; stopped: {s}"))
                     .unwrap_or_default()
+            );
+            Ok(())
+        }
+    }
+}
+
+/// `slang`: suggestions over the community documents, moves of old aliases
+fn slang_command(data: &Path, cmd: Slang) -> Result<()> {
+    let held = std::sync::Mutex::new(());
+    match cmd {
+        Slang::Suggest {
+            all,
+            max_batches,
+            parallel,
+            no_auto_apply,
+            threshold,
+            dry_run,
+            model,
+        } => {
+            let opts = slang::SuggestOptions {
+                all,
+                max_batches,
+                ..slang::SuggestOptions::default()
+            };
+            let docs = store::read_documents(data)?;
+            let plan = slang::plan(&docs, &UserGlossary::load(data)?, &opts);
+            println!(
+                "{} documents, {} characters not read: {} batches; this run reads {}",
+                plan.documents,
+                plan.chars,
+                plan.batches_total,
+                plan.batches.len()
+            );
+            if dry_run || plan.batches.is_empty() {
+                return Ok(());
+            }
+            let client = Client::from_env(model.settings())?;
+            let run = slang::RunOptions {
+                parallel: parallel.clamp(1, slang::MAX_PARALLEL),
+                auto_apply: (!no_auto_apply).then_some(threshold.clamp(0.0, 1.0)),
+            };
+            let stop = ctrl_c()?;
+            let report = slang::run(
+                &client,
+                data,
+                &plan.batches,
+                run,
+                &held,
+                &|| stop.load(Ordering::Relaxed),
+                &|_, line| println!("{line}"),
+            )?;
+            println!("done: {report}");
+            Ok(())
+        }
+        Slang::Move { dry_run } => {
+            let mut user = UserGlossary::load(data)?;
+            let moves = user.moves();
+            for m in &moves {
+                println!(
+                    "{} ({}): {} → {}{}",
+                    m.text,
+                    m.lang,
+                    m.from_name,
+                    m.to_name,
+                    m.relation
+                        .as_ref()
+                        .map(|r| format!(" ({r})"))
+                        .unwrap_or_default()
+                );
+                if !dry_run {
+                    user.apply_move(&m.alias)?;
+                }
+            }
+            if !dry_run && !moves.is_empty() {
+                user.save(data)?;
+            }
+            println!(
+                "{} aliases {}",
+                moves.len(),
+                if dry_run { "can move" } else { "moved" }
             );
             Ok(())
         }

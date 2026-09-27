@@ -100,7 +100,7 @@
 //! Errors are `{"error": "..."}` with status 400 (404 for a missing review).
 
 use crate::inspect::{Inspector, ffprobe};
-use crate::knowledge::{Knowledge, Status, Translation, now_ms};
+use crate::knowledge::{AutoApply, Knowledge, Status, Translation, now_ms};
 use crate::objects::write_atomic;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
@@ -504,6 +504,7 @@ impl Cuttlefish {
         knowledge: PathBuf,
         settings: Settings,
         translate_model: Option<String>,
+        auto_apply: AutoApply,
     ) -> Self {
         Self {
             inspector,
@@ -512,7 +513,9 @@ impl Cuttlefish {
             writing: Arc::default(),
             lookups: Arc::default(),
             thumbs: Mutex::default(),
-            knowledge: Arc::new(Knowledge::new(knowledge, settings, translate_model)),
+            knowledge: Arc::new(
+                Knowledge::new(knowledge, settings, translate_model).with_auto_apply(auto_apply),
+            ),
         }
     }
 
@@ -1892,6 +1895,7 @@ mod tests {
             dir.join("knowledge"),
             Settings::default(),
             None,
+            AutoApply::default(),
         );
         (dir, cuttlefish)
     }

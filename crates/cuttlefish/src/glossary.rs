@@ -16,7 +16,9 @@
 //! language, a note on its origin or use, where it came from and whether it
 //! is approved. Approved aliases count as names: [`Glossary::lookup`] and
 //! [`Glossary::find_in`] find a term by them. What the user teaches or
-//! approves is kept apart from the generated glossary ([`crate::slang`]).
+//! approves is kept apart from the generated glossary ([`crate::slang`]),
+//! with the new terms it adds, each linked to a broader term by a
+//! [`Relation`] (Flyfish missiles, part of Flyfish).
 //!
 //! Retrieval finds the terms used in a query and adds their other-language
 //! official names ([`Glossary::expand`]), so a Japanese question also
@@ -83,6 +85,48 @@ pub struct Alias {
     pub status: AliasStatus,
 }
 
+/// How a term relates to a broader one
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RelationKind {
+    /// A part or an attack of it (the Flyfish's missiles)
+    PartOf,
+    /// A kind of it
+    KindOf,
+    /// Otherwise related
+    RelatedTo,
+}
+
+impl RelationKind {
+    /// As written in prompts
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RelationKind::PartOf => "part of",
+            RelationKind::KindOf => "a kind of",
+            RelationKind::RelatedTo => "related to",
+        }
+    }
+}
+
+/// A term's link to a broader term, for the terms the user or the model
+/// added ([`crate::slang::UserTerm`])
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Relation {
+    pub kind: RelationKind,
+    /// The broader term's id
+    pub term: String,
+    /// Its English name (else its first name), shown in prompts and kept to
+    /// find it again after a re-import changed its id
+    pub name: String,
+}
+
+impl Relation {
+    /// `part of Flyfish`
+    pub fn label(&self) -> String {
+        alloc::format!("{} {}", self.kind.as_str(), self.name)
+    }
+}
+
 /// One term
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Term {
@@ -110,6 +154,10 @@ pub struct Term {
     /// never leads
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<String>,
+    /// The broader term it belongs to, for a term the user or the model
+    /// added
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related: Option<Relation>,
 }
 
 impl Term {
@@ -224,13 +272,21 @@ impl Index {
 
 /// An alias's line under its term in a prompt: `  - <lang> slang: <alias>
 /// → <official> (en: <English name>): <note>`; the official name is the
-/// one in the alias's language, else the English one, else the id
+/// one in the alias's language, else the English one, else the id. A term
+/// with a broader one says so: `missiles → Flyfish missiles (part of
+/// Flyfish)`.
 fn alias_line(t: &Term, a: &Alias) -> String {
     let english = t.name("en");
     let official = t.name(&a.lang).or(english).unwrap_or(&t.id);
     let mut line = alloc::format!("  - {} slang: {} → {official}", a.lang, a.text);
-    if let Some(en) = english.filter(|en| *en != official) {
-        line.push_str(&alloc::format!(" (en: {en})"));
+    let aside: Vec<String> = english
+        .filter(|en| *en != official)
+        .map(|en| alloc::format!("en: {en}"))
+        .into_iter()
+        .chain(t.related.as_ref().map(Relation::label))
+        .collect();
+    if !aside.is_empty() {
+        line.push_str(&alloc::format!(" ({})", aside.join("; ")));
     }
     if !a.note.is_empty() {
         line.push_str(": ");
@@ -515,6 +571,7 @@ impl Glossary {
                             g => String::from(g),
                         }),
                 )
+                .chain(t.related.as_ref().map(Relation::label))
                 .collect();
             if !tags.is_empty() {
                 out.push_str(&alloc::format!(" [{}]", tags.join(", ")));

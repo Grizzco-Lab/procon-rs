@@ -1311,11 +1311,20 @@
               Clear history
             </button>
           </header>
-          <!-- Slang (translate.js): suggestions waiting for review, what was
-               taught, and the suggestion run over the knowledge base -->
+          <!-- Slang (translate.js): old aliases a new term claims, new terms,
+               suggestions waiting for review, what was taught or applied,
+               and the suggestion run over the knowledge base -->
           <div class="cf-slang" id="cf-slang" hidden>
             <div class="cf-slang-head">
               <p class="panel-note" id="cf-slang-note"></p>
+              <label
+                class="check"
+                title="Approve at once what the model is sure of; you can undo each below"
+                data-i18n-title="slang.autoTitle"
+              >
+                <input type="checkbox" id="cf-slang-auto" />
+                <span id="cf-slang-auto-label"></span>
+              </label>
               <button type="button" class="btn" id="cf-slang-suggest">
                 <span data-i18n="slang.suggest"
                   >Suggest slang from the knowledge base</span
@@ -1323,13 +1332,57 @@
               </button>
             </div>
             <div class="cf-slang-run" id="cf-slang-run" hidden></div>
+            <div class="cf-slang-moves" id="cf-slang-moves-box" hidden>
+              <div class="cf-slang-head">
+                <h3 class="readout-label" data-i18n="slang.moves">
+                  Better terms for old aliases
+                </h3>
+                <button
+                  type="button"
+                  class="mode-toggle cf-approve"
+                  id="cf-slang-move-all"
+                  data-i18n="slang.moveAll"
+                >
+                  Move all
+                </button>
+              </div>
+              <ul class="cf-aliases" id="cf-slang-moves"></ul>
+            </div>
+            <h3 class="readout-label" data-i18n="slang.newTerms">New terms</h3>
+            <ul class="cf-aliases" id="cf-slang-terms"></ul>
             <h3 class="readout-label" data-i18n="slang.pending">
               Waiting for review
             </h3>
             <ul class="cf-aliases" id="cf-slang-pending"></ul>
-            <h3 class="readout-label" data-i18n="slang.taught">
-              Taught and approved
-            </h3>
+            <div class="cf-slang-head">
+              <h3 class="readout-label" data-i18n="slang.taught">
+                Taught and approved
+              </h3>
+              <div
+                class="seg cf-filter"
+                id="cf-slang-filter"
+                role="group"
+                aria-label="Which aliases"
+                data-i18n-aria-label="slang.filter.label"
+              >
+                <button
+                  type="button"
+                  class="mode-toggle"
+                  data-filter="all"
+                  data-i18n="slang.filter.all"
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  class="mode-toggle"
+                  data-filter="auto"
+                  data-i18n="slang.filter.auto"
+                >
+                  Auto-applied
+                </button>
+              </div>
+            </div>
             <ul class="cf-aliases" id="cf-slang-taught"></ul>
           </div>
           <p

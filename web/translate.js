@@ -233,6 +233,10 @@
       .join("");
   }
 
+  /** `part of Flyfish` for a new term's relation to a broader one */
+  const relationLabel = (related) =>
+    related ? t(`slang.rel.${related.kind}`, { name: related.name }) : "";
+
   /** One glossary term as it was used: the form in the text → its name in
    * the target language, the definition, every other name and the slang,
    * and "Add alias" */
@@ -251,6 +255,7 @@
         <span class="cf-tr-arrow">→</span>
         ${to ? `<b class="cf-tr-to">${escapeHtml(to)}</b>` : `<span class="panel-note">${escapeHtml(t("tr.noName", { lang: langName(entry.target) }))}</span>`}
         <span class="cf-kind">${escapeHtml(term.id)}</span>
+        ${term.related ? `<span class="panel-note">${escapeHtml(relationLabel(term.related))}</span>` : ""}
         <button type="button" class="mode-toggle cf-mini" data-add-alias>${escapeHtml(t("alias.add"))}</button>
       </div>
       ${term.definition ? `<p class="k-hit-text">${escapeHtml(term.definition)}</p>` : ""}
@@ -450,9 +455,13 @@
   // The user teaches aliases (slang) of glossary terms: "Add alias" on a
   // term, or "Teach a word" on a sentence (select the word, pick its term
   // as you type). The Slang panel lists them, the suggestions the model
-  // found in the knowledge base (Approve / Reject / Edit) and runs a
-  // suggestion job after a dry run. All in <knowledge>/glossary-user.toml
-  // through the knowledge/slang endpoints (src/knowledge.rs).
+  // found in the knowledge base (Approve / Reject / Edit; Undo for what
+  // auto-apply approved, with an "Auto-applied" filter), the new terms it
+  // proposed (with their relation to a broader term), the old aliases a new
+  // term claims (Move), and runs a suggestion job after a dry run (a few
+  // batches, or everything not read yet). All in
+  // <knowledge>/glossary-user.toml through the knowledge/slang endpoints
+  // (src/knowledge.rs).
 
   /** Poll interval of a suggestion run, in ms */
   const RUN_POLL_MS = 1500;
@@ -462,8 +471,15 @@
   const slang = {
     /** The user glossary as the server lists it */
     aliases: [],
+    /** New terms, and old aliases a new term claims */
+    terms: [],
+    moves: [],
     file: "",
     pending: 0,
+    /** The server's auto-apply default: `{on, threshold}` */
+    autoApply: { on: true, threshold: 0.6 },
+    /** Which approved aliases are listed: "all" or "auto" */
+    filter: remembered("slang-filter", "all"),
     /** Whether the panel is open */
     open: remembered("slang-open", "0") === "1",
     /** The suggestion run's job id while it runs */
@@ -743,9 +759,12 @@
       const data = await api("knowledge/slang");
       Object.assign(slang, {
         aliases: data.aliases,
+        terms: data.terms ?? [],
+        moves: data.moves ?? [],
         file: data.file,
         pending: data.pending,
         backend: data.backend,
+        autoApply: data.auto_apply ?? slang.autoApply,
       });
     } catch (error) {
       $("cf-slang-note").textContent = error.message;
@@ -753,6 +772,17 @@
     }
     drawSlang();
   }
+
+  /** Whether runs from this page apply confident suggestions at once: the
+   * viewer's choice, else the server's default */
+  function autoApply() {
+    const chosen = remembered("slang-auto", "");
+    return chosen ? chosen === "1" : slang.autoApply.on;
+  }
+
+  /** The Undo button of what was approved at once */
+  const undoButton = () =>
+    `<button type="button" class="mode-toggle" data-undo title="${escapeHtml(t("slang.undoTitle"))}">${escapeHtml(t("slang.undo"))}</button>`;
 
   /** One alias of the user glossary: the alias → its term, where it came
    * from, the evidence of a suggestion, and its actions */
@@ -768,6 +798,7 @@
       alias.confidence != null &&
         t("slang.confidence", { p: Math.round(alias.confidence * 100) }),
       alias.document && t("slang.from", { doc: alias.document }),
+      alias.term_status === "pending" && t("slang.termPending"),
     ].filter(Boolean);
     const pending = alias.status === "pending";
     li.innerHTML = `
@@ -776,6 +807,8 @@
         <span class="cf-kind">${escapeHtml(alias.lang)}</span>
         <span class="cf-tr-arrow">→</span>
         ${term}
+        ${alias.term_status ? `<span class="cf-kind">${escapeHtml(t("slang.newTerm"))}</span>` : ""}
+        ${alias.auto ? `<span class="cf-kind cf-auto">${escapeHtml(t("slang.autoApplied"))}</span>` : ""}
         <span class="panel-note">${escapeHtml(facts.join(" · "))}</span>
       </div>
       ${alias.note ? `<p class="k-hit-text">${escapeHtml(alias.note)}</p>` : ""}
@@ -787,8 +820,67 @@
                <button type="button" class="mode-toggle" data-reject>${escapeHtml(t("slang.reject"))}</button>`
             : ""
         }
+        ${alias.auto ? undoButton() : ""}
         <button type="button" class="mode-toggle" data-edit>${escapeHtml(t("slang.edit"))}</button>
         ${pending ? "" : `<button type="button" class="mode-toggle" data-delete>${escapeHtml(t("slang.delete"))}</button>`}
+      </div>`;
+    return li;
+  }
+
+  /** One new term: its name, kind and relation, definition, evidence,
+   * aliases and actions */
+  function termItem(term) {
+    const li = document.createElement("li");
+    li.className = "cf-alias";
+    li.dataset.newTerm = term.id;
+    const facts = [
+      t(`slang.source.${term.source}`),
+      term.confidence != null &&
+        t("slang.confidence", { p: Math.round(term.confidence * 100) }),
+      term.document && t("slang.from", { doc: term.document }),
+    ].filter(Boolean);
+    const pending = term.status === "pending";
+    const rejected = term.status === "rejected";
+    li.innerHTML = `
+      <div class="k-hit-head">
+        <b class="cf-tr-to">${escapeHtml(term.name)}</b>
+        ${term.kind ? `<span class="cf-kind">${escapeHtml(term.kind)}</span>` : ""}
+        ${term.related ? `<span class="panel-note">${escapeHtml(relationLabel(term.related))}</span>` : ""}
+        ${term.auto ? `<span class="cf-kind cf-auto">${escapeHtml(t("slang.autoApplied"))}</span>` : ""}
+        ${rejected ? `<span class="cf-kind">${escapeHtml(t("slang.rejected"))}</span>` : ""}
+        <span class="panel-note">${escapeHtml(facts.join(" · "))}</span>
+      </div>
+      ${term.definition ? `<p class="k-hit-text">${escapeHtml(term.definition)}</p>` : ""}
+      ${term.aliases?.length ? `<p class="panel-note">${escapeHtml(t("slang.termAliases", { list: term.aliases.join(", ") }))}</p>` : ""}
+      ${term.evidence ? `<blockquote class="cf-alias-evidence">${escapeHtml(term.evidence)}</blockquote>` : ""}
+      <div class="cf-alias-actions">
+        ${
+          pending
+            ? `<button type="button" class="mode-toggle cf-approve" data-term-status="approved">${escapeHtml(t("slang.approve"))}</button>`
+            : ""
+        }
+        ${pending ? `<button type="button" class="mode-toggle" data-term-status="rejected">${escapeHtml(t("slang.reject"))}</button>` : ""}
+        ${term.status === "approved" ? undoButton() : ""}
+        <button type="button" class="mode-toggle" data-delete>${escapeHtml(t("slang.delete"))}</button>
+      </div>`;
+    return li;
+  }
+
+  /** An old alias a new term claims, with Move */
+  function moveItem(move) {
+    const li = document.createElement("li");
+    li.className = "cf-alias";
+    li.dataset.move = move.alias;
+    li.innerHTML = `
+      <div class="k-hit-head">
+        <b class="cf-tr-from" lang="${escapeHtml(move.lang)}">${escapeHtml(move.text)}</b>
+        <span class="cf-kind">${escapeHtml(move.lang)}</span>
+        <span class="cf-tr-arrow">→</span>
+        <s class="panel-note">${escapeHtml(move.from_name || move.from)}</s>
+        <span class="cf-tr-arrow">→</span>
+        <b class="cf-tr-to">${escapeHtml(move.to_name)}</b>
+        ${move.relation ? `<span class="panel-note">${escapeHtml(move.relation)}</span>` : ""}
+        <button type="button" class="mode-toggle cf-approve cf-mini" data-move>${escapeHtml(t("slang.move"))}</button>
       </div>`;
     return li;
   }
@@ -799,16 +891,33 @@
     badge.textContent = slang.pending;
     $("cf-slang").hidden = !slang.open;
     $("cf-slang-toggle").setAttribute("aria-expanded", String(slang.open));
+    $("cf-slang-auto").checked = autoApply();
+    $("cf-slang-auto-label").textContent = t("slang.auto", {
+      p: Math.round(slang.autoApply.threshold * 100),
+    });
     const pending = slang.aliases.filter((a) => a.status === "pending");
-    const taught = slang.aliases.filter((a) => a.status === "approved");
+    const taught = slang.aliases.filter(
+      (a) => a.status === "approved" && (slang.filter !== "auto" || a.auto),
+    );
     $("cf-slang-note").textContent = slang.file
-      ? t("slang.note", { n: taught.length, file: slang.file.split("/").pop() })
+      ? t("slang.note", {
+          n: slang.aliases.filter((a) => a.status === "approved").length,
+          file: slang.file.split("/").pop(),
+        })
       : "";
     $("cf-slang-note").title = slang.file;
-    const list = (id, aliases, empty) => {
+    for (const button of $("cf-slang-filter").querySelectorAll(
+      "[data-filter]",
+    )) {
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.filter === slang.filter),
+      );
+    }
+    const list = (id, items, draw, empty) => {
       $(id).replaceChildren(
-        ...(aliases.length
-          ? aliases.map(aliasItem)
+        ...(items.length
+          ? items.map(draw)
           : [
               Object.assign(document.createElement("li"), {
                 className: "panel-note",
@@ -817,14 +926,22 @@
             ]),
       );
     };
-    list("cf-slang-pending", pending, "slang.noPending");
-    list("cf-slang-taught", taught, "slang.noTaught");
+    $("cf-slang-moves-box").hidden = !slang.moves.length;
+    list("cf-slang-moves", slang.moves, moveItem, "slang.noPending");
+    list("cf-slang-terms", slang.terms, termItem, "slang.noTerms");
+    list("cf-slang-pending", pending, aliasItem, "slang.noPending");
+    list(
+      "cf-slang-taught",
+      taught,
+      aliasItem,
+      slang.filter === "auto" ? "slang.noAuto" : "slang.noTaught",
+    );
   }
 
-  /** Changes an alias of the panel (approve, reject) and draws the list */
-  async function changeAlias(body) {
+  /** Posts a change of the panel and draws the list again */
+  async function changeSlang(path, body) {
     try {
-      await api("knowledge/slang/edit", "POST", body);
+      await api(`knowledge/slang/${path}`, "POST", body);
     } catch (error) {
       $("cf-slang-note").textContent = error.message;
     }
@@ -832,14 +949,39 @@
   }
 
   $("cf-slang").addEventListener("click", async (event) => {
+    const move = event.target.closest("[data-move]");
+    if (move) {
+      changeSlang("move", { id: move.closest("li").dataset.move });
+      return;
+    }
+    const termLi = event.target.closest("[data-new-term]");
+    if (termLi) {
+      const term = slang.terms.find((x) => x.id === termLi.dataset.newTerm);
+      if (!term) return;
+      const status = event.target.closest("[data-term-status]");
+      if (status) {
+        changeSlang("term", {
+          id: term.id,
+          status: status.dataset.termStatus,
+        });
+      } else if (event.target.closest("[data-undo]")) {
+        changeSlang("undo", { id: term.id });
+      } else if (event.target.closest("[data-delete]")) {
+        if (!confirm(t("slang.deleteTermAsk", { name: term.name }))) return;
+        changeSlang("delete", { id: term.id });
+      }
+      return;
+    }
     const li = event.target.closest(".cf-alias");
     if (!li || event.target.closest(".cf-alias-form")) return;
     const alias = slang.aliases.find((a) => a.id === li.dataset.id);
     if (!alias) return;
     if (event.target.closest("[data-approve]")) {
-      changeAlias({ id: alias.id, status: "approved" });
+      changeSlang("edit", { id: alias.id, status: "approved" });
     } else if (event.target.closest("[data-reject]")) {
-      changeAlias({ id: alias.id, status: "rejected" });
+      changeSlang("edit", { id: alias.id, status: "rejected" });
+    } else if (event.target.closest("[data-undo]")) {
+      changeSlang("undo", { id: alias.id });
     } else if (event.target.closest("[data-edit]")) {
       const form = aliasForm({
         mode: "edit",
@@ -856,14 +998,23 @@
       form.querySelector("[data-text]").focus();
     } else if (event.target.closest("[data-delete]")) {
       if (!confirm(t("slang.deleteAsk", { text: alias.text }))) return;
-      try {
-        await api("knowledge/slang/delete", "POST", { id: alias.id });
-      } catch (error) {
-        $("cf-slang-note").textContent = error.message;
-      }
-      loadSlang();
+      changeSlang("delete", { id: alias.id });
     }
   });
+
+  $("cf-slang-move-all").onclick = () => changeSlang("move", { all: true });
+
+  $("cf-slang-filter").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-filter]");
+    if (!button) return;
+    slang.filter = button.dataset.filter;
+    remember("slang-filter", slang.filter);
+    drawSlang();
+  });
+
+  $("cf-slang-auto").onchange = (event) => {
+    remember("slang-auto", event.target.checked ? "1" : "0");
+  };
 
   $("cf-slang-toggle").onclick = () => {
     slang.open = !slang.open;
@@ -881,15 +1032,22 @@
     runBox.innerHTML = `<p class="panel-note ${kind === "error" ? "level-critical" : ""}">${escapeHtml(text)}</p>`;
   }
 
-  /** The dry run: what a run of `max_batches` would read, with Run */
-  async function planRun() {
+  /** What a run reads: `max_batches`, or everything with "all" */
+  function runScope() {
+    const all = remembered("slang-all", "0") === "1";
     const batches = Number(remembered("slang-batches", "5")) || 5;
+    return all ? { all: true } : { max_batches: batches };
+  }
+
+  /** The dry run: what a run would read, with Run */
+  async function planRun() {
+    const scope = runScope();
     runNote(t("slang.planning"));
     let plan;
     try {
       plan = await api("knowledge/slang/suggest", "POST", {
         dry_run: true,
-        max_batches: batches,
+        ...scope,
       });
     } catch (error) {
       runNote(error.message, "error");
@@ -899,6 +1057,7 @@
       runNote(t("slang.nothing"));
       return;
     }
+    const batches = Number(remembered("slang-batches", "5")) || 5;
     runBox.innerHTML = `
       <p>${escapeHtml(
         t("slang.plan", {
@@ -912,7 +1071,9 @@
       ${plan.backend ? "" : `<p class="panel-note level-critical">${escapeHtml(t("slang.noBackend"))}</p>`}
       <div class="cf-alias-actions">
         <label class="check">${escapeHtml(t("slang.batches"))}
-          <input type="number" class="select num cf-batches" min="1" max="50" value="${batches}" data-batches /></label>
+          <input type="number" class="select num cf-batches" min="1" max="50" value="${batches}" data-batches ${scope.all ? "disabled" : ""} /></label>
+        <label class="check"><input type="checkbox" data-all ${scope.all ? "checked" : ""} />
+          ${escapeHtml(t("slang.all", { total: number(plan.batches_total), parallel: plan.parallel }))}</label>
         <button type="button" class="btn" data-run ${plan.backend ? "" : "disabled"}>${escapeHtml(t("slang.run"))}</button>
         <button type="button" class="mode-toggle" data-run-close>${escapeHtml(t("alias.cancel"))}</button>
       </div>`;
@@ -940,7 +1101,7 @@
         const stop = job.stopping
           ? `<button type="button" class="btn btn-small k-stop" disabled>${escapeHtml(t("k.stopping"))}</button><span class="panel-note">${escapeHtml(t("k.stoppingNote"))}</span>`
           : `<button type="button" class="btn btn-small k-stop" data-run-cancel title="${escapeHtml(t("k.stopTitle"))}"><span class="k-stop-glyph" aria-hidden="true"></span>${escapeHtml(t("k.stop"))}</button>`;
-        runBox.innerHTML = `<p class="panel-note">${escapeHtml(t("slang.running", { done: job.done + 1, total: job.total ?? "?" }))} ${escapeHtml(job.lines.at(-1) ?? "")}</p>
+        runBox.innerHTML = `<p class="panel-note">${escapeHtml(t("slang.running", { done: Math.min(job.done + 1, job.total ?? Infinity), total: job.total ?? "?" }))} ${escapeHtml(job.lines.at(-1) ?? "")}</p>
           <div class="cf-alias-actions">${stop}</div>`;
         runBox.hidden = false;
         await new Promise((resolve) => setTimeout(resolve, RUN_POLL_MS));
@@ -948,7 +1109,9 @@
       }
       slang.job = null;
       if (job.state === "done") {
-        runNote(t("slang.done", { line: job.lines.at(-1) ?? "" }));
+        runNote(
+          t("slang.done", { line: job.summary ?? job.lines.at(-1) ?? "" }),
+        );
       } else {
         runNote(
           t("slang.failed", {
@@ -981,6 +1144,12 @@
   };
 
   runBox.addEventListener("change", (event) => {
+    const all = event.target.closest("[data-all]");
+    if (all) {
+      remember("slang-all", all.checked ? "1" : "0");
+      planRun();
+      return;
+    }
     const input = event.target.closest("[data-batches]");
     if (!input) return;
     const n = Math.min(50, Math.max(1, Math.round(Number(input.value) || 1)));
@@ -1001,10 +1170,10 @@
         // The run ends on its own
       }
     } else if (event.target.closest("[data-run]")) {
-      const batches = Number(remembered("slang-batches", "5")) || 5;
       try {
         const started = await api("knowledge/slang/suggest", "POST", {
-          max_batches: batches,
+          ...runScope(),
+          auto_apply: autoApply(),
         });
         slang.job = started.job.id;
         followRun();

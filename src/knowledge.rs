@@ -41,16 +41,25 @@
 //!   type
 //! - `GET slang`: the user glossary (`<knowledge>/glossary-user.toml`, see
 //!   `cuttlefish::slang`): the aliases taught and suggested, newest first,
-//!   with their terms' names, and how many suggestions wait; `POST
-//!   slang/add` with `{"term", "text", "lang", "note"}` teaches an alias,
-//!   `slang/edit` with `{"id", "term"?, "text"?, "lang"?, "note"?,
-//!   "status"?}` changes one (approving or rejecting a suggestion sets its
-//!   status), `slang/delete` with `{"id"}` removes one. `POST
-//!   slang/suggest` with `{"dry_run", "max_batches"?, "batch_chars"?,
-//!   "sources"?, "language"?}` tells what a run would read (documents,
-//!   characters, batches) or starts one as a job: the model (the
-//!   translator's client) reads community documents batch by batch and
-//!   proposes aliases, which wait as pending
+//!   with their terms' names, the new terms, the old aliases that could
+//!   move to a new term (`moves`), how many suggestions wait and the
+//!   auto-apply default; `POST slang/add` with `{"term", "text", "lang",
+//!   "note"}` teaches an alias, `slang/edit` with `{"id", "term"?,
+//!   "text"?, "lang"?, "note"?, "status"?}` changes one (approving or
+//!   rejecting a suggestion sets its status), `slang/term` with `{"id",
+//!   "status"}` approves or rejects a new term with its aliases,
+//!   `slang/undo` with `{"id"}` rejects an alias or new term that was
+//!   approved (auto-applied), `slang/move` with `{"id"}` or `{"all":
+//!   true}` moves old aliases to their new terms, `slang/delete` with
+//!   `{"id"}` removes an alias or a new term. `POST slang/suggest` with
+//!   `{"dry_run", "all"?, "max_batches"?, "batch_chars"?, "sources"?,
+//!   "language"?, "parallel"?, "auto_apply"?, "threshold"?}` tells what a
+//!   run would read (documents, characters, batches) or starts one as a
+//!   job: the model (the translator's client) reads community documents
+//!   (with `all`, everything not read yet), a few batches at once, and
+//!   proposes aliases and new terms; with auto-apply (`[cuttlefish]
+//!   slang_auto_apply`, on by default) the sure ones are approved at once,
+//!   the rest waits as pending
 //! - `GET assets?q=&folder=`: images and icons of the catalogue, with the
 //!   names of their glossary terms; `GET thumb?id=` one's thumbnail
 //! - `GET inbox`: files waiting in the inbox; `POST upload?path=` with the
@@ -74,6 +83,7 @@ use cuttlefish::assets::{self, Catalogue};
 use cuttlefish::discord::Bot;
 use cuttlefish::doc::{Document, SourceKind};
 use cuttlefish::embed::{E5Embedder, Embedder};
+use cuttlefish::glossary::AliasStatus;
 use cuttlefish::glossary::{Glossary, Term};
 use cuttlefish::google::{self, GoogleFile};
 use cuttlefish::ingest::{self, Meta, Web};
@@ -507,6 +517,33 @@ pub struct Knowledge {
     /// Held while the user glossary (`glossary-user.toml`) is read and
     /// written back
     slang: Mutex<()>,
+    /// Whether slang suggestions are approved at once by default
+    auto_apply: AutoApply,
+}
+
+/// Auto-apply of slang suggestions by default: suggestions the model is at
+/// least `threshold` sure of are approved at once (`[cuttlefish]
+/// slang_auto_apply`, `slang_threshold`); the page may choose otherwise per
+/// run
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct AutoApply {
+    pub on: bool,
+    #[serde(serialize_with = "rounded")]
+    pub threshold: f32,
+}
+
+/// A confidence as JSON: to two decimals (0.7, not 0.699999988)
+fn rounded<S: serde::Serializer>(x: &f32, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_f64((f64::from(*x) * 100.0).round() / 100.0)
+}
+
+impl Default for AutoApply {
+    fn default() -> Self {
+        AutoApply {
+            on: true,
+            threshold: slang::DEFAULT_THRESHOLD,
+        }
+    }
 }
 
 impl Knowledge {
@@ -525,7 +562,13 @@ impl Knowledge {
             cancel: AtomicBool::new(false),
             catalogue: Mutex::default(),
             slang: Mutex::default(),
+            auto_apply: AutoApply::default(),
         }
+    }
+
+    /// With this auto-apply of slang suggestions by default
+    pub fn with_auto_apply(self, auto_apply: AutoApply) -> Self {
+        Self { auto_apply, ..self }
     }
 
     /// The crate's data folder
@@ -1187,11 +1230,18 @@ impl ingest::Sink for JobSink<'_> {
 // ----------------------------------------------------------------- slang
 
 /// A slang suggestion run as the page asks for it: a dry run tells what it
-/// would read
+/// would read; `auto_apply` and `threshold` override the configured
+/// [`AutoApply`], `parallel` the batches sent at once
 #[derive(Deserialize)]
 struct SuggestRequest {
     #[serde(default)]
     dry_run: bool,
+    #[serde(default)]
+    auto_apply: Option<bool>,
+    #[serde(default)]
+    threshold: Option<f32>,
+    #[serde(default)]
+    parallel: Option<usize>,
     #[serde(flatten)]
     options: SuggestOptions,
 }
@@ -1216,7 +1266,10 @@ impl Knowledge {
 
     /// The user glossary: every alias taught or suggested, newest first,
     /// each with its term's official names (`term_forms`, null when the
-    /// term is gone), and how many suggestions wait
+    /// term is gone; a new term's name while it waits) and, for a new
+    /// term's alias, that term's status (`term_status`); the new terms,
+    /// newest first; the old aliases that could move to a new term; how
+    /// many suggestions wait; the auto-apply default
     pub fn slang(&self) -> Result<Value> {
         let glossary = Store::load_glossary(&self.root)?;
         let user = UserGlossary::load(&self.root)?;
@@ -1226,16 +1279,41 @@ impl Knowledge {
             .rev()
             .map(|a| {
                 let term = a.find(&glossary).map(|i| &glossary.terms[i]);
+                let new = user.term(&a.term);
                 let mut value = json!(a);
-                value["term_forms"] = json!(term.map(|t| &t.forms));
+                value["term_forms"] = match (term, new) {
+                    (Some(t), _) => json!(t.forms),
+                    (None, Some(t)) => json!({ "en": [t.name] }),
+                    (None, None) => Value::Null,
+                };
+                value["term_status"] = json!(new.map(|t| t.status));
+                value
+            })
+            .collect();
+        let terms: Vec<Value> = user
+            .terms
+            .iter()
+            .rev()
+            .map(|t| {
+                let mut value = json!(t);
+                value["aliases"] = json!(
+                    user.aliases
+                        .iter()
+                        .filter(|a| a.term == t.id)
+                        .map(|a| &a.text)
+                        .collect::<Vec<_>>()
+                );
                 value
             })
             .collect();
         Ok(json!({
             "file": self.root.join(slang::FILE),
             "aliases": aliases,
-            "pending": user.pending().count(),
+            "terms": terms,
+            "moves": user.moves(),
+            "pending": user.pending().count() + user.pending_terms().count(),
             "backend": self.translate.detect(),
+            "auto_apply": self.auto_apply,
         }))
     }
 
@@ -1257,7 +1335,8 @@ impl Knowledge {
         Ok(answer)
     }
 
-    /// `POST slang/add`, `slang/edit`, `slang/delete`
+    /// `POST slang/add`, `slang/edit`, `slang/delete`, `slang/undo`,
+    /// `slang/term`, `slang/move`
     fn post_slang(&self, action: &str, body: &Value) -> Result<Value> {
         let text = |key: &str| body[key].as_str().unwrap_or_default();
         match action {
@@ -1279,8 +1358,32 @@ impl Knowledge {
                 self.change_slang(|g, user| Ok(json!(user.edit(g, text("id"), &edit)?)))
             }
             "delete" => self.change_slang(|_, user| {
-                ensure!(user.remove(text("id")), "no alias {}", text("id"));
+                ensure!(user.remove(text("id")), "no alias or term {}", text("id"));
                 Ok(json!({ "deleted": text("id") }))
+            }),
+            "undo" => self.change_slang(|_, user| {
+                user.undo(text("id"))?;
+                log::info!("Slang: {} undone", text("id"));
+                Ok(json!({ "undone": text("id") }))
+            }),
+            "term" => {
+                let status: AliasStatus = serde_json::from_value(body["status"].clone())
+                    .map_err(|e| anyhow::anyhow!("bad status: {e}"))?;
+                self.change_slang(|_, user| Ok(json!(user.set_term_status(text("id"), status)?)))
+            }
+            "move" => self.change_slang(|_, user| {
+                let ids: Vec<String> = if body["all"].as_bool() == Some(true) {
+                    user.moves().into_iter().map(|m| m.alias).collect()
+                } else {
+                    vec![text("id").to_string()]
+                };
+                let mut moved = Vec::new();
+                for id in &ids {
+                    let m = user.apply_move(id)?;
+                    log::info!("Slang: {} moved from {} to {}", m.text, m.from, m.to);
+                    moved.push(m);
+                }
+                Ok(json!({ "moved": moved }))
             }),
             _ => bail!("no endpoint POST knowledge/slang/{action}"),
         }
@@ -1296,12 +1399,26 @@ impl Knowledge {
             let _held = self.slang.lock().unwrap();
             slang::plan(&docs, &UserGlossary::load(&self.root)?, &request.options)
         };
+        let auto = request.auto_apply.unwrap_or(self.auto_apply.on);
+        let threshold = request
+            .threshold
+            .unwrap_or(self.auto_apply.threshold)
+            .clamp(0.0, 1.0);
+        let run = slang::RunOptions {
+            parallel: request
+                .parallel
+                .unwrap_or(slang::DEFAULT_PARALLEL)
+                .clamp(1, slang::MAX_PARALLEL),
+            auto_apply: auto.then_some(threshold),
+        };
         let summary = json!({
             "documents": plan.documents,
             "chars": plan.chars,
             "batches_total": plan.batches_total,
             "batches": plan.batches.len(),
             "chars_run": plan.chars_run,
+            "parallel": run.parallel,
+            "auto_apply": run.auto_apply.map(|t| (f64::from(t) * 100.0).round() / 100.0),
             "backend": self.translate.detect(),
         });
         if request.dry_run {
@@ -1317,50 +1434,42 @@ impl Knowledge {
             plan.batches_total
         );
         let job = self.start_job(what, move |knowledge, id| {
-            knowledge.run_suggest(id, &client, &plan.batches)
+            knowledge.run_suggest(id, &client, &plan.batches, run)
         })?;
         Ok(json!({ "plan": summary, "job": job }))
     }
 
-    /// Sends the batches to the model one by one; after each, its new
-    /// suggestions and what it read go into the user glossary
-    fn run_suggest(&self, id: u64, client: &Client, batches: &[slang::Batch]) -> Result<String> {
+    /// Sends the batches to the model, a few at once (`slang::run`); after
+    /// each, its suggestions and what it read go into the user glossary.
+    /// The loaded store reads the glossary again at the end.
+    fn run_suggest(
+        &self,
+        id: u64,
+        client: &Client,
+        batches: &[slang::Batch],
+        opts: slang::RunOptions,
+    ) -> Result<String> {
         let total = batches.len();
         self.update(id, |job| job.total = Some(total));
-        let mut added = 0;
-        for (i, batch) in batches.iter().enumerate() {
-            if self.cancel.load(Ordering::Relaxed) {
-                bail!("cancelled after {i} of {total} batches: {added} suggestions");
-            }
-            let glossary = Store::load_glossary(&self.root)?;
-            let reply = client.send(&slang::suggest_prompt(&glossary, batch))?;
-            let n = {
-                let _held = self.slang.lock().unwrap();
-                let mut user = UserGlossary::load(&self.root)?;
-                let found =
-                    slang::parse_candidates(&reply.text, &glossary, &user, batch, now_ms())?;
-                let n = user.take(found, batch);
-                user.save(&self.root)?;
-                n
-            };
-            added += n;
-            let titles: String = batch
-                .pieces
-                .iter()
-                .map(|p| p.title.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-                .chars()
-                .take(160)
-                .collect();
-            self.update(id, |job| {
-                job.done = i + 1;
-                job.added = added;
-                job.lines
-                    .push(format!("batch {}/{total}: {n} new ({titles})", i + 1));
-            });
-        }
-        Ok(format!("done: {added} suggestions to review"))
+        let result = slang::run(
+            client,
+            &self.root,
+            batches,
+            opts,
+            &self.slang,
+            &|| self.cancelled(),
+            &|report, line| {
+                self.update(id, |job| {
+                    job.done = report.batches + report.failed;
+                    job.added = report.suggestions();
+                    job.lines.push(line.to_string());
+                });
+            },
+        );
+        self.glossary_changed()?;
+        let report = result?;
+        self.update(id, |job| job.summary = Some(report.to_string()));
+        Ok(format!("done: {report}"))
     }
 }
 
@@ -1706,13 +1815,73 @@ mod tests {
         post("slang/delete", json!({"id": id})).ok().unwrap();
         assert!(knowledge.glossary("shark").unwrap()["terms"][0].is_null());
         // A dry run over a store without documents reads nothing
-        let dry = post("slang/suggest", json!({"dry_run": true}))
+        let dry = post("slang/suggest", json!({"dry_run": true, "all": true}))
             .ok()
             .unwrap();
         assert_eq!(
             (dry["documents"].as_u64(), dry["batches"].as_u64()),
             (Some(0), Some(0))
         );
+        assert_eq!(
+            (dry["parallel"].as_u64(), dry["auto_apply"].as_f64()),
+            (Some(3), Some(0.6))
+        );
+
+        // A new term claims an alias approved for the Flyfish: it moves
+        post(
+            "slang/add",
+            json!({"term": "Flyfish", "text": "missiles", "lang": "en"}),
+        )
+        .ok()
+        .unwrap();
+        let mut user = UserGlossary::load(&dir).unwrap();
+        user.terms.push(slang::UserTerm {
+            id: "flyfish-missiles".into(),
+            name: "Flyfish missiles".into(),
+            status: AliasStatus::Pending,
+            ..slang::UserTerm::default()
+        });
+        user.aliases.push(slang::UserAlias {
+            id: "s1".into(),
+            term: "flyfish-missiles".into(),
+            term_name: "Flyfish missiles".into(),
+            lang: "en".into(),
+            text: "missiles".into(),
+            status: AliasStatus::Pending,
+            ..slang::UserAlias::default()
+        });
+        user.save(&dir).unwrap();
+        let listed = knowledge.slang().unwrap();
+        assert_eq!(listed["pending"], 2);
+        assert_eq!(listed["terms"][0]["aliases"], json!(["missiles"]));
+        assert_eq!(
+            listed["aliases"][0]["term_forms"]["en"][0],
+            "Flyfish missiles"
+        );
+        assert_eq!(listed["aliases"][0]["term_status"], "pending");
+        // Offered once the new term is approved
+        assert_eq!(listed["moves"], json!([]));
+        post(
+            "slang/term",
+            json!({"id": "flyfish-missiles", "status": "approved"}),
+        )
+        .ok()
+        .unwrap();
+        assert_eq!(
+            knowledge.slang().unwrap()["moves"][0]["to"],
+            "flyfish-missiles"
+        );
+        let moved = post("slang/move", json!({"all": true})).ok().unwrap();
+        assert_eq!(moved["moved"][0]["from"], "flyfish");
+        assert_eq!(
+            knowledge.glossary("missiles").unwrap()["terms"][0]["id"],
+            "flyfish-missiles"
+        );
+        // Undone: rejected, no longer a name
+        post("slang/undo", json!({"id": "flyfish-missiles"}))
+            .ok()
+            .unwrap();
+        assert!(knowledge.glossary("missiles").unwrap()["terms"][0].is_null());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

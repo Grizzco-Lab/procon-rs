@@ -200,6 +200,14 @@ fn main() -> anyhow::Result<()> {
         knowledge,
         settings,
         config.cuttlefish.translate_model,
+        procon::knowledge::AutoApply {
+            on: config.cuttlefish.slang_auto_apply.unwrap_or(true),
+            threshold: config
+                .cuttlefish
+                .slang_threshold
+                .unwrap_or(cuttlefish::slang::DEFAULT_THRESHOLD)
+                .clamp(0.0, 1.0),
+        },
     ));
     // Reviews of the older layout move into folders, with their YouTube
     // videos from the download cache of before; on a thread, since the

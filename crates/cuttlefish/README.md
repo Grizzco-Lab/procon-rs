@@ -68,7 +68,7 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   inbox/             drop anything here (see "The inbox")
   inbox.json         what each inbox file gave, with its size, time and hash
   glossary.toml      your glossary; the crate's glossary.toml seed until you add one
-  glossary-user.toml slang you taught or approved in the studio (never overwritten)
+  glossary-user.toml slang and new terms you taught, approved or auto-applied (never overwritten)
   terms/<id>.json    name tables imported from the inbox, merged into the glossary
   assets.json        images and icons from the inbox
   reports/<t>.json   one report per inbox import (the last 30)
@@ -820,13 +820,37 @@ which finds the term again when a re-import gives it another id.
 term cannot be an alias). **Suggestions**: `slang::plan` cuts the community
 documents (all but wikis, most trusted first) into batches of text not read
 yet (the file's `[scanned]` table keeps how far each document was read) and
-says how many there are; `slang::suggest_batch` sends one batch with the
-glossary entries of the terms it mentions and the core terms in brief, and
-keeps the candidates (alias, language, term, a quote, a confidence, a note)
-that the text contains, whose term the glossary has, and that are no name
-yet, as `pending` aliases with source `suggested`. The user approves (status
+says how many there are; `slang::run` sends the batches, a few at once
+(3 by default, at most 8), each with the glossary entries of the terms it
+mentions and the core terms in brief (`suggest_prompt`), and keeps the
+candidates (alias, language, term, a quote, a confidence, a note) that the
+text contains, whose term the glossary has, and that are no name yet, as
+`pending` aliases with source `suggested`. The user approves (status
 `approved`), edits or rejects them (kept as `rejected`, never proposed
-again). A run reads at most `max_batches` (5 by default, 50 at most).
+again). A run reads at most `max_batches` (5 by default, 50 at most), or,
+with `all`, everything not read yet (`max_batches` then a safety limit); a
+failed batch is read again by the next run, and a document's `[scanned]`
+mark only moves over stretches read in order.
+
+**Auto-apply**: `Found::auto_apply` approves what the model is at least a
+threshold sure of (0.6 by default; the studio's `[cuttlefish]
+slang_auto_apply` and `slang_threshold`), marked `auto = true` so the page
+can list and undo it (`UserGlossary::undo` rejects it). **New terms**: when
+the slang names something narrower than any term (the Flyfish's missiles),
+or known slang points at a term too broad for it, the model proposes a new
+term (`new_terms` in the answer: English name, kind, definition, relation
+`part-of` / `kind-of` / `related-to` and the broader term, confidence,
+aliases). It is kept as a `[[term]]` of the user file (`UserTerm`, with a
+`glossary::Relation`) and its aliases name it by id; approved, it joins the
+glossary (`UserGlossary::apply`, before the aliases), and prompts show
+`missiles → Flyfish missiles (part of Flyfish)` and `[attack, part of
+Flyfish]`. A new term the user rejected, or the glossary has, is never
+proposed again. **Moves**: an approved alias whose text an approved new
+term's alias also has (`missiles` of the Flyfish, then of Flyfish missiles)
+is offered to move to the new term (`UserGlossary::moves`, `apply_move`).
+CLI: `cuttlefish slang suggest [--all] [--max-batches N] [--parallel N]
+[--no-auto-apply] [--threshold T] [--dry-run]` and `cuttlefish slang move
+[--dry-run]`.
 
 **4. Source quality.** Each document has a weight: #vod-review 1.2, guides
 1.15, wikis/Discord/files 1.0, web pages and video transcripts 0.9

@@ -302,13 +302,16 @@ term's entry from `GET knowledge/glossary` before the model answers. Slang
 (`cuttlefish::slang`): a term has official names (`Term::forms`) and aliases
 (`Alias`: text, language, note, source, status); the user's are in
 `<knowledge>/glossary-user.toml` (`UserGlossary`, applied last by
-`Store::load_glossary`), written by `POST knowledge/slang/add|edit|delete`
-under `Knowledge::slang`'s lock; `GET knowledge/terms?q=` serves the page's
-term picker. `POST knowledge/slang/suggest` plans batches of unread
-community text (`slang::plan`; `dry_run` answers the counts) and runs them
-as a job (`Knowledge::start_job`, shared with imports) through the
-translator's client, each batch's candidates (`slang::parse_candidates`)
-saved as pending before the next. Imports use `cuttlefish::ingest`
+`Store::load_glossary`, with its new terms, `UserTerm`), written by `POST
+knowledge/slang/add|edit|delete|undo|term|move` under `Knowledge::slang`'s
+lock; `GET knowledge/terms?q=` serves the page's term picker. `POST
+knowledge/slang/suggest` plans batches of unread community text
+(`slang::plan`; `dry_run` answers the counts; `all` reads everything) and
+runs them as a job (`Knowledge::start_job`, shared with imports) through the
+translator's client, three at once (`slang::run`), each batch's aliases and
+new terms (`slang::parse_candidates`) saved as it ends, the sure ones
+approved at once with auto-apply (`[cuttlefish] slang_auto_apply`,
+`slang_threshold`). Imports use `cuttlefish::ingest`
 (the same code as the CLI) with a `Sink` that writes the job's log; one runs
 at a time, and the index is written every fifty documents and at the end (it
 may live in a synced folder, where each write uploads it whole). The

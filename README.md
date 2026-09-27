@@ -267,16 +267,35 @@ when it is unsure what a slang word means. You teach it on the page:
 - **Suggest slang from the knowledge base** first tells what a run would
   read (community documents not read yet, in batches of about 12,000
   characters: how many batches in all, and how many this run reads, 5 by
-  default, at most 50), then, on **Run**, has the model read them batch by
-  batch (one request each) and propose aliases with a quote as evidence and
-  a confidence. Proposals the text does not contain, names the glossary
-  knows and terms it lacks are dropped; the rest wait for your review, and a
-  rejected one is not proposed again. The run shows in the Knowledge view's
-  jobs too and can be cancelled there or here.
+  default, at most 50; or tick **Read everything not read yet** for all the
+  batches, three sent at once), then, on **Run**, has the model read them
+  and propose aliases with a quote as evidence and a confidence. Proposals
+  the text does not contain, names the glossary knows and terms it lacks
+  are dropped, and a rejected one is not proposed again. The run shows in
+  the Knowledge view's jobs too and can be stopped there or here; it ends
+  with a tally (aliases applied, new terms, pending, skipped), and the next
+  run continues where it stopped.
+- **Apply confident suggestions** (on by default, `[cuttlefish]
+  slang_auto_apply`): proposals the model is at least 60% sure of
+  (`slang_threshold`) are approved at once, marked **auto-applied**; the
+  rest wait for review. **Auto-applied** above the approved list shows only
+  those, each with **Undo** (it is rejected and never proposed again).
+- **New terms**: when players name something narrower than any glossary
+  term (a Flyfish's missiles are not the Flyfish), the model proposes a new
+  term instead of an alias: an English name ("Flyfish missiles"), what it is,
+  a definition, how it relates to an existing term ("part of Flyfish") and
+  its aliases (missiles, FF missiles). New terms join the glossary like
+  imported ones; the prompts show `missiles → Flyfish missiles (part of
+  Flyfish)`. Approve, reject, undo or delete them in the panel.
+- **Better terms for old aliases**: an alias approved for a broader term
+  whose text a new term now claims (missiles of the Flyfish) is listed with
+  **Move** (or **Move all**), which gives it to the new term.
 
 What you teach and approve is kept in `<knowledge>/glossary-user.toml`,
 apart from the generated glossary, so re-importing name tables never
-overwrites it.
+overwrites it. `cuttlefish slang suggest --all` (with `--backend
+claude-cli`, `--parallel`, `--no-auto-apply`, `--dry-run`) and `cuttlefish
+slang move` do the same from the command line.
 
 `./scripts/run.sh` loads secrets from an env file, so the key never goes on
 the command line or into a config file: `$PROCON_ENV` if set, else

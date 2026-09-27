@@ -173,6 +173,12 @@ pub struct CuttlefishConfig {
     /// Model translating and explaining in the Translate view; by default
     /// `model`
     pub translate_model: Option<String>,
+    /// Slang suggestions the model is sure enough of are approved at once
+    /// (the user can still undo them); by default true
+    pub slang_auto_apply: Option<bool>,
+    /// The confidence (0 to 1) from which a suggestion is approved at once;
+    /// by default 0.6
+    pub slang_threshold: Option<f32>,
 }
 
 /// The Vision app: object detection and tracking on recorded sessions

@@ -4177,6 +4177,17 @@ body {
   margin: 4px 0 0;
 }
 
+.cf-slang-moves {
+  display: grid;
+  gap: 6px;
+}
+
+/* A suggestion approved at once, not by the user */
+.cf-kind.cf-auto {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .cf-aliases {
   display: grid;
   gap: 6px;
@@ -4856,7 +4867,6 @@ body {
   padding-top: 8px;
   border-top: 1px solid var(--panel-border);
 }
-
 
 .cf-meta {
   margin-right: auto;
