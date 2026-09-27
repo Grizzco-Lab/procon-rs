@@ -131,9 +131,10 @@ const authorOf = (v) => ({
   nickname: text(v, ["nickname", "nick_name", "nickName", "name"]),
 });
 
-/** The note's page, with the token its link carries when known */
-export function noteUrl(id, token) {
-  const base = `${SITE}/explore/${id}`;
+/** The note's page on `origin` (the site's own by default), with the
+ * token its link carries when known */
+export function noteUrl(id, token, origin = SITE) {
+  const base = `${origin}/explore/${id}`;
   return token
     ? `${base}?xsec_token=${encodeURIComponent(token)}&xsec_source=pc_user`
     : base;

@@ -374,8 +374,12 @@ export class Crawl {
       opened = await this.action(() => this.page.click(`a[href*="${id}"]`));
       if (opened) opened = (await this.page.location()).includes(id);
     }
-    if (!opened)
-      await this.action(() => this.page.goto(rn.noteUrl(id, l.xsec_token)));
+    if (!opened) {
+      this.log(`  ${id}: its tile did not open it; going to its address`);
+      await this.action(() =>
+        this.page.goto(rn.noteUrl(id, l.xsec_token, this.origin)),
+      );
+    }
     await this.page.waitFor(isNoteAnswer, 8000);
     const payloads = this.drain();
     const st = await this.page.evaluate(rn.JS_STATE);
