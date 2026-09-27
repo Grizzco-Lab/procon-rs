@@ -548,6 +548,16 @@
   border-color: transparent;
 }
 
+/* The translator's entries as stickers too */
+[data-theme="salmon"] .cf-tr {
+  border: 2px solid var(--sr-ink);
+  box-shadow: 2px 3px 0 var(--sr-ink);
+}
+
+[data-theme="salmon"] .cf-tr-text {
+  border-left: 6px solid var(--sr-teal);
+}
+
 /* ------------------------------------------------------ controller
  * Grips in workwear orange and teal on a charcoal face
  */
@@ -654,21 +664,24 @@
 /*
  * A character keeps each list page company in the corner, behind the
  * cards: the magnifier for the Inkspector's sessions, the old reviewer for
- * Cuttlefish's library
+ * Cuttlefish's library and translator
  */
 [data-theme="salmon"] #inspect-picker,
-[data-theme="salmon"] #cf-library {
+[data-theme="salmon"] #cf-library,
+[data-theme="salmon"] #cf-translate {
   position: relative;
 }
 
 [data-theme="salmon"] #inspect-picker > *,
-[data-theme="salmon"] #cf-library > .cf-cards {
+[data-theme="salmon"] #cf-library > .cf-cards,
+[data-theme="salmon"] #cf-translate > .p-cf-translations {
   position: relative;
   z-index: 1;
 }
 
 [data-theme="salmon"] #inspect-picker::after,
-[data-theme="salmon"] #cf-library::after {
+[data-theme="salmon"] #cf-library::after,
+[data-theme="salmon"] #cf-translate::after {
   content: "";
   position: fixed;
   right: 20px;
@@ -684,13 +697,15 @@
   background-image: url("inkspector.svg");
 }
 
-[data-theme="salmon"] #cf-library::after {
+[data-theme="salmon"] #cf-library::after,
+[data-theme="salmon"] #cf-translate::after {
   background-image: url("cuttlefish.svg");
 }
 
 @media (max-width: 720px) {
   [data-theme="salmon"] #inspect-picker::after,
-  [data-theme="salmon"] #cf-library::after {
+  [data-theme="salmon"] #cf-library::after,
+  [data-theme="salmon"] #cf-translate::after {
     width: 150px;
     height: 150px;
     opacity: 0.9;

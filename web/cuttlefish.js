@@ -7,9 +7,11 @@
 // Player, clock, escapeHtml). Its state lives in the hash:
 // #cuttlefish (the library: the reviews, "open a video" and the chat bar,
 // whose first message starts a review without a video),
-// #cuttlefish/r=<review>&t=<s> (a saved review) or
+// #cuttlefish/r=<review>&t=<s> (a saved review),
 // #cuttlefish/kind=<kind>&ref=<ref>&start_s=&end_s= (a video not reviewed
-// yet) or #cuttlefish/view=knowledge (the knowledge view, see knowledge.js).
+// yet), #cuttlefish/view=translate (the translator, see translate.js) or
+// #cuttlefish/view=knowledge (the knowledge view, see knowledge.js). The
+// tab strip above the library, #cf-tabs, switches the three views.
 // Reviews are saved as JSON through /api/cuttlefish/reviews/<id>, each in a
 // folder of its own with its YouTube (or copied) video and its chat; the
 // format is in src/cuttlefish.rs. The page owns the review: a chat message
@@ -350,7 +352,7 @@
     loadSessions();
     loadReviews();
     pollDownloads();
-    drawChips($("cf-entry-chips"), $("cf-entry-text"));
+    drawChips($("cf-entry-chips"), $("cf-entry-text"), entryChips());
     checkKey();
   }
 
@@ -1429,22 +1431,42 @@
     }
   }
 
-  /** Example messages as chips that fill `input` */
-  function drawChips(box, input) {
+  /** Example messages as chips that fill `input`: `{text, ctx?}`, a chip
+   * with `ctx` also choosing what the message takes of the video */
+  function drawChips(box, input, chips) {
     box.replaceChildren(
-      ...examples().map((example) => {
+      ...chips.map(({ text, ctx }) => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "cf-chip";
-        button.textContent = example;
+        button.textContent = text;
         button.onclick = () => {
-          input.value = example;
+          input.value = text;
           grow(input);
+          if (ctx) {
+            $("cf-ctx").value = ctx;
+            remember("context", ctx);
+            markContext();
+          }
           input.focus();
         };
         return button;
       }),
     );
+  }
+
+  /** The library bar's chips: questions about one's play */
+  const entryChips = () => examples().map((text) => ({ text }));
+
+  /** A review's chips: with a video, the moment and the range first */
+  function chatChips() {
+    const chips = entryChips();
+    if (!cf.review?.video) return chips;
+    return [
+      { text: t("cf.ask.moment"), ctx: "moment" },
+      { text: t("cf.chat.rangeExample"), ctx: "range" },
+      ...chips,
+    ];
   }
 
   /** The next example as the placeholder of the empty chat inputs */
@@ -1527,7 +1549,8 @@
     if (!review) return list.replaceChildren();
     const messages = review.messages;
     $("cf-chat-empty").hidden = messages.length > 0;
-    if (!messages.length) drawChips($("cf-chat-chips"), $("cf-chat-text"));
+    if (!messages.length)
+      drawChips($("cf-chat-chips"), $("cf-chat-text"), chatChips());
     const withVideo = Boolean(review.video);
     $("cf-context").hidden = !withVideo;
     markContext();
@@ -1802,7 +1825,7 @@
     drawReviews();
     drawSwatches();
     markTools();
-    drawChips($("cf-entry-chips"), $("cf-entry-text"));
+    drawChips($("cf-entry-chips"), $("cf-entry-text"), entryChips());
     rotatePlaceholders();
     markKey();
     if (!cf.review) return;
@@ -1816,16 +1839,20 @@
 
   // ---------------------------------------------------------------- routing
 
-  /** Show what the hash names: a review, a video, the knowledge view or the
-   * library */
+  /** The views the tab strip switches, besides the library */
+  const VIEWS = ["translate", "knowledge"];
+
+  /** Show what the hash names: a review, a video, the translate or
+   * knowledge view, or the library */
   async function route(state) {
-    if (state.get("view") === "knowledge") {
-      // knowledge.js shows its own view
+    const view = state.get("view");
+    if (VIEWS.includes(view)) {
+      // translate.js and knowledge.js show their own views
       leavePlayer();
       $("cf-player").hidden = true;
       $("cf-library").hidden = true;
       setChip("");
-      rememberView("#cuttlefish/view=knowledge");
+      rememberView(`#cuttlefish/view=${view}`);
       clearTimeout(cf.pollTimer);
       clearTimeout(cf.listTimer);
       return;
@@ -1870,11 +1897,25 @@
     }
     cf.shown = app === "cuttlefish";
     player.enabled = cf.shown;
+    markTabs(state);
     if (cf.shown) {
       startPlaceholders();
       route(state);
     }
   });
+
+  /** The tab strip: above the views, not in the player, the current view
+   * marked */
+  function markTabs(state) {
+    const inPlayer = state.has("r") || state.has("kind");
+    $("cf-tabs").hidden = !cf.shown || inPlayer;
+    const view = state.get("view");
+    const current = VIEWS.includes(view) ? view : "reviews";
+    for (const tab of $("cf-tabs").querySelectorAll("[data-tab]")) {
+      if (tab.dataset.tab === current) tab.setAttribute("aria-current", "page");
+      else tab.removeAttribute("aria-current");
+    }
+  }
   // Unsaved text is written before the page goes away
   window.addEventListener("pagehide", flushSave);
 

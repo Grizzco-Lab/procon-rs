@@ -3702,10 +3702,11 @@ body {
 
 /* ============================================================ cuttlefish
  * The Cuttlefish app: a library (open a video and the reviews as cards, the
- * chat bar that starts a review kept at the bottom of the window) and the
- * player (video with drawings and a timeline of
- * comments, the comments and notes under it, the chat beside; a review
- * without a video shows the chat and "Attach a video").
+ * chat bar that starts a review kept at the bottom of the window), the
+ * player (video with drawings and a timeline of comments, the comments and
+ * notes under it, the chat beside; a review without a video shows the chat
+ * and "Attach a video"), the translator (its history above a bar like the
+ * library's) and the knowledge view (further down).
  */
 
 :root:not([data-app="cuttlefish"]) [data-app-only="cuttlefish"] {
@@ -3713,6 +3714,7 @@ body {
 }
 
 #cf-library,
+#cf-translate,
 #cf-player {
   width: 100%;
   max-width: 1600px;
@@ -3734,8 +3736,10 @@ body {
 }
 
 /* The cards, then the chat bar; the cards take the spare height. Every row
- * (the tabs above too) shares the column's edges. */
-#cf-library {
+ * (the tabs above too) shares the column's edges. The translator is the
+ * same column: its history, then its bar. */
+#cf-library,
+#cf-translate {
   display: flex;
   flex: 1 0 auto;
   flex-direction: column;
@@ -3795,7 +3799,8 @@ body {
 }
 
 [data-theme="joy"] #cf-player,
-[data-theme="joy"] #cf-library {
+[data-theme="joy"] #cf-library,
+[data-theme="joy"] #cf-translate {
   max-width: 1360px;
 }
 
@@ -3820,6 +3825,7 @@ body {
 }
 
 [data-theme="telemetry"] .p-cf-open,
+[data-theme="telemetry"] .p-cf-translations,
 [data-theme="telemetry"] .p-cf-video,
 [data-theme="telemetry"] .is-chat .p-cf-chat {
   --panel-no: "01";
@@ -3838,6 +3844,7 @@ body {
 
 @media (max-width: 1100px) {
   :root[data-theme] #cf-library,
+  :root[data-theme] #cf-translate,
   :root[data-theme] #cf-player {
     max-width: 900px;
   }
@@ -3862,6 +3869,7 @@ body {
 }
 
 :root[data-layout="phone"][data-theme] #cf-library,
+:root[data-layout="phone"][data-theme] #cf-translate,
 :root[data-layout="phone"][data-theme] #cf-player {
   max-width: 480px;
 }
@@ -3904,10 +3912,11 @@ body {
   }
 }
 
-/* The library's chat bar stays at the bottom of the window, like a chat
- * app's input: the cards scroll above it and end above it. It fades in the
- * page's background over what scrolls under it. */
-#cf-library .p-cf-entry {
+/* The library's chat bar (and the translator's) stays at the bottom of the
+ * window, like a chat app's input: the cards scroll above it and end above
+ * it. It fades in the page's background over what scrolls under it. */
+#cf-library .p-cf-entry,
+#cf-translate .p-cf-entry {
   position: sticky;
   bottom: 0;
   z-index: 2;
@@ -3921,7 +3930,8 @@ body {
   box-shadow: none;
 }
 
-#cf-library .p-cf-entry::before {
+#cf-library .p-cf-entry::before,
+#cf-translate .p-cf-entry::before {
   content: "";
   position: absolute;
   inset: auto 0 100%;
@@ -3963,8 +3973,10 @@ body {
   line-height: 1.35;
 }
 
-.cf-entry-icon {
+/* The mentor's avatar next to every box where he can be asked */
+.cf-avatar {
   flex: none;
+  align-self: center;
   width: 24px;
   height: 24px;
 }
@@ -3986,6 +3998,133 @@ body {
 
 .p-cf-entry:has(.cf-input:not(:placeholder-shown)) .cf-chips {
   display: none;
+}
+
+/* The translator's bar: the language picker between the input and Send */
+.cf-tr-target {
+  flex: none;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.cf-tr-target .select {
+  height: 32px;
+}
+
+/* Narrow bars keep the picker and drop its word */
+@media (max-width: 720px) {
+  .cf-tr-target span {
+    display: none;
+  }
+}
+
+:root[data-layout="phone"] .cf-tr-target span {
+  display: none;
+}
+
+/* The translator: the history takes the spare height above the bar */
+.p-cf-translations {
+  flex: 1 0 auto;
+}
+
+.cf-translations {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One translation: the text and its language, the translation with Copy,
+ * the mentor's explanation, the glossary terms it used */
+.cf-tr {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.cf-tr-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.cf-tr-source {
+  min-width: 0;
+  font-weight: 600;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cf-tr-head .cf-meta {
+  margin-left: auto;
+  font-size: 11.5px;
+}
+
+.cf-tr-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+}
+
+.cf-tr-result:empty {
+  display: none;
+}
+
+.cf-tr-text {
+  flex: 1 1 240px;
+  margin: 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--s3);
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cf-tr-key {
+  flex: 1 1 100%;
+}
+
+.cf-tr-explain {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cf-tr-explain b {
+  color: var(--s3);
+}
+
+.cf-tr-terms-box summary {
+  color: var(--text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.cf-tr-terms {
+  margin-top: 8px;
+}
+
+.cf-tr-terms .k-term {
+  padding: 8px 10px;
+  background: var(--panel);
+}
+
+.cf-tr-arrow {
+  color: var(--text-3);
+}
+
+.cf-tr-to {
+  color: var(--accent);
 }
 
 /* A review without a video: the chat fills the window, its input at the
@@ -4791,12 +4930,14 @@ body {
 
 /* Panel titles stay on one line; the notes beside them wrap instead */
 #cf-library .panel-head,
+#cf-translate .panel-head,
 #cf-player .panel-head,
 #cf-knowledge .panel-head {
   flex-wrap: wrap;
 }
 
 #cf-library .panel-head h2,
+#cf-translate .panel-head h2,
 #cf-player .panel-head h2,
 #cf-knowledge .panel-head h2 {
   flex: none;
@@ -4804,6 +4945,7 @@ body {
 }
 
 #cf-library .panel-head .panel-note,
+#cf-translate .panel-head .panel-note,
 #cf-knowledge .panel-head .panel-note {
   flex: 1 1 12em;
   min-width: 0;
@@ -4817,9 +4959,8 @@ body {
 
 /* ============================================================ knowledge
  * Cuttlefish's knowledge view, managing the store: imports and the inbox,
- * what the store holds, documents, the glossary, assets and search. The
- * left column feeds and looks things up, the right column shows what is
- * there.
+ * what the store holds, documents, assets and search. The left column feeds
+ * and searches, the right column shows what is there.
  */
 
 #cf-knowledge {
@@ -4856,14 +4997,11 @@ body {
 [data-theme="telemetry"] .p-k-docs {
   --panel-no: "03";
 }
-[data-theme="telemetry"] .p-k-glossary {
+[data-theme="telemetry"] .p-k-assets {
   --panel-no: "04";
 }
-[data-theme="telemetry"] .p-k-assets {
-  --panel-no: "05";
-}
 [data-theme="telemetry"] .p-k-search {
-  --panel-no: "06";
+  --panel-no: "05";
 }
 
 @media (max-width: 1100px) {

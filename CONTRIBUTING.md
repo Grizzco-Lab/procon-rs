@@ -78,13 +78,13 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes, Follow's write rules |
 | `src/follow.rs` | Follow: boxes carried over the next frames by AgentZero's SAM 2 tracker, proxied from a thread; starts the tracker |
 | `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` with the chat, and the video, optional), video bytes with ranges, yt-dlp downloads into new or existing reviews, migration of the older flat layout, the chat endpoint over the shared knowledge store |
-| `src/knowledge.rs` | Cuttlefish's Knowledge view: the store and embedder loaded once (the chat's retrieval too), search, glossary, import jobs, inbox uploads, overview, assets and thumbnails, document deletion |
+| `src/knowledge.rs` | Cuttlefish's Knowledge view: the store and embedder loaded once (the chat's retrieval too), search, glossary lookups and `Knowledge::translate` for the Translate view, import jobs, inbox uploads, overview, assets and thumbnails, document deletion |
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results through our classes, dataset overview, send to labels |
 | `src/predictor.rs` | Predictor app backend: `agentzero-predict` runs as a child process, stored predictions, windows of predictions and truth, agreement numbers |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
 | `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, inbox, name tables, assets, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
-| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `vision.js`, `predictor.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
+| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `translate.js`, `vision.js`, `predictor.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
 | `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy |
 | `doc/` | Setup and dashboard write-up with screenshots, published to GitHub Pages |
 
@@ -187,8 +187,8 @@ own status), then the status takes a row of its own. The View menu sets
 (English in it, Simplified Chinese in `web/i18n-zh.js`), `t(key, values)`,
 and `data-i18n*` attributes on the page's elements; a change fires
 `lang-change` for what scripts draw; an entry may be a list (the chat's
-example messages). The Cuttlefish app and its Knowledge view use it; other
-apps can adopt it key by key. The Studio's preview pauses and its views stop
+example messages). The Cuttlefish app with its Translate and Knowledge views
+uses it; other apps can adopt it key by key. The Studio's preview pauses and its views stop
 drawing while another app is shown. `web/controller3d.js` loads three.js from
 jsdelivr and extrudes the SVG view's outline; the SVG stays as the fallback. The
 input overlay (`drawInputHud` in `app.js`) is shared by the Studio's video and
@@ -277,7 +277,16 @@ and adds his comments as its own. `src/knowledge.rs` holds the `cuttlefish`
 crate's `Store` and `E5Embedder`, loaded once on first use and shared by the
 chat (`Knowledge::chat` over the borrowed store, embedder and a client made
 per request), the Knowledge view's search, and imports; `GET knowledge/model`
-tells the page whether the key is set without loading the store. Imports use `cuttlefish::ingest`
+tells the page whether the key is set without loading the store. The Translate
+view (`web/translate.js`) posts `translate` with `{text, target}`:
+`Knowledge::translate` reads the glossary (no store, no model) for the terms
+the text uses, or the entry of a bare term with its name in the target
+language, and with a client the crate's `review::translate` for a sentence
+and `review::explain` for a term; `Cuttlefish::record_translation` appends
+the answer, with an id and time, to `<reviews>/translations.jsonl` (the
+last 500 kept, rewritten whole through `write_atomic`), which `GET
+translations` lists and `DELETE translations` removes. The page shows a bare
+term's entry from `GET knowledge/glossary` before the model answers. Imports use `cuttlefish::ingest`
 (the same code as the CLI) with a `Sink` that writes the job's log; one runs
 at a time, and the index is written every fifty documents and at the end (it
 may live in a synced folder, where each write uploads it whole). The

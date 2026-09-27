@@ -49,7 +49,11 @@ const I18N = {
     // Cuttlefish: the views
     "cf.name": "Cuttlefish",
     "cf.tab.reviews": "Reviews",
-    "cf.tab.reviewsNote": "Ask Cuttlefish, open a video, browse your reviews",
+    "cf.tab.reviewsNote":
+      "Ask Cuttlefish about your play, open a video, browse your reviews",
+    "cf.tab.translate": "Translate",
+    "cf.tab.translateNote":
+      "Jargon and callouts across languages, in the names each community uses; a term shows its glossary entry",
     "cf.tab.knowledge": "Knowledge",
     "cf.tab.knowledgeNote":
       "What Cuttlefish knows: import material, documents, glossary, assets, search",
@@ -182,7 +186,7 @@ const I18N = {
     "cf.ask.badRange": "The range must end after it starts",
     "cf.ask.watching": "Cuttlefish is watching…",
     "cf.chat.entryNote":
-      "a question, a callout to translate, jargon to explain; each conversation is a review, with or without a video",
+      "a question about your play; each conversation is a review, with or without a video",
     "cf.chat.messageLabel": "Message to Cuttlefish",
     "cf.chat.send": "Send",
     "cf.chat.keys": "Enter sends · Shift+Enter for a new line",
@@ -192,18 +196,19 @@ const I18N = {
     "cf.chat.failed": "Could not reach Cuttlefish: {error}",
     "cf.chat.error": "Cuttlefish could not answer: {error}",
     "cf.chat.empty":
-      "Ask anything about Salmon Run, paste a callout to translate for a teammate, or ask about the moment you are watching. Answers cite the knowledge; times in them seek the video.",
+      "Ask anything about Salmon Run or about the moment you are watching. Answers cite the knowledge; times in them seek the video. Jargon and callouts are translated in the Translate view.",
     "cf.chat.try": "Try one:",
-    // The player's own jargon, shown in every language (data, like the
-    // glossary), and two requests in English
+    // Questions about one's play: the chips and the rotating placeholder
     "cf.chat.examples": [
-      "惯性取消搬蛋快",
-      "我刚拿的熊刷，不应该上柱子拍的",
-      "小枪可以优先出差回收一些外围蛋，但不要待太久卡新一波怪",
-      "我还剩一个镭射",
-      "Translate for an English-speaking teammate: 小枪可以优先出差回收一些外围蛋",
+      "Where could I have played this wave better?",
+      "Why did I go down here?",
+      "Which boss should I have taken first here?",
+      "Where did the egg flow break?",
+      "Was my positioning right?",
       "When should I leave the basket to kill a Stinger?",
     ],
+    // With a video, next to "Comment on this moment"
+    "cf.chat.rangeExample": "What goes wrong in this range?",
     "cf.chat.with": "With the video:",
     "cf.chat.ctxMoment": "this moment",
     "cf.chat.ctxRange": "a range",
@@ -219,6 +224,32 @@ const I18N = {
     "cf.attach.attach": "Attach",
     "cf.attach.download": "Download and attach",
     "cf.attach.failed": "Not attached: {error}",
+
+    // Translate
+    "tr.empty":
+      "Type a term (Steelhead, コジャケ, 熊刷) for its glossary entry in every language, or a sentence full of jargon to translate with the names the other community uses. Answers are kept here.",
+    "tr.count": "{n} kept in {file}",
+    "tr.clear": "Clear history",
+    "tr.clearAsk": "Clear the translation history? {file} is removed.",
+    "tr.placeholder":
+      "A term (Steelhead, コジャケ, 熊刷) or a sentence full of jargon…",
+    "tr.textLabel": "Text to translate",
+    "tr.into": "into",
+    "tr.targetLabel": "Target language",
+    "tr.exampleInto": "Translate into {lang}",
+    "tr.working": "Translating…",
+    "tr.failed": "Not translated: {error}",
+    "tr.noKey":
+      "ANTHROPIC_API_KEY is not set where the studio runs, so only the glossary answers: a term's entry and names, the terms a sentence uses. Export it before starting the studio to translate sentences.",
+    "tr.noKeyTranslation":
+      "Translating this needs ANTHROPIC_API_KEY where the studio runs.",
+    "tr.copy": "Copy",
+    "tr.copied": "Copied",
+    "tr.entry": "Glossary entry",
+    "tr.terms": ({ n }) =>
+      n === 1 ? "1 glossary term used" : `${n} glossary terms used`,
+    "tr.noTerms": "No glossary term in it.",
+    "tr.noName": "no {lang} name in the glossary",
 
     // Knowledge
     "k.loading":
@@ -297,11 +328,6 @@ const I18N = {
     "k.th.fetched": "Fetched",
     "k.docs.shown": "{n} of {total}",
     "k.docs.none": "No documents yet: import some.",
-    "k.glossary.size": "{n} terms",
-    "k.glossary.none": "No glossary term found.",
-    "k.termPlaceholder": "Steelhead, コジャケ, or a sentence",
-    "k.termLabel": "Term or text",
-    "k.lookUp": "Look up",
 
     // Knowledge: the inbox, import reports, overview, assets
     "k.kind.inbox": "Inbox",

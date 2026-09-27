@@ -1038,9 +1038,10 @@
       </main>
     </div>
 
-    <!-- Cuttlefish app: chat with Cuttlefish, review videos with comments and drawings -->
+    <!-- Cuttlefish app: chat with Cuttlefish, review videos with comments and
+         drawings, translate jargon, manage what he knows -->
     <div data-app-section="cuttlefish" hidden>
-      <!-- The two views as a segmented switch, like the apps'; hidden in
+      <!-- The three views as a segmented switch, like the apps'; hidden in
            the player -->
       <nav class="cf-views" id="cf-tabs" aria-label="Cuttlefish">
         <div class="cf-views-track">
@@ -1048,13 +1049,25 @@
             class="cf-view"
             href="#cuttlefish"
             data-tab="reviews"
-            title="Ask Cuttlefish, open a video, browse your reviews"
+            title="Ask Cuttlefish about your play, open a video, browse your reviews"
             data-i18n-title="cf.tab.reviewsNote"
           >
             <svg class="cf-view-icon" viewBox="0 0 24 24" aria-hidden="true">
               <use href="icons/app-reviews.svg#i" />
             </svg>
             <span data-i18n="cf.tab.reviews">Reviews</span>
+          </a>
+          <a
+            class="cf-view"
+            href="#cuttlefish/view=translate"
+            data-tab="translate"
+            title="Jargon and callouts across languages, in the names each community uses; a term shows its glossary entry"
+            data-i18n-title="cf.tab.translateNote"
+          >
+            <svg class="cf-view-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <use href="icons/ui-translate.svg#i" />
+            </svg>
+            <span data-i18n="cf.tab.translate">Translate</span>
           </a>
           <a
             class="cf-view"
@@ -1194,13 +1207,13 @@
           class="panel p-cf-entry"
           aria-label="Ask Cuttlefish"
           data-i18n-aria-label="cf.ask"
-          title="a question, a callout to translate, jargon to explain; each conversation is a review, with or without a video"
+          title="a question about your play; each conversation is a review, with or without a video"
           data-i18n-title="cf.chat.entryNote"
         >
           <div class="cf-chips" id="cf-entry-chips"></div>
           <form class="cf-composer" id="cf-entry-form">
             <svg
-              class="app-icon cf-entry-icon"
+              class="app-icon cf-avatar"
               viewBox="0 0 24 24"
               aria-hidden="true"
             >
@@ -1224,6 +1237,90 @@
             </button>
           </form>
           <p class="panel-note cf-composer-note" id="cf-entry-note"></p>
+        </section>
+      </main>
+
+      <!-- Translate: jargon and callouts across languages (translate.js).
+           The history above, the box at the bottom of the window like the
+           library's chat bar -->
+      <main class="cf-translate" id="cf-translate" hidden>
+        <section
+          class="panel p-cf-translations"
+          aria-labelledby="h-cf-translations"
+        >
+          <header class="panel-head">
+            <div class="panel-title">
+              <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <use href="icons/ui-translate.svg#i" />
+              </svg>
+              <h2 id="h-cf-translations" data-i18n="cf.tab.translate">
+                Translate
+              </h2>
+            </div>
+            <span class="panel-note" id="cf-tr-note"></span>
+            <button
+              type="button"
+              class="mode-toggle"
+              id="cf-tr-clear"
+              data-i18n="tr.clear"
+            >
+              Clear history
+            </button>
+          </header>
+          <p
+            class="panel-note cf-tr-empty"
+            id="cf-tr-empty"
+            data-i18n="tr.empty"
+          >
+            Type a term (Steelhead, コジャケ, 熊刷) for its glossary entry in
+            every language, or a sentence full of jargon to translate with the
+            names the other community uses. Answers are kept here.
+          </p>
+          <ol class="cf-translations" id="cf-translations"></ol>
+        </section>
+
+        <section
+          class="panel p-cf-entry"
+          aria-label="Translate"
+          data-i18n-aria-label="cf.tab.translate"
+        >
+          <div class="cf-chips" id="cf-tr-chips"></div>
+          <form class="cf-composer" id="cf-tr-form">
+            <svg
+              class="app-icon cf-avatar"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <use href="icons/app-cuttlefish.svg#i" />
+            </svg>
+            <textarea
+              class="select cf-input"
+              id="cf-tr-text"
+              rows="1"
+              placeholder="A term (Steelhead, コジャケ, 熊刷) or a sentence full of jargon…"
+              aria-label="Text to translate"
+              data-i18n-placeholder="tr.placeholder"
+              data-i18n-aria-label="tr.textLabel"
+            ></textarea>
+            <label class="check cf-tr-target" for="cf-tr-target"
+              ><span data-i18n="tr.into">into</span>
+              <select
+                class="select"
+                id="cf-tr-target"
+                aria-label="Target language"
+                data-i18n-aria-label="tr.targetLabel"
+              ></select
+            ></label>
+            <button
+              type="submit"
+              class="btn cf-send"
+              id="cf-tr-send"
+              data-i18n="cf.chat.send"
+            >
+              Send
+            </button>
+          </form>
+          <p class="panel-note cf-composer-note" id="cf-tr-composer-note"></p>
         </section>
       </main>
 
@@ -1448,9 +1545,9 @@
           <ol class="cf-chat" id="cf-chat"></ol>
           <div class="cf-chat-empty" id="cf-chat-empty" hidden>
             <p class="panel-note" data-i18n="cf.chat.empty">
-              Ask anything about Salmon Run, paste a callout to translate for a
-              teammate, or ask about the moment you are watching. Answers cite
-              the knowledge; times in them seek the video.
+              Ask anything about Salmon Run or about the moment you are
+              watching. Answers cite the knowledge; times in them seek the
+              video. Jargon and callouts are translated in the Translate view.
             </p>
             <div class="cf-chips" id="cf-chat-chips"></div>
           </div>
@@ -1499,6 +1596,13 @@
               </button>
             </div>
             <div class="cf-composer-row">
+              <svg
+                class="app-icon cf-avatar"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <use href="icons/app-cuttlefish.svg#i" />
+              </svg>
               <textarea
                 class="select cf-input"
                 id="cf-chat-text"
@@ -1611,8 +1715,8 @@
       </main>
 
       <!-- Knowledge: what Cuttlefish knows, and how to feed it. Two
-           columns: feeding and looking up on the left, what is there on
-           the right -->
+           columns: feeding and searching on the left, what is there on the
+           right; looking up the glossary is the Translate view's -->
       <main class="layout" id="cf-knowledge" hidden>
         <div class="k-col">
           <section class="panel p-k-import" aria-labelledby="h-k-import">
@@ -1927,29 +2031,6 @@
             </form>
             <p class="notice" id="k-import-error" hidden></p>
             <ul class="cf-downloads" id="k-jobs"></ul>
-          </section>
-
-          <section class="panel p-k-glossary" aria-labelledby="h-k-glossary">
-            <header class="panel-head">
-              <h2 id="h-k-glossary" data-i18n="k.glossary">Glossary</h2>
-              <span class="panel-note" id="k-glossary-size"></span>
-            </header>
-            <form class="cf-row" id="k-glossary-form">
-              <input
-                class="select cf-grow"
-                id="k-term"
-                type="search"
-                placeholder="Steelhead, コジャケ, or a sentence"
-                aria-label="Term or text"
-                data-i18n-placeholder="k.termPlaceholder"
-                data-i18n-aria-label="k.termLabel"
-                required
-              />
-              <button type="submit" class="btn btn-small" data-i18n="k.lookUp">
-                Look up
-              </button>
-            </form>
-            <ul class="k-terms" id="k-glossary"></ul>
           </section>
 
           <section class="panel p-k-search" aria-labelledby="h-k-search">
@@ -2638,6 +2719,7 @@
     <script src="label.js"></script>
     <script src="cuttlefish.js"></script>
     <script src="knowledge.js"></script>
+    <script src="translate.js"></script>
     <script src="vision.js"></script>
     <script src="predictor.js"></script>
     <script type="module" src="controller3d.js"></script>

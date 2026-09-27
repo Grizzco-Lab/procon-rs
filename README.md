@@ -97,8 +97,8 @@ for details). The **View** menu picks the theme (Studio, Joy, Telemetry or
 Salmon Run), the layout (Auto, or Phone, which narrow screens also use),
 where the app links go (Side rail or Top bar), the rail's width (Compact or
 Expanded) and the language (English or
-Simplified Chinese, by default the browser's; so far Cuttlefish and its
-Knowledge view are translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
+Simplified Chinese, by default the browser's; so far Cuttlefish with its
+Translate and Knowledge views is translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
 Studio's preview pauses, and each app stops its own work while hidden.
 
 ### Studio
@@ -193,28 +193,47 @@ Labels come from `crates/gameplay-data`, the same code the training side uses.
 A chat with Cuttlefish, the AI reviewer, and video reviews: a recorded
 segment, a video file on the PC or a range of a YouTube video with comments at
 its times and shapes drawn on the paused frame, a notebook of mistakes and
-lessons to flip through later. The app has two views, **Reviews** and
-**Knowledge**.
+lessons to flip through later. The app has three views, **Reviews**,
+**Translate** and **Knowledge**; Cuttlefish's avatar sits next to every box
+where he can be asked.
 
 **Reviews** is the entry: the reviews so far, **Open a video** (a session, a
 file, a YouTube range), and at the bottom **Ask Cuttlefish**, a chat bar.
-Typing there (a question, a callout to translate for a teammate, jargon to
-explain: the examples rotate as its placeholder and sit above it as chips)
-starts a new review without a video, opens it and sends the message. Inside a
-review the chat is the panel beside the video (the main area when there is no
-video, with **Attach a video** beside it: a session, a file, or a YouTube range
-downloaded into the review). The chat keeps its whole history; Cuttlefish's
-answers cite the knowledge (`[S1]`, listed under **Sources**) and name moments
-as times that seek the video when clicked, and when asked about the video they
-can add timed comments with drawings, linked from the answer. **With the
-video** chooses what a message takes along: the frames around the playhead
-(**this moment**), a **range**, or **no frames** (for a translation, say);
-**Comment on this moment** sends a review request for the playhead. Every
-message is saved in the review's `review.json` (`messages`, with role, text,
-the moment or range it was asked with, sources and time), so reopening the
-review shows the conversation. The chat needs `ANTHROPIC_API_KEY` in the
-studio's environment (the only place it is read from); without it the chat
-says so and messages, comments and drawings are still saved.
+Typing there (a question about one's play: the examples, "Why did I go down
+here?", "Where did the egg flow break?", rotate as its placeholder and sit
+above it as chips) starts a new review without a video, opens it and sends
+the message. Inside a review the chat is the panel beside the video (the main
+area when there is no video, with **Attach a video** beside it: a session, a
+file, or a YouTube range downloaded into the review); with a video its chips
+start with the moment (**Comment on this moment**, **What goes wrong in this
+range?**). The chat keeps its whole history; Cuttlefish's answers cite the
+knowledge (`[S1]`, listed under **Sources**) and name moments as times that
+seek the video when clicked, and when asked about the video they can add
+timed comments with drawings, linked from the answer. **With the video**
+chooses what a message takes along: the frames around the playhead (**this
+moment**), a **range**, or **no frames**; **Comment on this moment** sends a
+review request for the playhead. Every message is saved in the review's
+`review.json` (`messages`, with role, text, the moment or range it was asked
+with, sources and time), so reopening the review shows the conversation. The
+chat needs `ANTHROPIC_API_KEY` in the studio's environment (the only place it
+is read from); without it the chat says so and messages, comments and
+drawings are still saved.
+
+**Translate** is the translator, a chat-like page for jargon and callouts: a
+box at the bottom with a target language (English, 中文, 日本語, Español,
+Français, Русский, 한국어; the last choice is remembered), the player's own
+sentences as chips (惯性取消搬蛋快, 我还剩一个镭射, …) and two English
+callouts into Chinese. A whole sentence comes back translated in the names the
+other community uses, with a **Copy** button and the glossary terms it used
+(熊刷 → Grizzco Roller, 出差 → shore run, each with its definition and its
+names in the other languages). A bare term (Steelhead, コジャケ, 熊刷) shows
+its glossary entry at once, its name in the target language as the
+translation, and then Cuttlefish's short explanation of what it means and
+when a player says it. The glossary answers without a key; the model's
+translation and explanation need `ANTHROPIC_API_KEY`, and the page says so
+when it is missing. Every answer is kept in
+`<reviews>/translations.jsonl` (one JSON object per line, the last 500),
+shown again on the next visit; **Clear history** removes the file.
 
 `./scripts/run.sh` loads secrets from an env file, so the key never goes on
 the command line or into a config file: `$PROCON_ENV` if set, else
@@ -255,18 +274,18 @@ While reviewing:
 
 The chat sends the message, the conversation so far, the frames it takes along
 and the nearby comments to Claude with knowledge retrieved from the store for
-it. The **Knowledge** view (next to **Reviews** above the library) manages
-that store (`crates/cuttlefish`, folder `[cuttlefish] knowledge`); asking and
-translating are the chat's job. It is laid out in two columns, feeding and
-looking up on the left, what is there on the right:
+it. The **Knowledge** view (the third tab above the library) manages that
+store (`crates/cuttlefish`, folder `[cuttlefish] knowledge`) and nothing else:
+asking is the chat's job, translating and looking up the glossary the
+Translate view's. It is laid out in two columns, feeding and searching on the
+left, what is there on the right:
 
 - **Import**: the **Inbox** (below), web pages, a sitemap or a MediaWiki
   category (robots.txt obeyed, one request per site every few seconds),
   YouTube subtitles, files on the PC (markdown, text, HTML, PDF, Word, subtitles),
   a Discord export or a Discord bot; one import at a time, with its log and a
   Cancel button;
-- **Glossary**, a lookup of a term or of the terms a sentence mentions, and
-  **Search**, the nearest chunks with their source, link, license and score,
+- **Search**, the nearest chunks with their source, link, license and score,
   in any language, without a key (what the chat retrieves);
 - **What the store holds**: documents, chunks, glossary and digest counts,
   whether `ANTHROPIC_API_KEY` and `DISCORD_BOT_TOKEN` are set (never their
@@ -461,7 +480,7 @@ Both programs take `--config <path>`.
 | `[recording]` | Default path `prefix` until one is set on the dashboard |
 | `[video]` | First `input` (`"screen"`, `/dev/video0` or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
 | `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) `annotations` (object labels, default `Annotations` next to the root), `tracker` (Follow's tracker, default `http://127.0.0.1:7340`), `tracker_command` and `tracker_dir` (what Start tracker runs, default `uv run agentzero-track-serve --port <port>` in `../AgentZero`); relative paths start at the config's folder |
-| `[cuttlefish]` | Optional: `reviews` (one folder per review with its video; default `Reviews` next to the root), `knowledge` (the knowledge store with its `inbox/`, default `Knowledge` next to the root) and `model` |
+| `[cuttlefish]` | Optional: `reviews` (one folder per review with its video, and the translator's `translations.jsonl`; default `Reviews` next to the root), `knowledge` (the knowledge store with its `inbox/`, default `Knowledge` next to the root) and `model` |
 | `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model) and `confidence` (0.25) |
 | `[predictor]` | Optional: `agentzero` (the AgentZero folder, default `../AgentZero`) and `results` (stored predictions, default `Predictions` next to the root) |
 | `[logging]` | `level`: error, warn, info, debug or trace |

@@ -34,7 +34,10 @@ I18N.zh = {
   // Cuttlefish: the views
   "cf.name": "鱼干司令",
   "cf.tab.reviews": "复盘",
-  "cf.tab.reviewsNote": "问问鱼干司令、打开视频、浏览你的复盘",
+  "cf.tab.reviewsNote": "向鱼干司令请教你的操作、打开视频、浏览你的复盘",
+  "cf.tab.translate": "翻译",
+  "cf.tab.translateNote":
+    "跨语言翻译黑话和报点，用各社区自己的叫法；输入一个术语就显示它的术语表词条",
   "cf.tab.knowledge": "知识库",
   "cf.tab.knowledgeNote": "鱼干司令的知识：导入资料、文档、术语表、素材、搜索",
   "cf.loading": "加载中…",
@@ -159,7 +162,7 @@ I18N.zh = {
   "cf.ask.badRange": "时间段的结束必须晚于开始",
   "cf.ask.watching": "鱼干司令正在看…",
   "cf.chat.entryNote":
-    "提问、翻译一句报点、解释术语；每段对话都是一个复盘，有没有视频都行",
+    "问问你的操作哪里可以更好；每段对话都是一个复盘，有没有视频都行",
   "cf.chat.messageLabel": "发给鱼干司令的消息",
   "cf.chat.send": "发送",
   "cf.chat.keys": "Enter 发送 · Shift+Enter 换行",
@@ -169,16 +172,17 @@ I18N.zh = {
   "cf.chat.failed": "联系不上鱼干司令：{error}",
   "cf.chat.error": "鱼干司令无法回答：{error}",
   "cf.chat.empty":
-    "问任何鲑鱼跑的问题，贴一句报点让他翻译给队友，或者问问你正在看的这一刻。回答会引用知识库；点击其中的时间可以跳转视频。",
+    "问任何鲑鱼跑的问题，或者问问你正在看的这一刻。回答会引用知识库；点击其中的时间可以跳转视频。黑话和报点请到“翻译”页翻译。",
   "cf.chat.try": "试试：",
   "cf.chat.examples": [
-    "惯性取消搬蛋快",
-    "我刚拿的熊刷，不应该上柱子拍的",
-    "小枪可以优先出差回收一些外围蛋，但不要待太久卡新一波怪",
-    "我还剩一个镭射",
-    "翻译成英文，发给外国队友：小枪可以优先出差回收一些外围蛋",
+    "这一波我哪里可以打得更好？",
+    "为什么我在这里倒下了？",
+    "这时候应该先处理哪个头目鲑鱼？",
+    "蛋流哪里断了？",
+    "我的站位合理吗？",
     "什么时候该离开鲑鱼卵容器去打高塔鱼？",
   ],
+  "cf.chat.rangeExample": "这段范围里有什么问题？",
   "cf.chat.with": "带上视频：",
   "cf.chat.ctxMoment": "这一刻",
   "cf.chat.ctxRange": "一个时间段",
@@ -192,6 +196,30 @@ I18N.zh = {
   "cf.attach.attach": "附加",
   "cf.attach.download": "下载并附加",
   "cf.attach.failed": "未能附加：{error}",
+
+  // Translate
+  "tr.empty":
+    "输入一个术语（炸弹鱼、コジャケ、熊刷）查看它在各语言里的术语表词条，或者一句满是黑话的话，用对方社区的叫法翻译出来。结果会保存在这里。",
+  "tr.count": "{n} 条，保存在 {file}",
+  "tr.clear": "清空历史",
+  "tr.clearAsk": "清空翻译历史？{file} 会被删除。",
+  "tr.placeholder": "一个术语（炸弹鱼、コジャケ、熊刷）或一句满是黑话的话…",
+  "tr.textLabel": "要翻译的文本",
+  "tr.into": "译成",
+  "tr.targetLabel": "目标语言",
+  "tr.exampleInto": "翻译成{lang}",
+  "tr.working": "翻译中…",
+  "tr.failed": "未能翻译：{error}",
+  "tr.noKey":
+    "运行工作室的机器上没有设置 ANTHROPIC_API_KEY，只有术语表能回答：术语的词条和各语言名称、一句话里用到的术语。要翻译整句，请在启动工作室前导出它。",
+  "tr.noKeyTranslation":
+    "翻译这一条需要在运行工作室的机器上设置 ANTHROPIC_API_KEY。",
+  "tr.copy": "复制",
+  "tr.copied": "已复制",
+  "tr.entry": "术语表词条",
+  "tr.terms": "用到 {n} 个术语",
+  "tr.noTerms": "其中没有术语表里的词。",
+  "tr.noName": "术语表里没有{lang}名称",
 
   // Knowledge
   "k.loading":
@@ -268,11 +296,6 @@ I18N.zh = {
   "k.th.fetched": "获取日期",
   "k.docs.shown": "{total} 个中的 {n} 个",
   "k.docs.none": "还没有文档：请导入一些。",
-  "k.glossary.size": "{n} 个术语",
-  "k.glossary.none": "没有找到术语。",
-  "k.termPlaceholder": "炸弹鱼、コジャケ，或一句话",
-  "k.termLabel": "术语或文本",
-  "k.lookUp": "查询",
 
   // Knowledge: the inbox, import reports, overview, assets
   "k.kind.inbox": "收件箱",

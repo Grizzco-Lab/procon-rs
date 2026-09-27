@@ -1,8 +1,8 @@
 //! Studio dashboard server: live controller view, video preview, recording controls
 //!
 //! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`, `/inspect.js`,
-//!   `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`, `/vision.js`,
-//!   `/predictor.js`, `/i18n.js`, `/i18n-zh.js`:
+//!   `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`,
+//!   `/translate.js`, `/vision.js`, `/predictor.js`, `/i18n.js`, `/i18n-zh.js`:
 //!   the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
 //!   report, `{"type":"status"}` text twice a second, and the video preview
@@ -129,8 +129,8 @@ pub async fn serve(
     });
 
     // The drawing layer, the shared video player, the Inkspector's labeling
-    // mode, the Cuttlefish app with its knowledge view, the Vision app, the
-    // Predictor and the page's dictionaries
+    // mode, the Cuttlefish app with its knowledge and translate views, the
+    // Vision app, the Predictor and the page's dictionaries
     let scripts = warp::path!(String).and_then(|name: String| async move {
         let body = match name.as_str() {
             "sketch.js" => include_str!("../web/sketch.js"),
@@ -138,6 +138,7 @@ pub async fn serve(
             "label.js" => include_str!("../web/label.js"),
             "cuttlefish.js" => include_str!("../web/cuttlefish.js"),
             "knowledge.js" => include_str!("../web/knowledge.js"),
+            "translate.js" => include_str!("../web/translate.js"),
             "vision.js" => include_str!("../web/vision.js"),
             "predictor.js" => include_str!("../web/predictor.js"),
             "i18n.js" => include_str!("../web/i18n.js"),

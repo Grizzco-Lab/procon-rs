@@ -1,11 +1,11 @@
 // Cuttlefish's knowledge view (#cuttlefish/view=knowledge): managing what
 // Cuttlefish knows. Imports (uploads into the inbox and its import report
-// included), what the store holds, documents, the glossary, the asset
-// browser and search, through /api/cuttlefish/knowledge/... (see
-// src/knowledge.rs). Questions and translations are the chat's, in
-// cuttlefish.js. Runs after cuttlefish.js, which hides its library and
-// player for this view, and uses the helpers of i18n.js, app.js and
-// inspect.js (t, $, escapeHtml).
+// included), what the store holds, documents, the asset browser and search,
+// through /api/cuttlefish/knowledge/... (see src/knowledge.rs). Questions
+// are the chat's (cuttlefish.js), glossary lookups and translations the
+// translator's (translate.js). Runs after cuttlefish.js, which hides its
+// library and player for this view and marks the tab, and uses the helpers
+// of i18n.js, app.js and inspect.js (t, $, escapeHtml).
 "use strict";
 
 (() => {
@@ -778,39 +778,6 @@
     loadOverview();
   });
 
-  // ------------------------------------------------------------- glossary
-
-  $("k-glossary-form").onsubmit = async (event) => {
-    event.preventDefault();
-    const list = $("k-glossary");
-    let data;
-    try {
-      data = await api(
-        `glossary?${new URLSearchParams({ q: $("k-term").value })}`,
-      );
-    } catch (error) {
-      list.innerHTML = `<li class="notice">${escapeHtml(error.message)}</li>`;
-      return;
-    }
-    $("k-glossary-size").textContent = t("k.glossary.size", { n: data.size });
-    list.replaceChildren();
-    if (!data.terms.length) {
-      list.innerHTML = `<li class="panel-note">${escapeHtml(t("k.glossary.none"))}</li>`;
-    }
-    for (const term of data.terms) {
-      const li = document.createElement("li");
-      li.className = "k-term";
-      const forms = Object.entries(term.forms)
-        .map(
-          ([lang, names]) =>
-            `<span class="k-form"><b>${escapeHtml(lang)}</b> ${escapeHtml(names.join(", "))}</span>`,
-        )
-        .join("");
-      li.innerHTML = `<div class="k-hit-head"><span class="cf-kind">${escapeHtml(term.id)}</span></div><div class="k-forms">${forms}</div><p class="k-hit-text">${escapeHtml(term.definition)}</p>`;
-      list.append(li);
-    }
-  };
-
   // -------------------------------------------------------------- routing
 
   function show() {
@@ -824,17 +791,9 @@
 
   window.addEventListener("app-route", (event) => {
     const { app, state } = event.detail;
-    const inPlayer = state.has("r") || state.has("kind");
-    const view = state.get("view") === "knowledge";
     const wasShown = k.shown;
-    k.shown = app === "cuttlefish" && view;
+    k.shown = app === "cuttlefish" && state.get("view") === "knowledge";
     $("cf-knowledge").hidden = !k.shown;
-    $("cf-tabs").hidden = app !== "cuttlefish" || inPlayer;
-    for (const tab of $("cf-tabs").querySelectorAll("[data-tab]")) {
-      const current = (tab.dataset.tab === "knowledge") === view;
-      if (current) tab.setAttribute("aria-current", "page");
-      else tab.removeAttribute("aria-current");
-    }
     if (k.shown && !wasShown) show();
     if (!k.shown) clearTimeout(k.pollTimer);
   });
