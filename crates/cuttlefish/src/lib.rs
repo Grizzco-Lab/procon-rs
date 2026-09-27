@@ -6,7 +6,8 @@
 //! Sheets and Slides through
 //! [`google`], YouTube transcripts through [`youtube`], Discord
 //! conversations through [`discord`], X posts captured from the user's own
-//! account through [`x`], local files through [`mod@file`]), split
+//! account through [`x`], Xiaohongshu notes with their comments through
+//! [`rednote`], local files through [`mod@file`]), split
 //! into chunks ([`chunk`]), embedded ([`embed`]) and indexed ([`index`],
 //! with a BM25 keyword index beside it, [`keyword`], for hybrid search) in a
 //! data folder ([`store`]); [`ingest`] runs the importers; [`eval`] measures
@@ -72,6 +73,7 @@ pub mod notes;
 pub mod pedia;
 pub mod php;
 pub mod questions;
+pub mod rednote;
 pub mod review;
 pub mod sampling;
 pub mod situation;

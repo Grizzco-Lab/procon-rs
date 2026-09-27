@@ -28,6 +28,7 @@
     "expert-note": "k.source.expertNote",
     "game-data": "k.source.gameData",
     x: "k.source.x",
+    rednote: "k.source.rednote",
   };
 
   /** Document formats as shown: names, or i18n keys (`k.`); others are

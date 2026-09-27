@@ -506,8 +506,8 @@ pub struct IngestJob {
 
 /// A document's format for the overview: the extension of its file;
 /// for an address `google-doc`, `google-sheet` or `google-slides`,
-/// `subtitles` (videos), `messages` (Discord) or `html`; an expert note
-/// `note`; else `other`
+/// `subtitles` (videos), `messages` (Discord), `card` (game data), `note`
+/// (a Xiaohongshu note) or `html`; an expert note `note`; else `other`
 fn format_of(d: &Document) -> String {
     if d.source == SourceKind::ExpertNote {
         return "note".to_string();
@@ -523,6 +523,7 @@ fn format_of(d: &Document) -> String {
             (SourceKind::Discord | SourceKind::DiscordVodReview, _) => "messages",
             (SourceKind::X, _) => "posts",
             (SourceKind::GameData, _) => "card",
+            (SourceKind::Rednote, _) => "note",
             (_, Some(GoogleFile::Doc(_))) => "google-doc",
             (_, Some(GoogleFile::Sheet { .. })) => "google-sheet",
             (_, Some(GoogleFile::Slides(_))) => "google-slides",

@@ -970,6 +970,7 @@ fn default_sources() -> Vec<SourceKind> {
         SourceKind::DiscordVodReview,
         SourceKind::Discord,
         SourceKind::X,
+        SourceKind::Rednote,
         SourceKind::Guide,
         SourceKind::Video,
         SourceKind::Web,

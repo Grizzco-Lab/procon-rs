@@ -12,6 +12,9 @@
 //!   discord`, with its `<id>.channel.json` beside it): its conversations;
 //! - **an X capture** (`x/<handle>/posts.jsonl` of `tools/capture`): one
 //!   document per post with its replies ([`crate::x`]);
+//! - **a Xiaohongshu capture** (`rednote/<user id>/notes.jsonl` of
+//!   `tools/capture`): one document per note with its comments
+//!   ([`crate::rednote`]);
 //! - **a structured file** (JSON, YAML, TOML, CSV, TSV, `.po`,
 //!   `.properties`, and PHP files of a message folder such as stat.ink's
 //!   `messages/<lang>/<category>.php`, see [`crate::messages`]): read for
@@ -46,7 +49,7 @@ use crate::ingest::{Meta, Sink};
 use crate::messages::{self, Category};
 use crate::store::{Store, write_atomic};
 use crate::tables::{self, Member};
-use crate::{discord, discord_fetch, x};
+use crate::{discord, discord_fetch, rednote, x};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -115,6 +118,8 @@ pub enum Route {
     DiscordArchive,
     /// An account's threads captured from X (`tools/capture`)
     X,
+    /// A creator's notes captured from Xiaohongshu (`tools/capture`)
+    Rednote,
     /// A structured file, read for name tables
     Table,
     /// An image or icon
@@ -137,6 +142,7 @@ pub fn version(route: Route) -> u32 {
         | Route::Discord
         | Route::DiscordArchive
         | Route::X
+        | Route::Rednote
         | Route::Image
         | Route::Skip(_) => 0,
         // Tables: PHP message folders, regional variants, kinds and games
@@ -233,6 +239,8 @@ pub fn classify(rel: &str, head: impl FnOnce() -> Vec<u8>) -> Route {
                 Route::Skip("state of cuttlefish fetch discord")
             } else if x::is_state_file(&text) {
                 Route::Skip("state of the X capture (tools/capture)")
+            } else if rednote::is_state_file(&text) {
+                Route::Skip("state of the Xiaohongshu capture (tools/capture)")
             } else {
                 Route::Table
             }
@@ -244,8 +252,12 @@ pub fn classify(rel: &str, head: impl FnOnce() -> Vec<u8>) -> Route {
                 Route::X
             } else if text.contains("\"channel_id\"") && text.contains("\"author\"") {
                 Route::DiscordArchive
+            } else if rednote::is_notes_file(&text)
+                || (name == rednote::NOTES_FILE && rel.starts_with("rednote/"))
+            {
+                Route::Rednote
             } else {
-                Route::Skip("JSON lines: not Discord messages or X posts")
+                Route::Skip("JSON lines: not Discord messages, X posts or Xiaohongshu notes")
             }
         }
         "yaml" | "yml" | "toml" | "csv" | "tsv" | "po" | "properties" => Route::Table,
@@ -324,7 +336,7 @@ struct Seen {
     bytes: u64,
     /// Modification time, Unix seconds
     modified: i64,
-    /// What it gave: `document`, `discord`, `x`, `table`, `no-table`,
+    /// What it gave: `document`, `discord`, `x`, `rednote`, `table`, `no-table`,
     /// `asset`, `archive`, `copy`, `empty`
     kind: String,
     /// The document, table or asset
@@ -467,10 +479,11 @@ impl Report {
     pub fn summary(&self) -> String {
         let skipped: usize = self.skipped.iter().map(|s| s.count).sum();
         alloc::format!(
-            "{} documents, {} Discord channels, {} X accounts, {} name tables, {} images; {} unchanged, {skipped} skipped, {} failed{}",
+            "{} documents, {} Discord channels, {} X accounts, {} Xiaohongshu creators, {} name tables, {} images; {} unchanged, {skipped} skipped, {} failed{}",
             self.count("document"),
             self.count("discord"),
             self.count("x"),
+            self.count("rednote"),
             self.count("glossary"),
             self.count("asset"),
             self.unchanged,
@@ -773,6 +786,7 @@ impl Import<'_> {
             Route::Prose => self.prose(&found, &mut seen, bytes)?,
             Route::Discord | Route::DiscordArchive => self.discord(&found, &mut seen, route)?,
             Route::X => self.x(&found, &mut seen)?,
+            Route::Rednote => self.rednote(&found, &mut seen)?,
             Route::Image => self.image(&found, &mut seen, bytes)?,
             Route::Archive => {
                 self.archive(&found, &mut seen)?;
@@ -906,6 +920,37 @@ impl Import<'_> {
             alloc::format!("@{handle}: {} posts with {replies} replies", docs.len()),
         );
         seen.kind = String::from("x");
+        Ok(())
+    }
+
+    /// A creator's notes of a Xiaohongshu capture: one document per note
+    /// with its comments
+    fn rednote(&mut self, found: &Found, seen: &mut Seen) -> Result<()> {
+        let notes = rednote::read(&found.path)?;
+        if notes.is_empty() {
+            self.report.skip("no notes", &found.rel);
+            seen.kind = String::from("empty");
+            return Ok(());
+        }
+        let docs = rednote::to_documents(&notes);
+        for mut doc in docs {
+            self.meta.apply(&mut doc);
+            self.sink.add(&doc)?;
+        }
+        let comments: usize = notes.iter().map(rednote::Note::comment_total).sum();
+        let who = notes
+            .iter()
+            .map(|n| n.author.nickname.as_str())
+            .find(|n| !n.is_empty())
+            .unwrap_or(&notes[0].author.user_id);
+        self.sink
+            .note(&alloc::format!("+ {} ({} notes)", found.rel, notes.len()));
+        self.report.take(
+            &found.rel,
+            "rednote",
+            alloc::format!("{who}: {} notes, {comments} comments", notes.len()),
+        );
+        seen.kind = String::from("rednote");
         Ok(())
     }
 
@@ -1552,7 +1597,7 @@ mod tests {
         );
         assert_eq!(
             classify("logs.jsonl", || b"{\"a\": 1}".to_vec()),
-            Route::Skip("JSON lines: not Discord messages or X posts")
+            Route::Skip("JSON lines: not Discord messages, X posts or Xiaohongshu notes")
         );
         // An X capture: the accounts' files read, the state theirs
         assert_eq!(
@@ -1567,6 +1612,23 @@ mod tests {
                 br#"{"tool": "xcap", "version": 1, "day": {}}"#.to_vec()
             }),
             Route::Skip("state of the X capture (tools/capture)")
+        );
+        // A Xiaohongshu capture: the notes read, the state theirs
+        assert_eq!(
+            classify("rednote/5f00/notes.jsonl", || {
+                br#"{"source":"rednote","id":"66aa","comments":[]}"#.to_vec()
+            }),
+            Route::Rednote
+        );
+        assert_eq!(
+            classify("rednote/5f00/notes.jsonl", Vec::new),
+            Route::Rednote
+        );
+        assert_eq!(
+            classify("rednote/state.json", || {
+                br#"{"tool": "rncap", "version": 1, "day": {}}"#.to_vec()
+            }),
+            Route::Skip("state of the Xiaohongshu capture (tools/capture)")
         );
         assert_eq!(
             classify("discord/1/2/2.channel.json", none),
@@ -2173,6 +2235,72 @@ mod tests {
         let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
         assert_eq!(report.count("x"), 0);
         assert_eq!(report.unchanged, 2, "{report:#?}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn reads_a_xiaohongshu_capture() {
+        let root = std::env::temp_dir().join(alloc::format!(
+            "cuttlefish-inbox-rednote-{}",
+            std::process::id()
+        ));
+        let cache = root.join("cache");
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = "rednote/5f0000000000000000000001";
+        write(
+            &root,
+            "rednote/state.json",
+            br#"{"tool": "rncap", "version": 1, "day": {"day": "2026-09-27", "actions": 3}, "accounts": {}, "seen": {}}"#,
+        );
+        let note = |id: &str, title: &str, comments: &str| {
+            alloc::format!(
+                r#"{{"source": "rednote", "id": "{id}", "url": "https://www.xiaohongshu.com/explore/{id}", "author": {{"user_id": "5f0000000000000000000001", "nickname": "Grizzco Coach"}}, "date": "2025-03-01T12:00:00Z", "kind": "normal", "title": "{title}", "text": "Steelhead first.", "tags": ["salmonrun"], "images": [], "likes": 3, "collects": 1, "shares": 0, "comment_count": 1, "comments": [{comments}], "comments_complete": true, "matched": ["steelhead"], "captured_at": "2026-09-27T10:00:00Z"}}"#
+            )
+        };
+        let comment = r#"{"id": "c1", "author": {"user_id": "u2", "nickname": "alice"}, "date": "2025-03-02T08:00:00Z", "text": "agree", "likes": 1, "replies": [{"id": "c1-1", "author": {"user_id": "u3", "nickname": "bob"}, "date": null, "text": "me too", "likes": 0, "reply_to": "c1", "reply_to_author": "alice"}], "replies_total": 1}"#;
+        let lines = alloc::format!(
+            "{}\n{}\n{}\n",
+            note("66aa00000000000000000001", "W3 plan", ""),
+            note("66aa00000000000000000002", "Eggstra 500", comment),
+            // The first note captured again, with a comment now
+            note("66aa00000000000000000001", "W3 plan (edited)", comment),
+        );
+        write(
+            &root,
+            &alloc::format!("{dir}/notes.jsonl"),
+            lines.as_bytes(),
+        );
+        let mut sink = Memory {
+            root: root.clone(),
+            ..Default::default()
+        };
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert_eq!(report.count("rednote"), 1, "{report:#?}");
+        assert_eq!(report.taken[0].detail, "Grizzco Coach: 2 notes, 4 comments");
+        assert_eq!(sink.docs.len(), 2);
+        let doc = sink
+            .docs
+            .iter()
+            .find(|d| d.title == "W3 plan (edited)")
+            .expect("the later capture wins");
+        assert_eq!(doc.source, SourceKind::Rednote);
+        assert_eq!(
+            doc.url.as_deref(),
+            Some("https://www.xiaohongshu.com/explore/66aa00000000000000000001")
+        );
+        assert!(doc.text.contains("[2025-03-02 08:00 UTC] alice: agree"));
+        assert!(doc.text.contains("  bob \u{21aa} alice: me too"));
+        let reasons: Vec<&str> = report.skipped.iter().map(|s| s.reason.as_str()).collect();
+        assert!(
+            reasons.contains(&"state of the Xiaohongshu capture (tools/capture)"),
+            "{reasons:?}"
+        );
+        assert!(report.summary().contains("1 Xiaohongshu creators"));
+        // Unchanged next time
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert_eq!(report.count("rednote"), 0);
+        assert_eq!(report.unchanged, 1);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

@@ -88,6 +88,10 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   inbox/x/<handle>/posts.jsonl
                      the Salmon Run threads of an account you follow on X, captured
                      by tools/capture/xcap.mjs; inbox/x/state.json is its state
+  inbox/rednote/<user id>/notes.jsonl
+                     the Salmon Run notes of a Xiaohongshu creator you follow, with
+                     their comments, captured by tools/capture/rednote.mjs;
+                     inbox/rednote/state.json is its state
   media/discord/<guild>/<channel>/<message id>/<file>
                      VODs and images downloaded by `fetch discord --attachments`,
                      with a media.jsonl manifest per channel (large: see below)
@@ -167,6 +171,7 @@ which can also upload into it) looks at each file by name and first bytes:
 | md, txt, rst, org, adoc, html, pdf, docx, srt, vtt | a document (chunked, embedded), keyed by its inbox path |
 | DiscordChatExporter JSON, or `<id>.messages.jsonl` of `fetch discord` (with its `<id>.channel.json` beside it) | its conversations; the fetcher's channel objects and `state.json` are skipped |
 | `x/<handle>/posts.jsonl` of `tools/capture/xcap.mjs` | one document per thread (the post, its quoted post, the replies); the capture's `x/state.json` is skipped |
+| `rednote/<user id>/notes.jsonl` of `tools/capture/rednote.mjs` | one document per Xiaohongshu note with its comments (source kind `rednote`); the capture's `rednote/state.json` is skipped |
 | json, yaml, toml, csv, tsv, po, properties | a name table if it holds the same keys in several languages; never embedded. Otherwise a data table: a small text document of `key / path: value` lines under 1 MB, skipped above. Project configuration (`package.json`, `Cargo.toml`, ...) is skipped |
 | php in a message folder (`messages/<lang>/<category>.php`, as Yii apps such as stat.ink keep them) | a name table: the keys are the English names, the values the translations. Interface categories (`app`, `email`, `privacy`, time zones, ...) and machine-translated folders (`_deepl`) are skipped; other `.php` is code |
 | png, jpg, gif, webp, svg, bmp, ico, avif | an asset; site images (folders named after logos, screenshots, clip art, "about") are skipped |
@@ -256,6 +261,7 @@ skipped and why, failed, gone.
 | YouTube | `ingest youtube <video/playlist/channel>` | `yt-dlp` fetches subtitles and metadata only; uploaded subtitles preferred over auto captions |
 | Discord #vod-review | `ingest discord-export`, `ingest discord-bot`, or `fetch discord` + `ingest inbox` | The export and the bot are the sanctioned ways; `fetch discord` reads with your own account, against Discord's terms. See below |
 | X (Twitter) | `tools/capture/xcap.mjs` + `ingest inbox` | The Salmon Run posts of the accounts you follow, with their replies, captured by your own logged-in Chrome, slowly and read-only (source kind `x`, weight 1.0); against X's terms, see below. Or save a thread as text and `ingest file` |
+| Xiaohongshu (RedNote, 小红书) | `tools/capture/rednote.mjs` + `ingest inbox` | The Salmon Run notes of the creators you follow, with their comments and replies, captured by your own logged-in Chrome, slowly and read-only (source kind `rednote`, weight 1.0); can breach the site's terms, see below |
 | Twitch | not automated | Twitch VODs have no subtitles (a speech-to-text step would be needed) |
 | Lean's Splatoon 3 datamine (leanny.github.io) | `ingest leanny` (the studio: **Game data (Lean)**) | Fact cards of exact game numbers (source kind `game-data`, weight 1.1) and the Eggstra Work events table; no licence, the data is Nintendo's: fetched at run time, private study only. See "Game data" |
 
@@ -956,6 +962,60 @@ language X recorded, the game era from the date, and "study use only, do
 not republish" as the terms. Slang suggestions read `x` documents with the
 other community sources.
 
+### Capturing Xiaohongshu (RedNote) with your own account
+
+The Chinese Salmon Run community writes on Xiaohongshu (小红书, RedNote):
+guides, clears, and discussion in the comments. `tools/capture/rednote.mjs`
+(Node 22+, no packages; the folder's README has the guide) drives the same
+logged-in Chrome as `xcap.mjs`, on the same profile folder
+(`~/.config/procon/browser-profile`, one login for both sites): it opens
+your following list once, each creator's notes list (笔记), and each note
+about Salmon Run for its comments and replies, scrolling and clicking like
+a reader, and keeps the JSON the page loaded for itself (the site's signed
+headers, `x-s`/`x-t`, are never made or replayed; the page's server state
+and the DOM are the fallbacks). **Automating one's own account can breach
+Xiaohongshu's terms**, and the site watches for it (risk control, sliders,
+forced re-logins, a restricted account); slow, read-only use of a real
+browser reduces the risk and does not remove it. The user weighed and
+accepted it for this private knowledge base. The tool makes no requests of
+its own, writes nothing to the site, downloads no media, and never sees or
+stores credentials.
+
+What it keeps: a note is about Salmon Run when its title in the list (or,
+with `--match detail`, its title, text and tags) matches the same
+three-language glossary as `xcap` (`lib/filter.mjs`: 打工, 鲑鱼跑, 熊先生,
+金鲑鱼卵, the bosses, the Kings, サーモンラン, バクダン, Salmon Run,
+Grizzco, ...). Each kept note is one JSON line in
+`<knowledge>/inbox/rednote/<user id>/notes.jsonl`: id, author, date,
+title, text, tags, image and video addresses (nothing downloaded), likes,
+collects, shares, the comment count, and the comments with their replies
+(author, date, text, likes, region, whom a reply answers);
+`inbox/rednote/state.json` holds the following list, a record per creator
+(every note decided on: kept, not about Salmon Run, unreadable) and the
+day's action count, so runs continue and stay incremental. Pace: 5 to 12 s
+between page actions, a 1 to 5 minute pause every 15 to 40, 400 actions a
+run and 1200 a day by default; a captcha, a slider, a login prompt, a
+risk-control page or a refused answer stops the run at once, nothing is
+ever solved. About 6 actions a note: 100 notes take roughly 1.5 to 4
+hours.
+
+```bash
+node tools/capture/rednote.mjs login                          # once, in the window that opens (a code to scan with the app)
+node tools/capture/rednote.mjs run --dry-run --max-actions 20 # browse a little, write nothing
+node tools/capture/rednote.mjs run                            # the capture; run again any time
+node tools/capture/rednote.mjs status
+cuttlefish ingest inbox                                       # or Import inbox on the Knowledge page
+```
+
+The inbox (`rednote.rs`) makes one document per note with source kind
+`rednote` (weight 1.0, like a Discord channel and below #vod-review):
+titled by the note; a header `Xiaohongshu note by <creator>, <date>`, the
+text, the tags, then a `## Comments` section of `[date] author: text`
+lines with the replies indented (`↳ name` for the comment they answer);
+the creator as attribution, the note's own language (zh, ja), the game era
+from the date, and "study use only, do not republish" as the terms. Slang
+suggestions read `rednote` documents with the other community sources.
+
 ## Deep questions and expert notes
 
 Fact questions ("how much health does a Steelhead have?") test the store;
@@ -1248,8 +1308,8 @@ never loses them (`term-reset` drops one). CLI: `cuttlefish slang suggest
 [--dry-run]` and `cuttlefish slang move [--dry-run]`.
 
 **4. Source quality.** Each document has a weight: expert notes 1.3,
-#vod-review 1.2, guides 1.15, game-data fact cards 1.1, wikis/Discord/files
-1.0, web pages and video transcripts 0.9 (`--weight` overrides). Ranking adds 0.1 x (weight - 1) to the cosine, which
+#vod-review 1.2, guides 1.15, game-data fact cards 1.1, wikis/Discord/X/
+Xiaohongshu/files 1.0, web pages and video transcripts 0.9 (`--weight` overrides). Ranking adds 0.1 x (weight - 1) to the cosine, which
 reorders close matches without burying a clearly better one, and takes
 0.02 off a source of the Splatoon 2 era (`game.rs`: Discord conversations
 get their era from their date at import, and every document may carry
