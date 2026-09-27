@@ -32,14 +32,15 @@ import * as state from "./lib/state.mjs";
 const DEFAULT_PROFILE = join(homedir(), ".config", "procon", "browser-profile");
 const DEFAULT_PORT = 9251;
 
-/** The pace of a person reading: 5 to 12 s between actions, a pause of 1
- * to 5 minutes every 15 to 40, at most 400 actions a run and 1200 a day */
+/** The pace of a person reading, on a site with strict risk control: 8 to
+ * 20 s between actions, a pause of 2 to 8 minutes every 10 to 25, at most
+ * 150 actions a run and 450 a day */
 const PACE = Object.freeze({
-  delay: [5, 12],
-  pauseEvery: [15, 40],
-  pause: [60, 300],
-  maxActions: 400,
-  dailyCap: 1200,
+  delay: [8, 20],
+  pauseEvery: [10, 25],
+  pause: [120, 480],
+  maxActions: 150,
+  dailyCap: 450,
   maxMinutes: null,
 });
 

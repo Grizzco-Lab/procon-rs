@@ -992,11 +992,11 @@ collects, shares, the comment count, and the comments with their replies
 (author, date, text, likes, region, whom a reply answers);
 `inbox/rednote/state.json` holds the following list, a record per creator
 (every note decided on: kept, not about Salmon Run, unreadable) and the
-day's action count, so runs continue and stay incremental. Pace: 5 to 12 s
-between page actions, a 1 to 5 minute pause every 15 to 40, 400 actions a
-run and 1200 a day by default; a captcha, a slider, a login prompt, a
+day's action count, so runs continue and stay incremental. Pace: 8 to 20 s
+between page actions, a 2 to 8 minute pause every 10 to 25, 150 actions a
+run and 450 a day by default; a captcha, a slider, a login prompt, a
 risk-control page or a refused answer stops the run at once, nothing is
-ever solved. About 6 actions a note: 100 notes take roughly 1.5 to 4
+ever solved. About 6 actions a note: 100 notes take roughly 5 to 7
 hours.
 
 ```bash

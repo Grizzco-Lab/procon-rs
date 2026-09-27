@@ -195,10 +195,10 @@ a captcha**: anything that wants a person stops the run at once.
   state's camel case (`__INITIAL_STATE__`, Vue refs unwrapped) alike;
   when a note's answers were missed, its title, text and comments are read
   off the page (`#detail-title`, `#detail-desc`, `.comment-item`).
-- **Pace** (`lib/pace.mjs`): 5 to 12 s between page actions (a navigation,
+- **Pace** (`lib/pace.mjs`): 8 to 20 s between page actions (a navigation,
   a wheel scroll of a few notches, a click, a key), drawn anew each time,
-  plus the page's own settling; a pause of 1 to 5 minutes every 15 to 40
-  actions; at most 400 actions a run and 1200 a day (UTC) by default;
+  plus the page's own settling; a pause of 2 to 8 minutes every 10 to 25
+  actions; at most 150 actions a run and 450 a day (UTC) by default;
   `--max-notes` (60) and `--max-minutes` if you like. **A stop at once**
   on: an address holding `captcha`, `verify`, `login`, `risk` or
   `security`; a page whose text asks for a verification, a slider, a code,
@@ -251,13 +251,12 @@ state file is skipped as the tool's own. Nothing else is written.
 
 **Expected time.** A note costs about 6 page actions: its tile, one or two
 scrolls of the comments, a reply thread or two, Escape, and its share of
-the list's scrolls. At the default pace (8.5 s between actions on average
-plus the page's settling, a 3-minute pause every 27 actions or so) that is
-about 1.5 to 2.5 minutes a note, so **100 notes take roughly 1.5 to 4
-hours** depending on how many comments they carry; the default caps (400
-actions a run) give about 60 notes a run, and the daily cap (1200) about
-200 a day. `--max-comments 60 --max-replies 3` is quicker per note,
-`--delay 8-20 --pause 120-600` gentler still.
+the list's scrolls. At the default pace (14 s between actions on average
+plus the page's settling, a 5-minute pause every 17 actions or so) that is
+about 3 to 4 minutes a note, so **100 notes take roughly 5 to 7 hours**
+depending on how many comments they carry; the default caps (150 actions a
+run) give about 25 notes a run, and the daily cap (450) about 75 a day.
+`--max-comments 60 --max-replies 3` is quicker per note.
 
 ### The record
 
