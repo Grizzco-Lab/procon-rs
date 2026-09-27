@@ -2176,7 +2176,9 @@ input:focus-visible {
     padding-left: var(--rail);
   }
 
-  /* Apps at the top, the tools (.bar-tools) at the foot, like a dock */
+  /* The apps centred in the height the tools (.bar-tools, fixed at the
+     foot over the bottom padding) leave, like a dock; a window too short
+     for them starts them at the top instead (`safe`) */
   :root[data-nav="side"]:not([data-layout="phone"]) .app-nav {
     position: fixed;
     top: 0;
@@ -2184,6 +2186,7 @@ input:focus-visible {
     left: 0;
     z-index: 40;
     flex-direction: column;
+    justify-content: safe center;
     gap: 6px;
     width: var(--rail);
     padding: 14px 11px 216px;
@@ -2537,6 +2540,21 @@ input:focus-visible {
     opacity: 1;
     transform: none;
     transition: none;
+  }
+
+  /* Names in line stay where they are on hover and focus: the slide of the
+     compact rail's tooltips (translate(0, -50%)) would lift a name by half
+     its height, over the app above when what it is for wraps. Only the
+     icon lifts. */
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav
+    a:is(:hover, :focus-visible)
+    .app-name,
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .bar-tools
+    .tool-button:is(:hover, :focus-visible)
+    .tool-name {
+    transform: none;
   }
 
   :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])

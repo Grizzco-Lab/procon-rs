@@ -88,9 +88,9 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/recorder.rs` | Session folders and `controller.bin`: start/pause/resume/stop |
 | `src/video.rs` | ffmpeg capture: input list, grabber, preview and recording encoders |
 | `src/audio.rs` | Capture card sound from PulseAudio, for recordings |
-| `src/studio.rs` | Coordinator: sessions, `session.json`, dashboard commands, saved settings |
+| `src/studio.rs` | Coordinator: sessions, `session.json`, dashboard commands, saved settings, technique markers (open span, mark last N s, undo; `web/techniques.js` is their panel) |
 | `src/web.rs` | Dashboard server (warp): page, WebSocket, command API, Inkspector API |
-| `src/inspect.rs` | Inkspector backend: sessions, frames, labels, delays |
+| `src/inspect.rs` | Inkspector backend: sessions, frames, labels, delays, technique markers (read, replace, every session's) |
 | `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes, Follow's write rules |
 | `src/follow.rs` | Follow: boxes carried over the next frames by AgentZero's SAM 2 tracker, proxied from a thread; starts the tracker |
 | `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` with the chat, and the video, optional), video bytes with ranges, yt-dlp downloads into new or existing reviews, migration of the older flat layout, the chat endpoint over the shared knowledge store |
@@ -196,8 +196,8 @@ also those kept as an app's last view in `localStorage`, become paths
 (`urlOfHash`, `storedView`). The server answers `/` and every app path with the
 page (`APPS` in `src/web.rs`) after its own routes, so every asset, icon and
 API URL in the page starts with `/`. The app
-links are a dock-like left rail (apps at the top, the language switch and
-View at its foot) or a segmented switch in the top bar (`data-nav`; other
+links are a dock-like left rail (apps centred in the height above the
+tools, the language switch and View at its foot) or a segmented switch in the top bar (`data-nav`; other
 apps' names become tooltips where the bar runs short), in the order the user
 dragged them into (or moved with Alt+arrows; `procon-app-order`, new apps go
 last). The rail is compact by default (icons on 50 px tiles, names as
