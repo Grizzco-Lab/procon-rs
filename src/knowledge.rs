@@ -212,8 +212,13 @@ fn is_set(name: &str) -> bool {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Source {
-    /// Everything in the inbox
-    Inbox,
+    /// Everything in the inbox; with `reimport`, one file, archive or
+    /// family of files (a path as a report shows it) is forgotten first and
+    /// read again
+    Inbox {
+        #[serde(default)]
+        reimport: Option<String>,
+    },
     /// Web pages, a sitemap or MediaWiki categories
     Web(Web),
     /// A YouTube video, playlist or channel's transcripts
@@ -291,7 +296,17 @@ impl IngestRequest {
             Ok(names.join(", "))
         };
         match &mut self.source {
-            Source::Inbox => Ok("Inbox".to_string()),
+            Source::Inbox { reimport } => {
+                *reimport = reimport
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|r| !r.is_empty())
+                    .map(String::from);
+                Ok(match reimport {
+                    Some(target) => format!("Inbox: {target} again"),
+                    None => "Inbox".to_string(),
+                })
+            }
             Source::Web(web) => {
                 trim(&mut web.urls);
                 trim(&mut web.categories);
@@ -923,8 +938,13 @@ impl Knowledge {
         };
         let meta = &request.meta;
         let result = match &request.source {
-            Source::Inbox => {
-                let result = inbox::import(&mut sink, &self.root, &self.cache, meta);
+            Source::Inbox { reimport } => {
+                let result = match reimport {
+                    Some(target) => {
+                        inbox::reimport(&mut sink, &self.root, &self.cache, meta, target)
+                    }
+                    None => inbox::import(&mut sink, &self.root, &self.cache, meta),
+                };
                 loaded.store.write().unwrap().reload_glossary()?;
                 result.map(|report| {
                     self.update(id, |job| {
@@ -982,6 +1002,13 @@ impl ingest::Sink for JobSink<'_> {
         }
         self.knowledge.update(self.id, |job| job.added += 1);
         Ok(chunks)
+    }
+
+    fn delete(&mut self, id: &str) -> Result<bool> {
+        let mut store = self.loaded.store.write().unwrap();
+        let removed = store.delete(id)?;
+        self.unsaved += removed as usize;
+        Ok(removed)
     }
 
     fn raw_dir(&self, kind: &str) -> PathBuf {

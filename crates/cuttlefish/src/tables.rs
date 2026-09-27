@@ -22,9 +22,21 @@
 //! things (a segment containing "name") are kept, so "OK" and "Back" never
 //! reach the glossary. Tables live in `<data>/terms/<id>.json`, one file
 //! per table ([`save`], [`load_all`]).
+//!
+//! Message folders (`messages/<lang>/<category>.php`, see
+//! [`crate::messages`]) are families too; a PHP message file's keys are its
+//! English text and become the `en` names ([`crate::php`]). A folder of a
+//! regional variant (`en-GB`, `es-MX`, `fr-CA`, `pt-BR`, see [`variant`])
+//! adds the names that differ from its language's under the variant's own
+//! code, so `Term::name("es")` stays the main Spanish name and a lookup
+//! finds the Mexican one too. A table's category gives its terms a kind
+//! (`boss`, `stage`, ...) and a game ([`Table::tag`]); tables of the newest
+//! game merge into the glossary first ([`load_all`]), so an older game's
+//! name never comes before a current one.
 
 use crate::doc::doc_id;
 use crate::glossary::Term;
+use crate::php;
 use crate::store::write_atomic;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
@@ -84,6 +96,21 @@ pub fn language(name: &str) -> Option<&'static str> {
     })
 }
 
+/// The regional variant a language code names, when its names may differ
+/// from the language's: `en-GB` (Nintendo's `EUen`), `es-MX` (`USes`),
+/// `fr-CA` (`USfr`) and `pt-BR`. Variants are shown under their own code
+/// next to their language ([`language`] gives the language).
+pub fn variant(name: &str) -> Option<&'static str> {
+    let l = name.trim().to_lowercase().replace('_', "-");
+    Some(match l.as_str() {
+        "en-gb" | "en-au" | "euen" => "en-GB",
+        "es-mx" | "es-419" | "uses" => "es-MX",
+        "fr-ca" | "usfr" => "fr-CA",
+        "pt-br" => "pt-BR",
+        _ => return None,
+    })
+}
+
 /// Characters that separate words in keys and file names
 fn is_separator(c: char) -> bool {
     matches!(c, '_' | '.' | ' ' | '-' | '(' | ')' | '[' | ']')
@@ -93,7 +120,17 @@ fn is_separator(c: char) -> bool {
 /// replaced by `*`: `ja` → `*`, `name_zh_TW` → `name_*`, `strings.ko` →
 /// `strings.*`
 pub fn segment_language(segment: &str) -> Option<(&'static str, String)> {
-    if let Some(l) = language(segment) {
+    segment_match(segment, language)
+}
+
+/// What `matcher` finds in a key segment or file name (the whole segment,
+/// a word of it, or a pair of words such as `zh_TW`), and the segment with
+/// the match replaced by `*`
+fn segment_match(
+    segment: &str,
+    matcher: fn(&str) -> Option<&'static str>,
+) -> Option<(&'static str, String)> {
+    if let Some(l) = matcher(segment) {
         return Some((l, String::from("*")));
     }
     // Words with their byte ranges
@@ -118,12 +155,12 @@ pub fn segment_language(segment: &str) -> Option<(&'static str, String)> {
         if let Some(&(_, end)) = words.get(i + 1) {
             let (s, e) = words[i];
             let pair = alloc::format!("{}-{}", &segment[s..e], &segment[words[i + 1].0..end]);
-            if let Some(l) = language(&pair) {
+            if let Some(l) = matcher(&pair) {
                 return Some((l, masked(s, end)));
             }
         }
         let (s, e) = words[i];
-        if let Some(l) = language(&segment[s..e]) {
+        if let Some(l) = matcher(&segment[s..e]) {
             return Some((l, masked(s, e)));
         }
     }
@@ -134,6 +171,19 @@ pub fn segment_language(segment: &str) -> Option<(&'static str, String)> {
 /// first) and the path with it replaced by `*`, which names the family of
 /// files that differ only by language
 pub fn path_language(rel: &str) -> Option<(&'static str, String)> {
+    path_match(rel, language)
+}
+
+/// The regional variant a file's path names (`messages/en-GB/map3.php`),
+/// if any
+pub fn path_variant(rel: &str) -> Option<&'static str> {
+    path_match(rel, variant).map(|(v, _)| v)
+}
+
+fn path_match(
+    rel: &str,
+    matcher: fn(&str) -> Option<&'static str>,
+) -> Option<(&'static str, String)> {
     let parts: Vec<&str> = rel.split('/').collect();
     let last = parts.len().checked_sub(1)?;
     for i in (0..parts.len()).rev() {
@@ -141,7 +191,7 @@ pub fn path_language(rel: &str) -> Option<(&'static str, String)> {
             Some((stem, ext)) if i == last && !stem.is_empty() => (stem, Some(ext)),
             _ => (parts[i], None),
         };
-        if let Some((l, masked)) = segment_language(name) {
+        if let Some((l, masked)) = segment_match(name, matcher) {
             let mut family: Vec<String> = parts.iter().map(|p| String::from(*p)).collect();
             family[i] = match ext {
                 Some(ext) => alloc::format!("{masked}.{ext}"),
@@ -401,24 +451,68 @@ pub fn as_text(path: &Path) -> Result<String> {
         .join("\n"))
 }
 
+/// A PHP message file (`return ['English text' => 'translation', ...]`):
+/// each translation under its key, which is also kept as the English text
+/// (as with gettext); empty translations are left out
+fn php_leaves(text: &str) -> Result<Vec<Leaf>> {
+    let mut out = Vec::new();
+    for (key, value) in php::parse_array(text)? {
+        if value.trim().is_empty() {
+            continue;
+        }
+        out.push(Leaf::new(alloc::vec![key.clone()], &value));
+        out.push(Leaf {
+            language: Some("en"),
+            ..Leaf::new(alloc::vec![key.clone()], &key)
+        });
+    }
+    Ok(out)
+}
+
+/// What [`read`] finds in a structured file
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Strings {
+    /// Its strings
+    pub leaves: Vec<Leaf>,
+    /// The language the file declares (a `.po` header), if any
+    pub language: Option<&'static str>,
+    /// The keys are the source text (gettext, PHP messages)
+    pub keys_are_text: bool,
+    /// The license its header names (a PHP file's `@license`)
+    pub license: Option<String>,
+    /// The copyright its header names
+    pub attribution: Option<String>,
+}
+
 /// The strings of a structured file (by extension: `json`, `yaml`, `yml`,
-/// `toml`, `csv`, `tsv`, `po`, `properties`) and the language the file
-/// declares, if any
-pub fn read(path: &Path) -> Result<(Vec<Leaf>, Option<&'static str>)> {
+/// `toml`, `csv`, `tsv`, `po`, `properties`, `php`), with what the file
+/// says about itself
+pub fn read(path: &Path) -> Result<Strings> {
     let (ext, text) = read_text(path)?;
     let text = text.as_str();
+    let mut out = Strings::default();
     if let Some(tree) = parse_tree(&ext, text)? {
-        let mut out = Vec::new();
-        flatten(&tree, false, &mut Vec::new(), &mut out);
-        return Ok((out, None));
+        flatten(&tree, false, &mut Vec::new(), &mut out.leaves);
+        return Ok(out);
     }
-    Ok(match ext.as_str() {
-        "csv" => (table_leaves(text, None), None),
-        "tsv" => (table_leaves(text, Some('\t')), None),
-        "po" => po_leaves(text),
-        "properties" => (properties_leaves(text), None),
+    match ext.as_str() {
+        "csv" => out.leaves = table_leaves(text, None),
+        "tsv" => out.leaves = table_leaves(text, Some('\t')),
+        "po" => {
+            (out.leaves, out.language) = po_leaves(text);
+            out.keys_are_text = true;
+        }
+        "properties" => out.leaves = properties_leaves(text),
+        "php" => {
+            out.leaves = php_leaves(text)?;
+            out.keys_are_text = true;
+            let header = php::header(text);
+            out.license = header.license;
+            out.attribution = header.copyright;
+        }
         _ => bail!("not a structured file: .{ext}"),
-    })
+    }
+    Ok(out)
 }
 
 /// Whether a string can be a name: one line of at most [`MAX_NAME`]
@@ -450,14 +544,23 @@ pub fn slug(text: &str) -> String {
 }
 
 /// A structured file's strings, with the language its path names
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Member {
     /// Path of the file
     pub file: String,
     /// Language named by the path ([`path_language`]) or declared inside
     pub language: Option<&'static str>,
+    /// Regional variant named by the path ([`path_variant`]); its names go
+    /// under this code where they differ from the language's
+    pub variant: Option<&'static str>,
     /// Its strings
     pub leaves: Vec<Leaf>,
+    /// The keys are the source text itself (gettext, PHP messages), so a
+    /// large table of them is names, not interface text to prune
+    pub keys_are_text: bool,
+    /// License and copyright the file names, if any
+    pub license: Option<String>,
+    pub attribution: Option<String>,
 }
 
 /// A name table imported into the glossary
@@ -475,21 +578,89 @@ pub struct Table {
     pub strings: usize,
     /// What was kept and why, in words
     pub note: String,
+    /// What the names are (`boss`, `stage`, `weapon`, ...), when the
+    /// source says
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// The game the names belong to (`S3`, `S2`, `S1`), when the source
+    /// says
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<String>,
+    /// License the files name
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    /// Copyright the files name
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribution: Option<String>,
     /// The terms
     pub terms: Vec<Term>,
+}
+
+impl Table {
+    /// Sets the kind and game of the table and each of its terms
+    pub fn tag(&mut self, kind: Option<&str>, game: Option<&str>) {
+        self.kind = kind.map(String::from);
+        self.game = game.map(String::from);
+        for t in &mut self.terms {
+            t.kind = self.kind.clone();
+            t.game = self.game.clone();
+        }
+    }
+
+    /// Merge order: the newest game first, then tables of no game, then
+    /// older games, so an older name never comes before a current one
+    pub fn rank(&self) -> u8 {
+        match self.game.as_deref() {
+            Some("S3") => 0,
+            None => 1,
+            Some("S2") => 2,
+            Some(_) => 3,
+        }
+    }
+}
+
+/// Moves the names of regional variants (`en-GB`) next to their language:
+/// a variant without its language becomes the language; otherwise only the
+/// names that differ from the language's stay, under the variant's code
+fn fold_variants(langs: &mut BTreeMap<&'static str, Vec<String>>) {
+    let variants: Vec<&'static str> = langs
+        .keys()
+        .copied()
+        .filter(|k| language(k).is_some_and(|base| base != *k))
+        .collect();
+    for v in variants {
+        let base = language(v).unwrap();
+        let Some(names) = langs.remove(v) else {
+            continue;
+        };
+        match langs.get(base) {
+            None => {
+                langs.insert(base, names);
+            }
+            Some(main) => {
+                let differing: Vec<String> = names
+                    .into_iter()
+                    .filter(|n| !main.iter().any(|m| m.eq_ignore_ascii_case(n)))
+                    .collect();
+                if !differing.is_empty() {
+                    langs.insert(v, differing);
+                }
+            }
+        }
+    }
 }
 
 /// Groups the strings of a file or family (`source`) into terms; a table
 /// without terms has nothing in several languages
 pub fn build(source: &str, members: &[Member]) -> Table {
-    // Key without language → language → names
+    // Key without language → language (or variant) → names
     let mut groups: BTreeMap<String, BTreeMap<&'static str, Vec<String>>> = BTreeMap::new();
     let (mut strings, mut single, mut long) = (0, 0, 0);
     for m in members {
         for leaf in &m.leaves {
             strings += 1;
             let mut path = leaf.path.clone();
-            let lang = leaf.language.or(m.language).or_else(|| {
+            let lang = leaf.language.or(m.variant).or(m.language).or_else(|| {
                 (0..path.len()).rev().find_map(|i| {
                     let (l, masked) = segment_language(&path[i])?;
                     let rest = masked
@@ -523,10 +694,18 @@ pub fn build(source: &str, members: &[Member]) -> Table {
             }
         }
     }
-    groups.retain(|_, langs| langs.len() >= 2);
+    // Names in two languages or more, regional variants aside
+    groups.retain(|_, langs| {
+        fold_variants(langs);
+        let bases: BTreeSet<&str> = langs.keys().map(|k| language(k).unwrap_or(k)).collect();
+        bases.len() >= 2
+    });
     let found = groups.len();
     let mut note = alloc::format!("{found} names in several languages");
-    if found > LARGE {
+    // Keys that are the names themselves (message files) are never
+    // interface-text keys to prune
+    let keyed = members.iter().any(|m| m.keys_are_text);
+    if found > LARGE && !keyed {
         groups.retain(|key, _| key.to_lowercase().contains("name"));
         note = alloc::format!(
             "{} of {found} kept: a table this large is mostly interface text, so only keys naming things (\"name\") are taken",
@@ -557,9 +736,7 @@ pub fn build(source: &str, members: &[Member]) -> Table {
             None => {
                 terms.push(Term {
                     id,
-                    definition: String::new(),
-                    forms: BTreeMap::new(),
-                    from: Vec::new(),
+                    ..Term::default()
                 });
                 terms.last_mut().unwrap()
             }
@@ -582,6 +759,10 @@ pub fn build(source: &str, members: &[Member]) -> Table {
         languages: languages.into_iter().collect(),
         strings,
         note,
+        kind: None,
+        game: None,
+        license: members.iter().find_map(|m| m.license.clone()),
+        attribution: members.iter().find_map(|m| m.attribution.clone()),
         terms,
     }
 }
@@ -608,8 +789,9 @@ pub fn remove(root: &Path, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Every table in the data folder, by id; a file that does not read
-/// (half-synced, a conflict copy) is skipped with a warning
+/// Every table in the data folder, in merge order ([`Table::rank`], then
+/// id); a file that does not read (half-synced, a conflict copy) is skipped
+/// with a warning
 pub fn load_all(root: &Path) -> Vec<Table> {
     let Ok(entries) = std::fs::read_dir(dir(root)) else {
         return Vec::new();
@@ -629,7 +811,7 @@ pub fn load_all(root: &Path) -> Vec<Table> {
             Err(e) => log::warn!("skipping {}: {e:#}", path.display()),
         }
     }
-    tables.sort_by(|a, b| a.id.cmp(&b.id));
+    tables.sort_by(|a, b| (a.rank(), &a.id).cmp(&(b.rank(), &b.id)));
     tables
 }
 
@@ -643,12 +825,16 @@ mod tests {
         let path = dir.join(file.replace('/', "_"));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&path, text).unwrap();
-        let (leaves, declared) = read(&path).unwrap();
+        let strings = read(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
         Member {
             file: String::from(file),
-            language: path_language(file).map(|(l, _)| l).or(declared),
-            leaves,
+            language: path_language(file).map(|(l, _)| l).or(strings.language),
+            variant: path_variant(file),
+            leaves: strings.leaves,
+            keys_are_text: strings.keys_are_text,
+            license: strings.license,
+            attribution: strings.attribution,
         }
     }
 
@@ -664,6 +850,15 @@ mod tests {
     fn languages_from_codes_names_and_paths() {
         assert_eq!(language("USen"), Some("en"));
         assert_eq!(language("zh_TW"), Some("zh-Hant"));
+        assert_eq!(language("en-GB"), Some("en"));
+        assert_eq!(variant("en-GB"), Some("en-GB"));
+        assert_eq!(variant("EUen"), Some("en-GB"));
+        assert_eq!(variant("es_MX"), Some("es-MX"));
+        assert_eq!(variant("pt-BR"), Some("pt-BR"));
+        assert_eq!(variant("zh-CN"), None);
+        assert_eq!(variant("en"), None);
+        assert_eq!(path_variant("messages/fr-CA/map3.php"), Some("fr-CA"));
+        assert_eq!(path_variant("messages/fr/map3.php"), None);
         assert_eq!(language("Japanese"), Some("ja"));
         assert_eq!(language("\u{7b80}\u{4f53}\u{4e2d}\u{6587}"), Some("zh"));
         assert_eq!(language("weapon"), None);
@@ -775,6 +970,117 @@ mod tests {
     }
 
     #[test]
+    fn php_message_folders_with_variants() {
+        let header = "<?php\n/**\n * @copyright Copyright (C) 2022-2025 AIZAWA Hina\n * @license https://github.com/fetus-hina/stat.ink/blob/master/LICENSE MIT\n */\nreturn [\n";
+        let gb = member(
+            "s.zip/messages/en-GB/map3.php",
+            &alloc::format!(
+                "{header}    'Any Stage' => '',\n    'Marooner\\'s Bay' => 'Marooner\\'s Bay',\n    'Gray' => 'Grey',\n];\n"
+            ),
+        );
+        let es = member(
+            "s.zip/messages/es/map3.php",
+            &alloc::format!(
+                "{header}    'Marooner\\'s Bay' => 'Bahía Náufrago',\n    'Gray' => 'Gris',\n];\n"
+            ),
+        );
+        let mx = member(
+            "s.zip/messages/es-MX/map3.php",
+            &alloc::format!(
+                "{header}    'Marooner\\'s Bay' => 'Bahía Náufragos',\n    'Gray' => 'Gris',\n];\n"
+            ),
+        );
+        let br = member(
+            "s.zip/messages/pt-BR/map3.php",
+            &alloc::format!("{header}    'Marooner\\'s Bay' => 'Baía dos Náufragos',\n];\n"),
+        );
+        let zh = member(
+            "s.zip/messages/zh-CN/map3.php",
+            &alloc::format!("{header}    'Marooner\\'s Bay' => '漂浮落难船',\n];\n"),
+        );
+        assert_eq!(gb.variant, Some("en-GB"));
+        assert_eq!(
+            gb.license.as_deref(),
+            Some("MIT (https://github.com/fetus-hina/stat.ink/blob/master/LICENSE)")
+        );
+        let mut table = build("s.zip/messages/*/map3.php", &[gb, es, mx, br, zh]);
+        assert_eq!(table.terms.len(), 2, "{table:?}");
+        let bay = names(&table, "marooner-s-bay");
+        // The key is the English name; the same British name is not repeated
+        assert_eq!(bay["en"], ["Marooner's Bay"]);
+        assert!(!bay.contains_key("en-GB"));
+        assert_eq!(bay["es"], ["Bahía Náufrago"]);
+        assert_eq!(bay["es-MX"], ["Bahía Náufragos"]);
+        // A variant without its language is the language
+        assert_eq!(bay["pt"], ["Baía dos Náufragos"]);
+        assert_eq!(bay["zh"], ["漂浮落难船"]);
+        let gray = names(&table, "gray");
+        assert_eq!(gray["en"], ["Gray"]);
+        assert_eq!(gray["en-GB"], ["Grey"]);
+        assert!(!gray.contains_key("es-MX"));
+        assert_eq!(
+            table.terms[1].from,
+            ["s.zip/messages/*/map3.php#Marooner's Bay"]
+        );
+        assert_eq!(table.languages, ["en", "en-GB", "es", "es-MX", "pt", "zh"]);
+        assert_eq!(
+            table.attribution.as_deref(),
+            Some("Copyright (C) 2022-2025 AIZAWA Hina")
+        );
+        table.tag(Some("stage"), Some("S3"));
+        assert_eq!(table.terms[0].kind.as_deref(), Some("stage"));
+        assert_eq!(table.terms[0].game.as_deref(), Some("S3"));
+        assert_eq!(table.rank(), 0);
+        // A British variant alone is not a second language
+        let only_gb = member("m/en-GB/x.php", "<?php return ['Gray' => 'Grey'];");
+        assert!(build("m/*/x.php", &[only_gb]).terms.is_empty());
+    }
+
+    #[test]
+    fn newest_game_merges_first() {
+        let root = std::env::temp_dir().join(alloc::format!(
+            "cuttlefish-tables-order-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut s2 = Table {
+            source: String::from("a/*/weapon2.php"),
+            ..Table::default()
+        };
+        s2.tag(None, Some("S2"));
+        let mut s3 = Table {
+            source: String::from("z/*/weapon3.php"),
+            ..Table::default()
+        };
+        s3.tag(None, Some("S3"));
+        let mut s1 = Table {
+            source: String::from("b/*/weapon.php"),
+            ..Table::default()
+        };
+        s1.tag(None, Some("S1"));
+        let none = Table {
+            source: String::from("c/names.csv"),
+            ..Table::default()
+        };
+        for t in [&s2, &s3, &s1, &none] {
+            let mut t = t.clone();
+            t.id = doc_id(&t.source);
+            save(&root, &t).unwrap();
+        }
+        let sources: Vec<String> = load_all(&root).into_iter().map(|t| t.source).collect();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(
+            sources,
+            [
+                "z/*/weapon3.php",
+                "c/names.csv",
+                "a/*/weapon2.php",
+                "b/*/weapon.php"
+            ]
+        );
+    }
+
+    #[test]
     fn no_table_without_languages() {
         let package = member(
             "app/package.json",
@@ -807,6 +1113,15 @@ mod tests {
         let table = build("ui/*.json", &[m("ui/en.json", en), m("ui/ja.json", ja)]);
         assert_eq!(table.terms.len(), 1);
         assert!(table.note.starts_with("1 of 511 kept"), "{}", table.note);
+        // A message file's keys are the names: a large one is kept whole
+        let mut php = String::from("<?php return [\n");
+        for i in 0..LARGE + 10 {
+            php.push_str(&alloc::format!("    'Gear {i}' => 'ギア {i}',\n"));
+        }
+        php.push_str("];\n");
+        let table = build("m/*/gear2.php", &[member("m/ja/gear2.php", &php)]);
+        assert_eq!(table.terms.len(), LARGE + 10);
+        assert!(table.note.starts_with("510 names"), "{}", table.note);
     }
 
     #[test]

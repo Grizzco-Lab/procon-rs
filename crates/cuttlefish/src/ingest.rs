@@ -69,6 +69,11 @@ pub trait Sink {
     fn has(&self, key: &str) -> bool;
     /// Store a document; returns its number of chunks
     fn add(&mut self, doc: &Document) -> Result<usize>;
+    /// Remove the document with this id (an inbox file imported again);
+    /// false when there is none, or when the sink keeps nothing to remove
+    fn delete(&mut self, _id: &str) -> Result<bool> {
+        Ok(false)
+    }
     /// Folder for raw downloads of one kind (`web`, `wiki`, `youtube`,
     /// `discord`)
     fn raw_dir(&self, kind: &str) -> PathBuf;
@@ -467,11 +472,10 @@ fn fetch_google(fetcher: &mut Fetcher, raw: &Path, url: &str, file: &GoogleFile)
             Format::Text => String::from(got.text().trim_start_matches('\u{feff}').trim()),
             Format::Docx => file::read(&path)?.1,
             Format::Csv => {
-                let (leaves, _) = tables::read(&path)?;
                 let member = Member {
                     file: String::from(url),
-                    language: None,
-                    leaves,
+                    leaves: tables::read(&path)?.leaves,
+                    ..Member::default()
                 };
                 let table = tables::build(url, &[member]);
                 if !table.terms.is_empty() {

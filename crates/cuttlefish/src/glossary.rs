@@ -30,18 +30,28 @@ use std::path::Path;
 pub const SEED: &str = include_str!("../glossary.toml");
 
 /// One term
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Term {
     /// Stable id (`steelhead`)
     pub id: String,
     /// Short English definition; empty for imported names
     #[serde(default)]
     pub definition: String,
-    /// Names per language code, official name first
+    /// Names per language code, official name first; a regional variant
+    /// (`en-GB`, `es-MX`) holds only the names that differ from its
+    /// language's
     pub forms: BTreeMap<String, Vec<String>>,
     /// Where imported names came from: `<file>#<key>`
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub from: Vec<String>,
+    /// What it is (`boss`, `stage`, `weapon`, ...), when an import says
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// The game its names belong to (`S3`, `S2`, `S1`), when an import
+    /// says; the newest game's import comes first, so an older game's name
+    /// never leads
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<String>,
 }
 
 impl Term {
@@ -57,6 +67,64 @@ pub struct Glossary {
     /// The terms, in file order
     #[serde(rename = "term", default)]
     pub terms: Vec<Term>,
+}
+
+/// A name or id as compared: trimmed, lowercase
+fn key(s: &str) -> String {
+    s.trim().to_lowercase()
+}
+
+/// Where a glossary's terms are, by id, English name and any name, for
+/// [`Glossary::merge`] and [`Glossary::conflicts`]
+struct Index {
+    ids: BTreeMap<String, usize>,
+    english: BTreeMap<String, usize>,
+    any: BTreeMap<String, usize>,
+}
+
+impl Index {
+    fn new(terms: &[Term]) -> Self {
+        let mut index = Index {
+            ids: BTreeMap::new(),
+            english: BTreeMap::new(),
+            any: BTreeMap::new(),
+        };
+        for (i, t) in terms.iter().enumerate() {
+            index.ids.entry(key(&t.id)).or_insert(i);
+            for (lang, forms) in &t.forms {
+                for f in forms {
+                    index.add(lang, f, i);
+                }
+            }
+        }
+        index
+    }
+
+    /// Notes a name of term `i`, the first term with it keeping it
+    fn add(&mut self, lang: &str, form: &str, i: usize) {
+        if lang == "en" {
+            self.english.entry(key(form)).or_insert(i);
+        }
+        self.any.entry(key(form)).or_insert(i);
+    }
+
+    /// The term `t` belongs to: the one with an English name of it; without
+    /// English names, the one with its id, else one sharing any name
+    fn find(&self, t: &Term) -> Option<usize> {
+        let english: Vec<&String> = t.forms.get("en").into_iter().flatten().collect();
+        if !english.is_empty() {
+            return english
+                .iter()
+                .find_map(|f| self.english.get(&key(f)).copied());
+        }
+        if let Some(&i) = self.ids.get(&key(&t.id)) {
+            return Some(i);
+        }
+        t.forms
+            .values()
+            .flatten()
+            .find_map(|f| self.any.get(&key(f)).copied())
+    }
 }
 
 /// True for scripts written without spaces, where a form may sit inside a
@@ -150,23 +218,17 @@ impl Glossary {
         out
     }
 
-    /// Adds imported terms: a term sharing a name (ignoring case) with one
-    /// already here adds its names and origin to it; others are appended,
-    /// with their id made unique
+    /// Adds imported terms: a term with an English name (ignoring case) of
+    /// one already here adds its names and origin to it, as does a term
+    /// without English names that has the id of one or shares a name in any
+    /// language; others are appended, with their id made unique. English
+    /// decides because localized names are shared more often (Splattershot
+    /// and the Shooter class are both "Lanzatintas" in Spanish).
     pub fn merge(&mut self, terms: &[Term]) {
-        // Lowercase name or id to the index of its term
-        let mut names: BTreeMap<String, usize> = BTreeMap::new();
-        let key = |s: &str| s.trim().to_lowercase();
-        for (i, t) in self.terms.iter().enumerate() {
-            names.entry(key(&t.id)).or_insert(i);
-            for f in t.forms.values().flatten() {
-                names.entry(key(f)).or_insert(i);
-            }
-        }
+        let mut index = Index::new(&self.terms);
         for t in terms {
-            let found = t.forms.values().flatten().find_map(|f| names.get(&key(f)));
-            let i = match found {
-                Some(&i) => i,
+            let i = match index.find(t) {
+                Some(i) => i,
                 None => {
                     let mut new = Term {
                         forms: BTreeMap::new(),
@@ -174,11 +236,11 @@ impl Glossary {
                         ..t.clone()
                     };
                     let mut n = 1;
-                    while names.contains_key(&key(&new.id)) {
+                    while index.ids.contains_key(&key(&new.id)) {
                         n += 1;
                         new.id = alloc::format!("{}-{n}", t.id);
                     }
-                    names.insert(key(&new.id), self.terms.len());
+                    index.ids.insert(key(&new.id), self.terms.len());
                     self.terms.push(new);
                     self.terms.len() - 1
                 }
@@ -190,7 +252,7 @@ impl Glossary {
                     if !list.iter().any(|g| key(g) == key(f)) {
                         list.push(f.clone());
                     }
-                    names.entry(key(f)).or_insert(i);
+                    index.add(lang, f, i);
                 }
             }
             for f in &t.from {
@@ -198,7 +260,44 @@ impl Glossary {
                     term.from.push(f.clone());
                 }
             }
+            if term.kind.is_none() {
+                term.kind = t.kind.clone();
+            }
+            if term.game.is_none() {
+                term.game = t.game.clone();
+            }
         }
+    }
+
+    /// Names of `terms` that differ from this glossary's: for each imported
+    /// term that [`Glossary::merge`] would fold into a term here, the
+    /// languages where the main names differ, as lines `<id>: <lang>
+    /// "<here>" here, "<there>" in <source>` (the source is the term's
+    /// first origin)
+    pub fn conflicts(&self, terms: &[Term]) -> Vec<String> {
+        let index = Index::new(&self.terms);
+        let mut out = Vec::new();
+        for t in terms {
+            let Some(ours) = index.find(t).map(|i| &self.terms[i]) else {
+                continue;
+            };
+            for (lang, forms) in &t.forms {
+                let (Some(here), Some(there)) = (ours.name(lang), forms.first()) else {
+                    continue;
+                };
+                if here.trim().to_lowercase() != there.trim().to_lowercase() {
+                    let source = t
+                        .from
+                        .first()
+                        .map_or("the import", |f| f.split('#').next().unwrap_or(f));
+                    out.push(alloc::format!(
+                        "{}: {lang} \"{here}\" here, \"{there}\" in {source}",
+                        ours.id
+                    ));
+                }
+            }
+        }
+        out
     }
 
     /// Number of terms with a name in each language
@@ -232,6 +331,25 @@ impl Glossary {
             if !t.definition.is_empty() {
                 out.push_str(": ");
                 out.push_str(&t.definition);
+            }
+            // What an import says it is; the game only when not the current one
+            let tags: Vec<String> = t
+                .kind
+                .iter()
+                .cloned()
+                .chain(
+                    t.game
+                        .iter()
+                        .filter(|g| *g != "S3")
+                        .map(|g| match g.as_str() {
+                            "S2" => String::from("Splatoon 2"),
+                            "S1" => String::from("Splatoon 1"),
+                            g => String::from(g),
+                        }),
+                )
+                .collect();
+            if !tags.is_empty() {
+                out.push_str(&alloc::format!(" [{}]", tags.join(", ")));
             }
             out.push('\n');
         }
@@ -335,13 +453,100 @@ mod tests {
         assert_eq!(steelhead.name("ja"), Some("バクダン"));
         assert_eq!(steelhead.from, ["inbox/names.csv#SakelienBomber"]);
         assert!(!steelhead.definition.is_empty());
-        // No shared name: a new term, with an id of its own
-        assert_eq!(g.terms.len(), size + 2);
-        assert_eq!(g.lookup("Maws DE").unwrap().id, "maws-2");
-        assert_eq!(g.lookup("Something else").unwrap().id, "maws-3");
+        // Without English names the id decides; with an English name that
+        // no term has, a new term with an id of its own
+        assert_eq!(g.terms.len(), size + 1);
+        assert_eq!(g.lookup("Maws DE").unwrap().id, "maws");
+        assert_eq!(g.lookup("Something else").unwrap().id, "maws-2");
         assert!(g.languages()["fr"] >= 1);
         let line = Glossary::prompt_lines(&[g.lookup("maws-2").unwrap()], None);
-        assert_eq!(line, "- maws-2 (de: Maws DE)\n");
+        assert_eq!(line, "- maws-2 (en: Something else)\n");
+    }
+
+    #[test]
+    fn tags_conflicts_and_older_games() {
+        let mut g = Glossary::seed();
+        let imported: Glossary = Glossary::parse(
+            r#"
+            [[term]]
+            id = "steelhead"
+            forms = { en = ["Steelhead"], zh = ["炸弹鱼"], ja = ["バクダン"] }
+            from = ["inbox/s.zip/messages/*/salmon-boss3.php#Steelhead"]
+            kind = "boss"
+            game = "S3"
+            [[term]]
+            id = "spawning-grounds"
+            forms = { en = ["Spawning Grounds"], zh = ["鲑坝"] }
+            from = ["inbox/s.zip/messages/*/map3.php#Spawning Grounds"]
+            kind = "stage"
+            game = "S3"
+            [[term]]
+            id = "lost-outpost"
+            forms = { en = ["Lost Outpost"], ja = ["海上集落シャケト場"] }
+            kind = "stage"
+            game = "S2"
+            "#,
+        )
+        .unwrap();
+        // Only the stage's Chinese name differs from the seed's
+        assert_eq!(
+            g.conflicts(&imported.terms),
+            ["spawning-grounds: zh \"鲑鱼坝\" here, \"鲑坝\" in inbox/s.zip/messages/*/map3.php"]
+        );
+        g.merge(&imported.terms);
+        let grounds = g.lookup("Spawning Grounds").unwrap();
+        // Both names stay, the seed's first
+        assert_eq!(grounds.forms["zh"], ["鲑鱼坝", "鲑坝"]);
+        assert_eq!(grounds.kind.as_deref(), Some("stage"));
+        let s2 = g.lookup("Lost Outpost").unwrap();
+        assert_eq!(s2.game.as_deref(), Some("S2"));
+        assert_eq!(
+            Glossary::prompt_lines(&[s2], None),
+            "- lost-outpost (en: Lost Outpost; ja: 海上集落シャケト場) [stage, Splatoon 2]\n"
+        );
+        let s3 = Glossary::prompt_lines(&[grounds], Some("zh"));
+        assert!(s3.ends_with("Salmon Run stage. [stage]\n"), "{s3}");
+        // The seed's own terms carry no tags
+        assert!(!Glossary::prompt_lines(&[g.lookup("Maws").unwrap()], None).contains('['));
+    }
+
+    #[test]
+    fn merges_by_english_name_only() {
+        let mut g = Glossary::default();
+        let imported: Glossary = Glossary::parse(
+            r#"
+            [[term]]
+            id = "shooters"
+            forms = { en = ["Shooters"], es = ["Lanzatintas"], ja = ["シューター"] }
+            [[term]]
+            id = "splattershot"
+            forms = { en = ["Splattershot"], es = ["Lanzatintas"], ja = ["スプラシューター"] }
+            [[term]]
+            id = "grounds"
+            forms = { en = ["Grounds"], zh = ["鲑坝"] }
+            [[term]]
+            id = "spawning-grounds"
+            forms = { en = ["Spawning Grounds"], zh = ["鲑坝"] }
+            [[term]]
+            id = "splattershot-2"
+            forms = { en = ["SPLATTERSHOT"], fr = ["Liquidateur"] }
+            [[term]]
+            id = "no-english"
+            forms = { ja = ["スプラシューター"], ko = ["스플랫 슈터"] }
+            "#,
+        )
+        .unwrap();
+        g.merge(&imported.terms);
+        let ids: Vec<&str> = g.terms.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["shooters", "splattershot", "grounds", "spawning-grounds"]
+        );
+        let shot = g.lookup("splattershot").unwrap();
+        assert_eq!(shot.forms["fr"], ["Liquidateur"]);
+        assert_eq!(shot.forms["ko"], ["스플랫 슈터"]);
+        assert_eq!(shot.forms["en"], ["Splattershot"]);
+        assert!(g.conflicts(&imported.terms).is_empty());
     }
 
     #[test]

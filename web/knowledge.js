@@ -550,8 +550,9 @@
   function reportHtml(report) {
     const byKind = {};
     for (const t of report.taken) (byKind[t.kind] ??= []).push(t);
+    const again = escapeHtml(t("k.report.reimport"));
     const list = (items) =>
-      `<ul>${items.map((t) => `<li><span class="path">${escapeHtml(t.path)}</span> <span class="panel-note">${escapeHtml(t.detail)}</span></li>`).join("")}</ul>`;
+      `<ul>${items.map((t) => `<li><span class="path">${escapeHtml(t.path)}</span> <span class="panel-note">${escapeHtml(t.detail)}</span> <button type="button" class="mode-toggle" data-reimport="${escapeHtml(t.path)}">${again}</button></li>`).join("")}</ul>`;
     const taken = Object.entries(byKind)
       .map(
         ([kind, items]) =>
@@ -601,7 +602,22 @@
     box.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
-  $("k-report").addEventListener("click", (event) => {
+  $("k-report").addEventListener("click", async (event) => {
+    const again = event.target.closest("[data-reimport]");
+    if (again) {
+      // Forgets what the file gave and reads it again, as an inbox import
+      again.disabled = true;
+      try {
+        await api("ingest", {
+          kind: "inbox",
+          reimport: again.dataset.reimport,
+        });
+      } catch (error) {
+        again.disabled = false;
+        return note("k-import-error", error.message);
+      }
+      return pollJobs();
+    }
     if (!event.target.closest("[data-close-report]")) return;
     k.report = null;
     $("k-report").hidden = true;

@@ -132,6 +132,10 @@ enum Ingest {
     /// Everything in <data>/inbox/: prose becomes documents, name tables
     /// glossary terms, images the asset catalogue (see the README)
     Inbox {
+        /// Forget what this inbox file, folder, archive or family of files
+        /// (a path as a report shows it) gave, and import it again
+        #[arg(long, value_name = "PATH")]
+        reimport: Option<String>,
         #[command(flatten)]
         meta: Meta,
     },
@@ -273,6 +277,10 @@ impl ingest::Sink for Sink {
             self.store.save()?;
         }
         Ok(n)
+    }
+
+    fn delete(&mut self, id: &str) -> Result<bool> {
+        self.store.delete(id)
     }
 
     fn raw_dir(&self, kind: &str) -> PathBuf {
@@ -561,9 +569,13 @@ fn print_report(r: &inbox::Report) {
 
 fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
     match cmd {
-        Ingest::Inbox { meta } => {
+        Ingest::Inbox { reimport, meta } => {
             let mut sink = Sink::open(data)?;
-            let report = inbox::import(&mut sink, data, &store::cache_dir(), &meta)?;
+            let cache = store::cache_dir();
+            let report = match reimport {
+                Some(target) => inbox::reimport(&mut sink, data, &cache, &meta, &target)?,
+                None => inbox::import(&mut sink, data, &cache, &meta)?,
+            };
             print_report(&report);
             sink.finish()
         }

@@ -9,10 +9,14 @@
 //!   document, chunked and embedded like any other ([`crate::file`]);
 //! - **a Discord export** (DiscordChatExporter JSON): its conversations;
 //! - **a structured file** (JSON, YAML, TOML, CSV, TSV, `.po`,
-//!   `.properties`): read for names in several languages, which go into the
-//!   glossary with their file and key ([`crate::tables`]); never embedded;
+//!   `.properties`, and PHP files of a message folder such as stat.ink's
+//!   `messages/<lang>/<category>.php`, see [`crate::messages`]): read for
+//!   names in several languages, which go into the glossary with their file
+//!   and key ([`crate::tables`]); never embedded. Message categories of
+//!   interface text and machine-translated folders are skipped;
 //! - **an image or icon**: an entry of the asset catalogue
-//!   ([`crate::assets`]);
+//!   ([`crate::assets`]); site images (logos, screenshots, clip art) are
+//!   skipped;
 //! - **an archive**: unpacked into the local cache with `bsdtar` and its
 //!   files taken the same way;
 //! - anything else (source code, binaries, media, fonts, office files that
@@ -22,17 +26,20 @@
 //! build folders (`node_modules`, `target`, `dist`, ...) are not entered, so
 //! a git repository gives only its text, string and locale files.
 //!
-//! Files are remembered in `<data>/inbox.json` by path, size, time and
-//! content hash: a file seen before and unchanged is not read again, a
-//! changed file replaces what it gave, and a file with the same content as
-//! another is skipped as a copy. Files never leave the inbox; the documents
-//! of files removed from it stay until deleted. Each import writes a
-//! [`Report`] to `<data>/reports/`.
+//! Files are remembered in `<data>/inbox.json` by path, size, time,
+//! content hash and the version of the reader that took them ([`version`]):
+//! a file seen before and unchanged is not read again unless its reader is
+//! newer, a changed file replaces what it gave, and a file with the same
+//! content as another is skipped as a copy. [`reimport`] forgets one file
+//! or archive (its documents are removed) and reads it again. Files never
+//! leave the inbox; the documents of files removed from it stay until
+//! deleted. Each import writes a [`Report`] to `<data>/reports/`.
 
 use crate::assets::{self, Asset, Catalogue};
 use crate::discord;
 use crate::doc::{Document, SourceKind, doc_id};
 use crate::ingest::{Meta, Sink};
+use crate::messages::{self, Category};
 use crate::store::{Store, write_atomic};
 use crate::tables::{self, Member};
 use alloc::collections::{BTreeMap, VecDeque};
@@ -109,6 +116,31 @@ pub enum Route {
     Skip(&'static str),
 }
 
+/// Version of each reader; a file taken with an older version is read
+/// again although its content is unchanged. Every reader started at 0,
+/// which is also what manifests written before versions say. Bump a
+/// reader's version when it gives more or better, and the archive's when
+/// the classifier or any reader changes, since an archive's files are only
+/// known once it is unpacked.
+pub fn version(route: Route) -> u32 {
+    match route {
+        Route::Prose | Route::Discord | Route::Image | Route::Skip(_) => 0,
+        // Tables: PHP message folders, regional variants, kinds and games
+        Route::Table => 1,
+        // Archives: PHP message files taken, site images skipped
+        Route::Archive => 1,
+    }
+}
+
+/// Whether an image's folders say it is part of a site, not of the game:
+/// logos, screenshots, clip art, an "about" page
+fn site_image(rel: &str) -> bool {
+    let folders = rel.rsplit('/').skip(1);
+    folders
+        .map(str::to_lowercase)
+        .any(|f| f.contains("logo") || matches!(f.as_str(), "about" | "screenshots" | "irasutoya"))
+}
+
 /// How a file is taken, from its path in the inbox and, for JSON and
 /// unknown formats, its first bytes (`head` is called only then)
 pub fn classify(rel: &str, head: impl FnOnce() -> Vec<u8>) -> Route {
@@ -180,7 +212,23 @@ pub fn classify(rel: &str, head: impl FnOnce() -> Vec<u8>) -> Route {
             }
         }
         "yaml" | "yml" | "toml" | "csv" | "tsv" | "po" | "properties" => Route::Table,
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif" => Route::Image,
+        "php" => match messages::layout(rel) {
+            Some(m) if m.machine => Route::Skip("machine-translated messages (_deepl)"),
+            Some(m) if m.kind == Category::Site => {
+                Route::Skip("interface and site text of a message folder")
+            }
+            Some(_) => Route::Table,
+            None => Route::Skip(
+                "source code: not embedded (text, string and locale files beside it are read)",
+            ),
+        },
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif" => {
+            if site_image(rel) {
+                Route::Skip("site image (logos, screenshots, clip art)")
+            } else {
+                Route::Image
+            }
+        }
         "zip" | "tar" | "tgz" | "7z" => Route::Archive,
         "rar" => Route::Skip("RAR archive: not read (repack it as zip)"),
         e if CODE.contains(&e) => Route::Skip(
@@ -245,6 +293,10 @@ struct Seen {
     /// The document, table or asset
     #[serde(default, skip_serializing_if = "Option::is_none")]
     id: Option<String>,
+    /// [`version`] of the reader that took it (0 in manifests written
+    /// before versions were recorded)
+    #[serde(default)]
+    version: u32,
 }
 
 /// What the imports took from each file of the inbox (`inbox.json`)
@@ -541,6 +593,7 @@ fn modified(meta: &std::fs::Metadata) -> i64 {
 struct FamilyMember {
     found: Found,
     language: Option<&'static str>,
+    variant: Option<&'static str>,
     seen: Seen,
     changed: bool,
 }
@@ -562,6 +615,29 @@ struct Import<'a> {
     /// Folders archives were unpacked into
     unpacked: Vec<PathBuf>,
     queue: VecDeque<Found>,
+    /// Archives unpacked again although unchanged: those around a
+    /// re-import's target
+    forced: Vec<String>,
+}
+
+/// Whether `pattern` (a path, or a family such as `locales/*/x.json`)
+/// covers the inbox path `rel`: the path itself, anything under it, or a
+/// file of the family
+fn covers(pattern: &str, rel: &str) -> bool {
+    if rel == pattern || rel.starts_with(&alloc::format!("{pattern}/")) {
+        return true;
+    }
+    if !pattern.contains('*') {
+        return false;
+    }
+    let (a, b): (Vec<&str>, Vec<&str>) = (pattern.split('/').collect(), rel.split('/').collect());
+    a.len() == b.len()
+        && a.iter().zip(&b).all(|(p, r)| match p.split_once('*') {
+            Some((before, after)) => {
+                r.len() >= before.len() + after.len() && r.starts_with(before) && r.ends_with(after)
+            }
+            None => p == r,
+        })
 }
 
 impl Import<'_> {
@@ -574,16 +650,23 @@ impl Import<'_> {
         }
         let meta = std::fs::metadata(&found.path)?;
         let (bytes, modified) = (meta.len(), modified(&meta));
+        let version = version(route);
+        // Read again: on request, an archive around a re-import's target
+        // (the target itself was forgotten, so it is new), or taken by an
+        // older reader
         let old = self.old.files.get(&found.rel).cloned();
+        let again = self.meta.refresh
+            || self.forced.contains(&found.rel)
+            || old.as_ref().is_some_and(|s| s.version < version);
         let quick = old
             .as_ref()
-            .filter(|s| !self.meta.refresh && s.bytes == bytes && s.modified == modified);
+            .filter(|s| !again && s.bytes == bytes && s.modified == modified);
         let (hash, unchanged) = match quick {
             Some(s) => (s.hash.clone(), true),
             None => {
                 let hash = hash_file(&found.path)?;
                 let same = old.as_ref().is_some_and(|s| s.hash == hash);
-                (hash, same && !self.meta.refresh)
+                (hash, same && !again)
             }
         };
         let mut seen = Seen {
@@ -592,6 +675,7 @@ impl Import<'_> {
             modified,
             kind: String::new(),
             id: None,
+            version,
         };
         if unchanged {
             let old = old.unwrap();
@@ -793,9 +877,11 @@ impl Import<'_> {
             Some((l, family)) => (Some(l), family),
             None => (None, found.rel.clone()),
         };
+        let variant = tables::path_variant(&found.rel);
         self.families.entry(family).or_default().push(FamilyMember {
             found,
             language,
+            variant,
             seen,
             changed,
         });
@@ -804,6 +890,14 @@ impl Import<'_> {
     /// Reads the families with a changed file into tables
     fn tables(&mut self) -> Result<()> {
         let families = core::mem::take(&mut self.families);
+        // A message category without a game suffix next to a suffixed
+        // sibling (`map` beside `map3`) is the first game's
+        let categories: alloc::collections::BTreeSet<String> = families
+            .values()
+            .flatten()
+            .filter_map(|m| messages::layout(&m.found.rel).map(|m| m.category))
+            .collect();
+        let own = Store::own_glossary(&self.root)?;
         for (family, members) in families {
             if !members.iter().any(|m| m.changed) {
                 for m in members {
@@ -814,17 +908,21 @@ impl Import<'_> {
             let mut read = Vec::new();
             let mut ok = Vec::new();
             for m in members {
-                let leaves = if m.seen.bytes > tables::MAX_BYTES {
+                let strings = if m.seen.bytes > tables::MAX_BYTES {
                     Err(anyhow::anyhow!("too large for a table (over 32 MB)"))
                 } else {
                     tables::read(&m.found.path)
                 };
-                match leaves {
-                    Ok((leaves, declared)) => {
+                match strings {
+                    Ok(strings) => {
                         read.push(Member {
                             file: m.found.rel.clone(),
-                            language: m.language.or(declared),
-                            leaves,
+                            language: m.language.or(strings.language),
+                            variant: m.variant,
+                            leaves: strings.leaves,
+                            keys_are_text: strings.keys_are_text,
+                            license: strings.license,
+                            attribution: strings.attribution,
                         });
                         ok.push(m);
                         continue;
@@ -844,7 +942,18 @@ impl Import<'_> {
                 );
             }
             let source = alloc::format!("{INBOX}/{family}");
-            let table = tables::build(&source, &read);
+            let mut table = tables::build(&source, &read);
+            // What a message category says its names are
+            if let Some(m) = ok.first().and_then(|m| messages::layout(&m.found.rel)) {
+                let kind = match m.kind {
+                    Category::Names(kind) => kind,
+                    Category::Site => None,
+                };
+                let game = m
+                    .game
+                    .or_else(|| messages::first_game(&m.category, |c| categories.contains(c)));
+                table.tag(kind, game);
+            }
             if table.terms.is_empty() {
                 // A data table: small ones are kept as text
                 tables::remove(&self.root, &table.id)?;
@@ -872,9 +981,20 @@ impl Import<'_> {
             }
             let kind = {
                 tables::save(&self.root, &table)?;
+                let tags: Vec<&str> = table
+                    .kind
+                    .iter()
+                    .chain(&table.game)
+                    .map(String::as_str)
+                    .collect();
                 let detail = alloc::format!(
-                    "{} terms in {} from {} ({})",
+                    "{} terms{} in {} from {} ({})",
                     table.terms.len(),
+                    if tags.is_empty() {
+                        String::new()
+                    } else {
+                        alloc::format!(" [{}]", tags.join(", "))
+                    },
                     table.languages.join(", "),
                     match table.files.len() {
                         1 => String::from("1 file"),
@@ -885,6 +1005,11 @@ impl Import<'_> {
                 self.sink
                     .note(&alloc::format!("+ {family} ({} terms)", table.terms.len()));
                 self.report.take(&family, "glossary", detail);
+                for line in own.conflicts(&table.terms) {
+                    self.report
+                        .notes
+                        .push(alloc::format!("name differs: {line}"));
+                }
                 "table"
             };
             for m in ok {
@@ -969,9 +1094,63 @@ impl Import<'_> {
 /// in `cache`. With `meta.refresh`, every file is read again. Returns the
 /// report, also written to `reports/`.
 pub fn import(sink: &mut dyn Sink, root: &Path, cache: &Path, meta: &Meta) -> Result<Report> {
+    run(sink, root, cache, meta, None)
+}
+
+/// Imports the inbox with one file, folder, archive or family of files
+/// (`target`, a path in the inbox as a report shows it) forgotten first:
+/// its documents are removed from the sink, and what it gives now replaces
+/// its tables and assets. Archives around it are unpacked again.
+pub fn reimport(
+    sink: &mut dyn Sink,
+    root: &Path,
+    cache: &Path,
+    meta: &Meta,
+    target: &str,
+) -> Result<Report> {
+    run(sink, root, cache, meta, Some(target))
+}
+
+fn run(
+    sink: &mut dyn Sink,
+    root: &Path,
+    cache: &Path,
+    meta: &Meta,
+    target: Option<&str>,
+) -> Result<Report> {
     let inbox = root.join(INBOX);
     std::fs::create_dir_all(&inbox)?;
-    let old = Manifest::load(root);
+    let mut old = Manifest::load(root);
+    let mut report = Report::new();
+    let mut forced = Vec::new();
+    if let Some(target) = target {
+        let target = target.trim().trim_matches('/');
+        ensure!(!target.is_empty(), "give the inbox path to import again");
+        let (mut forgotten, mut removed) = (0, 0);
+        for (rel, seen) in core::mem::take(&mut old.files) {
+            if covers(target, &rel) {
+                forgotten += 1;
+                if seen.kind == "document"
+                    && let Some(id) = &seen.id
+                    && sink.delete(id)?
+                {
+                    removed += 1;
+                }
+            } else {
+                if seen.kind == "archive" && target.starts_with(&alloc::format!("{rel}/")) {
+                    forced.push(rel.clone());
+                }
+                old.files.insert(rel, seen);
+            }
+        }
+        ensure!(
+            forgotten > 0 || inbox.join(target).exists(),
+            "nothing in the inbox as {target}"
+        );
+        report.notes.push(alloc::format!(
+            "{target} imported again: {forgotten} files forgotten, {removed} documents removed"
+        ));
+    }
     let hashes = old
         .files
         .iter()
@@ -986,11 +1165,12 @@ pub fn import(sink: &mut dyn Sink, root: &Path, cache: &Path, meta: &Meta) -> Re
         old,
         new: Manifest::default(),
         hashes,
-        report: Report::new(),
+        report,
         families: BTreeMap::new(),
         catalogue: Catalogue::load(root),
         unpacked: Vec::new(),
         queue: VecDeque::new(),
+        forced,
     };
     let mut files = Vec::new();
     walk(&inbox, "", &mut files, &mut import.report.notes);
@@ -1076,12 +1256,11 @@ pub fn pending(root: &Path) -> Pending {
         };
         out.files += 1;
         out.bytes += meta.len();
-        let known = manifest
-            .files
-            .get(&rel)
-            .is_some_and(|s| s.bytes == meta.len() && s.modified == modified(&meta));
-        let skipped = matches!(classify(&rel, Vec::new), Route::Skip(_));
-        if !known && !skipped {
+        let route = classify(&rel, Vec::new);
+        let known = manifest.files.get(&rel).is_some_and(|s| {
+            s.bytes == meta.len() && s.modified == modified(&meta) && s.version >= version(route)
+        });
+        if !known && !matches!(route, Route::Skip(_)) {
             out.new += 1;
         }
     }
@@ -1177,10 +1356,30 @@ mod tests {
             self.docs.push(doc.clone());
             Ok(1)
         }
+        fn delete(&mut self, id: &str) -> Result<bool> {
+            let before = self.docs.len();
+            self.docs.retain(|d| d.id != id);
+            Ok(self.docs.len() < before)
+        }
         fn raw_dir(&self, kind: &str) -> PathBuf {
             self.root.join(kind)
         }
         fn note(&mut self, _line: &str) {}
+    }
+
+    /// Packs `src`'s folder `name` into `<inbox>/<name>.zip`
+    fn zip(root: &Path, src: &Path, name: &str) {
+        std::fs::create_dir_all(root.join(INBOX)).unwrap();
+        let status = Command::new("bsdtar")
+            .arg("-a")
+            .arg("-cf")
+            .arg(root.join(INBOX).join(alloc::format!("{name}.zip")))
+            .arg("-C")
+            .arg(src)
+            .arg(name)
+            .status()
+            .unwrap();
+        assert!(status.success());
     }
 
     fn write(root: &Path, rel: &str, content: &[u8]) {
@@ -1226,6 +1425,251 @@ mod tests {
             classify("notes.xyz", || b"text".to_vec()),
             Route::Skip("unknown format")
         );
+        // PHP: only message folders, without interface text or machine
+        // translations
+        assert_eq!(
+            classify("s.zip/s/messages/zh-CN/salmon-boss3.php", none),
+            Route::Table
+        );
+        assert_eq!(
+            classify("s.zip/s/messages/_deepl/zh/salmon-boss3.php", none),
+            Route::Skip("machine-translated messages (_deepl)")
+        );
+        assert_eq!(
+            classify("s.zip/s/messages/ja/app.php", none),
+            Route::Skip("interface and site text of a message folder")
+        );
+        assert!(matches!(
+            classify("s.zip/s/models/Weapon.php", none),
+            Route::Skip(r) if r.starts_with("source code")
+        ));
+        // Site images
+        assert_eq!(
+            classify("s.zip/s/resources/app-link-logos/ikalog.png", none),
+            Route::Skip("site image (logos, screenshots, clip art)")
+        );
+        assert_eq!(
+            classify("s.zip/s/resources/abilities/spl3/comeback.png", none),
+            Route::Image
+        );
+        assert!(covers("a/b.zip", "a/b.zip/c/d.md"));
+        assert!(covers("a/b.zip", "a/b.zip"));
+        assert!(!covers("a/b.zip", "a/b.zip2"));
+        assert!(covers("m/*/map3.php", "m/zh-CN/map3.php"));
+        assert!(covers("po/strings_*.po", "po/strings_ko.po"));
+        assert!(!covers("m/*/map3.php", "m/zh-CN/x/map3.php"));
+    }
+
+    #[test]
+    fn php_message_folders_in_a_zip() {
+        let root =
+            std::env::temp_dir().join(alloc::format!("cuttlefish-messages-{}", std::process::id()));
+        let cache = root.join("cache");
+        let _ = std::fs::remove_dir_all(&root);
+        let src = root.join("src");
+        let messages = src.join("statink/messages");
+        let file = |lang: &str, category: &str, pairs: &str| {
+            let dir = messages.join(lang);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(alloc::format!("{category}.php")),
+                alloc::format!(
+                    "<?php\n/**\n * @license https://example.org/LICENSE MIT\n */\nreturn [\n{pairs}];\n"
+                ),
+            )
+            .unwrap();
+        };
+        // The Chinese Steelhead differs from the seed's; the British
+        // English is the key itself
+        file(
+            "zh-CN",
+            "salmon-boss3",
+            "    'Steelhead' => '铁盔',\n    'Big Shot' => '铁球鱼',\n    'Any Boss' => '',\n",
+        );
+        file(
+            "ja",
+            "salmon-boss3",
+            "    'Steelhead' => 'バクダン',\n    'Big Shot' => 'テッキュウ',\n",
+        );
+        file(
+            "en-GB",
+            "salmon-boss3",
+            "    'Steelhead' => 'Steelhead',\n    'Big Shot' => 'Big Shot',\n",
+        );
+        file("ja", "map3", "    'Spawning Grounds' => 'シェケナダム',\n");
+        file("zh-CN", "map3", "    'Spawning Grounds' => '鲑坝',\n");
+        file("ja", "map", "    'Arowana Mall' => 'アロワナモール',\n");
+        file("zh-CN", "map", "    'Arowana Mall' => '阿罗望商场',\n");
+        file("ja", "app", "    'Save' => '保存',\n");
+        file("zh-CN", "app", "    'Save' => '保存',\n");
+        file("_deepl/zh", "salmon-boss3", "    'Steelhead' => '机器',\n");
+        zip(&root, &src, "statink");
+        let mut sink = Memory {
+            root: root.clone(),
+            ..Default::default()
+        };
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        let mut taken: Vec<&str> = report
+            .taken
+            .iter()
+            .filter(|t| t.kind == "glossary")
+            .map(|t| t.path.as_str())
+            .collect();
+        taken.sort();
+        assert_eq!(
+            taken,
+            [
+                "statink.zip/statink/messages/*/map.php",
+                "statink.zip/statink/messages/*/map3.php",
+                "statink.zip/statink/messages/*/salmon-boss3.php",
+            ]
+        );
+        let boss = report
+            .taken
+            .iter()
+            .find(|t| t.path.ends_with("salmon-boss3.php"))
+            .unwrap();
+        assert!(
+            boss.detail.starts_with("2 terms [boss, S3] in en, ja, zh"),
+            "{}",
+            boss.detail
+        );
+        let reasons: Vec<&str> = report.skipped.iter().map(|s| s.reason.as_str()).collect();
+        assert!(
+            reasons.contains(&"machine-translated messages (_deepl)"),
+            "{reasons:?}"
+        );
+        assert!(
+            reasons.contains(&"interface and site text of a message folder"),
+            "{reasons:?}"
+        );
+        assert!(
+            report.notes.iter().any(|n| n
+                == "name differs: steelhead: zh \"炸弹鱼\" here, \"铁盔\" in inbox/statink.zip/statink/messages/*/salmon-boss3.php"),
+            "{:?}",
+            report.notes
+        );
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|n| n.starts_with("name differs: spawning-grounds: zh")),
+            "{:?}",
+            report.notes
+        );
+        // The glossary: seed names first, stat.ink's after, tagged
+        let glossary = Store::load_glossary(&root).unwrap();
+        let steelhead = glossary.lookup("铁盔").unwrap();
+        assert_eq!(steelhead.id, "steelhead");
+        assert_eq!(steelhead.forms["zh"], ["炸弹鱼", "铁盔"]);
+        assert_eq!(steelhead.forms["en"], ["Steelhead"]);
+        assert!(!steelhead.forms.contains_key("en-GB"));
+        assert_eq!(steelhead.kind.as_deref(), Some("boss"));
+        assert_eq!(steelhead.game.as_deref(), Some("S3"));
+        assert_eq!(
+            steelhead.from,
+            ["inbox/statink.zip/statink/messages/*/salmon-boss3.php#Steelhead"]
+        );
+        let mall = glossary.lookup("Arowana Mall").unwrap();
+        assert_eq!(
+            (mall.kind.as_deref(), mall.game.as_deref()),
+            (Some("stage"), Some("S1"))
+        );
+        assert!(glossary.lookup("Save").is_none());
+        assert!(glossary.lookup("机器").is_none());
+        let tables = tables::load_all(&root);
+        assert_eq!(tables.len(), 3);
+        assert_eq!(tables[0].game.as_deref(), Some("S3"));
+        assert_eq!(tables[2].game.as_deref(), Some("S1"));
+        assert_eq!(
+            tables[0].license.as_deref(),
+            Some("MIT (https://example.org/LICENSE)")
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn newer_readers_and_reimports_read_again() {
+        let root =
+            std::env::temp_dir().join(alloc::format!("cuttlefish-reimport-{}", std::process::id()));
+        let cache = root.join("cache");
+        let _ = std::fs::remove_dir_all(&root);
+        let src = root.join("src");
+        std::fs::create_dir_all(src.join("pack/names")).unwrap();
+        std::fs::write(
+            src.join("pack/names/bosses.csv"),
+            "id,en,ja\nsteelhead,Steelhead,バクダン\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("pack/guide.md"),
+            "# Stingers\n\nKill the Stinger from below, where its pot is exposed.",
+        )
+        .unwrap();
+        zip(&root, &src, "pack");
+        write(
+            &root,
+            "notes.md",
+            b"# Notes\n\nThe basket moves down at low tide, so bank early.",
+        );
+        let mut sink = Memory {
+            root: root.clone(),
+            ..Default::default()
+        };
+        let meta = Meta::default();
+        let first = import(&mut sink, &root, &cache, &meta).unwrap();
+        assert_eq!(first.count("document"), 2);
+        assert_eq!(first.count("glossary"), 1);
+        assert_eq!(pending(&root).new, 0);
+
+        // The manifest says an older table reader took the CSV: it is read
+        // again, the prose is not
+        let manifest_path = Manifest::path(&root);
+        let text = std::fs::read_to_string(&manifest_path).unwrap();
+        let mut manifest: Manifest = serde_json::from_str(&text).unwrap();
+        let csv = String::from("pack.zip/pack/names/bosses.csv");
+        manifest.files.get_mut(&csv).unwrap().version = 0;
+        manifest.files.get_mut("pack.zip").unwrap().version = 0;
+        manifest.save(&root).unwrap();
+        assert_eq!(pending(&root).new, 1);
+        let again = import(&mut sink, &root, &cache, &meta).unwrap();
+        assert_eq!(again.count("glossary"), 1, "{again:#?}");
+        assert_eq!(again.count("document"), 0);
+        assert!(
+            again
+                .notes
+                .iter()
+                .any(|n| n.starts_with("unpacked pack.zip"))
+        );
+        assert_eq!(pending(&root).new, 0);
+
+        // Re-import of one file inside the archive: its document is removed
+        // and added again; the rest is untouched
+        let target = "pack.zip/pack/guide.md";
+        let re = reimport(&mut sink, &root, &cache, &meta, target).unwrap();
+        assert_eq!(re.count("document"), 1, "{re:#?}");
+        assert_eq!(re.taken[0].path, target);
+        assert_eq!(re.count("glossary"), 0);
+        assert!(re.notes.iter().any(|n| n
+            == "pack.zip/pack/guide.md imported again: 1 files forgotten, 1 documents removed"));
+        assert_eq!(sink.docs.len(), 2);
+        // Of a family, and of the whole archive
+        let re = reimport(
+            &mut sink,
+            &root,
+            &cache,
+            &meta,
+            "pack.zip/pack/names/bosses.csv",
+        )
+        .unwrap();
+        assert_eq!(re.count("glossary"), 1, "{re:#?}");
+        let re = reimport(&mut sink, &root, &cache, &meta, "pack.zip").unwrap();
+        assert_eq!((re.count("document"), re.count("glossary")), (1, 1));
+        assert_eq!(sink.docs.len(), 2);
+        assert!(reimport(&mut sink, &root, &cache, &meta, "nothing.zip").is_err());
+        assert!(reimport(&mut sink, &root, &cache, &meta, " ").is_err());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -235,15 +235,21 @@ impl Store {
         })
     }
 
-    /// The data folder's `glossary.toml` (or the seed without one), with
-    /// the name tables imported from the inbox merged in
-    pub fn load_glossary(root: &Path) -> Result<Glossary> {
+    /// The data folder's own `glossary.toml`, or the seed without one:
+    /// the names as written, without imports
+    pub fn own_glossary(root: &Path) -> Result<Glossary> {
         let path = root.join("glossary.toml");
-        let mut glossary = if path.exists() {
-            Glossary::load(&path)?
+        if path.exists() {
+            Glossary::load(&path)
         } else {
-            Glossary::seed()
-        };
+            Ok(Glossary::seed())
+        }
+    }
+
+    /// The data folder's `glossary.toml` (or the seed without one), with
+    /// the name tables imported from the inbox merged in, newest game first
+    pub fn load_glossary(root: &Path) -> Result<Glossary> {
+        let mut glossary = Self::own_glossary(root)?;
         for table in crate::tables::load_all(root) {
             glossary.merge(&table.terms);
         }

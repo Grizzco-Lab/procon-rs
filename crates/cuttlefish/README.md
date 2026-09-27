@@ -20,6 +20,7 @@ cd ~/Developing/procon-rs    # where config.toml is
 export CUTTLEFISH_CONTACT=you@example.org   # put in the crawler's User-Agent
 
 cuttlefish ingest inbox                    # everything dropped into <data>/inbox/
+cuttlefish ingest inbox --reimport 'stat.ink-3.128.4.zip'   # forget what a file gave, read it again
 
 cuttlefish ingest file fundamentals.pdf --source guide --license "by permission of the authors"
 cuttlefish ingest url https://example.org/guide --source guide
@@ -108,7 +109,8 @@ which can also upload into it) looks at each file by name and first bytes:
 | md, txt, rst, org, adoc, html, pdf, docx, srt, vtt | a document (chunked, embedded), keyed by its inbox path |
 | DiscordChatExporter JSON | its conversations |
 | json, yaml, toml, csv, tsv, po, properties | a name table if it holds the same keys in several languages; never embedded. Otherwise a data table: a small text document of `key / path: value` lines under 1 MB, skipped above. Project configuration (`package.json`, `Cargo.toml`, ...) is skipped |
-| png, jpg, gif, webp, svg, bmp, ico, avif | an asset |
+| php in a message folder (`messages/<lang>/<category>.php`, as Yii apps such as stat.ink keep them) | a name table: the keys are the English names, the values the translations. Interface categories (`app`, `email`, `privacy`, time zones, ...) and machine-translated folders (`_deepl`) are skipped; other `.php` is code |
+| png, jpg, gif, webp, svg, bmp, ico, avif | an asset; site images (folders named after logos, screenshots, clip art, "about") are skipped |
 | zip, tar(.gz/.xz/.bz2/.zst), 7z | unpacked with `bsdtar` into the cache, contents taken the same way |
 | code, media, office files other than docx, fonts, binaries, unknown | skipped, with the reason |
 
@@ -127,10 +129,35 @@ languages or more becomes a term with those names and its origin
 (`from = ["inbox/<file>#<key>"]`). Only names are kept (one line, at most 60
 characters, no markup or placeholders, 3+ characters if ASCII); in a table of
 more than 500 terms, only keys containing "name" (a game's whole interface
-text otherwise floods the glossary with "OK" and "Back"). Tables are stored per
-file or family in `terms/` and merged into the glossary: a term sharing a name
-with an existing one adds its languages to it (the seed's Steelhead gains
-French and Chinese), others are added as new terms.
+text otherwise floods the glossary with "OK" and "Back"), unless the keys are
+the names themselves (PHP messages, gettext). Tables are stored per file or
+family in `terms/` and merged into the glossary: a term with an English name
+of an existing one adds its languages to it (the seed's Steelhead gains
+French and Chinese), a term without English names merges on the id or any
+shared name, others are added as new terms. English decides because
+localized names are shared more often (Splattershot and the Shooter class are
+both "Lanzatintas" in Spanish).
+
+**Message folders** (`messages.rs`, `php.rs`). One folder per language, one
+file per category, as stat.ink's `messages/zh-CN/salmon-boss3.php`. The PHP
+array is read as literals (single or double quotes, escapes, comments, `.`
+concatenation, nested arrays, `array_merge(...)`), never run; the file's
+`@license` and `@copyright` are kept on the table. Regional variants (`en-GB`,
+`es-MX`, `fr-CA`, `pt-BR`; Nintendo's `EUen`, `USes`, `USfr`) are folded into
+their language, with the names that differ kept under the variant's own code
+(`forms.en = ["Armor Jacket Replica"], forms.en-GB = ["Armour Jacket
+Replica"]`), so `name("es")` is the Spanish name and a lookup finds the
+Mexican one too; a variant without its language (only `pt-BR`) is the
+language. The category names the kind of the terms (`salmon-boss3` → `boss`,
+`map3` → `stage`, `weapon3` → `weapon`, `special3`, `subweapon3` → `sub`,
+`ability3`, `salmon-event3` → `event`, `salmon-title3`, `salmon-uniform3`,
+...) and their game (`3` → S3, `2` → S2, no suffix beside a suffixed sibling →
+S1); both go on the terms (`kind`, `game`) and into prompts (`[boss]`, `[stage,
+Splatoon 2]`). Tables of Splatoon 3 merge into the glossary first, then
+untagged ones, then older games, so an older name never comes before the
+current one. Names that differ from the glossary's own (`glossary.toml` or the
+seed) are listed in the import report (`name differs: spawning-grounds: zh
+"鲑鱼坝" here, "鲑坝" in ...`); both names are kept, the glossary's first.
 
 **Assets** (`assets.rs`). Each image gets an entry in `assets.json`: path,
 size, dimensions from its header, a name from the file name and its folder,
@@ -141,13 +168,18 @@ request into the cache; small icons and SVGs are served as they are. Images
 are not embedded; an image embedder (CLIP, SigLIP) could make them searchable
 by content later.
 
-**Dedup.** `inbox.json` remembers each file's size, time and content hash. An
-unchanged file is not read again (an unchanged archive is not unpacked), a
-changed file replaces its document or table, a file with the content of
-another is skipped as a copy, and files gone from the inbox are reported
-(their documents stay). A deleted document stays deleted until its file
-changes or the import runs with `--refresh`. Every import writes a report:
-what was taken as what, skipped and why, failed, gone.
+**Dedup.** `inbox.json` remembers each file's size, time, content hash and
+the version of the reader that took it (`inbox::version`, per kind of file).
+An unchanged file is not read again (an unchanged archive is not unpacked)
+unless its reader is newer; a changed file replaces its document or table, a
+file with the content of another is skipped as a copy, and files gone from
+the inbox are reported (their documents stay). A deleted document stays
+deleted until its file changes or the import runs with `--refresh`.
+`--reimport <path>` (or **Import again** next to a file in a report) forgets
+one file, folder, archive or family of files: its documents are removed, the
+archives around it are unpacked again, and what it gives now replaces its
+tables and assets. Every import writes a report: what was taken as what,
+skipped and why, failed, gone.
 
 ## Sources and their terms
 

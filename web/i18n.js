@@ -371,6 +371,7 @@ const I18N = {
     "k.report.statsCancelled":
       "{files} files looked at, {unchanged} unchanged, cancelled",
     "k.report.close": "Close",
+    "k.report.reimport": "Import again",
     "k.report.nothing": "Nothing new taken.",
     "k.report.skipped": "Skipped",
     "k.none": "none",

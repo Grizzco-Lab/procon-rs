@@ -339,6 +339,7 @@ I18N.zh = {
   "k.report.statsCancelled":
     "查看了 {files} 个文件，{unchanged} 个未变，已取消",
   "k.report.close": "关闭",
+  "k.report.reimport": "重新导入",
   "k.report.nothing": "没有新的内容。",
   "k.report.skipped": "已跳过",
   "k.none": "无",
