@@ -168,7 +168,8 @@ a captcha**: anything that wants a person stops the run at once.
 
 - **The same Chrome as xcap.** `~/.config/procon/browser-profile` (or
   `--profile`), port 9251 (or `--port`); `login` opens a window on it for
-  you to log in (the site shows a code to scan with the app), `run` starts
+  you to log in (the site shows a code to scan with the app) and leaves it
+  open until you close it, `run` starts
   Chrome on it or attaches to one already listening (`--attach`). Your
   everyday Chrome and its profile are never touched.
 - **What it visits.** The home page (are we logged in, and as whom: the
@@ -220,7 +221,7 @@ a captcha**: anything that wants a person stops the run at once.
 ```bash
 cd ~/Developing/procon-rs                   # where config.toml is: the knowledge folder is found as the cuttlefish CLI finds it
 
-# 1. Once: log in, in the window that opens (a code to scan with the app); the window closes when logged in
+# 1. Once: log in, in the window that opens (a code to scan with the app); close the window when done
 node tools/capture/rednote.mjs login
 
 # 2. A dry run: the following list, a creator's notes, a note or two, printed; nothing written

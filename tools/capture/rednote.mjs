@@ -237,15 +237,17 @@ async function login() {
         await new Promise((r) => setTimeout(r, 3000));
         ok = await loggedIn(page).catch(() => undefined);
       }
-      if (!ok) {
-        console.error("no login seen; run login again");
-        process.exitCode = 1;
-      } else {
-        // The site may still be setting its cookies right after the login
-        await new Promise((r) => setTimeout(r, 5000));
-        log(`logged in; the session stays in ${resolve(o.profile)}`);
-      }
     }
+    if (!ok) {
+      console.error("no login seen; run login again");
+      process.exitCode = 1;
+    } else if (b.chrome) {
+      // The window is the user's now: Chrome saves the profile as it closes
+      log(
+        `logged in; the session stays in ${resolve(o.profile)}. Close the window when you are done`,
+      );
+      await b.chrome.exited;
+    } else log("logged in");
   } finally {
     await page.close().catch(() => {});
     await b.stop();
