@@ -1,6 +1,7 @@
 //! Documents: one page, video transcript, conversation or file, with where
 //! it came from and under which terms it may be used.
 
+use crate::discord::MessageRow;
 use crate::moments::Moment;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -77,10 +78,14 @@ pub struct Document {
     pub weight: f32,
     /// Plain text; markdown headings (`#`) mark sections
     pub text: String,
-    /// Moments in a video the text points at (Discord VOD reviews: links
-    /// with a time, times and waves written in the messages)
+    /// Moments in a video the text points at (Discord documents imported
+    /// before `messages`; newer ones keep them in their rows)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub moments: Vec<Moment>,
+    /// A conversation's messages: reply relation, thread, the video each
+    /// is about and its moments (Discord)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub messages: Vec<MessageRow>,
 }
 
 impl Document {
@@ -101,6 +106,7 @@ impl Document {
             weight: source.default_weight(),
             text,
             moments: Vec::new(),
+            messages: Vec::new(),
         }
     }
 }

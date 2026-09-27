@@ -12,14 +12,20 @@
 //!    account ([`crate::discord_fetch`]; against Discord's terms, at the
 //!    user's own risk), read with [`read_archive`].
 //!
-//! Messages become one document per conversation: a forum post or thread,
-//! or a run of channel messages without a gap longer than
-//! [`CONVERSATION_GAP_S`]. Attachments (VOD clips) are kept as links, and
-//! the moments the messages point at (video links with a time, times and
-//! waves in the text, [`crate::moments`]) as the document's `moments`.
+//! Messages become one document per conversation: a forum post or thread;
+//! in a plain channel, a video post with the replies to it and the
+//! messages that follow without a gap longer than [`CONVERSATION_GAP_S`]
+//! ([`to_documents`]). Attachments (VOD clips) are kept as links. Each
+//! message is also a row of the document's `messages` ([`MessageRow`]):
+//! its id, the message it replies to, its thread, the video it is about
+//! ([`VideoFrom`] tells how that was found) and the moments it points at
+//! (video links with a time, times and waves in the text,
+//! [`crate::moments`]), linked to that video.
 
 use crate::doc::{Document, SourceKind};
-use crate::moments;
+use crate::moments::{self, Moment, MomentKind};
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use anyhow::{Context, Result, bail};
@@ -47,6 +53,61 @@ pub struct Message {
     pub content: String,
     /// Attachment and embed links (`name: url`)
     pub links: Vec<String>,
+    /// The message this one replies to
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    /// The replied-to message as the API sends it along with a reply
+    /// (`referenced_message`), for when it is not among the messages read
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quoted: Option<Box<Message>>,
+}
+
+/// How the video a message is about was found ([`MessageRow::video_from`])
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VideoFrom {
+    /// A YouTube link or a video attachment in the message itself
+    Own,
+    /// In the message it replies to, or further up the reply chain
+    Reply,
+    /// In the starter message of its thread or forum post
+    Starter,
+    /// The replied-to author's nearest earlier video post in the channel
+    EarlierPost,
+}
+
+/// One message of a document, for linking comments with videos
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MessageRow {
+    /// Snowflake id
+    pub id: String,
+    /// Display name of the author
+    pub author: String,
+    /// When it was posted
+    pub time: DateTime<Utc>,
+    /// The message it replies to
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    /// Who wrote the replied-to message, when known
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_author: Option<String>,
+    /// The thread or forum post it is in
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    /// The video it is about: a YouTube or attachment link
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_url: Option<String>,
+    /// The time in that video it points at: its link's start, else the
+    /// first video time written in it
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_t: Option<f32>,
+    /// How the video was found
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_from: Option<VideoFrom>,
+    /// The moments it points at, with the video as their `url` when they
+    /// name none
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub moments: Vec<Moment>,
 }
 
 /// Where the messages were posted
@@ -124,6 +185,11 @@ struct ExportChannel {
 #[serde(rename_all = "camelCase")]
 struct ExportMessage {
     id: String,
+    /// `Default`, `Reply`, `ThreadCreated`, ...
+    #[serde(default)]
+    r#type: String,
+    #[serde(default)]
+    reference: Option<ExportReference>,
     timestamp: DateTime<Utc>,
     #[serde(default)]
     content: String,
@@ -132,6 +198,13 @@ struct ExportMessage {
     attachments: Vec<ExportAttachment>,
     #[serde(default)]
     embeds: Vec<Embed>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportReference {
+    #[serde(default)]
+    message_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -194,27 +267,204 @@ pub fn parse_export(json: &str) -> Result<(Channel, Vec<Message>)> {
                 author: m.author.nickname.unwrap_or(m.author.name),
                 content: m.content,
                 links,
+                reply_to: (m.r#type == "Reply")
+                    .then(|| m.reference.and_then(|r| r.message_id))
+                    .flatten(),
+                quoted: None,
             }
         })
         .collect();
     Ok((channel, messages))
 }
 
-/// Splits messages (oldest first) into conversations and makes a document of
-/// each. `whole` keeps them as one conversation (a thread or forum post).
-pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec<Document> {
-    let mut groups: Vec<&[Message]> = Vec::new();
-    let mut start = 0;
-    for i in 1..messages.len() {
-        let gap = (messages[i].timestamp - messages[i - 1].timestamp).num_seconds();
-        if !whole && gap > CONVERSATION_GAP_S {
-            groups.push(&messages[start..i]);
-            start = i;
+/// Extensions of video attachments
+const VIDEO_EXTENSIONS: [&str; 6] = ["mp4", "mov", "webm", "mkv", "m4v", "avi"];
+
+/// A message's text with its links, where moments and videos are looked for
+fn with_links(m: &Message) -> String {
+    let mut text = m.content.clone();
+    for l in &m.links {
+        text.push('\n');
+        text.push_str(l);
+    }
+    text
+}
+
+/// The video a message itself links: its first YouTube link (with the
+/// link's start time), else its first video attachment
+pub fn video_in(m: &Message) -> Option<(String, Option<f32>)> {
+    if let Some((url, t)) = moments::extract(&with_links(m))
+        .into_iter()
+        .find_map(|x| Some((x.url?, x.seconds)))
+    {
+        return Some((url, t));
+    }
+    let is_video = |s: &str| {
+        let s = s
+            .split(['?', '#'])
+            .next()
+            .unwrap_or_default()
+            .to_lowercase();
+        VIDEO_EXTENSIONS
+            .iter()
+            .any(|e| s.ends_with(&alloc::format!(".{e}")))
+    };
+    m.links.iter().find_map(|l| {
+        let (name, url) = l.rsplit_once(": ")?;
+        (is_video(name) || is_video(url)).then(|| (String::from(url), None))
+    })
+}
+
+/// A row for each message (oldest first): the reply relation, the thread
+/// and the video it is about, found in this order: a link in the message
+/// itself; in the message it replies to, following the chain; in its
+/// thread's or post's starter message (the one whose id is the thread's);
+/// else the replied-to author's nearest earlier video post in the channel
+pub fn rows(channel: &Channel, messages: &[Message]) -> Vec<MessageRow> {
+    let by_id: BTreeMap<&str, usize> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.id.as_str(), i))
+        .collect();
+    let own: Vec<Option<(String, Option<f32>)>> = messages.iter().map(video_in).collect();
+    let starter = channel
+        .thread
+        .then(|| by_id.get(channel.id.as_str()))
+        .flatten()
+        .and_then(|&i| own[i].clone());
+    messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let replied = m.reply_to.as_deref().and_then(|r| by_id.get(r).copied());
+            let reply_author = match replied {
+                Some(j) => Some(messages[j].author.clone()),
+                None => m.quoted.as_ref().map(|q| q.author.clone()),
+            };
+            let mut video = own[i].clone().map(|v| (v, VideoFrom::Own));
+            // Up the reply chain: in the file, else what a reply quotes
+            let mut at = i;
+            for _ in 0..messages.len() {
+                if video.is_some() {
+                    break;
+                }
+                let r = messages[at].reply_to.as_deref();
+                match r.and_then(|r| by_id.get(r)) {
+                    Some(&j) => {
+                        video = own[j]
+                            .clone()
+                            .map(|(url, _)| ((url, None), VideoFrom::Reply));
+                        at = j;
+                    }
+                    None => {
+                        video = messages[at]
+                            .quoted
+                            .as_deref()
+                            .filter(|_| r.is_some())
+                            .and_then(video_in)
+                            .map(|(url, _)| ((url, None), VideoFrom::Reply));
+                        break;
+                    }
+                }
+            }
+            if video.is_none() {
+                video = starter
+                    .clone()
+                    .map(|(url, _)| ((url, None), VideoFrom::Starter));
+            }
+            // The replied-to author's latest video post before the reply
+            // (ids are times, so this works for a message not read too)
+            if video.is_none()
+                && let (Some(r), Some(who)) = (m.reply_to.as_deref(), &reply_author)
+            {
+                let before = snowflake(r);
+                video = (0..i)
+                    .rev()
+                    .filter(|&j| snowflake(&messages[j].id) <= before)
+                    .find(|&j| &messages[j].author == who && own[j].is_some())
+                    .and_then(|j| own[j].clone())
+                    .map(|(url, _)| ((url, None), VideoFrom::EarlierPost));
+            }
+            let mut found = moments::extract(&with_links(m));
+            let (video_url, mut video_t, video_from) = match video {
+                Some(((url, t), from)) => (Some(url), t, Some(from)),
+                None => (None, None, None),
+            };
+            if video_t.is_none() {
+                video_t = found
+                    .iter()
+                    .find(|x| x.kind == MomentKind::VideoTime && x.url.is_none())
+                    .and_then(|x| x.seconds);
+            }
+            for x in &mut found {
+                x.message_id = Some(m.id.clone());
+                x.author = Some(m.author.clone());
+                x.at = Some(m.timestamp);
+                if x.url.is_none() {
+                    x.url.clone_from(&video_url);
+                }
+            }
+            MessageRow {
+                id: m.id.clone(),
+                author: m.author.clone(),
+                time: m.timestamp,
+                reply_to: m.reply_to.clone(),
+                reply_author,
+                thread: channel.thread.then(|| channel.id.clone()),
+                video_url,
+                video_t,
+                video_from,
+                moments: found,
+            }
+        })
+        .collect()
+}
+
+/// Conversations of a plain channel's messages (oldest first), as lists of
+/// indices: a reply joins the conversation of the message it replies to; a
+/// message with a video of its own starts one; any other message joins the
+/// one before it, unless more than [`CONVERSATION_GAP_S`] passed
+fn conversations(messages: &[Message]) -> Vec<Vec<usize>> {
+    let by_id: BTreeMap<&str, usize> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.id.as_str(), i))
+        .collect();
+    let mut of: Vec<usize> = Vec::with_capacity(messages.len());
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for (i, m) in messages.iter().enumerate() {
+        let replied = m.reply_to.as_deref().and_then(|r| by_id.get(r).copied());
+        let g = match replied {
+            Some(j) if j < i => of[j],
+            _ if video_in(m).is_some() => groups.len(),
+            _ if i > 0
+                && (m.timestamp - messages[i - 1].timestamp).num_seconds()
+                    <= CONVERSATION_GAP_S =>
+            {
+                of[i - 1]
+            }
+            _ => groups.len(),
+        };
+        if g == groups.len() {
+            groups.push(Vec::new());
         }
+        groups[g].push(i);
+        of.push(g);
     }
-    if start < messages.len() {
-        groups.push(&messages[start..]);
-    }
+    groups
+}
+
+/// Makes a document of each conversation of messages (oldest first).
+/// `whole` keeps them as one (a thread or forum post); else a video post
+/// with its replies, and what follows it without a long gap, is one
+/// ([`conversations`]). Each keeps its messages' [`rows`].
+pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec<Document> {
+    let groups = if whole {
+        alloc::vec![(0..messages.len()).collect()]
+    } else {
+        conversations(messages)
+    };
+    let all_rows = rows(channel, messages);
     let source = if channel.is_vod_review() {
         SourceKind::DiscordVodReview
     } else {
@@ -222,8 +472,9 @@ pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec
     };
     groups
         .into_iter()
+        .filter(|g: &Vec<usize>| !g.is_empty())
         .map(|g| {
-            let first = &g[0];
+            let first = &messages[g[0]];
             let url = alloc::format!(
                 "https://discord.com/channels/{}/{}/{}",
                 channel.guild_id,
@@ -237,13 +488,18 @@ pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec
             let title = alloc::format!("{place}, {}", first.timestamp.format("%Y-%m-%d"));
             let mut text = String::new();
             let mut authors: Vec<&str> = Vec::new();
-            let mut found = Vec::new();
-            for m in g {
+            for &i in &g {
+                let (m, row) = (&messages[i], &all_rows[i]);
                 if !authors.contains(&m.author.as_str()) {
                     authors.push(&m.author);
                 }
+                let reply = match (&row.reply_to, &row.reply_author) {
+                    (_, Some(who)) => alloc::format!(" \u{21aa} {who}"),
+                    (Some(_), None) => String::from(" \u{21aa} ?"),
+                    (None, None) => String::new(),
+                };
                 text.push_str(&alloc::format!(
-                    "[{}] {}: {}\n",
+                    "[{}] {}{reply}: {}\n",
                     m.timestamp.format("%Y-%m-%d %H:%M UTC"),
                     m.author,
                     m.content.trim()
@@ -252,18 +508,6 @@ pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec
                     text.push_str(&alloc::format!("  [{l}]\n"));
                 }
                 text.push('\n');
-                // Moments in the text and in the links (embeds of a video)
-                let mut with_links = m.content.clone();
-                for l in &m.links {
-                    with_links.push('\n');
-                    with_links.push_str(l);
-                }
-                for mut moment in moments::extract(&with_links) {
-                    moment.message_id = Some(m.id.clone());
-                    moment.author = Some(m.author.clone());
-                    moment.at = Some(m.timestamp);
-                    found.push(moment);
-                }
             }
             let mut doc = Document::new(source, &url, title, String::from(text.trim_end()));
             doc.url = Some(url);
@@ -273,7 +517,7 @@ pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec
                 alloc::format!("{} ({})", authors.join(", "), channel.guild)
             });
             doc.license = Some(String::from(LICENSE));
-            doc.moments = found;
+            doc.messages = g.iter().map(|&i| all_rows[i].clone()).collect();
             doc
         })
         .collect()
@@ -288,10 +532,23 @@ pub struct Bot {
 /// The REST API
 pub const API: &str = "https://discord.com/api/v10";
 
+/// Message type of a reply
+const REPLY: u64 = 19;
+/// Message type of a thread's first message in a text channel: an empty
+/// message whose `referenced_message` is the channel message that started
+/// the thread
+const THREAD_STARTER: u64 = 21;
+
 /// A message object of the API
 #[derive(Deserialize)]
 struct ApiMessage {
     id: String,
+    #[serde(default, rename = "type")]
+    kind: u64,
+    #[serde(default)]
+    message_reference: Option<ApiReference>,
+    #[serde(default)]
+    referenced_message: Option<Box<ApiMessage>>,
     timestamp: DateTime<Utc>,
     #[serde(default)]
     content: String,
@@ -300,6 +557,12 @@ struct ApiMessage {
     attachments: Vec<ApiAttachment>,
     #[serde(default)]
     embeds: Vec<Embed>,
+}
+
+#[derive(Deserialize)]
+struct ApiReference {
+    #[serde(default)]
+    message_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -316,7 +579,21 @@ struct ApiAttachment {
 }
 
 impl From<ApiMessage> for Message {
+    /// A thread's starter message becomes the channel message that started
+    /// the thread, which it quotes
     fn from(m: ApiMessage) -> Self {
+        if m.kind == THREAD_STARTER
+            && let Some(started) = m.referenced_message
+        {
+            return Message::from(*started);
+        }
+        let reply_to = (m.kind == REPLY)
+            .then(|| m.message_reference.and_then(|r| r.message_id))
+            .flatten();
+        let quoted = m
+            .referenced_message
+            .filter(|_| reply_to.is_some())
+            .map(|q| Box::new(Message::from(*q)));
         let mut links: Vec<String> = m
             .attachments
             .iter()
@@ -329,6 +606,8 @@ impl From<ApiMessage> for Message {
             author: m.author.global_name.unwrap_or(m.author.username),
             content: m.content,
             links,
+            reply_to,
+            quoted,
         }
     }
 }
@@ -620,12 +899,190 @@ not json
         assert_eq!(docs[0].source, SourceKind::DiscordVodReview);
         assert_eq!(docs[0].title, "#vod-review > Run 3 wipe, 2024-05-01");
         assert_eq!(docs[0].attribution.as_deref(), Some("bob, Alice"));
-        let m = &docs[0].moments;
+        let rows = &docs[0].messages;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].id, "12");
+        assert_eq!(rows[1].thread.as_deref(), Some("3"));
+        assert_eq!(
+            rows[1].video_url.as_deref(),
+            Some("https://youtu.be/x?t=83")
+        );
+        assert_eq!(rows[1].video_t, Some(83.0));
+        assert_eq!(rows[1].video_from, Some(VideoFrom::Own));
+        let m = &rows[1].moments;
         assert_eq!(m.len(), 2);
         assert_eq!(m[0].raw, "W1 :50");
         assert_eq!(m[0].message_id.as_deref(), Some("12"));
         assert_eq!(m[0].author.as_deref(), Some("Alice"));
+        // Linked to the message's video
+        assert_eq!(m[0].url.as_deref(), Some("https://youtu.be/x?t=83"));
         assert_eq!(m[1].url.as_deref(), Some("https://youtu.be/x?t=83"));
         assert_eq!(m[1].seconds, Some(83.0));
+        assert!(rows[0].moments.is_empty());
+    }
+
+    /// An API message line; `extra` is more JSON fields
+    fn api(id: &str, minute: u32, who: &str, text: &str, extra: &str) -> String {
+        alloc::format!(
+            r#"{{"id": "{id}", "timestamp": "2024-05-01T10:{minute:02}:00+00:00", "content": "{text}", "author": {{"id": "{who}", "username": "{who}"}}{extra}}}"#
+        )
+    }
+
+    fn reply(to: &str) -> String {
+        alloc::format!(r#", "type": 19, "message_reference": {{"message_id": "{to}"}}"#)
+    }
+
+    fn plain_channel() -> Channel {
+        Channel {
+            guild_id: String::from("1"),
+            id: String::from("2"),
+            name: String::from("vod-review"),
+            ..Channel::default()
+        }
+    }
+
+    #[test]
+    fn videos_through_replies_and_earlier_posts() {
+        let lines = [
+            // souper's VOD, then a comment of hers without a video
+            api("100", 0, "souper", "my run https://youtu.be/vod1", ""),
+            api("101", 1, "souper", "I died at wave 2", ""),
+            // A reply to the VOD post, and a reply to that reply
+            api("102", 2, "Ben", "at 1:20 go left", &reply("100")),
+            api("103", 3, "souper", "thanks!", &reply("102")),
+            // A reply to her comment: her nearest earlier video post
+            api("104", 4, "Ben", "W2 :40 you were alone", &reply("101")),
+            // A reply to a message not read: its video comes quoted
+            api(
+                "105",
+                5,
+                "Cy",
+                "nice",
+                &alloc::format!(
+                    r#"{}, "referenced_message": {}"#,
+                    reply("50"),
+                    api("50", 0, "Dee", "old clip", r#", "attachments": [{"url": "https://cdn.example/a.MP4?ex=1", "filename": "a.MP4"}]"#)
+                ),
+            ),
+            // Not a reply, no video, soon after: no video, same conversation
+            api("106", 6, "Cy", "gg", ""),
+        ]
+        .join("\n");
+        let msgs = parse_api_messages(&lines);
+        let ch = plain_channel();
+        let rows = rows(&ch, &msgs);
+        let video = |i: usize| (rows[i].video_url.as_deref(), rows[i].video_from);
+        let vod1 = Some("https://youtu.be/vod1");
+        assert_eq!(video(0), (vod1, Some(VideoFrom::Own)));
+        assert_eq!(video(1), (None, None));
+        assert_eq!(video(2), (vod1, Some(VideoFrom::Reply)));
+        assert_eq!(rows[2].video_t, Some(80.0));
+        assert_eq!(rows[2].reply_author.as_deref(), Some("souper"));
+        assert_eq!(video(3), (vod1, Some(VideoFrom::Reply)));
+        assert_eq!(video(4), (vod1, Some(VideoFrom::EarlierPost)));
+        assert_eq!(rows[4].moments[0].url.as_deref(), vod1);
+        assert_eq!(
+            video(5),
+            (
+                Some("https://cdn.example/a.MP4?ex=1"),
+                Some(VideoFrom::Reply)
+            )
+        );
+        assert_eq!(rows[5].reply_author.as_deref(), Some("Dee"));
+        assert_eq!(video(6), (None, None));
+        assert!(rows.iter().all(|r| r.thread.is_none()));
+
+        let docs = to_documents(&ch, &msgs, false);
+        assert_eq!(docs.len(), 1);
+        assert!(
+            docs[0]
+                .text
+                .contains("[2024-05-01 10:03 UTC] souper \u{21aa} Ben: thanks!"),
+            "{}",
+            docs[0].text
+        );
+        assert!(docs[0].text.contains("Cy \u{21aa} Dee: nice"));
+        assert_eq!(docs[0].messages.len(), 7);
+    }
+
+    #[test]
+    fn plain_channels_split_by_video_posts_and_reply_chains() {
+        let lines = [
+            api("100", 0, "souper", "run A https://youtu.be/a", ""),
+            api("101", 1, "Ben", "wave 1 was fine", ""),
+            api("102", 2, "Cy", "run B https://youtu.be/b", ""),
+            api("103", 3, "Ben", "1:10 in A you left", &reply("100")),
+            api("104", 4, "Dee", "and in B?", ""),
+            api("105", 5, "Cy", "B again", &reply("102")),
+        ]
+        .join("\n");
+        let msgs = parse_api_messages(&lines);
+        let docs = to_documents(&plain_channel(), &msgs, false);
+        let ids: Vec<Vec<&str>> = docs
+            .iter()
+            .map(|d| d.messages.iter().map(|r| r.id.as_str()).collect())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                alloc::vec!["100", "101", "103", "104"],
+                alloc::vec!["102", "105"]
+            ]
+        );
+        assert_eq!(
+            docs[0].url.as_deref(),
+            Some("https://discord.com/channels/1/2/100")
+        );
+        assert_eq!(
+            docs[1].url.as_deref(),
+            Some("https://discord.com/channels/1/2/102")
+        );
+    }
+
+    #[test]
+    fn threads_take_their_starters_video() {
+        // A thread started from a channel message: its first message
+        // quotes the starter, whose id is the thread's
+        let starter = api("30", 0, "souper", "VOD https://youtu.be/s", "");
+        let lines = [
+            api(
+                "31",
+                1,
+                "souper",
+                "",
+                &alloc::format!(
+                    r#", "type": 21, "message_reference": {{"message_id": "30"}}, "referenced_message": {starter}"#
+                ),
+            ),
+            api("32", 2, "Ben", "2:05 rotate", ""),
+        ]
+        .join("\n");
+        let msgs = parse_api_messages(&lines);
+        assert_eq!(msgs[0].id, "30");
+        assert_eq!(msgs[0].content, "VOD https://youtu.be/s");
+        let ch = Channel {
+            id: String::from("30"),
+            thread: true,
+            ..plain_channel()
+        };
+        let rows = rows(&ch, &msgs);
+        assert_eq!(rows[1].video_url.as_deref(), Some("https://youtu.be/s"));
+        assert_eq!(rows[1].video_from, Some(VideoFrom::Starter));
+        assert_eq!(rows[1].video_t, Some(125.0));
+        assert_eq!(rows[1].thread.as_deref(), Some("30"));
+    }
+
+    #[test]
+    fn export_replies() {
+        let json = r#"{"guild": {"id": "1", "name": "G"}, "channel": {"id": "2", "name": "c"},
+          "messages": [
+            {"id": "10", "timestamp": "2024-05-01T10:00:00+00:00", "content": "https://youtu.be/q", "author": {"name": "a"}},
+            {"id": "11", "type": "Reply", "reference": {"messageId": "10"}, "timestamp": "2024-05-01T10:01:00+00:00", "content": "ok", "author": {"name": "b"}}
+          ]}"#;
+        let (ch, msgs) = parse_export(json).unwrap();
+        assert_eq!(msgs[1].reply_to.as_deref(), Some("10"));
+        let rows = rows(&ch, &msgs);
+        assert_eq!(rows[1].video_from, Some(VideoFrom::Reply));
+        assert_eq!(rows[1].reply_author.as_deref(), Some("a"));
     }
 }

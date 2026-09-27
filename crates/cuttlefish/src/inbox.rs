@@ -1925,9 +1925,10 @@ mod tests {
             doc.text
                 .contains("[2024-05-01 10:00 UTC] Alice: https://youtu.be/x?t=83")
         );
-        assert_eq!(doc.moments.len(), 2);
-        assert_eq!(doc.moments[0].seconds, Some(83.0));
-        assert_eq!(doc.moments[1].raw, "W1 :50");
+        let moments: Vec<_> = doc.messages.iter().flat_map(|r| &r.moments).collect();
+        assert_eq!(moments.len(), 2);
+        assert_eq!(moments[0].seconds, Some(83.0));
+        assert_eq!(moments[1].raw, "W1 :50");
         let reasons: Vec<&str> = report.skipped.iter().map(|s| s.reason.as_str()).collect();
         assert!(
             reasons.contains(&"Discord channel object (read with its messages)"),
@@ -1958,7 +1959,8 @@ mod tests {
         let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
         assert_eq!(report.count("discord"), 1);
         assert_eq!(sink.docs.len(), 1);
-        assert_eq!(sink.docs[0].moments.len(), 3);
+        let rows = &sink.docs[0].messages;
+        assert_eq!(rows.iter().map(|r| r.moments.len()).sum::<usize>(), 3);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
