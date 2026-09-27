@@ -1,8 +1,9 @@
 // A real Chrome over the DevTools protocol (Node's WebSocket, no
 // packages): started on the capture's own profile folder with a debugging
 // port, or attached to one already listening there. One page is driven:
-// navigations, wheel scrolls, and the JSON the page itself receives from
-// X's GraphQL API, read from the network events.
+// navigations, wheel scrolls, clicks and keys like a person's, and the
+// JSON the page itself receives (X's GraphQL API by default; `keep` picks
+// another site's answers), read from the network events.
 
 import { spawn } from "node:child_process";
 
@@ -58,27 +59,66 @@ export async function stop({ child, exited }) {
   if (!done) child.kill("SIGKILL");
 }
 
-/** Opens a new tab and attaches to it */
-export async function openPage(port) {
+/** Whether an address is X's GraphQL API, the answers kept by default */
+export const isGraphql = (url) => /\/i\/api\/graphql\//.test(url);
+
+/** Opens a new tab and attaches to it. `keep(url)` says which answers'
+ * bodies are kept for `drain` (X's GraphQL API by default). */
+export async function openPage(port, options = {}) {
   const r = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {
     method: "PUT",
   });
   if (!r.ok) throw new Error(`cannot open a tab: ${r.status}`);
   const target = await r.json();
-  const page = new Page(target);
+  const page = new Page(target, options);
   await page.connect();
   return page;
 }
 
+/** The centre of the first visible element `selector` names, scrolled
+ * into view, as a page script: `[x, y]` or null */
+function boxOf(selector) {
+  return `(() => {
+    const els = [...document.querySelectorAll(${JSON.stringify(selector)})];
+    const el = els.find((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+    if (!el) return null;
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+    const r = el.getBoundingClientRect();
+    return [r.left + r.width / 2, r.top + r.height / 2];
+  })()`;
+}
+
+/** The centre of the first visible small element whose own text holds
+ * one of `words` (and a digit, when `digit`), as a page script */
+function textBoxOf(words, digit) {
+  return `(() => {
+    const words = ${JSON.stringify(words)};
+    const els = [...document.querySelectorAll("span, div, a, button, p, li")];
+    const el = els.find((e) => {
+      const t = (e.innerText || "").trim();
+      if (!t || t.length > 24) return false;
+      if (!words.some((w) => t.includes(w))) return false;
+      if (${digit ? "true" : "false"} && !/\\d/.test(t)) return false;
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+    if (!el) return null;
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+    const r = el.getBoundingClientRect();
+    return [r.left + r.width / 2, r.top + r.height / 2];
+  })()`;
+}
+
 /** One tab under DevTools control */
 export class Page {
-  constructor(target) {
+  constructor(target, { keep = isGraphql } = {}) {
     this.target = target;
+    this.keep = keep;
     this.ws = null;
     this.nextId = 0;
     this.pending = new Map();
     this.listeners = new Map();
-    /** GraphQL answers received and not drained yet */
+    /** Answers received (`keep` accepted their address) and not drained yet */
     this.responses = [];
     /** Requests seen, by id, until they finish */
     this.requests = new Map();
@@ -141,11 +181,11 @@ export class Page {
     this.listeners.get(method).push(f);
   }
 
-  /** A finished request: a GraphQL answer's body is kept */
+  /** A finished request: a kept answer's body is read */
   async finished(requestId) {
     const request = this.requests.get(requestId);
     this.requests.delete(requestId);
-    if (!request || !/\/i\/api\/graphql\//.test(request.url)) return;
+    if (!request || !this.keep(request.url)) return;
     let json = null;
     try {
       const { body, base64Encoded } = await this.send(
@@ -162,7 +202,7 @@ export class Page {
     this.responses.push({ url: request.url, status: request.status, json });
   }
 
-  /** The GraphQL answers received since the last drain */
+  /** The answers received since the last drain */
   drain() {
     return this.responses.splice(0);
   }
@@ -206,11 +246,25 @@ export class Page {
     return this.evaluate("location.href");
   }
 
-  /** Scrolls down like a wheel: a few notches with short gaps */
-  async scroll() {
-    const [w, h] = await this.evaluate("[innerWidth, innerHeight]");
-    const x = Math.round(w * (0.35 + Math.random() * 0.3));
-    const y = Math.round(h * (0.3 + Math.random() * 0.4));
+  /** The start of the page's visible text */
+  text() {
+    return this.evaluate(
+      '(document.body ? document.body.innerText : "").slice(0, 6000)',
+    );
+  }
+
+  /** Scrolls down like a wheel: a few notches with short gaps, over the
+   * element `selector` names (a scrolling pane) or the page */
+  async scroll({ selector } = {}) {
+    let x;
+    let y;
+    const point = selector ? await this.evaluate(boxOf(selector)) : null;
+    if (point) [x, y] = point;
+    else {
+      const [w, h] = await this.evaluate("[innerWidth, innerHeight]");
+      x = Math.round(w * (0.35 + Math.random() * 0.3));
+      y = Math.round(h * (0.3 + Math.random() * 0.4));
+    }
     const notches = 2 + Math.floor(Math.random() * 3);
     for (let i = 0; i < notches; i++) {
       await this.send("Input.dispatchMouseEvent", {
@@ -225,8 +279,49 @@ export class Page {
     await sleep(1200 + Math.random() * 1300);
   }
 
+  /** A left click at a point of the page (`[x, y]`), a little off the
+   * exact centre like a hand's; false without a point */
+  async clickAt(point) {
+    if (!point) return false;
+    const x = point[0] + (Math.random() - 0.5) * 8;
+    const y = point[1] + (Math.random() - 0.5) * 6;
+    for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+      const params = { type, x, y };
+      if (type !== "mouseMoved")
+        Object.assign(params, { button: "left", clickCount: 1 });
+      await this.send("Input.dispatchMouseEvent", params);
+      await sleep(50 + Math.random() * 60);
+    }
+    await sleep(800 + Math.random() * 700);
+    return true;
+  }
+
+  /** Clicks the first visible element `selector` names; false when there
+   * is none */
+  async click(selector) {
+    return this.clickAt(await this.evaluate(boxOf(selector)));
+  }
+
+  /** Clicks the first visible small element whose own text holds one of
+   * `words` (and a digit, with `digit`: a count); false when there is none */
+  async clickText(words, { digit = false } = {}) {
+    return this.clickAt(await this.evaluate(textBoxOf(words, digit)));
+  }
+
+  /** A key pressed and released (`"Escape"`, 27) */
+  async key(key, code) {
+    for (const type of ["keyDown", "keyUp"])
+      await this.send("Input.dispatchKeyEvent", {
+        type,
+        key,
+        code: key,
+        windowsVirtualKeyCode: code,
+      });
+    await sleep(600 + Math.random() * 600);
+  }
+
   /** Whether the app shows a signed-in account, and its handle: the
-   * profile link of the app's own tab bar */
+   * profile link of the app's own tab bar (X) */
   async signedIn() {
     const href = await this.evaluate(
       `document.querySelector('a[data-testid="AppTabBar_Profile_Link"]')?.getAttribute("href") ?? null`,

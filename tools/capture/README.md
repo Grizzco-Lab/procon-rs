@@ -1,4 +1,12 @@
-# xcap: Salmon Run posts from X, slowly, with your own browser
+# Captures: Salmon Run posts from X and Xiaohongshu, slowly, with your own browser
+
+Two tools share this folder, a Chrome profile (`~/.config/procon/browser-profile`,
+logged into both sites once), a DevTools port (9251), and the libraries in
+`lib/`: `xcap.mjs` for X (Twitter) and `rednote.mjs` for Xiaohongshu
+(RedNote, 小红书), [below](#rncap-salmon-run-notes-from-xiaohongshu). Node
+22+ and Google Chrome, no packages.
+
+## xcap: Salmon Run posts from X
 
 `xcap.mjs` captures the Salmon Run posts of the accounts you follow on X
 (Twitter), each with its replies, into Cuttlefish's inbox
@@ -130,3 +138,159 @@ node --test tools/capture/test/     # GraphQL parsing on fixture answers, the fi
 
 No test touches X or a login; the fixtures are synthetic. The CDP layer
 (`lib/cdp.mjs`) is the same pattern as `scripts/layout-check.mjs`.
+
+## rncap: Salmon Run notes from Xiaohongshu
+
+`rednote.mjs` captures the Salmon Run notes (笔记) of the creators you
+follow on Xiaohongshu (RedNote, 小红书), each with its comments and their
+replies, into Cuttlefish's inbox (`<knowledge>/inbox/rednote/<user
+id>/notes.jsonl`), where `cuttlefish ingest inbox` (or **Import inbox** on
+the Knowledge page) turns each note into a community document (source kind
+`rednote`, `crates/cuttlefish/src/rednote.rs`).
+
+### The risk, first
+
+**Automating your own account can breach Xiaohongshu's terms of service.**
+The site watches for it: a fresh browser or a new network can meet its
+risk-control page at once ("IP at risk"), a slider or a forced re-login,
+and an account seen automating can be restricted. Slow, read-only use of a
+real, logged-in browser reduces the risk; it does not remove it. This tool
+exists because that was weighed and accepted for one private knowledge
+base. It does nothing an attentive reader would not: it opens pages in your
+own Chrome, scrolls them, clicks a tile or a "more replies" button, and
+keeps the JSON the page loaded for itself. It calls no API of its own,
+makes no signed header (`x-s`, `x-t`), writes nothing to the site, and
+downloads no media. It never sees, stores or logs credentials: the Chrome
+profile folder holds the session, as any browser's does. **It never solves
+a captcha**: anything that wants a person stops the run at once.
+
+### How it works
+
+- **The same Chrome as xcap.** `~/.config/procon/browser-profile` (or
+  `--profile`), port 9251 (or `--port`); `login` opens a window on it for
+  you to log in (the site shows a code to scan with the app), `run` starts
+  Chrome on it or attaches to one already listening (`--attach`). Your
+  everyday Chrome and its profile are never touched.
+- **What it visits.** The home page (are we logged in, and as whom: the
+  site's `user/me` answer, else the page state), your own profile once for
+  the following list (the following count is clicked and the list
+  scrolled; kept in the state for a week, `--refresh-following` reads it
+  again, `--creators` gives creators yourself as profile links, ids or
+  `@<file>`), each creator's profile, scrolling the notes list until it
+  ends or, on later visits, until it shows only notes seen before, and each
+  new note about Salmon Run: its tile is clicked, the comments pane
+  (`.note-scroller`) scrolled while the site says there are more
+  (`--max-comments`, 200), folded reply threads unfolded (`--max-replies`,
+  10), then Escape closes it.
+- **What counts as Salmon Run:** the same three-language glossary as xcap
+  (`lib/filter.mjs`), on the note's title as the list shows it (only
+  matching notes are opened), or with `--match detail` on the whole note
+  (title, text, tags: every new note is opened, one visit each). The
+  creators you follow are Salmon Run creators already, so this keeps their
+  other notes out.
+- **Where the notes come from** (`lib/rednote.mjs`): the JSON the page
+  receives (`user_posted` for a creator's list, `/feed` for a note,
+  `comment/page` and `comment/sub/page` for comments and replies, the
+  following list), read by shape, in the API's snake case and the page
+  state's camel case (`__INITIAL_STATE__`, Vue refs unwrapped) alike;
+  when a note's answers were missed, its title, text and comments are read
+  off the page (`#detail-title`, `#detail-desc`, `.comment-item`).
+- **Pace** (`lib/pace.mjs`): 5 to 12 s between page actions (a navigation,
+  a wheel scroll of a few notches, a click, a key), drawn anew each time,
+  plus the page's own settling; a pause of 1 to 5 minutes every 15 to 40
+  actions; at most 400 actions a run and 1200 a day (UTC) by default;
+  `--max-notes` (60) and `--max-minutes` if you like. **A stop at once**
+  on: an address holding `captcha`, `verify`, `login`, `risk` or
+  `security`; a page whose text asks for a verification, a slider, a code,
+  a login or reports an account or traffic anomaly; an answer with HTTP
+  403, 461 or 471; a JSON answer with a code that means the session is not
+  accepted (300011 to 300015, -100). The run reports what it saw and ends;
+  pass the check yourself in the `login` window, and run again later,
+  gentler (`--delay 8-20 --pause 120-600`). Ctrl+C finishes the action
+  under way and saves.
+- **Resumable and incremental** (`lib/state.mjs`, `tool: "rncap"`):
+  `<inbox>/rednote/state.json` keeps the day's action count, the following
+  list (creator ids), a record per creator (nickname, whether the whole
+  list was scrolled once, last visit, counts) and every note id decided on
+  (`kept`, `off-topic`, `failed`). A note not reached before a cap is not
+  marked, so the next run takes it.
+
+### Steps
+
+```bash
+cd ~/Developing/procon-rs                   # where config.toml is: the knowledge folder is found as the cuttlefish CLI finds it
+
+# 1. Once: log in, in the window that opens (a code to scan with the app); the window closes when logged in
+node tools/capture/rednote.mjs login
+
+# 2. A dry run: the following list, a creator's notes, a note or two, printed; nothing written
+node tools/capture/rednote.mjs run --dry-run --max-actions 20
+
+# 3. A real run: the following list, the creators, the Salmon Run notes with their comments
+node tools/capture/rednote.mjs run
+
+# Later runs continue where the last stopped (new notes first); run it in an evening or daily
+node tools/capture/rednote.mjs run --max-minutes 60 --max-notes 30
+node tools/capture/rednote.mjs status       # the creators, counts and today's actions
+
+# 4. Into the store: the Knowledge page's Import inbox button, or
+cuttlefish ingest inbox
+```
+
+`--creators <link,id,...>` or `--creators @creators.txt` reads only those
+creators (profile links `https://www.xiaohongshu.com/user/profile/<id>` or
+24-character ids, one per line in the file); `--me <id>` gives your
+account's id when the page does not tell it. `--config <studio config>`
+or `--data <knowledge folder>` when not run beside `config.toml`.
+
+**Where the files go:** `<knowledge>/inbox/rednote/<user id>/notes.jsonl`,
+one JSON line per note, appended (a note read again adds a line; the
+import keeps the last); `<knowledge>/inbox/rednote/state.json` beside
+them. The inbox import sees a changed file and replaces its documents; the
+state file is skipped as the tool's own. Nothing else is written.
+
+**Expected time.** A note costs about 6 page actions: its tile, one or two
+scrolls of the comments, a reply thread or two, Escape, and its share of
+the list's scrolls. At the default pace (8.5 s between actions on average
+plus the page's settling, a 3-minute pause every 27 actions or so) that is
+about 1.5 to 2.5 minutes a note, so **100 notes take roughly 1.5 to 4
+hours** depending on how many comments they carry; the default caps (400
+actions a run) give about 60 notes a run, and the daily cap (1200) about
+200 a day. `--max-comments 60 --max-replies 3` is quicker per note,
+`--delay 8-20 --pause 120-600` gentler still.
+
+### The record
+
+```json
+{"source": "rednote", "id": "66aa…", "url": "https://www.xiaohongshu.com/explore/66aa…",
+ "author": {"user_id": "5f00…", "nickname": "…"},
+ "date": "2024-08-30T06:40:00.000Z", "updated": "2024-08-30T07:40:00.000Z", "kind": "video",
+ "title": "打工400分教学", "text": "…", "tags": ["打工", "Splatoon3"],
+ "images": ["https://sns-img…/1.jpg"], "video": "https://sns-video…/1.mp4",
+ "likes": 12000, "collects": 3210, "shares": 12, "comment_count": 88,
+ "comments": [{"id": "…", "author": {"user_id": "…", "nickname": "alice"}, "date": "…", "text": "…",
+               "likes": 5, "location": "北京", "reply_to": null, "reply_to_author": null,
+               "replies": [{"id": "…", "author": {…}, "date": "…", "text": "…", "likes": 1,
+                            "location": null, "reply_to": "…", "reply_to_author": "alice",
+                            "replies": [], "replies_total": 0}],
+               "replies_total": 2}],
+ "comments_complete": true, "matched": ["打工"], "captured_at": "2026-09-27T10:00:00.000Z"}
+```
+
+Images and videos are addresses only; nothing is downloaded.
+`comments_complete` is false when a cap cut the comments. In the store
+(`crates/cuttlefish/src/rednote.rs`) each note is one document titled by
+the note, with a header (`Xiaohongshu note by <creator>, <date>`), the
+text, the tags, and a `## Comments` section of timestamped lines with the
+replies indented (`[2024-08-30 12:13 UTC] bob ↳ alice: …`); the creator as
+attribution, the note's language, and the game era from its date; weight
+1.0 like a Discord channel, below #vod-review.
+
+### Tests
+
+```bash
+node --test tools/capture/test/     # both tools: rednote.test.mjs (the site's answers, the page state, links, markers, the record), rednote-crawl.test.mjs (the visit against a scripted page)
+```
+
+No test touches the site or a login; the fixtures are synthetic, shaped
+like the site's answers.
