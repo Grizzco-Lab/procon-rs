@@ -85,9 +85,22 @@ controller; point `[proxy] address` at `localhost:7331`.
 
 ## The dashboard
 
-One page with five apps, switched without reloading: **Studio** (`#studio`),
-**Inkspector** (`#inspect`), **Cuttlefish** (`#cuttlefish`), **Vision**
-(`#vision`) and **Predictor** (`#predictor`). The app links sit in a left rail
+One page with five apps, switched without reloading: **Studio** (`/studio`,
+also `/`), **Inkspector** (`/inspect`), **Cuttlefish** (`/cuttlefish`),
+**Vision** (`/vision`) and **Predictor** (`/predictor`). Each app keeps what is
+open in the URL, so a link opens it again, a reload stays where it was, and the
+browser's back and forward move between views; an app keeps its place while
+another is shown. Links from before (`#inspect/...`) still open. The URLs:
+
+| App | URL |
+| --- | --- |
+| Studio | `/studio` |
+| Inkspector | `/inspect`, `/inspect/<session>?seg=<file>&n=<frame>&delay=<ms>&pred=<path>` (`&label=1` opens the labeling mode) |
+| Cuttlefish | `/cuttlefish` (reviews), `/cuttlefish/translate`, `/cuttlefish/knowledge`, `/cuttlefish/review/<id>?t=<s>`, `/cuttlefish/video?kind=&ref=&start_s=&end_s=&t=` (a video not reviewed yet) |
+| Vision | `/vision`, `/vision/<session>?seg=<file>&n=<frame>` |
+| Predictor | `/predictor`, `/predictor/<video>/<checkpoint>?t=<s>` |
+
+The app links sit in a left rail
 (with the language switch and View at its foot; compact by default, the names
 as tooltips, or expanded to icons with names through the View menu or the
 chevron at its foot) or in the top bar; drag them, or press Alt+arrows on
@@ -184,7 +197,7 @@ with the picture, and a model's predictions against them.
   (+20 ms per extra object), 1.2–2 s on the CPU. Fast camera turns, ink and
   name tags make boxes drift within a few frames for players and small
   Salmonids; golden eggs and baskets hold for seconds.
-- The URL keeps the view (`#inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>`).
+- The URL keeps the view (`/inspect/<session>?seg=<file>&n=<frame>&delay=<ms>`).
 
 Labels come from `crates/gameplay-data`, the same code the training side uses.
 
@@ -414,7 +427,7 @@ it is for: labeling gameplay nobody recorded a controller for.
 - **Agreement**, for sessions: F1 per button and the correlation of each
   stick axis, the gyro and the camera turn, over the frames in view or the
   whole video. Plain videos show predictions only.
-- The URL keeps the view (`#predictor/key=<video>&ckpt=<checkpoint>&t=<s>`).
+- The URL keeps the view (`/predictor/<video>/<checkpoint>?t=<s>`).
 
 ## Recordings
 

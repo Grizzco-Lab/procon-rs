@@ -165,8 +165,20 @@ lowers to debug (`is_client_abort` in `src/bin/main.rs`). `scripts/run.sh`
 builds first (15–45 s after a code update, over a minute after a dependency
 change) and then runs the binary.
 
-The page holds five apps switched by the hash (`#studio`, `#inspect/...`,
-`#cuttlefish/...`, `#vision/...`, `#predictor/...`) without reloading; the app
+The page holds five apps, each at its own path (`/studio`, `/inspect/...`,
+`/cuttlefish/...`, `/vision/...`, `/predictor/...`), switched without
+reloading. `web/app.js` routes with the History API: `appUrl(app, state)`
+builds a path from the keys an app reads (what is open goes in the path, a
+frame, a time or an option in the query), `routeOf` reads it back and
+`routeApp` shows that app and fires `app-route` with the state; `navigate`
+pushes a history entry and `replaceRoute` replaces it for changes as frequent
+as a frame while scrubbing. A document-level click handler takes plain left
+clicks on links into the apps, so the links are real paths (middle-click and
+copying work); back and forward (`popstate`) route again. Old `#app/...` links,
+also those kept as an app's last view in `localStorage`, become paths
+(`urlOfHash`, `storedView`). The server answers `/` and every app path with the
+page (`APPS` in `src/web.rs`) after its own routes, so every asset, icon and
+API URL in the page starts with `/`. The app
 links are a dock-like left rail (apps at the top, the language switch and
 View at its foot) or a segmented switch in the top bar (`data-nav`; other
 apps' names become tooltips where the bar runs short), in the order the user
@@ -220,7 +232,7 @@ follow the player through `onFrame`, `onSeek`, `onPlay` and `onMark`.
 drawn by hand on a 24×24 grid with 2 px round strokes in `currentColor` and
 one ink accent filled with `var(--icon-accent, currentColor)`. Each file's
 drawing is `<g id="i">`, so the page uses it as
-`<svg class="app-icon" viewBox="0 0 24 24"><use href="icons/app-studio.svg#i"/></svg>`
+`<svg class="app-icon" viewBox="0 0 24 24"><use href="/icons/app-studio.svg#i"/></svg>`
 and it takes the theme's colours. `/icons/` is a gallery of every icon on each
 theme. Our own doodles in the Salmon Run spirit; never Nintendo's artwork.
 
@@ -232,7 +244,7 @@ and cached; labels come from `gameplay_data::align` at the requested delay; a
 segment's sound is served as WebM with byte ranges. `POST
 /api/inspect/delay` sets or removes a delay by hand in the calibration file.
 `web/inspect.js` opens the segment in the player and keeps its state in the
-hash.
+URL (`/inspect/<session>?seg=&n=&delay=&pred=`).
 
 The labeling mode (`src/objects.rs`, `web/label.js`) saves boxes frame by
 frame; the scrubber marks labeled frames on one canvas (`drawMarks`). Follow
