@@ -154,7 +154,14 @@ export class Page {
         reject(new Error("tab closed"));
       this.pending.clear();
     };
+    // CORS preflights (OPTIONS, no body) come before a site's API answers:
+    // not answers themselves, they would end a wait before the real one
+    this.preflights = new Set();
+    this.on("Network.requestWillBeSent", (p) => {
+      if (p.request?.method === "OPTIONS") this.preflights.add(p.requestId);
+    });
     this.on("Network.responseReceived", (p) => {
+      if (p.type === "Preflight" || this.preflights.delete(p.requestId)) return;
       this.requests.set(p.requestId, {
         url: p.response.url,
         status: p.response.status,
