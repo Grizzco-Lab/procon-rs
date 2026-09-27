@@ -369,13 +369,22 @@
             ? count || t("k.job.running")
             : t(`k.job.${job.state}`);
         const log = job.lines.slice(-LOG_SHOWN).map(escapeHtml).join("\n");
+        // A running job (loading the store and embedding included) has a
+        // Stop button above its log, where it is seen without scrolling
+        const stop =
+          job.state === "running"
+            ? job.stopping
+              ? `<button type="button" class="btn btn-small k-stop" disabled>${escapeHtml(t("k.stopping"))}</button>
+                 <span class="panel-note">${escapeHtml(t("k.stoppingNote"))}</span>`
+              : `<button type="button" class="btn btn-small k-stop" data-cancel title="${escapeHtml(t("k.stopTitle"))}"><span class="k-stop-glyph" aria-hidden="true"></span>${escapeHtml(t("k.stop"))}</button>`
+            : "";
         li.innerHTML = `
           <div class="cf-download-head"><span class="cf-download-url" title="${escapeHtml(job.what)}">${escapeHtml(job.what)}</span><span class="num">${escapeHtml(state)} · ${escapeHtml(t("k.job.added", { n: job.added }))}</span></div>
           <div class="meter-track"><div class="meter-fill" style="width:${percent}%"></div></div>
+          ${stop ? `<div class="k-job-tools">${stop}</div>` : ""}
           ${job.error ? `<span class="panel-note level-critical">${escapeHtml(job.error)}</span>` : ""}
           ${job.summary ? `<span class="panel-note">${escapeHtml(job.summary)}</span>` : ""}
           <pre class="k-log">${log}</pre>
-          ${job.state === "running" ? `<button type="button" class="mode-toggle" data-cancel>${escapeHtml(t("k.cancel"))}</button>` : ""}
           ${job.report ? `<button type="button" class="mode-toggle" data-report="${escapeHtml(job.report)}">${escapeHtml(t("k.report.show"))}</button>` : ""}`;
         return li;
       }),
@@ -398,8 +407,15 @@
   $("k-jobs").addEventListener("click", async (event) => {
     const report = event.target.closest("[data-report]");
     if (report) return showReport(report.dataset.report);
-    if (!event.target.closest("[data-cancel]")) return;
-    await api("cancel", {});
+    const stop = event.target.closest("[data-cancel]");
+    if (!stop) return;
+    stop.disabled = true;
+    stop.textContent = t("k.stopping");
+    try {
+      await api("cancel", {});
+    } catch (error) {
+      note("k-import-error", error.message);
+    }
     pollJobs();
   });
 

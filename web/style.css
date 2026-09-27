@@ -5359,6 +5359,35 @@ body {
   flex: 1 1 12em;
 }
 
+/* A running import's Stop button, above its log: filled in the alarm
+ * color so it is seen in every theme, with a stop square before its label */
+.k-job-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.k-stop {
+  height: 32px;
+  padding: 0 12px;
+  border-color: color-mix(in oklab, var(--critical) 70%, var(--panel-border));
+  background: color-mix(in oklab, var(--critical) 16%, var(--btn-bg));
+  color: var(--text);
+  font-size: 13px;
+}
+
+.k-stop:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--critical) 30%, var(--btn-bg));
+}
+
+.k-stop-glyph {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--critical);
+}
+
 .k-log {
   max-height: 9em;
   margin: 0;

@@ -937,8 +937,11 @@
         loadSlang();
       }
       if (job.state === "running") {
+        const stop = job.stopping
+          ? `<button type="button" class="btn btn-small k-stop" disabled>${escapeHtml(t("k.stopping"))}</button><span class="panel-note">${escapeHtml(t("k.stoppingNote"))}</span>`
+          : `<button type="button" class="btn btn-small k-stop" data-run-cancel title="${escapeHtml(t("k.stopTitle"))}"><span class="k-stop-glyph" aria-hidden="true"></span>${escapeHtml(t("k.stop"))}</button>`;
         runBox.innerHTML = `<p class="panel-note">${escapeHtml(t("slang.running", { done: job.done + 1, total: job.total ?? "?" }))} ${escapeHtml(job.lines.at(-1) ?? "")}</p>
-          <div class="cf-alias-actions"><button type="button" class="mode-toggle" data-run-cancel>${escapeHtml(t("k.cancel"))}</button></div>`;
+          <div class="cf-alias-actions">${stop}</div>`;
         runBox.hidden = false;
         await new Promise((resolve) => setTimeout(resolve, RUN_POLL_MS));
         continue;
@@ -989,6 +992,9 @@
     if (event.target.closest("[data-run-close]")) {
       runBox.hidden = true;
     } else if (event.target.closest("[data-run-cancel]")) {
+      const stop = event.target.closest("[data-run-cancel]");
+      stop.disabled = true;
+      stop.textContent = t("k.stopping");
       try {
         await api("knowledge/cancel", "POST", {});
       } catch {

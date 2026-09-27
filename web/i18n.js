@@ -395,9 +395,15 @@ const I18N = {
     "k.job.running": "running",
     "k.job.done": "done",
     "k.job.failed": "failed",
-    "k.job.cancelled": "cancelled",
+    "k.job.cancelled": "stopped (run again to continue)",
     "k.job.added": "{n} added",
     "k.cancel": "Cancel",
+    "k.stop": "Stop (continue later)",
+    "k.stopTitle":
+      "Stops after the item under way (a page, a file, a batch; the embedding while the store loads too). What was imported is kept; running the same import again continues where it stopped.",
+    "k.stopping": "Stopping…",
+    "k.stoppingNote":
+      "finishing the item under way; run the import again to continue",
     "k.filter": "Filter",
     "k.filterLabel": "Filter documents",
     "k.th.title": "Title",

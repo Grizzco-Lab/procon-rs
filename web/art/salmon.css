@@ -438,6 +438,20 @@
   color: #1a1320;
 }
 
+[data-theme="salmon"] .k-stop {
+  border-color: var(--sr-ink);
+  background: var(--sr-orange);
+  color: #1a1320;
+}
+
+[data-theme="salmon"] .k-stop:hover:not(:disabled) {
+  background: var(--rec);
+}
+
+[data-theme="salmon"] .k-stop-glyph {
+  background: #1a1320;
+}
+
 [data-theme="salmon"] .mode-toggle {
   border: 2px solid #3f453a;
   font-weight: 600;

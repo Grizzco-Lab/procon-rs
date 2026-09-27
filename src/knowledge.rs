@@ -452,6 +452,9 @@ pub struct IngestJob {
     /// An inbox import's report id (see `GET report`) and summary
     pub report: Option<String>,
     pub summary: Option<String>,
+    /// Told to stop (`POST cancel`); it ends after the item under way
+    #[serde(default)]
+    pub stopping: bool,
 }
 
 /// A document's format for the overview: the extension of its file;
@@ -966,6 +969,7 @@ impl Knowledge {
             finished_ms: None,
             report: None,
             summary: None,
+            stopping: false,
         };
         jobs.push(job.clone());
         drop(jobs);
@@ -1002,9 +1006,16 @@ impl Knowledge {
         Ok(job)
     }
 
-    /// Stop the running import after its document
+    /// Stop the running job after its item (a document, a page, a batch;
+    /// the embedding while the store loads stops too); the job shows as
+    /// stopping until it ends. What was done is kept, and running the
+    /// import again continues where it stopped.
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
+        let mut jobs = self.jobs.lock().unwrap();
+        for job in jobs.iter_mut().filter(|j| j.state == JobState::Running) {
+            job.stopping = true;
+        }
     }
 
     fn update(&self, id: u64, f: impl FnOnce(&mut IngestJob)) {
@@ -1047,12 +1058,19 @@ impl Knowledge {
                     None => inbox::import(&mut sink, &self.root, &self.cache, meta),
                 };
                 loaded.store.write().unwrap().reload_glossary()?;
-                result.map(|report| {
+                result.and_then(|report| {
                     self.update(id, |job| {
                         job.report = Some(report.id.clone());
                         job.summary = Some(report.summary());
                     });
-                    report.count("document")
+                    // Stopped by the user: the job ends as cancelled, with
+                    // its report; the next import takes the rest
+                    ensure!(
+                        !report.cancelled,
+                        "stopped after {} files; the next import continues with the rest",
+                        report.files
+                    );
+                    Ok(report.count("document"))
                 })
             }
             Source::Web(web) => ingest::web(&mut sink, web, meta),
@@ -1759,6 +1777,7 @@ mod tests {
             finished_ms: None,
             report: None,
             summary: None,
+            stopping: false,
         });
         let knowledge = Arc::new(knowledge);
         let started = knowledge
