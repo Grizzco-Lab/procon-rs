@@ -947,9 +947,10 @@ impl Knowledge {
         })
     }
 
-    /// Start a job (an import, a slang suggestion run) on a thread of its
-    /// own, one at a time; `run` answers the job's last line
-    fn start_job(
+    /// Start a job (an import, a slang suggestion run, the reviews from
+    /// #vod-review) on a thread of its own, one at a time; `run` answers
+    /// the job's last line
+    pub(crate) fn start_job(
         self: &Arc<Self>,
         what: String,
         run: impl FnOnce(&Knowledge, u64) -> Result<String> + Send + 'static,
@@ -1021,6 +1022,16 @@ impl Knowledge {
         for job in jobs.iter_mut().filter(|j| j.state == JobState::Running) {
             job.stopping = true;
         }
+    }
+
+    /// Whether the running job was told to stop
+    pub(crate) fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// Adds a line to a job's log
+    pub(crate) fn log(&self, id: u64, line: String) {
+        self.update(id, |job| job.lines.push(line));
     }
 
     fn update(&self, id: u64, f: impl FnOnce(&mut IngestJob)) {

@@ -33,6 +33,10 @@ cuttlefish ingest discord-export vod-review.json
 DISCORD_BOT_TOKEN=... cuttlefish ingest discord-bot --channel 123456789012345678
 cuttlefish fetch discord --channel https://discord.com/channels/<server>/<channel> --count   # your own account: against Discord's terms, see below
 cuttlefish fetch discord --channel ... --attachments videos    # also download the uploaded VODs (see "Downloading the VODs")
+cuttlefish corpus build                    # the reviewed VODs of the archive as corpus/vod-review.jsonl, with counts
+cuttlefish corpus videos --list            # the YouTube VODs with their 480p sizes; `corpus videos` downloads them slowly
+cuttlefish corpus align                    # read the HUD of the videos on disk (wave tables), place the wave-timer moments
+cuttlefish corpus reviews                  # a studio review per VOD on disk, the community's comments at their moments
 
 cuttlefish search "バクダンの処理"          # top-k chunks with sources; any language
 cuttlefish glossary "Steelhead"            # a term's names and definition
@@ -72,6 +76,13 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   media/discord/<guild>/<channel>/<message id>/<file>
                      VODs and images downloaded by `fetch discord --attachments`,
                      with a media.jsonl manifest per channel (large: see below)
+  media/youtube/<id>.mp4, <id>.info.json
+                     the corpus's YouTube VODs at 480p (`corpus videos`) with
+                     title, channel, duration, size, or why one is unavailable
+  <video stem>.wave_starts.json
+                     beside a video: its waves read from the HUD (`corpus align`)
+  corpus/vod-review.jsonl
+                     the #vod-review corpus, one reviewed VOD per line (`corpus build`)
   raw/<kind>/        pages, subtitles, exports as received
   docs/<id>.json     processed documents with source, url or inbox path, title,
                      language, license, attribution, revision (wiki pages),
@@ -508,6 +519,95 @@ cuttlefish fetch discord --channel https://discord.com/channels/7373597082766541
 cuttlefish ingest inbox             # the rows now carry video_local
 ```
 
+#### The VOD-review corpus
+
+The archive is also a dataset: every video someone posted for review, with
+the comments on it and the moments they point at. `cuttlefish corpus build`
+reads the #vod-review channel and its threads from the inbox
+(`inbox/discord/`), the media manifests and the downloaded videos, and
+writes `<knowledge>/corpus/vod-review.jsonl`, one line per **VOD**: a
+conversation of the channel ([above](#discord)) in which a video was posted.
+Each line holds the conversation's id and link, the poster, the day and the
+**game era** (`game`: `S2` before Splatoon 3's launch on 2022-09-09, else
+`S3`; `game_from` says whether the date or a wave table decided), the
+**video** (`key`: `youtube-<id>` or `discord-<attachment id>`; the link as
+posted, a link's start, an attachment's file name, and `local`, its file
+below the knowledge folder when downloaded; more videos of the same post in
+`other_videos`), and the **messages** in order, each with its author, time,
+text, reply and the video it is about when that is another one. A message's
+`moments` are what it points at, with the text as written, the kind
+([`moments`](#discord): `video_time`, `wave_timer`, a wave without a time),
+the wave (named, or the last one named before it in the same message: "W1"
+on a line of its own heads the timers below it) and one of two flags:
+**`aligned`** (`t_s` is seconds into the video: a time written as `1:20`,
+a link's `t=`, or a timer the wave table placed; `placed_by` tells which,
+with the table's `confidence`) or **`needs_hud`** (a wave timer, `W2 :50`,
+waiting for the video's wave table). The build prints the counts: VODs by
+era and by video on disk, comments, moments by kind, how many are aligned
+now and how many wait. It is deterministic and re-runnable; nothing is
+downloaded or changed by it.
+
+**The videos.** `cuttlefish corpus videos --list` asks yt-dlp about each
+YouTube VOD of the corpus (metadata only, one request at a time, cached in
+`media/youtube/<id>.info.json`) and adds up the size a download would take;
+`cuttlefish corpus videos` then downloads them, at most 480 lines
+(`bv*[height<=480]+ba/b[height<=480]`, merged into `<id>.mp4`), one at a
+time with a random pause of 10 to 30 s between videos (`--delay 10-30`),
+`--max N` videos a run. It is resumable: a downloaded video is skipped, a
+partial one continues, a deleted or private video is remembered in its
+`info.json` as unavailable and not asked for again (`--retry-unavailable`
+asks). Three failures in a row (the network, a bot check) end the run;
+Ctrl+C ends it after the video under way. The uploaded attachments come
+from `fetch discord --attachments videos` (above).
+
+**Aligning with the HUD.** The wave timer counts down from 100 within a
+wave, so "W2 :50" is a moment of the video only once the video's waves are
+known. `cuttlefish corpus align` reads the HUD of every VOD video on disk
+that has no wave table yet (`gameplay-vision`'s reader: the wave label and
+the timer from the top-left corner, sampled every 0.5 s, about 1-2 s per
+minute of video; `--refresh` reads them all again) and writes the table
+beside the video as `<video stem>.wave_starts.json`, the file
+`gameplay-vision hud scan` writes (see that crate's README: one entry per
+continuous piece of a wave, `start_video_s`, `timer_at_start`, `agree`).
+The build then places each timer at `start_video_s + timer_at_start -
+timer_s` for the first entry of that wave whose span holds the result, a
+timer that names no wave ("13s using a bomb", about a clip of one wave) in
+the only wave it fits, and a wave named without a time where the wave is
+first seen; the entry's `agree` becomes the moment's `confidence`. A video without waves in it (a
+lobby, a results screen) keeps its timers unplaced. The table is also the
+hook for evidence about the game: a `game` key (`"S2"` or `"S3"`) in it,
+written by hand or by a reader that tells the games apart, overrides the
+era from the date.
+
+**Reviews for the studio.** `cuttlefish corpus reviews` creates or updates
+a review of the Cuttlefish app for every VOD whose video is on disk, in the
+studio's reviews folder (`[cuttlefish] reviews` of `--config`, else
+`Reviews` next to the knowledge folder; `--reviews <dir>` overrides):
+`<reviews>/discord-<conversation id>/review.json`, titled by the poster and
+the day, with the era and the origin (`source: {from: discord, url,
+video}`). The review's video is the file in the knowledge folder by its
+full path (kind `file`), not a copy: the VODs add up to gigabytes, and both
+folders may be synced folders where a hard link is not possible, so a
+reference is what keeps working. Each message becomes comments at the
+moments it places in the video (one per aligned moment, with the text from
+that moment to the next, the reviewer's name as the author, and the
+message's link as `source`), and one note for the rest: the text without a
+time, and the moments that wait for the HUD as `unplaced` (text, kind,
+wave, seconds left), which the page shows as chips. Ids of what was
+written start with `discord-`; a run replaces those and nothing else, so
+comments, notes and chats added in the studio stay where they are, and a
+run that changes nothing writes nothing. The library's **Community**
+filter shows these reviews; the Knowledge page's **Create reviews from
+#vod-review** button runs `align` and `reviews` as a job.
+
+```bash
+cuttlefish corpus build                       # the corpus and its counts
+cuttlefish corpus videos --list               # what a download would take; run first
+cuttlefish corpus videos --max 10             # ten videos, then run again
+cuttlefish corpus align                       # wave tables for the videos on disk
+cuttlefish corpus reviews                     # the reviews; again after align or new videos
+```
+
 **Whole wikis and sites** (`wiki.rs`). Both are as polite as the rest: one
 request at a time, `--delay-s` (default 2 s, at least 1) or the site's
 `Crawl-delay` when longer, every `robots.txt` rule for `Cuttlefish` (else
@@ -731,10 +831,20 @@ again). A run reads at most `max_batches` (5 by default, 50 at most).
 **4. Source quality.** Each document has a weight: #vod-review 1.2, guides
 1.15, wikis/Discord/files 1.0, web pages and video transcripts 0.9
 (`--weight` overrides). Ranking adds 0.1 x (weight - 1) to the cosine, which
-reorders close matches without burying a clearly better one. The prompt
-tells the model that high-level review outweighs generic pages and to cite
-only excerpts it was given; every source keeps its license and url so
-citations are clickable.
+reorders close matches without burying a clearly better one, and takes
+0.02 off a source of the Splatoon 2 era (`game.rs`: Discord conversations
+get their era from their date at import, and every document may carry
+`game`), so the current game comes first among close matches and the older
+one still follows. Each excerpt the model sees is labelled with its source
+kind, its era when known (`era="[Splatoon 2 era]"`) and, for a #vod-review
+conversation, the video it is about; its lines are `[date] reviewer:
+comment`, and the prompt tells the model to quote such advice by reviewer
+and year ("Centritide, 2023: ...") and to say when it leans on the older
+game. Documents imported before the era existed get it from their first
+message's date when indexed (`cuttlefish reindex`). The prompt tells the
+model that high-level review outweighs generic pages and to cite only
+excerpts it was given; every source keeps its license and url so citations
+are clickable.
 
 **5. Evaluation.** `eval.example.toml` shows the format: questions with the
 sources that should be retrieved and points a good answer makes. Build 30-50

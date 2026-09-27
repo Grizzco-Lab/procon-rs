@@ -3,10 +3,10 @@
 //! Splatoon 3 launched on 2022-09-09; community material from before is
 //! about Splatoon 2's Salmon Run, whose bosses, stages and rules differ in
 //! parts. Everything gets an era from its date ([`era`]) and may be
-//! corrected later from evidence (a video's HUD, a wave-start table:
-//! [`crate::corpus::WaveStarts::game`]). Retrieval prefers the current
-//! game a little ([`crate::index::score`]) and labels the older era for
-//! the model ([`Game::era_label`]).
+//! corrected later from evidence (a `game` key in a video's wave table,
+//! [`crate::corpus::load_table`]). Retrieval prefers the current game a
+//! little ([`crate::index::score`]) and labels the older era for the
+//! model ([`Game::era_label`]).
 
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};

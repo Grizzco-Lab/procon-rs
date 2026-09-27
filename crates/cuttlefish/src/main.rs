@@ -339,6 +339,15 @@ enum Corpus {
         #[arg(long)]
         retry_unavailable: bool,
     },
+    /// Read the HUD of every VOD's video on disk that has no wave table
+    /// yet (gameplay-vision's reader: wave number and timer) and write
+    /// <video stem>.wave_starts.json beside it, so the next build places
+    /// the wave-timer moments; about 1-2 s per minute of video
+    Align {
+        /// Scan videos that have a table already, too
+        #[arg(long)]
+        refresh: bool,
+    },
     /// Create or update a review of the studio for every VOD whose video
     /// is on disk: <reviews>/discord-<id>/review.json, the comments at
     /// their moments, the rest as notes; re-running changes only what the
@@ -916,6 +925,25 @@ fn corpus_command(data: &Path, config: Option<&Path>, cmd: Corpus) -> Result<()>
             };
             let summary = corpus_videos::run(&built, &dir, &options, &stop, &mut report)?;
             println!("{summary}");
+            Ok(())
+        }
+        Corpus::Align { refresh } => {
+            let stop = ctrl_c()?;
+            println!(
+                "Reading the HUD of {} videos on disk. Ctrl+C stops after the video under way.",
+                corpus::Stats::of(&built, data).with_local_video
+            );
+            let done = corpus::align(
+                &built,
+                data,
+                refresh,
+                &|| stop.load(Ordering::Relaxed),
+                &mut |line| println!("{line}"),
+            )?;
+            println!("{done}");
+            let built = corpus::build(data)?;
+            corpus::write(data, &built)?;
+            println!("{}", corpus::Stats::of(&built, data));
             Ok(())
         }
         Corpus::Reviews { reviews } => {

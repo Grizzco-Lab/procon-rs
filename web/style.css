@@ -4857,9 +4857,6 @@ body {
   border-top: 1px solid var(--panel-border);
 }
 
-.k-corpus-result {
-  white-space: pre-wrap;
-}
 
 .cf-meta {
   margin-right: auto;

@@ -387,9 +387,8 @@ I18N.zh = {
   "k.docs.none": "还没有文档：请导入一些。",
   "k.corpus.go": "从 #vod-review 创建复盘",
   "k.corpus.note":
-    "每个视频在本机的被点评 VOD 都会成为一个带社区评论的复盘；可随时重新运行",
-  "k.corpus.running": "正在读取存档…",
-  "k.corpus.failed": "无法创建复盘：{error}",
+    "先读取本机视频的 HUD，然后每个视频在本机的被点评 VOD 都会成为一个带社区评论的复盘；可随时重新运行",
+  "k.corpus.failed": "无法开始：{error}",
 
   // Knowledge: the inbox, import reports, overview, assets
   "k.kind.inbox": "收件箱",

@@ -287,7 +287,7 @@ pub struct Note {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Origin>,
     /// Moments of an imported note not placed in the video yet (wave
-    /// timers waiting for the video's wave-start table)
+    /// timers waiting for the video's wave table)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unplaced: Vec<Unplaced>,
 }
@@ -719,27 +719,43 @@ impl Cuttlefish {
         Ok(review)
     }
 
-    /// Build the #vod-review corpus from the knowledge folder's archive and
-    /// create or update a review for every VOD whose video is on disk
-    /// (`cuttlefish corpus reviews`); answers with the corpus's counts and
-    /// what was written
-    pub fn community_reviews(&self) -> Result<Value> {
-        let knowledge = self.knowledge.root();
-        let built = corpus::build(knowledge)?;
-        corpus::write(knowledge, &built)?;
-        let stats = corpus::Stats::of(&built, knowledge);
-        let _writing = self.writing.lock().unwrap();
-        let written = corpus_reviews::write(&built, knowledge, &self.reviews)?;
-        Ok(json!({
-            "corpus": stats.to_string(),
-            "vods": stats.vods,
-            "with_local_video": stats.with_local_video,
-            "reviews": written.to_string(),
-            "created": written.created,
-            "updated": written.updated,
-            "unchanged": written.unchanged,
-            "dir": self.reviews,
-        }))
+    /// Start the job that turns the #vod-review archive into reviews, as
+    /// `cuttlefish corpus align` then `corpus reviews`: the corpus is built
+    /// from the knowledge folder, every VOD video on disk without a wave
+    /// table has its HUD read (1-2 s per minute of video; Stop ends it
+    /// after the video under way), and a review is created or updated for
+    /// every VOD whose video is on disk. Runs as a knowledge job, one at a
+    /// time with the imports; answers with the job.
+    pub fn community_reviews(&self) -> Result<Value, Status> {
+        let reviews = self.reviews.clone();
+        let writing = Arc::clone(&self.writing);
+        let job = self.knowledge.start_job(
+            "Reviews from #vod-review".to_string(),
+            move |knowledge, id| {
+                let root = knowledge.root();
+                let built = corpus::build(root)?;
+                knowledge.log(id, corpus::Stats::of(&built, root).to_string());
+                let aligned = corpus::align(
+                    &built,
+                    root,
+                    false,
+                    &|| knowledge.cancelled(),
+                    &mut |line| knowledge.log(id, line.to_string()),
+                )?;
+                knowledge.log(id, aligned.to_string());
+                ensure!(!aligned.stopped, "stopped before the reviews were written");
+                let built = corpus::build(root)?;
+                corpus::write(root, &built)?;
+                let stats = corpus::Stats::of(&built, root);
+                let written = {
+                    let _writing = writing.lock().unwrap();
+                    corpus_reviews::write(&built, root, &reviews)?
+                };
+                knowledge.log(id, stats.to_string());
+                Ok(format!("done: {written}"))
+            },
+        )?;
+        Ok(json!(job))
     }
 
     /// Move reviews of the older layout, `<reviews>/<id>.json`, into
@@ -1341,7 +1357,7 @@ impl Cuttlefish {
             }
             (&Method::POST, None) if path == "chat" => Ok(Reply::json(self.chat(&json_body()?)?)),
             (&Method::POST, None) if path == "community-reviews" => {
-                Ok(Reply::json(self.community_reviews().map_err(bad)?))
+                Ok(Reply::json(self.community_reviews()?))
             }
             (&Method::POST, None) if path == "translate" => {
                 Ok(Reply::json(self.translate(&json_body()?)?))
@@ -2204,16 +2220,32 @@ mod tests {
         assert_eq!(written, again);
         // The listing tells the origin, title and era
         let (dir, cuttlefish) = scratch("imported");
-        std::fs::create_dir_all(dir.join("discord-300")).unwrap();
-        std::fs::write(dir.join("discord-300/review.json"), text).unwrap();
+        std::fs::create_dir_all(dir.join("reviews/discord-300")).unwrap();
+        std::fs::write(dir.join("reviews/discord-300/review.json"), text).unwrap();
         let listed = cuttlefish.reviews().unwrap();
         assert_eq!(listed["reviews"][0]["from"], "discord");
         assert_eq!(listed["reviews"][0]["title"], "Cy, 2023-06-01");
         assert_eq!(listed["reviews"][0]["game"], "S3");
-        // Nothing to build from an empty knowledge folder: no reviews made
-        let done = cuttlefish.community_reviews().unwrap();
-        assert_eq!(done["vods"], 0);
-        assert_eq!(done["created"], 0);
+        // The job runs on a thread; an empty knowledge folder gives no
+        // VODs and no reviews
+        let job = cuttlefish.community_reviews().map_err(|e| e.1).unwrap();
+        assert_eq!(job["what"], "Reviews from #vod-review");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let last = loop {
+            let jobs = cuttlefish.knowledge.jobs();
+            let job = &jobs["jobs"][0];
+            if job["state"] != "running" || std::time::Instant::now() > deadline {
+                break job.clone();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert_eq!(last["state"], "done", "{last}");
+        assert!(
+            last["lines"].as_array().unwrap().iter().any(|l| l
+                .as_str()
+                .is_some_and(|l| l.starts_with("done: 0 reviews created"))),
+            "{last}"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

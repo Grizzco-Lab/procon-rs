@@ -9,9 +9,10 @@
 //! working. Each message becomes comments at the moments it places in the
 //! video (one per aligned moment, with the text from that moment to the
 //! next) and one note for the rest: the text without a time, and the
-//! wave-timer moments waiting for the video's wave-start table, listed as
-//! [`Unplaced`] (wave and seconds left) so a HUD pass can place them; the
-//! next run then turns them into comments. Everything written carries an
+//! wave-timer moments waiting for the video's wave table, listed as
+//! [`Unplaced`] (wave and seconds left) so a HUD pass can place them
+//! (`cuttlefish corpus align`); the next run then turns them into
+//! comments. Everything written carries an
 //! [`Origin`] (`from: discord` with the message's link) and an id starting
 //! with [`ID_PREFIX`]; a run replaces those and nothing else, so comments
 //! and notes people add in the studio stay, and a run that changes nothing
@@ -418,7 +419,7 @@ pub fn write(corpus: &Corpus, knowledge: &Path, reviews: &Path) -> Result<Writte
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::corpus::{self, WaveStart, WaveStarts};
+    use crate::corpus::{self, tests::wave_table};
 
     #[test]
     fn reviews_of_vods_on_disk() {
@@ -568,18 +569,11 @@ mod tests {
             "souper's thanks too"
         );
 
-        WaveStarts {
-            video: String::from("youtube-abcdefghijk"),
-            game: None,
-            by: Some(String::from("hud")),
-            waves: alloc::vec![WaveStart {
-                wave: 2,
-                start_s: 130.0,
-                end_s: None
-            }],
-        }
-        .save(&root)
-        .unwrap();
+        wave_table(
+            &yt.join("abcdefghijk.mp4"),
+            None,
+            &[(2, 130.0, 230.0, 100.0)],
+        );
         let c = corpus::build(&root).unwrap();
         let done = write(&c, &root, &reviews).unwrap();
         assert_eq!((done.updated, done.unchanged), (1, 1));
@@ -637,7 +631,8 @@ mod tests {
                     t_s: None,
                     aligned: false,
                     needs_hud: false,
-                    placed_by: None
+                    placed_by: None,
+                    confidence: None
                 },
                 CorpusMoment {
                     raw: String::from(":50"),
@@ -647,7 +642,8 @@ mod tests {
                     t_s: None,
                     aligned: false,
                     needs_hud: true,
-                    placed_by: None
+                    placed_by: None,
+                    confidence: None
                 }
             ],
             ..ben.clone()

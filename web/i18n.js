@@ -428,9 +428,8 @@ const I18N = {
     "k.docs.none": "No documents yet: import some.",
     "k.corpus.go": "Create reviews from #vod-review",
     "k.corpus.note":
-      "each reviewed VOD whose video is on disk becomes a review with the community's comments; re-run any time",
-    "k.corpus.running": "Reading the archive…",
-    "k.corpus.failed": "Could not create the reviews: {error}",
+      "reads the HUD of the videos on disk, then each reviewed VOD with its video becomes a review with the community's comments; re-run any time",
+    "k.corpus.failed": "Could not start: {error}",
 
     // Knowledge: the inbox, import reports, overview, assets
     "k.kind.inbox": "Inbox",

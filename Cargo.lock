@@ -634,6 +634,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "env_logger",
+ "gameplay-vision",
  "log",
  "regex",
  "scraper",
