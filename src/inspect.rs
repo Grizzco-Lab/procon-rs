@@ -24,6 +24,11 @@
 //! - `audio?s=&seg=`: the segment's sound track as WebM (Opus copied, not
 //!   re-encoded), with HTTP range support for seeking; it starts with the
 //!   first frame, so audio time `t` is frame `t * fps`
+//! - `markers?s=`: the session's markers (technique spans, see
+//!   [`gameplay_data::session::Marker`]); without `s`, those of every
+//!   session, each with `session`, `seg` and the frame `n` of its start
+//! - `POST markers` with `{"s", "markers"}` replaces a session's markers
+//!   in its `session.json`, answered with them as saved
 //! - `classes`: the object classes of the labeling mode (see
 //!   [`crate::objects`]), with the annotations folder
 //! - `objects?s=&seg=`: every labeled frame of a segment
@@ -44,7 +49,7 @@ use gameplay_data::calibration::{
 };
 use gameplay_data::controller::ControllerLog;
 use gameplay_data::labels::{self, Label};
-use gameplay_data::session::{SESSION_FILE, SessionInfo};
+use gameplay_data::session::{Marker, SESSION_FILE, SessionInfo, write_markers};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -350,6 +355,7 @@ impl Inspector {
             "frames": segment.frames,
             "fps": segment.fps,
             "controller_shift_ms": 0.0,
+            "start_unix_ms": segment.start_unix_ms,
             "video_delay_ms": segment.default_delay(),
             "calibration": calibration_json(segment.calibration.as_ref()),
             "sound": segment.has_audio,
@@ -473,6 +479,93 @@ impl Inspector {
         Ok(calibration_json(self.calibrations().get(name)))
     }
 
+    /// The folder of session `name`, which must hold a `session.json`
+    fn session_dir(&self, name: &str) -> Result<PathBuf> {
+        ensure!(
+            !name.is_empty() && !name.contains(['/', '\\']) && name != "..",
+            "bad session name {name:?}"
+        );
+        let dir = self.root().join(name);
+        ensure!(dir.join(SESSION_FILE).is_file(), "no session {name}");
+        Ok(dir)
+    }
+
+    /// The markers of session `name`, read afresh (the Studio adds them
+    /// while recording)
+    pub fn markers(&self, name: &str) -> Result<Value> {
+        let info = SessionInfo::read(&self.session_dir(name)?)?;
+        Ok(json!({ "markers": info.markers }))
+    }
+
+    /// Every marker under the root, newest session first, each with its
+    /// `session` and where the Inkspector shows its start: the segment
+    /// `seg` and frame `n` (at the session's calibrated delay; no `n` for
+    /// older, variable-rate sessions)
+    pub fn all_markers(&self) -> Result<Value> {
+        let root = self.root();
+        let calibrations = self.calibrations();
+        let mut found: Vec<(String, SessionInfo)> = std::fs::read_dir(&root)
+            .with_context(|| format!("cannot list {}", root.display()))?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let info = SessionInfo::read(&entry.path()).ok()?;
+                let name = entry.file_name().into_string().ok()?;
+                (!info.markers.is_empty()).then_some((name, info))
+            })
+            .collect();
+        found.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        let mut markers = Vec::new();
+        for (name, info) in &found {
+            let delay = calibrations
+                .get(name)
+                .and_then(Calibration::applied_delay_ms)
+                .unwrap_or(0.0);
+            for marker in &info.markers {
+                // The frame showing the input at the span's start
+                let shown = marker.t_start_ms as f64 + delay;
+                let segment = info
+                    .video
+                    .segments
+                    .iter()
+                    .rev()
+                    .find(|s| s.start_unix_ms.is_some_and(|t| t as f64 <= shown))
+                    .or(info.video.segments.first());
+                let n = segment
+                    .and_then(|s| Some((s.start_unix_ms?, info.video.fps?)))
+                    .map(|(start, fps)| {
+                        ((shown - start as f64) * f64::from(fps) / 1000.0)
+                            .round()
+                            .max(0.0) as u64
+                    });
+                let mut item = json!(marker);
+                item["session"] = json!(name);
+                item["seg"] = json!(segment.map(|s| &s.file));
+                item["n"] = json!(n);
+                markers.push(item);
+            }
+        }
+        Ok(json!({ "markers": markers }))
+    }
+
+    /// Replace a session's markers from `{"s", "markers"}`; answers with
+    /// them as saved
+    pub fn save_markers(&self, body: &Value) -> Result<Value> {
+        let name = body["s"].as_str().context("no session given")?;
+        let dir = self.session_dir(name)?;
+        let markers: Vec<Marker> =
+            serde_json::from_value(body["markers"].clone()).context("bad markers")?;
+        for marker in &markers {
+            ensure!(!marker.label.trim().is_empty(), "a marker needs a label");
+            ensure!(
+                marker.t_start_ms <= marker.t_end_ms,
+                "{} ends before it starts",
+                marker.label
+            );
+        }
+        write_markers(&dir, &markers)?;
+        self.markers(name)
+    }
+
     /// Replace the boxes of a frame from `{"s", "seg", "frame", "boxes",
     /// "base"}`; answers with the frame as saved
     pub fn save_objects(&self, body: &Value) -> Result<Value> {
@@ -521,6 +614,10 @@ impl Inspector {
         let seg = text("seg").filter(|s| !s.is_empty());
         let value = match endpoint {
             "sessions" => self.sessions()?,
+            "markers" => match text("s").filter(|s| !s.is_empty()) {
+                Some(name) => self.markers(name)?,
+                None => self.all_markers()?,
+            },
             "info" => self.info(session()?, seg)?,
             "frame" => {
                 let jpeg = self.frame(session()?, seg, index("n")?)?;

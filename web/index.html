@@ -894,6 +894,116 @@
         <p class="notice" id="rec-error" role="alert" hidden></p>
       </section>
 
+      <!-- Technique markers (techniques.js): pick a technique, then mark a
+           span of the recording as it, or the last few seconds -->
+      <section class="panel p-techniques" aria-labelledby="h-techniques">
+        <header class="panel-head">
+          <h2 id="h-techniques" data-i18n="tech.title">Techniques</h2>
+          <div class="seg-switch" role="group" aria-label="Count">
+            <button
+              type="button"
+              class="mode-toggle"
+              id="tech-mode-session"
+              aria-pressed="true"
+              data-i18n="tech.mode.session"
+              data-i18n-title="tech.mode.sessionNote"
+              title="Reps marked in this session"
+            >
+              This session
+            </button>
+            <button
+              type="button"
+              class="mode-toggle"
+              id="tech-mode-all"
+              aria-pressed="false"
+              data-i18n="tech.mode.all"
+              data-i18n-title="tech.mode.allNote"
+              title="Checklist: which techniques have examples in any session"
+            >
+              Checklist
+            </button>
+          </div>
+        </header>
+        <p class="panel-note" id="tech-note"></p>
+        <ul class="tech-list" id="tech-list"></ul>
+        <div class="tech-live" id="tech-live" hidden>
+          <span class="tech-live-dot" aria-hidden="true"></span>
+          <span id="tech-live-text"></span>
+        </div>
+        <div class="tech-actions">
+          <button
+            type="button"
+            class="btn btn-record"
+            id="tech-span"
+            title="M"
+            disabled
+          >
+            <span class="glyph glyph-dot"></span
+            ><span id="tech-span-text" data-i18n="tech.start">Start span</span
+            ><kbd>M</kbd>
+          </button>
+          <span class="tech-last">
+            <button type="button" class="btn" id="tech-last" title="B" disabled>
+              <span data-i18n="tech.last">Mark last</span>
+            </button>
+            <input
+              class="select num"
+              id="tech-seconds"
+              type="number"
+              min="1"
+              max="600"
+              step="1"
+              value="5"
+              aria-label="Seconds to mark"
+              data-i18n-aria-label="tech.seconds"
+            />
+            <span>s</span><kbd>B</kbd>
+          </span>
+          <button type="button" class="btn" id="tech-undo" title="U" disabled>
+            <span data-i18n="tech.undo">Undo</span><kbd>U</kbd>
+          </button>
+        </div>
+        <form class="tech-add" id="tech-add">
+          <input
+            class="select"
+            name="label"
+            type="text"
+            required
+            placeholder="Add a technique"
+            data-i18n-placeholder="tech.add.label"
+            aria-label="Name of a technique to add"
+            autocomplete="off"
+          />
+          <input
+            class="select"
+            name="zh"
+            type="text"
+            placeholder="Chinese name"
+            data-i18n-placeholder="tech.add.zh"
+            aria-label="Its Chinese name"
+            autocomplete="off"
+          />
+          <input
+            class="select"
+            name="term"
+            type="text"
+            placeholder="Pedia term id"
+            data-i18n-placeholder="tech.add.term"
+            aria-label="Its Pedia term id"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button type="submit" class="btn btn-small" data-i18n="tech.add">
+            Add
+          </button>
+        </form>
+        <p class="panel-note keys" data-i18n-html="tech.keys">
+          <kbd>1</kbd>–<kbd>9</kbd> pick · <kbd>M</kbd> start/stop a span ·
+          <kbd>B</kbd> mark the last seconds · <kbd>U</kbd> undo the last marker
+        </p>
+        <p class="notice" id="tech-error" role="alert" hidden></p>
+      </section>
+
       <section class="panel p-replay" aria-labelledby="h-replay">
         <header class="panel-head">
           <h2 id="h-replay">Replay</h2>
@@ -1098,6 +1208,8 @@
                frames as marks and the neighbours: filled by the shared player -->
           <div class="screen" id="i-screen"></div>
           <div class="scrubber" id="i-scrubber"></div>
+          <!-- Technique markers under the scrubber, labelled; a click goes to one -->
+          <div class="marker-lane" id="i-marker-lane" hidden></div>
           <!-- Labeling mode: classes with their counts, actions and Follow, filled by label.js -->
           <div class="label-bar" id="l-bar" hidden>
             <div class="label-classes">
@@ -1253,6 +1365,25 @@
           </header>
           <div class="tiles" id="i-session-tiles"></div>
           <p class="panel-note" id="i-session-note"></p>
+          <!-- Technique markers of the session (inspect.js): jump to one,
+               change its technique, start or end, add one at the frame -->
+          <div class="i-markers">
+            <div class="panel-head">
+              <h3 data-i18n="mk.title">Technique markers</h3>
+              <button
+                type="button"
+                class="mode-toggle"
+                id="i-marker-add"
+                data-i18n="mk.add"
+                data-i18n-title="mk.addNote"
+                title="Adds a 2 s marker from this frame; then set its start, end and technique"
+              >
+                Add marker here
+              </button>
+            </div>
+            <p class="panel-note" id="i-markers-note"></p>
+            <ul class="i-marker-list" id="i-markers"></ul>
+          </div>
           <div id="i-stage"></div>
         </section>
       </main>
@@ -3636,6 +3767,7 @@
     <script src="/app.js"></script>
     <script src="/sketch.js"></script>
     <script src="/player.js"></script>
+    <script src="/techniques.js"></script>
     <script src="/stages.js"></script>
     <script src="/inspect.js"></script>
     <script src="/label.js"></script>

@@ -137,6 +137,7 @@ fn main() -> anyhow::Result<()> {
         config.proxy.address,
         state_path,
         saved.game_settings.unwrap_or_default(),
+        saved.techniques.unwrap_or_default(),
     ));
     // The last replay file may sit on a slow network mount: the dashboard
     // does not wait for it

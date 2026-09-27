@@ -42,6 +42,31 @@ The README's "Studio" and "Recordings" sections explain each setting.
 - A red notice under the Recording panel means the session ended (disk full,
   for one); press Record again.
 
+### Marking techniques
+
+Practice sessions of advanced movement get technique markers: labelled
+examples for the IDM, and a reminder of what is still missing.
+
+1. Before recording, open the Techniques panel's **Checklist**: techniques
+   with ○ have no example in any session yet.
+2. Pick the technique to practise: click it, or press its number (1–9) while
+   the Studio is shown (not while typing in a field).
+3. Record, then for each rep either
+   - press **M** when it starts and **M** again when it ends (a span; the
+     panel shows "Marking … 00:03" in red while it runs), or
+   - do it, then press **B** to mark the last N seconds (the box next to
+     **Mark last**, 5 s by default; keep it a little longer than the rep).
+4. A wrong key: **U** undoes the last marker (or drops the open span).
+   Starting another technique ends the open span; Pause and Stop end it too.
+5. **This session** counts the reps marked so far. Markers go to the
+   session's `session.json` at once, so a crash keeps them.
+6. Afterwards, the Inkspector shows them on the scrubber; fix a start or end
+   there, or add a marker after the fact with **Add marker here**.
+
+A technique missing from the list: type its name (and its Chinese name and
+Pedia term id, if any) under the list and press **Add**; it stays on the
+list across restarts.
+
 ## After recording
 
 1. Open the new session in the **Inkspector**: the video plays, the input

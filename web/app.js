@@ -841,6 +841,8 @@ async function sendCommand(body, errorId = "rec-error") {
     showError(null, errorId);
     renderRecorder(reply.recorder);
     renderReplay(reply.replay);
+    // The Techniques panel (techniques.js)
+    renderTechniques(reply.techniques);
     return true;
   } catch (error) {
     showError(error.message, errorId);
@@ -1291,6 +1293,7 @@ function renderStatus(status) {
   renderRecorder(status.recorder);
   renderGameSettings(status.game_settings);
   renderReplay(status.replay);
+  renderTechniques(status.techniques);
   renderVideo(status.video);
   // Live rate per second; per hour uses the session's average, which is far
   // steadier than the live rate (video bitrate swings with what is on screen)

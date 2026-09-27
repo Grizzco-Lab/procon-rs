@@ -674,6 +674,7 @@
             ${e.quotes.length < Math.min(e.mentions, 50) && e.quotes.length >= pd.quotes ? `<button type="button" class="mode-toggle" data-more>${escapeHtml(t("pedia.more"))}</button>` : ""}
           </section>
 
+          <section class="panel pd-part" id="pd-examples" aria-labelledby="pd-h-examples" hidden></section>
           ${
             e.notes.length
               ? `<section class="panel pd-part" aria-labelledby="pd-h-notes">
@@ -721,6 +722,46 @@
           </section>
         </aside>
       </div>`;
+    drawExamples(e);
+  }
+
+  /** Examples the user recorded of the entry's technique: the markers of
+   * the sessions (techniques.js) with its term id or one of its names, each
+   * a link to the Inkspector at its start. Shown for movement techniques,
+   * and for any entry that has some. */
+  async function drawExamples(e) {
+    const id = e.term.id;
+    let markers;
+    try {
+      markers = await loadAllMarkers();
+    } catch {
+      return;
+    }
+    const box = $("pd-examples");
+    if (!box || pd.entry !== e) return;
+    const names = new Set(Object.values(e.term.forms).flat());
+    const found = markers.filter(
+      (m) => m.term === id || (!m.term && names.has(m.label)),
+    );
+    if (!found.length && e.section !== "movement") return;
+    const date = (ms) =>
+      new Date(ms).toLocaleString(i18nLocale(), {
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+    const items = found.map((m) => {
+      const state = { s: m.session };
+      if (m.seg != null) state.seg = m.seg;
+      if (m.n != null) state.n = m.n;
+      const seconds = ((m.t_end_ms - m.t_start_ms) / 1000).toFixed(1);
+      return `<li><a href="${escapeHtml(appUrl("inspect", state))}">${escapeHtml(date(m.t_start_ms))}</a>
+        <span class="panel-note">${escapeHtml(m.label)} · ${seconds} s · ${escapeHtml(m.session)}</span></li>`;
+    });
+    box.innerHTML = `
+      <header class="panel-head pd-part-head"><h2 id="pd-h-examples">${escapeHtml(t("pedia.examples"))}</h2>
+        <span class="panel-note">${escapeHtml(found.length ? t("pedia.examplesNote", { n: found.length }) : t("pedia.examplesNone"))}</span></header>
+      ${items.length ? `<ul class="pd-examples">${items.join("")}</ul>` : ""}`;
+    box.hidden = false;
   }
 
   // ------------------------------------------------------------ editing

@@ -223,6 +223,202 @@ body[data-rec="recording"] .topbar {
 .p-motion {
   grid-area: motion;
 }
+.p-techniques {
+  grid-area: techniques;
+}
+
+/* ------------------------------------------------------------ techniques
+ * The Techniques panel (techniques.js): the list to pick from, with each
+ * technique's reps this session or, as a checklist, its examples so far;
+ * the span being marked; the marking buttons; a field to add techniques.
+ */
+
+.seg-switch {
+  display: flex;
+  gap: 4px;
+}
+
+.tech-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tech-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tech-pick {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+}
+
+.tech-pick:hover {
+  border-color: var(--btn-border);
+  background: var(--btn-hover);
+}
+
+.tech-pick[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.tech-item.is-open .tech-pick {
+  border-color: var(--rec);
+  box-shadow: inset 3px 0 0 var(--rec);
+}
+
+.tech-key {
+  flex: none;
+  width: 1.2em;
+  color: var(--text-3);
+  font: 12px var(--font-num);
+  text-align: center;
+}
+
+.tech-names {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  min-width: 0;
+}
+
+.tech-name {
+  font-weight: 600;
+}
+
+.tech-alt {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.tech-count {
+  flex: none;
+  min-width: 3ch;
+  color: var(--text-3);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.tech-count.is-done {
+  color: var(--good);
+  font-weight: 600;
+}
+
+.tech-link {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--panel-border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.tech-link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tech-link.is-empty {
+  visibility: hidden;
+}
+
+.tech-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--rec);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tech-live[hidden] {
+  display: none;
+}
+
+.tech-live-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--rec);
+  animation: tech-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes tech-pulse {
+  to {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tech-live-dot {
+    animation: none;
+  }
+}
+
+.tech-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tech-actions kbd {
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font: 11px var(--font-num);
+  opacity: 0.7;
+}
+
+.tech-last {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tech-last input {
+  width: 4.5em;
+}
+
+.tech-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tech-add input {
+  flex: 1 1 8em;
+  min-width: 0;
+}
+
+.tech-add input[name="label"] {
+  flex: 2 1 12em;
+}
 
 /* Sits right after the title; the input menu keeps the far end */
 .preview-delay {
@@ -1212,7 +1408,8 @@ input:focus-visible {
   grid-template-columns: repeat(8, minmax(0, 1fr));
   grid-template-areas:
     "video video video video controller controller controller controller"
-    "recorder recorder replay replay stats stats motion motion";
+    "recorder recorder techniques techniques replay replay stats stats"
+    "recorder recorder techniques techniques motion motion motion motion";
 }
 
 /* Both monitors keep 16:9; the controller is fitted inside its screen */
@@ -1294,6 +1491,7 @@ input:focus-visible {
   grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
   grid-template-areas:
     "controller recorder"
+    "controller techniques"
     "controller replay"
     "controller stats"
     "video motion";
@@ -1494,7 +1692,8 @@ input:focus-visible {
   grid-template-columns: repeat(12, minmax(0, 1fr));
   grid-template-areas:
     "controller controller controller controller controller video video video video recorder recorder recorder"
-    "motion motion motion motion motion motion replay replay replay stats stats stats";
+    "motion motion motion motion motion techniques techniques techniques techniques replay replay replay"
+    "motion motion motion motion motion techniques techniques techniques techniques stats stats stats";
 }
 
 [data-theme="telemetry"] .topbar {
@@ -1592,6 +1791,9 @@ input:focus-visible {
 }
 [data-theme="telemetry"] .p-replay {
   --panel-no: "06";
+}
+[data-theme="telemetry"] .p-techniques {
+  --panel-no: "07";
 }
 
 [data-theme="telemetry"] .panel-note {
@@ -1763,8 +1965,9 @@ input:focus-visible {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
       "video controller"
-      "recorder replay"
-      "stats motion";
+      "recorder techniques"
+      "replay stats"
+      "motion motion";
   }
 }
 
@@ -1773,7 +1976,7 @@ input:focus-visible {
   max-width: 480px;
   margin: 0 auto;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "recorder" "controller" "video" "replay" "stats" "motion";
+  grid-template-areas: "recorder" "techniques" "controller" "video" "replay" "stats" "motion";
 }
 
 :root[data-layout="phone"] .p-motion {
@@ -1783,7 +1986,7 @@ input:focus-visible {
 @media (max-width: 720px) {
   :root[data-theme] .layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "recorder" "controller" "video" "replay" "stats" "motion";
+    grid-template-areas: "recorder" "techniques" "controller" "video" "replay" "stats" "motion";
   }
 
   :root[data-theme] .p-motion {
@@ -4245,6 +4448,7 @@ body {
   --mark-comment: var(--accent);
   --mark-ai: var(--s3);
   --mark-community: var(--warning);
+  --mark-technique: var(--rec);
   position: absolute;
   inset: 0;
   width: 100%;
@@ -4254,6 +4458,105 @@ body {
 
 .scrubber.is-faint .scrubber-marks {
   opacity: 0.45;
+}
+
+/* Technique markers under the Inkspector's scrubber: one labelled chip per
+ * span, placed like the scrubber's frames */
+.marker-lane {
+  position: relative;
+  margin-top: -6px;
+}
+
+.marker-lane[hidden] {
+  display: none;
+}
+
+.marker-chip {
+  position: absolute;
+  top: 0;
+  min-width: 6px;
+  height: 18px;
+  padding: 0 4px;
+  overflow: hidden;
+  border: 1px solid var(--rec);
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--rec) 22%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: start;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.marker-chip:hover {
+  z-index: 1;
+  min-width: max-content;
+  background: color-mix(in oklab, var(--rec) 40%, var(--panel));
+}
+
+/* The Pedia's recorded examples of a technique (pedia.js) */
+.pd-examples {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pd-examples li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 10px;
+}
+
+/* The Session panel's list of markers */
+.i-markers h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.i-marker-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.i-marker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--panel-border);
+  border-inline-start: 3px solid var(--rec);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.i-marker select {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+
+.i-marker-frames {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.i-marker-frames input {
+  width: 6.5em;
+}
+
+.i-marker-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 /* ============================================================ cuttlefish

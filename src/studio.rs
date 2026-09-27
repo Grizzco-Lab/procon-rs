@@ -6,8 +6,15 @@
 //!
 //! It also holds the replay [`Player`], which plays loaded actions to the Switch.
 //!
-//! Settings changed from the dashboard (path prefix, video input, replay file)
-//! are saved to a small JSON state file so they survive restarts.
+//! Settings changed from the dashboard (path prefix, video input, replay file,
+//! techniques added to the list) are saved to a small JSON state file so they
+//! survive restarts.
+//!
+//! While a session is open, the Techniques panel marks spans of it as a
+//! technique practised: a span started and stopped by hand, or the last few
+//! seconds. They go to `session.json` as `markers` (see
+//! [`gameplay_data::session::Marker`]), which the Inkspector can edit too, so
+//! the file holds the list and each change here reads it first.
 
 use crate::audio;
 use crate::dump::unix_ms;
@@ -15,11 +22,13 @@ use crate::player::Player;
 use crate::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
 use crate::stream::LinkStats;
 use crate::video::Video;
+use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::Ordering;
+use gameplay_data::session::{MARKER_TECHNIQUE, Marker, SessionInfo, write_atomic, write_markers};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -84,7 +93,26 @@ pub struct SavedState {
     pub replay_mix: Option<bool>,
     /// The game's controller settings, for the next session
     pub game_settings: Option<GameSettings>,
+    /// Techniques added to the Techniques panel's list (the dashboard has
+    /// the usual ones)
+    pub techniques: Option<Vec<Technique>>,
 }
+
+/// A technique added to the Techniques panel's list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Technique {
+    /// Its name, as markers get it
+    pub label: String,
+    /// Its name in Chinese
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zh: Option<String>,
+    /// Its Pedia term id
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub term: Option<String>,
+}
+
+/// Longest "mark the last N seconds", in seconds
+const MAX_MARK_LAST_S: f64 = 600.0;
 
 impl SavedState {
     /// Read the state file; a missing or broken file means no saved settings
@@ -104,18 +132,62 @@ pub enum Command {
     Pause,
     Resume,
     Stop,
-    SetPrefix { prefix: String },
-    SetVideoInput { input: String },
-    SetVideoQuality { height: u32, fps: u32 },
-    SetPreviewMatchesRecording { enabled: bool },
-    SetRecordAudio { enabled: bool },
-    SetGameSettings { settings: GameSettings },
-    LoadReplay { path: String },
+    SetPrefix {
+        prefix: String,
+    },
+    SetVideoInput {
+        input: String,
+    },
+    SetVideoQuality {
+        height: u32,
+        fps: u32,
+    },
+    SetPreviewMatchesRecording {
+        enabled: bool,
+    },
+    SetRecordAudio {
+        enabled: bool,
+    },
+    SetGameSettings {
+        settings: GameSettings,
+    },
+    LoadReplay {
+        path: String,
+    },
     PlayReplay,
     PauseReplay,
     ResumeReplay,
     StopReplay,
-    SetReplayMix { enabled: bool },
+    SetReplayMix {
+        enabled: bool,
+    },
+    /// Start a span of a technique now (ending the open one)
+    MarkStart {
+        label: String,
+        term: Option<String>,
+    },
+    /// End the open span
+    MarkStop,
+    /// Mark the last `seconds` as a technique
+    MarkLast {
+        label: String,
+        term: Option<String>,
+        seconds: f64,
+    },
+    /// Remove the last marker of the session (a mistaken key)
+    MarkUndo,
+    /// The techniques added to the list
+    SetTechniques {
+        techniques: Vec<Technique>,
+    },
+}
+
+/// A technique span started but not ended yet
+#[derive(Clone)]
+struct OpenSpan {
+    label: String,
+    term: Option<String>,
+    start_ms: u64,
 }
 
 /// One recorded video file of the session
@@ -140,6 +212,46 @@ struct Session {
     game_settings: GameSettings,
     /// Link drop counter when the session started
     dropped_before: u64,
+    /// The markers as last read from or written to `session.json`
+    markers: Vec<Marker>,
+    /// The technique span being marked
+    open_span: Option<OpenSpan>,
+}
+
+impl Session {
+    /// Take the markers from `session.json`, where the Inkspector may have
+    /// changed them; keep the known ones when it cannot be read
+    fn reload_markers(&mut self) {
+        match SessionInfo::read(&self.dir) {
+            Ok(info) => self.markers = info.markers,
+            Err(e) => log::warn!("Keeping the markers known: {:#}", e),
+        }
+    }
+
+    /// End the open span at `now`, adding it to the markers
+    fn close_span(&mut self, now: u64) -> bool {
+        let Some(span) = self.open_span.take() else {
+            return false;
+        };
+        self.markers.push(Marker {
+            kind: MARKER_TECHNIQUE.into(),
+            label: span.label,
+            term: span.term,
+            t_start_ms: span.start_ms,
+            t_end_ms: now.max(span.start_ms),
+            created_ms: now,
+        });
+        true
+    }
+}
+
+/// A technique's name and term as the dashboard sends them: trimmed, and
+/// never empty
+fn technique(label: &str, term: Option<String>) -> Result<(String, Option<String>)> {
+    let label = label.trim();
+    ensure!(!label.is_empty(), "pick a technique first");
+    let term = term.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    Ok((label.to_string(), term))
 }
 
 /// Session coordinator shared by the web server
@@ -152,9 +264,12 @@ pub struct Studio {
     state_path: PathBuf,
     session: Mutex<Option<Session>>,
     game_settings: Mutex<GameSettings>,
+    /// Techniques added to the Techniques panel's list
+    techniques: Mutex<Vec<Technique>>,
 }
 
 impl Studio {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         recorder: Recorder,
         video: Video,
@@ -163,6 +278,7 @@ impl Studio {
         proxy_address: String,
         state_path: PathBuf,
         game_settings: GameSettings,
+        techniques: Vec<Technique>,
     ) -> Self {
         Self {
             recorder,
@@ -173,6 +289,7 @@ impl Studio {
             state_path,
             session: Mutex::new(None),
             game_settings: Mutex::new(game_settings),
+            techniques: Mutex::new(techniques),
         }
     }
 
@@ -190,14 +307,20 @@ impl Studio {
                     segments: Vec::new(),
                     game_settings: self.game_settings(),
                     dropped_before: self.link.dropped.load(Ordering::Relaxed),
+                    markers: Vec::new(),
+                    open_span: None,
                 };
                 self.start_segment(&mut new);
                 self.write_session(&new)?;
                 *session = Some(new);
             }
             Command::Pause => {
+                let paused_at = unix_ms();
                 self.recorder.pause()?;
                 if let Some(current) = session.as_mut() {
+                    // A span ends with the frames
+                    current.reload_markers();
+                    current.close_span(paused_at);
                     self.finish_segment(current);
                     self.write_session(current)?;
                 }
@@ -205,6 +328,7 @@ impl Studio {
             Command::Resume => {
                 self.recorder.resume()?;
                 if let Some(current) = session.as_mut() {
+                    current.reload_markers();
                     self.start_segment(current);
                     self.write_session(current)?;
                 }
@@ -215,9 +339,94 @@ impl Studio {
                 if let Some(current) = session.as_mut() {
                     // Stamped before ffmpeg spends a moment finishing the file
                     current.stopped_at_ms = Some(stopped_at);
+                    current.reload_markers();
+                    current.close_span(stopped_at);
                     self.finish_segment(current);
                     self.write_session(current)?;
                 }
+            }
+            Command::MarkStart { label, term } => {
+                let (label, term) = technique(&label, term)?;
+                ensure!(
+                    self.recorder.status().state == RecorderState::Recording,
+                    "start recording to mark a technique"
+                );
+                let current = session.as_mut().context("no session is open")?;
+                let now = unix_ms();
+                current.reload_markers();
+                // Another technique ends the one being marked
+                if current.close_span(now) {
+                    write_markers(&current.dir, &current.markers)?;
+                }
+                current.open_span = Some(OpenSpan {
+                    label,
+                    term,
+                    start_ms: now,
+                });
+            }
+            Command::MarkStop => {
+                let current = session.as_mut().context("no session is open")?;
+                ensure!(current.open_span.is_some(), "no technique is being marked");
+                current.reload_markers();
+                current.close_span(unix_ms());
+                write_markers(&current.dir, &current.markers)?;
+            }
+            Command::MarkLast {
+                label,
+                term,
+                seconds,
+            } => {
+                let (label, term) = technique(&label, term)?;
+                ensure!(
+                    seconds > 0.0 && seconds <= MAX_MARK_LAST_S,
+                    "mark between 0 and {MAX_MARK_LAST_S} seconds, not {seconds}"
+                );
+                ensure!(
+                    self.recorder.status().state != RecorderState::Idle,
+                    "start recording to mark a technique"
+                );
+                let current = session.as_mut().context("no session is open")?;
+                let now = unix_ms();
+                current.reload_markers();
+                current.markers.push(Marker {
+                    kind: MARKER_TECHNIQUE.into(),
+                    label,
+                    term,
+                    t_start_ms: now
+                        .saturating_sub((seconds * 1000.0) as u64)
+                        .max(current.started_at_ms),
+                    t_end_ms: now,
+                    created_ms: now,
+                });
+                write_markers(&current.dir, &current.markers)?;
+            }
+            Command::MarkUndo => {
+                let current = session.as_mut().context("no session is open")?;
+                // The span being marked goes first, else the last marker made
+                if current.open_span.take().is_none() {
+                    current.reload_markers();
+                    let last = current
+                        .markers
+                        .iter()
+                        .enumerate()
+                        .max_by_key(|(_, m)| m.created_ms)
+                        .map(|(i, _)| i);
+                    let Some(last) = last else {
+                        bail!("no marker to undo");
+                    };
+                    current.markers.remove(last);
+                    write_markers(&current.dir, &current.markers)?;
+                }
+            }
+            Command::SetTechniques { techniques } => {
+                let mut kept = Vec::new();
+                for t in techniques {
+                    let (label, term) = technique(&t.label, t.term)?;
+                    let zh = t.zh.map(|z| z.trim().to_string()).filter(|z| !z.is_empty());
+                    kept.push(Technique { label, zh, term });
+                }
+                *self.techniques.lock().unwrap() = kept;
+                self.save_state()?;
             }
             Command::SetPrefix { prefix } => {
                 self.recorder.set_prefix(&prefix)?;
@@ -272,6 +481,30 @@ impl Studio {
     /// The game's controller settings for the next session
     pub fn game_settings(&self) -> GameSettings {
         self.game_settings.lock().unwrap().clone()
+    }
+
+    /// The Techniques panel's state: the techniques added to the list, the
+    /// span being marked (`label`, `term`, `elapsed_ms`) and the markers of
+    /// the current or last session (`counts` by label, `total`)
+    pub fn techniques_status(&self) -> Value {
+        let added = self.techniques.lock().unwrap().clone();
+        let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let mut counts = BTreeMap::<&str, usize>::new();
+        let (mut open, mut total) = (Value::Null, 0);
+        if let Some(session) = session.as_ref() {
+            for marker in &session.markers {
+                *counts.entry(&marker.label).or_default() += 1;
+            }
+            total = session.markers.len();
+            if let Some(span) = &session.open_span {
+                open = json!({
+                    "label": span.label,
+                    "term": span.term,
+                    "elapsed_ms": unix_ms().saturating_sub(span.start_ms),
+                });
+            }
+        }
+        json!({ "added": added, "open": open, "counts": counts, "total": total })
     }
 
     /// Bytes of video in the current or last session
@@ -347,7 +580,7 @@ impl Studio {
     fn write_session(&self, session: &Session) -> Result<()> {
         let recorder = self.recorder.status();
         let (height, fps) = self.video.quality();
-        let description = json!({
+        let mut description = json!({
             "started_at_unix_ms": session.started_at_ms,
             "stopped_at_unix_ms": session.stopped_at_ms,
             // Splatoon 3's controller settings: they scale gyro and stick into camera turns
@@ -372,9 +605,14 @@ impl Studio {
                 "segments": session.segments,
             },
         });
-        let path = session.dir.join("session.json");
-        std::fs::write(&path, serde_json::to_string_pretty(&description)?)
-            .with_context(|| format!("cannot write {}", path.display()))
+        if !session.markers.is_empty() {
+            // Technique spans marked by hand, in host Unix ms like the frames
+            description["markers"] = json!(session.markers);
+        }
+        write_atomic(
+            &session.dir.join("session.json"),
+            &serde_json::to_string_pretty(&description)?,
+        )
     }
 
     /// Save dashboard settings next to the config file
@@ -390,6 +628,7 @@ impl Studio {
             game_settings: Some(self.game_settings()),
             replay_path: self.player.path(),
             replay_mix: Some(self.player.mix()),
+            techniques: Some(self.techniques.lock().unwrap().clone()),
         };
         // Write then rename, so a crash never leaves a half-written file
         let temp = self.state_path.with_extension("tmp");

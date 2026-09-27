@@ -5,7 +5,7 @@
 //! - `GET /` and every app path (`/studio`, `/inspect/...`, `/cuttlefish/...`,
 //!   `/vision/...`, `/predictor/...`, see [`APPS`]): the page, which shows
 //!   the app its path names; `/style.css`, `/app.js`, `/controller3d.js`,
-//!   `/inspect.js`, `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`,
+//!   `/inspect.js`, `/techniques.js`, `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`,
 //!   `/translate.js`, `/source.js`, `/pedia.js`, `/stages.js`, `/vision.js`,
 //!   `/predictor.js`, `/i18n.js`, `/i18n-zh.js`:
 //!   the page, embedded from `web/`
@@ -13,7 +13,8 @@
 //!   report, `{"type":"status"}` text twice a second, and the video preview
 //!   as binary fragmented-MP4 messages (an init segment, then one per frame)
 //! - `POST /api/command`: a [`Command`] such as `{"action":"start"}`, answered
-//!   with `{"recorder": ..., "replay": ...}` or `{"error": "..."}`
+//!   with `{"recorder": ..., "replay": ..., "techniques": ...}` or
+//!   `{"error": "..."}`
 //! - `GET /api/inspect/...`: the Inkspector app's data, see [`crate::inspect`];
 //!   errors are `400` with `{"error": "..."}`; `/api/inspect/follow/...`:
 //!   Follow in its labeling mode, see [`crate::follow`]
@@ -153,12 +154,13 @@ pub async fn serve(
         )
     });
 
-    // The drawing layer, the shared video player, the stage map links, the
-    // Inkspector's labeling mode, the Cuttlefish app with its knowledge,
+    // The technique markers, the drawing layer, the shared video player, the
+    // stage map links, the Inkspector's labeling mode, the Cuttlefish app with its knowledge,
     // translate and Pedia views and its source popover, the Vision app, the
     // Predictor and the page's dictionaries
     let scripts = warp::path!(String).and_then(|name: String| async move {
         let body = match name.as_str() {
+            "techniques.js" => include_str!("../web/techniques.js"),
             "sketch.js" => include_str!("../web/sketch.js"),
             "player.js" => include_str!("../web/player.js"),
             "stages.js" => include_str!("../web/stages.js"),
@@ -185,6 +187,7 @@ pub async fn serve(
 
     let delay_inspector = Arc::clone(&inspector);
     let objects_inspector = Arc::clone(&inspector);
+    let markers_inspector = Arc::clone(&inspector);
     // Inkspector data reads files and runs ffmpeg; keep that off the async workers
     let inspect = warp::path!("api" / "inspect" / String)
         .and(warp::get())
@@ -284,6 +287,34 @@ pub async fn serve(
             }
         });
 
+    // A session's technique markers, edited in the Inkspector
+    let markers = warp::path!("api" / "inspect" / "markers")
+        .and(warp::post())
+        .and(warp::body::content_length_limit(1 << 20))
+        .and(warp::body::json())
+        .and_then(move |body: Value| {
+            let inspector = Arc::clone(&markers_inspector);
+            async move {
+                let result =
+                    tokio::task::spawn_blocking(move || inspector.save_markers(&body)).await;
+                let (status, reply) = match result {
+                    Ok(Ok(saved)) => (StatusCode::OK, saved),
+                    Ok(Err(e)) => (
+                        StatusCode::BAD_REQUEST,
+                        json!({ "error": format!("{e:#}") }),
+                    ),
+                    Err(e) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        json!({ "error": e.to_string() }),
+                    ),
+                };
+                Ok::<_, core::convert::Infallible>(warp::reply::with_status(
+                    warp::reply::json(&reply),
+                    status,
+                ))
+            }
+        });
+
     let video = studio.video.clone();
     let websocket = warp::path!("ws")
         .and(warp::ws())
@@ -305,6 +336,7 @@ pub async fn serve(
                     let reply = json!({
                         "recorder": studio.recorder.status(),
                         "replay": studio.player.status(),
+                        "techniques": studio.techniques_status(),
                     });
                     warp::reply::with_status(warp::reply::json(&reply), StatusCode::OK)
                 }
@@ -334,6 +366,7 @@ pub async fn serve(
         .or(api)
         .or(delay)
         .or(objects)
+        .or(markers)
         .or(under("api/inspect/follow").and(follow::routes(follow)))
         .or(under("api/cuttlefish").and(cuttlefish::routes(cuttlefish)))
         .or(under("api/vision").and(vision::routes(vision)))
@@ -629,6 +662,7 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
                 },
                 "recorder": recorder,
                 "game_settings": studio.game_settings(),
+                "techniques": studio.techniques_status(),
                 "replay": studio.player.status(),
                 "video": video,
                 // Bytes per second, and bytes of the current or last session

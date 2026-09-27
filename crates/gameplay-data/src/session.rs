@@ -3,8 +3,9 @@
 //! Frame `n` of a segment was captured at `start_unix_ms + n * 1000 / fps`
 //! on the host clock. Older sessions lack `video.fps` and `video.height`
 //! and have variable-rate video; newer ones may add `game_settings`,
-//! `video.audio` and, per segment with sound, `audio_start_unix_ms`. Fields
-//! that are absent stay absent when written back.
+//! `video.audio`, per segment with sound, `audio_start_unix_ms`, and
+//! `markers` (spans labelled by hand, such as a technique practised).
+//! Fields that are absent stay absent when written back.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -34,6 +35,34 @@ pub struct SessionInfo {
     pub controller: ControllerInfo,
     /// The video files
     pub video: VideoInfo,
+    /// Spans labelled by hand, in the order they were made
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<Marker>,
+}
+
+/// [`Marker::kind`] of a technique practised, such as a squid roll
+pub const MARKER_TECHNIQUE: &str = "technique";
+
+/// A span of a session labelled by hand
+///
+/// Times are host Unix ms, the clock of the controller frames: the span
+/// covers the input from `t_start_ms` to `t_end_ms`, which the video shows
+/// `video_delay_ms` later.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Marker {
+    /// What the span holds: [`MARKER_TECHNIQUE`]; other kinds may come
+    pub kind: String,
+    /// The technique's name, such as `Squid roll`
+    pub label: String,
+    /// The Pedia (glossary) term id of the technique, if it has one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub term: Option<String>,
+    /// Host Unix ms where the span starts
+    pub t_start_ms: u64,
+    /// Host Unix ms where the span ends
+    pub t_end_ms: u64,
+    /// Host Unix ms when the marker was made
+    pub created_ms: u64,
 }
 
 /// Splatoon 3's controller settings, which scale gyro and stick input into
@@ -141,6 +170,33 @@ impl SessionInfo {
     }
 }
 
+/// Replace the markers in the `session.json` of a session folder, keeping
+/// every other field as it is
+pub fn write_markers(dir: &Path, markers: &[Marker]) -> Result<()> {
+    let path = dir.join(SESSION_FILE);
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("cannot read {}", path.display()))?;
+    let mut info: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("cannot parse {}", path.display()))?;
+    let object = info
+        .as_object_mut()
+        .with_context(|| format!("{} is not an object", path.display()))?;
+    if markers.is_empty() {
+        object.remove("markers");
+    } else {
+        object.insert("markers".into(), serde_json::to_value(markers)?);
+    }
+    write_atomic(&path, &serde_json::to_string_pretty(&info)?)
+}
+
+/// Write `text` to `path` through a file next to it and a rename, so a
+/// reader never sees half of it
+pub fn write_atomic(path: &Path, text: &str) -> Result<()> {
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, text).with_context(|| format!("cannot write {}", temp.display()))?;
+    std::fs::rename(&temp, path).with_context(|| format!("cannot write {}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,7 +233,57 @@ mod tests {
         assert_eq!(info.video.fps, None);
         assert!(info.game_settings.is_none());
         assert!(!info.video.segments[0].has_audio());
+        assert!(info.markers.is_empty());
         let written = serde_json::to_string(&info).unwrap();
         assert!(!written.contains("fps") && !written.contains("audio"));
+        assert!(!written.contains("markers"));
+    }
+
+    const WITH_MARKERS: &str = r#"{"controller": {"file": "controller.bin", "frames": 900},
+        "started_at_unix_ms": 1790369541466, "stopped_at_unix_ms": 1790369571466,
+        "video": {"fps": 30, "height": 720, "input": "screen",
+                  "segments": [{"file": "video-01.mkv", "start_unix_ms": 1790369541479}]},
+        "markers": [
+          {"kind": "technique", "label": "Squid roll", "term": "squid-roll",
+           "t_start_ms": 1790369545000, "t_end_ms": 1790369547500, "created_ms": 1790369547500},
+          {"kind": "technique", "label": "Fast wall climb",
+           "t_start_ms": 1790369550000, "t_end_ms": 1790369555000, "created_ms": 1790369560000}]}"#;
+
+    #[test]
+    fn markers_round_trip() {
+        let info: SessionInfo = serde_json::from_str(WITH_MARKERS).unwrap();
+        assert_eq!(info.markers.len(), 2);
+        let roll = &info.markers[0];
+        assert_eq!(roll.kind, MARKER_TECHNIQUE);
+        assert_eq!(roll.term.as_deref(), Some("squid-roll"));
+        assert_eq!(roll.t_end_ms - roll.t_start_ms, 2500);
+        assert_eq!(info.markers[1].term, None);
+        let written = serde_json::to_string(&info).unwrap();
+        // A marker without a term leaves it out
+        assert_eq!(written.matches("\"term\"").count(), 1);
+        let again: SessionInfo = serde_json::from_str(&written).unwrap();
+        assert_eq!(again, info);
+    }
+
+    #[test]
+    fn write_markers_keeps_the_rest() {
+        let dir =
+            std::env::temp_dir().join(format!("gameplay-data-markers-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A field the model does not know stays in the file
+        let text = WITH_MARKERS.replacen('{', r#"{"note": "kept","#, 1);
+        std::fs::write(dir.join(SESSION_FILE), text).unwrap();
+        let mut markers = SessionInfo::read(&dir).unwrap().markers;
+        markers.remove(0);
+        write_markers(&dir, &markers).unwrap();
+        let info = SessionInfo::read(&dir).unwrap();
+        assert_eq!(info.markers, markers);
+        assert_eq!(info.video.fps, Some(30));
+        let raw = std::fs::read_to_string(dir.join(SESSION_FILE)).unwrap();
+        assert!(raw.contains("\"note\": \"kept\""));
+        write_markers(&dir, &[]).unwrap();
+        let raw = std::fs::read_to_string(dir.join(SESSION_FILE)).unwrap();
+        assert!(!raw.contains("markers"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

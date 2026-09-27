@@ -944,6 +944,67 @@ const I18N = {
     "k.delete.ask": 'Delete "{title}" and its {n} chunks?',
     "k.delete.askInbox":
       'Delete "{title}" and its {n} chunks? Its file stays in the inbox; it comes back only if the file changes or is imported with "Again if stored".',
+
+    // Technique markers: the Studio's Techniques panel (techniques.js), the
+    // Inkspector's markers (inspect.js) and the Pedia's recorded examples
+    "tech.title": "Techniques",
+    "tech.mode.session": "This session",
+    "tech.mode.sessionNote": "Reps marked in this session",
+    "tech.mode.all": "Checklist",
+    "tech.mode.allNote":
+      "Which techniques have examples in any session, as a reminder of what to record",
+    "tech.start": "Start span",
+    "tech.stop": "Stop span",
+    "tech.last": "Mark last",
+    "tech.seconds": "Seconds to mark",
+    "tech.undo": "Undo",
+    "tech.add": "Add",
+    "tech.add.label": "Add a technique",
+    "tech.add.zh": "Chinese name",
+    "tech.add.term": "Pedia term id",
+    "tech.keys":
+      "<kbd>1</kbd>–<kbd>9</kbd> pick · <kbd>M</kbd> start/stop a span · <kbd>B</kbd> mark the last seconds · <kbd>U</kbd> undo the last marker",
+    "tech.sessionCount": ({ n }) =>
+      n === 1
+        ? "1 rep marked in this session"
+        : `${n} reps marked in this session`,
+    "tech.allCount": ({ n }) =>
+      n === 1 ? "1 example recorded" : `${n} examples recorded`,
+    "tech.none": "No example recorded yet",
+    "tech.pedia": "Open in the Pedia",
+    "tech.remove": "Remove from the list",
+    "tech.removeAsk":
+      'Remove "{name}" from the list? Its markers stay in the sessions.',
+    "tech.exists": '"{name}" is on the list already',
+    "tech.idleNote":
+      "Pick a technique, record, then mark each rep (a span, or the last seconds).",
+    "tech.sessionNote": ({ n }) =>
+      n === 1 ? "1 marker in this session" : `${n} markers in this session`,
+    "tech.allNote": ({ done, n, markers, sessions }) =>
+      `${done} of ${n} have examples · ${markers} marker${markers === 1 ? "" : "s"} in ${sessions} session${sessions === 1 ? "" : "s"}`,
+    "tech.loading": "Reading the sessions…",
+    "tech.marking": "Marking {name} · {time}",
+    "mk.title": "Technique markers",
+    "mk.note": "Spans of controller input; drawn at this delay",
+    "mk.none": "No markers in this session.",
+    "mk.elsewhere": ({ n }) =>
+      n === 1 ? "1 more in other segments" : `${n} more in other segments`,
+    "mk.add": "Add marker here",
+    "mk.addNote":
+      "Adds a 2 s marker from this frame; then set its start, end and technique",
+    "mk.go": "Go",
+    "mk.setStart": "Start here",
+    "mk.setEnd": "End here",
+    "mk.delete": "Delete",
+    "mk.deleteAsk": 'Delete the marker "{name}"?',
+    "mk.saveError": "Could not save the markers: {error}",
+    "mk.technique": "Technique",
+    "mk.frames": "Frames",
+    "pedia.examples": "Recorded examples",
+    "pedia.examplesNote": ({ n }) =>
+      n === 1 ? "1 marked in your sessions" : `${n} marked in your sessions`,
+    "pedia.examplesNone":
+      "None marked yet: pick it in the Studio's Techniques panel while recording.",
   },
 };
 

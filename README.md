@@ -140,6 +140,17 @@ Studio's preview pauses, and each app stops its own work while hidden.
   (1080p to 360p) and frame rate (60 to 10 fps); "Preview at recording
   quality"; "Record sound"; and the game's settings (Splatoon 3 motion and
   stick sensitivity, motion controls, invert Y/X), saved with each session.
+- **Techniques**: technique markers, labelled examples of what you practise
+  (squid roll, sub strafe / inertia cancel, main strafe, fast wall climb,
+  small hop / big jump, grabbing eggs without cancelling ink recovery, egg
+  throw, egg runs at the basket, and any you add). Pick one (keys 1–9), then
+  while recording mark a span with **Start span** / **Stop span** (M), or
+  **Mark last** N seconds (B); **Undo** (U) removes the last marker (or drops
+  the open span). Starting another technique ends the open span; Pause and
+  Stop end it too. **This session** counts the reps marked so far;
+  **Checklist** shows which techniques have examples in any session under
+  the Inkspector's root. Added techniques (name, Chinese name, Pedia term
+  id) are saved in `config.state.json`; each has a link to its Pedia entry.
 - **Replay**: plays a session folder, a `controller.bin` or a `.jsonl` of
   actions to the Switch (see below).
 - **Data**: controller and video write rates, this session's size, all
@@ -147,8 +158,9 @@ Studio's preview pauses, and each app stops its own work while hidden.
   left at the current rate) and free memory.
 - **Motion**: stick readouts and a five-second gyro chart.
 
-The path prefix, video input, quality, sound, game settings and replay file
-are saved in `config.state.json` next to the config, so they survive restarts.
+The path prefix, video input, quality, sound, game settings, replay file and
+added techniques are saved in `config.state.json` next to the config, so they
+survive restarts.
 
 ### The player
 
@@ -186,6 +198,13 @@ with the picture, and a model's predictions against them.
   computed one.
 - **Predictions**: a labels `.jsonl` path on the PC shows a model's labels
   under the truth, differences in red.
+- **Technique markers**: the session's markers are red bands on the
+  scrubber with labelled chips under it (a click goes to the start), and a
+  list in the Session panel: change a marker's technique, its first and last
+  frame (typed, or **Start here** / **End here** at the frame shown),
+  **Go** to it or **Delete** it. **Add marker here** adds one after the fact
+  (2 s from the frame shown, the technique picked in the Studio). Markers
+  cover controller input, so they are drawn at the delay in use.
 - **Label** (L): draw boxes around objects on the frame, class by class, for
   training a detector. Boxes are saved per frame in `[inspect] annotations`
   (default `Annotations` next to the sessions' folder); the model's boxes
@@ -430,8 +449,11 @@ related terms both ways (part of, a kind of, related to), the stat.ink icon
 or the class icon, game-data fact cards when imported, **In the wild** (the
 best #vod-review comments using the term, with reviewer, date and era;
 **Conversation** shows the whole comment with its replies, and a comment on
-a VOD that is a review here opens it at its moment), the expert notes and
-deep questions about it, and **Ask Cuttlefish about this**. Everything is
+a VOD that is a review here opens it at its moment), **Recorded examples**
+(the technique markers of your sessions with the term's id or name, each
+opening the Inkspector at its start; shown for movement techniques and any
+term that has some), the expert notes and deep questions about it, and
+**Ask Cuttlefish about this**. Everything is
 corrected in place: **Edit** the definition and kind, add or remove slang,
 **Link to a term**, **Flag as wrong** (a term the suggestions added is
 rejected, with Undo; a glossary term is corrected), **Add a note**. Edits are
@@ -645,7 +667,7 @@ prefix's folder must exist. Before a recording day, go through
 |---|---|
 | `controller.bin` | 80-byte frames, little endian: Unix ms on the Pi (u64), report size (u8, 0 for a heartbeat), sequence number (u32), µs from the proxy reading the report to the Switch taking it (u16, 0 if unknown), 1 padding byte, the 64-byte HID report |
 | `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses: constant-rate H.264 with a keyframe every second, plus an Opus sound track (48 kHz stereo) when "Record sound" is on |
-| `session.json` | Start/stop times, the proxy's address and clock offset, frame and dropped-frame counts, the video input, size and frame rate, each file's first-frame time (`start_unix_ms`, and `audio_start_unix_ms` with sound) and `game_settings` |
+| `session.json` | Start/stop times, the proxy's address and clock offset, frame and dropped-frame counts, the video input, size and frame rate, each file's first-frame time (`start_unix_ms`, and `audio_start_unix_ms` with sound), `game_settings` and, if any were marked, `markers`: `[{kind: "technique", label, term?, t_start_ms, t_end_ms, created_ms}]` in PC Unix ms (the controller frames' clock) |
 
 To line them up on the PC's clock:
 

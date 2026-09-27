@@ -2,7 +2,9 @@
 // against the video frame by frame in the shared player (player.js: exact
 // frames from the studio, overlays, neighbours, keys, labels table). Runs
 // next to app.js and stages.js and uses their helpers ($, root, appUrl,
-// StageMap); its state lives in
+// StageMap), and techniques.js's for the session's technique markers (bands
+// on the scrubber, labelled chips under it, a list to jump to and edit them
+// in the Session panel); its state lives in
 // the address as /inspect/<session>?seg=<file>&n=<frame>&delay=<ms>&pred=<path>
 // (and label=1 to open in the labeling mode).
 
@@ -48,6 +50,8 @@ const inspector = {
    * (`model`), and a range being followed ([first, last] or null)
    */
   marks: { user: [], model: [], range: null },
+  /** The session's technique markers (session.json), host Unix ms */
+  markers: [],
 };
 
 /** The player in the Frame panel (app.js has `player`, the preview); label.js draws its boxes over its screen */
@@ -267,7 +271,9 @@ async function showSegment(session, segment, state) {
     },
     parseInt(state.get("n")) || 0,
   );
-  drawMarks();
+  inspector.markers = [];
+  drawMarkers();
+  loadMarkers();
 }
 
 function drawSession() {
@@ -372,17 +378,246 @@ function resetLabels() {
   inspector.labelChunks = new Map();
 }
 
-/** Hand the labeled frames (label.js's list) to the player's scrubber */
+/** Hand the labeled frames (label.js's list) and the technique markers to
+ * the player's scrubber */
 function drawMarks() {
   const { user, model, range } = inspector.marks;
+  const spans = markerSpans();
   framePlayer.setMarks({
     ticks: [
       ...user.map((n) => ({ n, kind: "user" })),
       ...model.map((n) => ({ n, kind: "model", short: true })),
     ],
-    ranges: range ? [{ a: range[0], b: range[1], kind: "range" }] : [],
+    ranges: [
+      ...spans.map(({ a, b }) => ({ a, b, kind: "technique" })),
+      ...(range ? [{ a: range[0], b: range[1], kind: "range" }] : []),
+    ],
   });
 }
+
+// ----------------------------------------------------------------- markers
+
+/** Frame of the segment showing the input at host time `ms`, at the delay
+ * in use (the labels' alignment: frame n shows the input from
+ * start + n / fps - delay) */
+function frameOfMs(ms) {
+  const { info, delay } = inspector;
+  return Math.round(((ms - info.start_unix_ms + delay) * info.fps) / 1000);
+}
+
+/** Host time of the input frame n shows, the reverse of frameOfMs */
+function msOfFrame(n) {
+  const { info, delay } = inspector;
+  return Math.round(info.start_unix_ms + (n * 1000) / info.fps - delay);
+}
+
+/** The markers in this segment as frames [a, b] (clipped), with their index */
+function markerSpans() {
+  const { info, markers } = inspector;
+  if (!info?.start_unix_ms) return [];
+  const last = info.frames - 1;
+  return markers
+    .map((marker, i) => ({
+      marker,
+      i,
+      a: frameOfMs(marker.t_start_ms),
+      b: frameOfMs(marker.t_end_ms),
+    }))
+    .filter(({ a, b }) => b >= 0 && a <= last)
+    .map((span) => ({
+      ...span,
+      a: Math.max(0, span.a),
+      b: Math.min(last, span.b),
+    }))
+    .sort((x, y) => x.a - y.a || x.b - y.b);
+}
+
+/** A marker's technique as the lists have it, or itself when not listed */
+function markerTechnique(marker) {
+  return techniques().find((tech) => markerOf(marker, tech)) ?? marker;
+}
+
+async function loadMarkers() {
+  const { info } = inspector;
+  const response = await fetch(
+    `/api/inspect/markers?${new URLSearchParams({ s: info.session })}`,
+  );
+  const data = await response.json();
+  if (inspector.info !== info) return;
+  if (!response.ok) {
+    $("i-markers-note").textContent = data.error;
+    return;
+  }
+  inspector.markers = data.markers;
+  drawMarkers();
+}
+
+/** Save the session's markers, then show them as saved */
+async function saveMarkers(markers) {
+  const { info } = inspector;
+  const response = await fetch("/api/inspect/markers", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ s: info.session, markers }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    alert(t("mk.saveError", { error: data.error }));
+    return;
+  }
+  if (inspector.info !== info) return;
+  inspector.markers = data.markers;
+  // The Studio's checklist and the Pedia read them again
+  allMarkers.at = 0;
+  drawMarkers();
+}
+
+/** A copy of the markers with marker i changed by `change` */
+function changedMarkers(i, change) {
+  return inspector.markers.map((marker, j) =>
+    j === i ? { ...marker, ...change } : marker,
+  );
+}
+
+/** The markers on the scrubber, in the lane under it and in the list */
+function drawMarkers() {
+  drawMarks();
+  const { info, markers } = inspector;
+  const spans = markerSpans();
+  const lane = $("i-marker-lane");
+  lane.hidden = !spans.length;
+  const last = Math.max(1, (info?.frames ?? 1) - 1);
+  // Overlapping spans go to rows of their own: each to the first row free
+  const rowEnds = [];
+  lane.innerHTML = spans
+    .map(({ marker, i, a, b }) => {
+      let row = rowEnds.findIndex((end) => end <= a);
+      if (row < 0) row = rowEnds.length;
+      rowEnds[row] = b;
+      const name = techniqueNames(markerTechnique(marker))[0];
+      const left = (100 * a) / last;
+      const width = Math.max(0.4, (100 * (b - a)) / last);
+      return `<button type="button" class="marker-chip" data-go="${i}" style="left:${left}%;width:${width}%;top:${row * 20}px" title="${escapeHtml(`${name} · ${a}–${b}`)}">${escapeHtml(name)}</button>`;
+    })
+    .join("");
+  lane.style.height = `${Math.max(1, rowEnds.length) * 20}px`;
+
+  const outside = markers.length - spans.length;
+  $("i-markers-note").textContent = markers.length
+    ? `${t("mk.note")}${outside ? ` · ${t("mk.elsewhere", { n: outside })}` : ""}`
+    : t("mk.none");
+  const list = techniques();
+  $("i-markers").innerHTML = spans
+    .map(({ marker, i, a, b }) => {
+      const current = markerTechnique(marker);
+      const options = [...list, ...(list.includes(current) ? [] : [current])]
+        .map((tech) => {
+          const [name, alt] = techniqueNames(tech);
+          const label = alt ? `${name} · ${alt}` : name;
+          return `<option value="${escapeHtml(tech.label)}" ${tech === current ? "selected" : ""}>${escapeHtml(label)}</option>`;
+        })
+        .join("");
+      const seconds = ((b - a) / info.fps).toFixed(1);
+      return `<li class="i-marker" data-i="${i}">
+        <select class="select" data-field="label" aria-label="${escapeHtml(t("mk.technique"))}">${options}</select>
+        <span class="i-marker-frames">
+          <input class="select num" type="number" min="0" max="${info.frames - 1}" value="${a}" data-field="a" aria-label="${escapeHtml(t("mk.setStart"))}" />–<input class="select num" type="number" min="0" max="${info.frames - 1}" value="${b}" data-field="b" aria-label="${escapeHtml(t("mk.setEnd"))}" />
+          <span class="panel-note">${seconds} s</span>
+        </span>
+        <span class="i-marker-actions">
+          <button type="button" class="mode-toggle" data-act="go">${escapeHtml(t("mk.go"))}</button>
+          <button type="button" class="mode-toggle" data-act="start">${escapeHtml(t("mk.setStart"))}</button>
+          <button type="button" class="mode-toggle" data-act="end">${escapeHtml(t("mk.setEnd"))}</button>
+          <button type="button" class="mode-toggle" data-act="delete">${escapeHtml(t("mk.delete"))}</button>
+        </span>
+      </li>`;
+    })
+    .join("");
+}
+
+$("i-marker-lane").addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-go]");
+  if (chip)
+    go(frameOfMs(inspector.markers[Number(chip.dataset.go)].t_start_ms));
+});
+
+$("i-markers").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-act]");
+  if (!button) return;
+  const i = Number(button.closest("[data-i]").dataset.i);
+  const marker = inspector.markers[i];
+  const here = msOfFrame(inspector.frame);
+  const act = button.dataset.act;
+  if (act === "go") go(Math.max(0, frameOfMs(marker.t_start_ms)));
+  else if (act === "start")
+    saveMarkers(
+      changedMarkers(i, {
+        t_start_ms: here,
+        t_end_ms: Math.max(here, marker.t_end_ms),
+      }),
+    );
+  else if (act === "end")
+    saveMarkers(
+      changedMarkers(i, {
+        t_end_ms: here,
+        t_start_ms: Math.min(here, marker.t_start_ms),
+      }),
+    );
+  else if (
+    act === "delete" &&
+    confirm(t("mk.deleteAsk", { name: marker.label }))
+  )
+    saveMarkers(inspector.markers.filter((_, j) => j !== i));
+});
+
+$("i-markers").addEventListener("change", (event) => {
+  const field = event.target.dataset.field;
+  if (!field) return;
+  const i = Number(event.target.closest("[data-i]").dataset.i);
+  const marker = inspector.markers[i];
+  if (field === "label") {
+    const tech = techniques().find((x) => x.label === event.target.value);
+    if (!tech) return;
+    saveMarkers(
+      changedMarkers(i, { label: tech.label, term: tech.term ?? null }),
+    );
+    return;
+  }
+  const n = parseInt(event.target.value);
+  if (!Number.isFinite(n)) return drawMarkers();
+  const ms = msOfFrame(n);
+  saveMarkers(
+    changedMarkers(
+      i,
+      field === "a"
+        ? { t_start_ms: ms, t_end_ms: Math.max(ms, marker.t_end_ms) }
+        : { t_end_ms: ms, t_start_ms: Math.min(ms, marker.t_start_ms) },
+    ),
+  );
+});
+
+// A marker added after the fact: the Studio's technique picked, 2 s from
+// the frame on screen
+$("i-marker-add").addEventListener("click", () => {
+  const { info, frame } = inspector;
+  if (!info?.start_unix_ms) return;
+  const tech = pickedTechnique();
+  const end = Math.min(info.frames - 1, frame + Math.round(2 * info.fps));
+  saveMarkers([
+    ...inspector.markers,
+    {
+      kind: "technique",
+      label: tech.label,
+      term: tech.term ?? null,
+      t_start_ms: msOfFrame(frame),
+      t_end_ms: msOfFrame(end),
+      created_ms: Date.now(),
+    },
+  ]);
+});
+window.addEventListener("lang-change", () => {
+  if (inspector.info) drawMarkers();
+});
 
 /** Jump to frame n, pausing playback */
 function go(n) {
@@ -416,6 +651,7 @@ document.addEventListener("keydown", (event) => {
 $("i-delay").addEventListener("change", () => {
   inspector.delay = parseFloat($("i-delay").value) || 0;
   resetLabels();
+  drawMarkers();
   go(inspector.frame);
 });
 
@@ -490,6 +726,7 @@ async function routeInspector(state) {
     inspector.pred = pred;
     $("i-pred").value = pred;
     resetLabels();
+    drawMarkers();
   }
   go(parseInt(state.get("n")) || 0);
   // Back from another app: carry on playing if it was
