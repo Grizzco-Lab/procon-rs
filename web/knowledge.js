@@ -27,6 +27,7 @@
     file: "k.source.file",
     "expert-note": "k.source.expertNote",
     "game-data": "k.source.gameData",
+    x: "k.source.x",
   };
 
   /** Document formats as shown: names, or i18n keys (`k.`); others are
@@ -42,6 +43,7 @@
     "google-slides": "k.format.googleSlides",
     subtitles: "k.format.subtitles",
     messages: "k.format.messages",
+    posts: "k.format.posts",
     note: "k.format.note",
     card: "k.format.card",
     file: "k.source.file",

@@ -796,6 +796,8 @@ const I18N = {
     "k.format.note": "Note",
     "k.source.gameData": "Game data",
     "k.format.card": "Fact card",
+    "k.source.x": "X (Twitter)",
+    "k.format.posts": "Posts",
     "k.ov.credits": "Credits",
     "k.ov.credit": "{n} fact cards from {name}: {what}.",
     "k.job.running": "running",

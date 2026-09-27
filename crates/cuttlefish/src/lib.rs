@@ -5,7 +5,8 @@
 //! and [`html`], whole wiki topics and sites through [`wiki`], Google Docs,
 //! Sheets and Slides through
 //! [`google`], YouTube transcripts through [`youtube`], Discord
-//! conversations through [`discord`], local files through [`mod@file`]), split
+//! conversations through [`discord`], X posts captured from the user's own
+//! account through [`x`], local files through [`mod@file`]), split
 //! into chunks ([`chunk`]), embedded ([`embed`]) and indexed ([`index`]) in a
 //! data folder ([`store`]); [`ingest`] runs the importers. A [`glossary`] maps jargon across
 //! languages: official names and the slang players use, which the user teaches and approves
@@ -75,4 +76,5 @@ pub mod slang;
 pub mod store;
 pub mod tables;
 pub mod wiki;
+pub mod x;
 pub mod youtube;

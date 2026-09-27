@@ -34,6 +34,9 @@ pub enum SourceKind {
     /// A fact card of numbers extracted from the game's files
     /// ([`crate::leanny`]): exact, and presented as such
     GameData,
+    /// A post on X (Twitter) with its replies, captured from the user's
+    /// own account ([`crate::x`]): community talk, like a Discord channel
+    X,
 }
 
 impl SourceKind {
@@ -46,7 +49,7 @@ impl SourceKind {
             SourceKind::DiscordVodReview => 1.2,
             SourceKind::Guide => 1.15,
             SourceKind::GameData => 1.1,
-            SourceKind::Wiki | SourceKind::Discord | SourceKind::File => 1.0,
+            SourceKind::Wiki | SourceKind::Discord | SourceKind::X | SourceKind::File => 1.0,
             SourceKind::Web | SourceKind::Video => 0.9,
         }
     }

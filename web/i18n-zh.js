@@ -730,6 +730,8 @@ I18N.zh = {
   "k.format.note": "笔记",
   "k.source.gameData": "游戏数据",
   "k.format.card": "数据卡片",
+  "k.source.x": "X（推特）",
+  "k.format.posts": "帖子",
   "k.ov.credits": "致谢",
   "k.ov.credit": "{n} 张数据卡片来自 {name}：{what}。",
   "k.job.running": "进行中",

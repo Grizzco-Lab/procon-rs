@@ -969,6 +969,7 @@ fn default_sources() -> Vec<SourceKind> {
     alloc::vec![
         SourceKind::DiscordVodReview,
         SourceKind::Discord,
+        SourceKind::X,
         SourceKind::Guide,
         SourceKind::Video,
         SourceKind::Web,

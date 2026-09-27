@@ -83,6 +83,9 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   assets.json        images and icons from the inbox
   reports/<t>.json   one report per inbox import (the last 30)
   digest.md          curated fundamentals, sent with every request (optional)
+  inbox/x/<handle>/posts.jsonl
+                     the Salmon Run threads of an account you follow on X, captured
+                     by tools/capture/xcap.mjs; inbox/x/state.json is its state
   media/discord/<guild>/<channel>/<message id>/<file>
                      VODs and images downloaded by `fetch discord --attachments`,
                      with a media.jsonl manifest per channel (large: see below)
@@ -159,6 +162,7 @@ which can also upload into it) looks at each file by name and first bytes:
 |---|---|
 | md, txt, rst, org, adoc, html, pdf, docx, srt, vtt | a document (chunked, embedded), keyed by its inbox path |
 | DiscordChatExporter JSON, or `<id>.messages.jsonl` of `fetch discord` (with its `<id>.channel.json` beside it) | its conversations; the fetcher's channel objects and `state.json` are skipped |
+| `x/<handle>/posts.jsonl` of `tools/capture/xcap.mjs` | one document per thread (the post, its quoted post, the replies); the capture's `x/state.json` is skipped |
 | json, yaml, toml, csv, tsv, po, properties | a name table if it holds the same keys in several languages; never embedded. Otherwise a data table: a small text document of `key / path: value` lines under 1 MB, skipped above. Project configuration (`package.json`, `Cargo.toml`, ...) is skipped |
 | php in a message folder (`messages/<lang>/<category>.php`, as Yii apps such as stat.ink keep them) | a name table: the keys are the English names, the values the translations. Interface categories (`app`, `email`, `privacy`, time zones, ...) and machine-translated folders (`_deepl`) are skipped; other `.php` is code |
 | png, jpg, gif, webp, svg, bmp, ico, avif | an asset; site images (folders named after logos, screenshots, clip art, "about") are skipped |
@@ -247,7 +251,8 @@ skipped and why, failed, gone.
 | Google Docs, Sheets, Slides | `ingest url <the address you share>` | Read through their exports (see below); only files shared as "Anyone with the link can view"; a sheet's tabs one by one with `--all-tabs` |
 | YouTube | `ingest youtube <video/playlist/channel>` | `yt-dlp` fetches subtitles and metadata only; uploaded subtitles preferred over auto captions |
 | Discord #vod-review | `ingest discord-export`, `ingest discord-bot`, or `fetch discord` + `ingest inbox` | The export and the bot are the sanctioned ways; `fetch discord` reads with your own account, against Discord's terms. See below |
-| Twitter/X, Twitch | not automated | X's API terms and pricing rule out scraping; save the posts or threads you value as text and `ingest file`. Twitch VODs have no subtitles (a speech-to-text step would be needed) |
+| X (Twitter) | `tools/capture/xcap.mjs` + `ingest inbox` | The Salmon Run posts of the accounts you follow, with their replies, captured by your own logged-in Chrome, slowly and read-only (source kind `x`, weight 1.0); against X's terms, see below. Or save a thread as text and `ingest file` |
+| Twitch | not automated | Twitch VODs have no subtitles (a speech-to-text step would be needed) |
 | Lean's Splatoon 3 datamine (leanny.github.io) | `ingest leanny` (the studio: **Game data (Lean)**) | Fact cards of exact game numbers (source kind `game-data`, weight 1.1) and the Eggstra Work events table; no licence, the data is Nintendo's: fetched at run time, private study only. See "Game data" |
 
 **Google Docs, Sheets and Slides.** Their pages are drawn by JavaScript, so
@@ -897,6 +902,55 @@ cuttlefish ingest wiki https://splatoonwiki.org/wiki/Category:Salmon_Run \
 `Category:Mechanics` and `Category:Collectibles` are subcategories of
 `Category:Salmon Run` that hold the whole game's mechanics and collectibles
 (Octo Expansion's 8-balls, Sunken Scrolls, ...), so they are left out.
+
+### Capturing X (Twitter) with your own account
+
+The Salmon Run creators the user follows post their findings on X, and
+X's API terms and pricing rule out reading them through the API.
+`tools/capture/xcap.mjs` (Node 22+, no packages; its README has the
+guide) drives the user's own logged-in Chrome over the DevTools protocol
+on a profile folder of its own (`~/.config/procon/browser-profile`): it
+opens the following list, each followed account's profile and the page of
+each post about Salmon Run, scrolls like a reader, and keeps the JSON the
+page loaded for itself. **Automating one's own account can breach X's
+terms**, and the account can be limited or suspended; slow, read-only use
+of a real browser reduces the risk and does not remove it. The user
+weighed and accepted it for this private knowledge base. The tool makes no
+requests of its own, signs nothing, writes nothing to X, downloads no
+media, and never sees or stores credentials (the browser profile holds the
+session).
+
+What it keeps: a post is about Salmon Run when its text or its quoted
+post's matches the glossary in English, Japanese or Simplified Chinese
+(サーモンラン, バイト, 鮭, Salmon Run, 打工, 鲑鱼跑, Grizzco, Eggstra
+Work, Big Run, the bosses, Kings, events and stages); retweets, the
+accounts' replies to others and everything off topic stay out. Each kept
+thread (the post and its replies) is one JSON line in
+`<knowledge>/inbox/x/<handle>/posts.jsonl` with id, author, date, text,
+language, links, media links, the quoted post, whom it replies to and the
+replies; `inbox/x/state.json` holds the following list, a cursor per
+account, every post id looked at and the day's action count, so runs
+continue and stay incremental. Pace: 4 to 10 s between page actions, a 1
+to 3 minute pause every 15 to 30, 400 actions a run and 800 a day by
+default, a stop on a 429, a 401 or the login page; about an hour per 100
+posts.
+
+```bash
+node tools/capture/xcap.mjs login                          # once, in the window that opens
+node tools/capture/xcap.mjs run --dry-run --max-actions 20 # browse a little, write nothing
+node tools/capture/xcap.mjs run                            # the capture; run again any time
+node tools/capture/xcap.mjs status
+cuttlefish ingest inbox                                    # or Import inbox on the Knowledge page
+```
+
+The inbox (`x.rs`) makes one document per thread with source kind `x`
+(weight 1.0, like a Discord channel and below #vod-review): titled by the
+author, the day and the start of the text; the post, its quoted post and
+the replies as timestamped lines (`[2026-09-24 12:20 UTC] Wave 3 (@wave3)
+↪ @ikura_coach: ...`) with their links; the authors as attribution, the
+language X recorded, the game era from the date, and "study use only, do
+not republish" as the terms. Slang suggestions read `x` documents with the
+other community sources.
 
 ## Deep questions and expert notes
 

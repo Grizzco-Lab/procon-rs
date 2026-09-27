@@ -521,6 +521,7 @@ fn format_of(d: &Document) -> String {
         (None, Some(url)) => match (d.source, google::recognise(url)) {
             (SourceKind::Video, _) => "subtitles",
             (SourceKind::Discord | SourceKind::DiscordVodReview, _) => "messages",
+            (SourceKind::X, _) => "posts",
             (SourceKind::GameData, _) => "card",
             (_, Some(GoogleFile::Doc(_))) => "google-doc",
             (_, Some(GoogleFile::Sheet { .. })) => "google-sheet",

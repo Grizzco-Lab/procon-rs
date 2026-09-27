@@ -512,6 +512,7 @@ or deleted.
 | Images and icons (PNG, JPEG, GIF, WebP, SVG, …) | Assets: size, a thumbnail, a name from the file name, and the glossary term it shows when the file name says (`Wst_Shooter_Normal_00.png` → Splattershot) |
 | Zip and tar archives | Unpacked (in the local cache) and taken the same way |
 | DiscordChatExporter JSON | Its conversations |
+| `x/<handle>/posts.jsonl` from `tools/capture/xcap.mjs` (Salmon Run posts of the accounts you follow on X, with replies; your own browser, slowly) | One document per thread |
 | Anything else (video, Excel, fonts, programs, unknown formats) | Skipped, with the reason in the report |
 
 Two limits to know: Excel (`.xlsx`) and Nintendo's own formats (`.msbt`,

@@ -10,6 +10,8 @@
 //! - **a Discord export** (DiscordChatExporter JSON) or **a channel of a
 //!   Discord archive** (`<id>.messages.jsonl` of `cuttlefish fetch
 //!   discord`, with its `<id>.channel.json` beside it): its conversations;
+//! - **an X capture** (`x/<handle>/posts.jsonl` of `tools/capture`): one
+//!   document per post with its replies ([`crate::x`]);
 //! - **a structured file** (JSON, YAML, TOML, CSV, TSV, `.po`,
 //!   `.properties`, and PHP files of a message folder such as stat.ink's
 //!   `messages/<lang>/<category>.php`, see [`crate::messages`]): read for
@@ -44,7 +46,7 @@ use crate::ingest::{Meta, Sink};
 use crate::messages::{self, Category};
 use crate::store::{Store, write_atomic};
 use crate::tables::{self, Member};
-use crate::{discord, discord_fetch};
+use crate::{discord, discord_fetch, x};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -111,6 +113,8 @@ pub enum Route {
     Discord,
     /// A channel or thread of a `cuttlefish fetch discord` archive
     DiscordArchive,
+    /// An account's threads captured from X (`tools/capture`)
+    X,
     /// A structured file, read for name tables
     Table,
     /// An image or icon
@@ -129,7 +133,12 @@ pub enum Route {
 /// known once it is unpacked.
 pub fn version(route: Route) -> u32 {
     match route {
-        Route::Prose | Route::Discord | Route::DiscordArchive | Route::Image | Route::Skip(_) => 0,
+        Route::Prose
+        | Route::Discord
+        | Route::DiscordArchive
+        | Route::X
+        | Route::Image
+        | Route::Skip(_) => 0,
         // Tables: PHP message folders, regional variants, kinds and games
         Route::Table => 1,
         // Archives: PHP message files taken, site images skipped
@@ -222,6 +231,8 @@ pub fn classify(rel: &str, head: impl FnOnce() -> Vec<u8>) -> Route {
                 Route::Discord
             } else if text.contains(discord_fetch::TOOL) {
                 Route::Skip("state of cuttlefish fetch discord")
+            } else if x::is_state_file(&text) {
+                Route::Skip("state of the X capture (tools/capture)")
             } else {
                 Route::Table
             }
@@ -229,10 +240,12 @@ pub fn classify(rel: &str, head: impl FnOnce() -> Vec<u8>) -> Route {
         "jsonl" => {
             let head = head();
             let text = String::from_utf8_lossy(&head);
-            if text.contains("\"channel_id\"") && text.contains("\"author\"") {
+            if x::is_posts_file(&text) || (name == x::POSTS_FILE && rel.starts_with("x/")) {
+                Route::X
+            } else if text.contains("\"channel_id\"") && text.contains("\"author\"") {
                 Route::DiscordArchive
             } else {
-                Route::Skip("JSON lines: not Discord messages")
+                Route::Skip("JSON lines: not Discord messages or X posts")
             }
         }
         "yaml" | "yml" | "toml" | "csv" | "tsv" | "po" | "properties" => Route::Table,
@@ -311,8 +324,8 @@ struct Seen {
     bytes: u64,
     /// Modification time, Unix seconds
     modified: i64,
-    /// What it gave: `document`, `discord`, `table`, `no-table`, `asset`,
-    /// `archive`, `copy`, `empty`
+    /// What it gave: `document`, `discord`, `x`, `table`, `no-table`,
+    /// `asset`, `archive`, `copy`, `empty`
     kind: String,
     /// The document, table or asset
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -454,9 +467,10 @@ impl Report {
     pub fn summary(&self) -> String {
         let skipped: usize = self.skipped.iter().map(|s| s.count).sum();
         alloc::format!(
-            "{} documents, {} Discord channels, {} name tables, {} images; {} unchanged, {skipped} skipped, {} failed{}",
+            "{} documents, {} Discord channels, {} X accounts, {} name tables, {} images; {} unchanged, {skipped} skipped, {} failed{}",
             self.count("document"),
             self.count("discord"),
+            self.count("x"),
             self.count("glossary"),
             self.count("asset"),
             self.unchanged,
@@ -758,6 +772,7 @@ impl Import<'_> {
         match route {
             Route::Prose => self.prose(&found, &mut seen, bytes)?,
             Route::Discord | Route::DiscordArchive => self.discord(&found, &mut seen, route)?,
+            Route::X => self.x(&found, &mut seen)?,
             Route::Image => self.image(&found, &mut seen, bytes)?,
             Route::Archive => {
                 self.archive(&found, &mut seen)?;
@@ -862,6 +877,35 @@ impl Import<'_> {
         );
         self.report.take(&found.rel, "discord", detail);
         seen.kind = String::from("discord");
+        Ok(())
+    }
+
+    /// An account's file of the X capture: one document per thread
+    fn x(&mut self, found: &Found, seen: &mut Seen) -> Result<()> {
+        let threads = x::read(&found.path)?;
+        if threads.is_empty() {
+            self.report.skip("no posts", &found.rel);
+            seen.kind = String::from("empty");
+            return Ok(());
+        }
+        let docs = x::to_documents(&threads);
+        let replies: usize = threads.iter().map(|t| t.replies.len()).sum();
+        for mut doc in docs.iter().cloned() {
+            self.meta.apply(&mut doc);
+            self.sink.add(&doc)?;
+        }
+        self.sink
+            .note(&alloc::format!("+ {} ({} threads)", found.rel, docs.len()));
+        let handle = threads
+            .iter()
+            .find_map(|t| t.post.author.handle.as_deref())
+            .unwrap_or("?");
+        self.report.take(
+            &found.rel,
+            "x",
+            alloc::format!("@{handle}: {} posts with {replies} replies", docs.len()),
+        );
+        seen.kind = String::from("x");
         Ok(())
     }
 
@@ -1508,7 +1552,21 @@ mod tests {
         );
         assert_eq!(
             classify("logs.jsonl", || b"{\"a\": 1}".to_vec()),
-            Route::Skip("JSON lines: not Discord messages")
+            Route::Skip("JSON lines: not Discord messages or X posts")
+        );
+        // An X capture: the accounts' files read, the state theirs
+        assert_eq!(
+            classify("x/ikura_coach/posts.jsonl", || {
+                br#"{"source":"x","id":"1","author":{"handle":"ikura_coach"},"replies":[]}"#
+                    .to_vec()
+            }),
+            Route::X
+        );
+        assert_eq!(
+            classify("x/state.json", || {
+                br#"{"tool": "xcap", "version": 1, "day": {}}"#.to_vec()
+            }),
+            Route::Skip("state of the X capture (tools/capture)")
         );
         assert_eq!(
             classify("discord/1/2/2.channel.json", none),
@@ -2048,6 +2106,72 @@ mod tests {
         // And once more: unchanged now
         let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
         assert_eq!(report.count("discord"), 0);
+        assert_eq!(report.unchanged, 2, "{report:#?}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn reads_x_captures() {
+        let root =
+            std::env::temp_dir().join(alloc::format!("cuttlefish-inbox-x-{}", std::process::id()));
+        let cache = root.join("cache");
+        let _ = std::fs::remove_dir_all(&root);
+        write(
+            &root,
+            "x/state.json",
+            br#"{"tool": "xcap", "version": 1, "day": {"day": "2026-09-27", "actions": 3}, "accounts": {}, "seen": {}}"#,
+        );
+        let thread = |id: &str, text: &str| {
+            alloc::format!(
+                r#"{{"source":"x","id":"{id}","url":"https://x.com/ikura_coach/status/{id}","author":{{"handle":"ikura_coach","name":"Ikura Coach"}},"date":"2026-09-24T12:00:00.000Z","text":"{text}","lang":"ja","urls":[],"media":[],"quoted":null,"reply_to":null,"replies":[{{"id":"{id}1","url":"https://x.com/fan/status/{id}1","author":{{"handle":"fan","name":"Fan"}},"date":"2026-09-24T12:20:00.000Z","text":"なるほど","lang":"ja","urls":[],"media":[],"reply_to":{{"id":"{id}","handle":"ikura_coach"}}}}],"matched":["バクダン"],"captured_at":"2026-09-27T00:00:00.000Z"}}"#
+            )
+        };
+        let mut lines = thread("10", "バクダンは湧いた瞬間に処理");
+        lines.push('\n');
+        write(&root, "x/ikura_coach/posts.jsonl", lines.as_bytes());
+        write(&root, "x/quiet_account/posts.jsonl", b"");
+        let mut sink = Memory {
+            root: root.clone(),
+            ..Default::default()
+        };
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert_eq!(report.count("x"), 1, "{report:#?}");
+        assert_eq!(
+            report.taken[0].detail,
+            "@ikura_coach: 1 posts with 1 replies"
+        );
+        assert_eq!(sink.docs.len(), 1);
+        let doc = &sink.docs[0];
+        assert_eq!(doc.source, SourceKind::X);
+        assert_eq!(
+            doc.url.as_deref(),
+            Some("https://x.com/ikura_coach/status/10")
+        );
+        assert!(
+            doc.text
+                .contains("[2026-09-24 12:20 UTC] Fan (@fan) \u{21aa} @ikura_coach: なるほど"),
+            "{}",
+            doc.text
+        );
+        let reasons: Vec<&str> = report.skipped.iter().map(|s| s.reason.as_str()).collect();
+        assert!(
+            reasons.contains(&"state of the X capture (tools/capture)"),
+            "{reasons:?}"
+        );
+        assert!(reasons.contains(&"no posts"), "{reasons:?}");
+        assert!(report.summary().contains("1 X accounts"));
+
+        // Another thread appended: the file changed, its documents replaced
+        lines.push_str(&thread("12", "Eggstra Work this weekend"));
+        lines.push('\n');
+        write(&root, "x/ikura_coach/posts.jsonl", lines.as_bytes());
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert_eq!(report.count("x"), 1);
+        assert_eq!(sink.docs.len(), 2);
+        // And once more: unchanged
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert_eq!(report.count("x"), 0);
         assert_eq!(report.unchanged, 2, "{report:#?}");
         std::fs::remove_dir_all(&root).unwrap();
     }
