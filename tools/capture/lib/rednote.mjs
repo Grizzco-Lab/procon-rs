@@ -220,6 +220,10 @@ export function commentFrom(v) {
     text: content,
     likes: count(field(v, ["like_count", "likeCount"])),
     location: text(v, ["ip_location", "ipLocation"]) || null,
+    // A comment may be a picture alone (`pictures`, its text empty)
+    images: (field(v, ["pictures"]) ?? [])
+      .map((p) => text(p, ["url_default", "urlDefault", "url"]))
+      .filter(Boolean),
     reply_to: targetId || null,
     reply_to_author: targetAuthor.nickname || null,
     replies: (field(v, ["sub_comments", "subComments"]) ?? [])
@@ -427,6 +431,7 @@ export function record(note, matched, capturedAt = new Date()) {
     text: c.text,
     likes: c.likes ?? 0,
     location: c.location ?? null,
+    images: c.images ?? [],
     reply_to: c.reply_to ?? null,
     reply_to_author: c.reply_to_author ?? null,
     replies: (c.replies ?? []).map(comment),
@@ -559,6 +564,7 @@ export function noteFromDom(dom, id, creator) {
       text: c.text ?? "",
       likes: 0,
       location: null,
+      images: [],
       reply_to: null,
       reply_to_author: null,
       replies: [],

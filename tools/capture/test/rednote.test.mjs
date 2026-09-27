@@ -114,6 +114,9 @@ export function commentsFixture(hasMore) {
           create_time: 1725030000000,
           like_count: 0,
           user_info: { user_id: "u4", nickname: "carol" },
+          pictures: [
+            { url_default: "https://sns-img/c2.jpg", url_pre: "https://x/p" },
+          ],
           sub_comment_count: 0,
           sub_comments: [],
         },
@@ -260,6 +263,9 @@ test("comments come with their replies; a replies page names its root", () => {
     ["c1", "alice", "bob"],
   );
   assert.equal(p.comments[1].location, null);
+  // A comment's pictures are kept as links; most comments have none
+  assert.deepEqual(p.comments[1].images, ["https://sns-img/c2.jpg"]);
+  assert.deepEqual(c.images, []);
   const sub = `${API}/v2/comment/sub/page?note_id=${SR}&root_comment_id=c1&num=10&cursor=s1`;
   assert.equal(rn.recognise(sub, commentsFixture(false)).root, "c1");
   assert.equal(rn.commentFrom({ like_count: 3 }), null);

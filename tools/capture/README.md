@@ -276,7 +276,7 @@ run) give about 25 notes a run, and the daily cap (450) about 75 a day.
  "images": ["https://sns-img…/1.jpg"], "video": "https://sns-video…/1.mp4",
  "likes": 12000, "collects": 3210, "shares": 12, "comment_count": 88,
  "comments": [{"id": "…", "author": {"user_id": "…", "nickname": "alice"}, "date": "…", "text": "…",
-               "likes": 5, "location": "北京", "reply_to": null, "reply_to_author": null,
+               "likes": 5, "location": "北京", "images": [], "reply_to": null, "reply_to_author": null,
                "replies": [{"id": "…", "author": {…}, "date": "…", "text": "…", "likes": 1,
                             "location": null, "reply_to": "…", "reply_to_author": "alice",
                             "replies": [], "replies_total": 0}],

@@ -64,6 +64,9 @@ pub struct Comment {
     /// The region the site shows with it
     #[serde(default)]
     pub location: Option<String>,
+    /// Pictures posted with it (a comment may be a picture alone)
+    #[serde(default)]
+    pub images: Vec<String>,
     /// The comment a reply answers, when not the root comment
     #[serde(default)]
     pub reply_to: Option<String>,
@@ -192,13 +195,17 @@ fn stamp(date: Option<DateTime<Utc>>) -> String {
 }
 
 /// One comment as a line: its time, author, whom it answers, the text
+/// (`[picture]` for a comment that is a picture alone)
 fn write_comment(text: &mut String, c: &Comment, answers: Option<&str>, indent: &str) {
     let reply = answers.map_or_else(String::new, |who| alloc::format!(" \u{21aa} {who}"));
+    let body = match c.text.trim() {
+        "" if !c.images.is_empty() => "[picture]",
+        t => t,
+    };
     text.push_str(&alloc::format!(
-        "{indent}{}{}{reply}: {}\n",
+        "{indent}{}{}{reply}: {body}\n",
         stamp(c.date),
         c.author.label(),
-        c.text.trim()
     ));
 }
 
@@ -296,7 +303,7 @@ mod tests {
     use super::*;
     use crate::game::Game;
 
-    const LINE: &str = r#"{"source":"rednote","id":"66aa00000000000000000001","url":"https://www.xiaohongshu.com/explore/66aa00000000000000000001","author":{"user_id":"5f0000000000000000000001","nickname":"Grizzco Coach"},"date":"2024-08-30T06:40:00.000Z","updated":"2024-08-30T07:40:00.000Z","kind":"video","title":"打工400分教学","text":"第一波决定一切：先处理炸弹鱼，再搬蛋。 #打工[话题]#","tags":["打工","Splatoon3"],"images":["https://sns-img/1.jpg"],"video":"https://sns-video/1.mp4","likes":12000,"collects":3210,"shares":12,"comment_count":88,"comments":[{"id":"c1","author":{"user_id":"u2","nickname":"alice"},"date":"2024-08-30T09:26:40.000Z","text":"Kill the Steelhead before the Flyfish","likes":5,"location":"北京","replies":[{"id":"c1-1","author":{"user_id":"u3","nickname":"bob"},"date":"2024-08-30T12:13:20.000Z","text":"Only when it is at the shore","likes":1,"reply_to":"c1","reply_to_author":"alice","replies":[],"replies_total":0}],"replies_total":2},{"id":"c2","author":{"user_id":"u4","nickname":"carol"},"date":null,"text":"nice","likes":0,"replies":[],"replies_total":0}],"comments_complete":false,"matched":["打工"],"captured_at":"2026-09-27T10:00:00.000Z"}"#;
+    const LINE: &str = r#"{"source":"rednote","id":"66aa00000000000000000001","url":"https://www.xiaohongshu.com/explore/66aa00000000000000000001","author":{"user_id":"5f0000000000000000000001","nickname":"Grizzco Coach"},"date":"2024-08-30T06:40:00.000Z","updated":"2024-08-30T07:40:00.000Z","kind":"video","title":"打工400分教学","text":"第一波决定一切：先处理炸弹鱼，再搬蛋。 #打工[话题]#","tags":["打工","Splatoon3"],"images":["https://sns-img/1.jpg"],"video":"https://sns-video/1.mp4","likes":12000,"collects":3210,"shares":12,"comment_count":88,"comments":[{"id":"c1","author":{"user_id":"u2","nickname":"alice"},"date":"2024-08-30T09:26:40.000Z","text":"Kill the Steelhead before the Flyfish","likes":5,"location":"北京","replies":[{"id":"c1-1","author":{"user_id":"u3","nickname":"bob"},"date":"2024-08-30T12:13:20.000Z","text":"Only when it is at the shore","likes":1,"reply_to":"c1","reply_to_author":"alice","replies":[],"replies_total":0}],"replies_total":2},{"id":"c2","author":{"user_id":"u4","nickname":"carol"},"date":null,"text":"","likes":0,"images":["https://sns-img/c2.jpg"],"replies":[],"replies_total":0}],"comments_complete":false,"matched":["打工"],"captured_at":"2026-09-27T10:00:00.000Z"}"#;
 
     #[test]
     fn recognises_the_captures_files() {
@@ -371,8 +378,10 @@ mod tests {
         assert!(doc.text.contains(
             "\n  [2024-08-30 12:13 UTC] bob \u{21aa} alice: Only when it is at the shore\n"
         ));
-        // A comment without a date has no stamp
-        assert!(doc.text.ends_with("\ncarol: nice"), "{}", doc.text);
+        // A comment without a date has no stamp; one that is a picture alone
+        // says so
+        assert!(doc.text.ends_with("\ncarol: [picture]"), "{}", doc.text);
+        assert_eq!(notes[1].comments[1].images, ["https://sns-img/c2.jpg"]);
         // Without a title, the start of the text names the document
         assert_eq!(
             docs[0].title,

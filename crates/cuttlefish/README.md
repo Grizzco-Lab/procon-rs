@@ -990,7 +990,9 @@ Salmon Run, Grizzco, ...). Each kept note is one JSON line in
 `<knowledge>/inbox/rednote/<user id>/notes.jsonl`: id, author, date,
 title, text, tags, image and video addresses (nothing downloaded), likes,
 collects, shares, the comment count, and the comments with their replies
-(author, date, text, likes, region, whom a reply answers);
+(author, date, text, likes, region, pictures as links, whom a reply
+answers; a comment that is a picture alone reads `[picture]` in the
+document);
 `inbox/rednote/state.json` holds the following list, a record per creator
 (every note decided on: kept, not about Salmon Run, unreadable) and the
 day's action count, so runs continue and stay incremental. Pace: 8 to 20 s
