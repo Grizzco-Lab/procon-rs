@@ -376,6 +376,16 @@ appNav.addEventListener("drop", (event) => event.preventDefault());
 // Every app's script has run by then
 document.addEventListener("DOMContentLoaded", routeApp);
 
+/** Load the 3D controller (three.js from the CDN) when the Studio is first
+ * shown, so other apps start without waiting for it; it announces itself
+ * with `procon3d-ready` */
+let loading3d = false;
+window.addEventListener("app-route", ({ detail }) => {
+  if (loading3d || detail.app !== "studio") return;
+  loading3d = true;
+  import("/controller3d.js").catch((error) => console.warn("3D view:", error));
+});
+
 // ------------------------------------------------------------------ guide
 
 // "How it fits together": the apps as one pipeline (a popover, so Escape or
