@@ -31,6 +31,22 @@ a copy of `config.toml` at it (`[proxy] address`, a different `[web] port`,
 `target/release/procon --config <copy>`. Dashboard settings are saved next to
 that copy (`<name>.state.json`).
 
+After changing the page's layout or styles, run the layout check against
+such a test studio (Node 22 or later and Chrome; no packages):
+
+```bash
+node scripts/layout-check.mjs http://127.0.0.1:<port>   # --only joy,salmon for some themes
+```
+
+It opens every app in headless Chrome, in each theme, in English and Chinese,
+at 1440 px (apps in the top bar and in the rail) and at phone width (390 px),
+and measures the boxes that broke before: the Studio's 3D stage (the SVG view
+without WebGL) fills its panel, the top bar is one row at 1440 px, the
+Cuttlefish chat bar sits at the bottom of the window, and no app widens the
+page sideways. Every view is listed; failures are repeated at the end and the
+exit code is 1. `CHROME` names another Chrome binary. The profile lives in a
+temporary folder and is removed afterwards.
+
 `scripts/gadget_procon.sh` and `scripts/cleanup_gadget.sh` set up and remove
 the USB gadget by hand; the proxy does this itself (`src/gadget.rs`).
 

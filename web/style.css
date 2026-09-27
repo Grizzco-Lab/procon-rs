@@ -2458,8 +2458,15 @@ input:focus-visible {
 }
 
 .p-frame .panel-head,
-.p-labels .panel-head {
+.p-labels .panel-head,
+.p-v-frame .panel-head {
   flex-wrap: wrap;
+}
+
+/* "N in <root>": a long path breaks instead of widening a phone's page */
+#i-sessions-note {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .panel-head .controls {
