@@ -12,6 +12,7 @@
 //     scrubber,    // the .scrubber element
 //     strip,       // the neighbours strip (optional), stripNote its note
 //     table,       // tbody of the labels table (optional), predNote its note
+//     compact,     // a narrow labels table: no Valid column, values apart by a space
 //     remember,    // localStorage prefix of the choices (overlay, sound, spacing)
 //     neighbours,  // { radius, seconds }: thumbnails on each side, every frame or every `seconds`
 //     onFrame(n), onSeek(n), onPlay(playing), onMark(tick), onError(message),
@@ -225,6 +226,8 @@ class Player {
     this.stripNote = options.stripNote ?? null;
     this.table = options.table ?? null;
     this.predNote = options.predNote ?? null;
+    /** A narrow labels table: no Valid column, a frame without reports marked on its row */
+    this.compact = Boolean(options.compact);
     this.prefix = `procon-${options.remember ?? "player"}-`;
     const neighbours = options.neighbours ?? {};
     /** Thumbnails on each side of the current frame */
@@ -806,6 +809,10 @@ class Player {
   drawTable(rows) {
     if (!this.table) return;
     const body = this.table;
+    // Compact: values apart by a space alone
+    const tight = (text) => (v) => text(v).replaceAll(", ", " ");
+    const stick = this.compact ? tight(stickText) : stickText;
+    const gyro = this.compact ? tight(gyroText) : gyroText;
     body.replaceChildren();
     for (const { n, truth, pred } of rows) {
       const tr = document.createElement("tr");
@@ -813,15 +820,22 @@ class Player {
       tr.onclick = () => this.go(n);
       const number = document.createElement("td");
       number.textContent = n;
+      tr.append(number);
+      if (!this.compact)
+        tr.append(
+          this.cell("valid", truth, pred, (v) =>
+            v == null ? "" : v ? "yes" : "no",
+          ),
+        );
+      else if (truth && !validLabel(truth)) {
+        tr.classList.add("no-reports");
+        tr.title = t("player.noReports");
+      }
       tr.append(
-        number,
-        this.cell("valid", truth, pred, (v) =>
-          v == null ? "" : v ? "yes" : "no",
-        ),
         this.cell("buttons", truth, pred, (v) => (v ? v.join(" ") || "–" : "")),
-        this.cell("left_stick", truth, pred, stickText),
-        this.cell("right_stick", truth, pred, stickText),
-        this.cell("gyro_deg", truth, pred, gyroText),
+        this.cell("left_stick", truth, pred, stick),
+        this.cell("right_stick", truth, pred, stick),
+        this.cell("gyro_deg", truth, pred, gyro),
       );
       body.append(tr);
     }

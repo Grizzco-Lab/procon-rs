@@ -875,8 +875,8 @@
               </button>
             </div>
           </header>
-          <!-- The frame with its overlays, and the scrubber with the labeled
-               frames as marks: both filled by the shared player -->
+          <!-- The frame with its overlays, the scrubber with the labeled
+               frames as marks and the neighbours: filled by the shared player -->
           <div class="screen" id="i-screen"></div>
           <div class="scrubber" id="i-scrubber"></div>
           <!-- Labeling mode: classes with their counts, actions and Follow, filled by label.js -->
@@ -937,6 +937,9 @@
             </div>
             <p class="panel-note" id="l-note"></p>
           </div>
+          <!-- Neighbours: the frames on each side, right under the scrubber
+               (under the labeling bar while labeling) -->
+          <div class="strip" id="i-strip"></div>
         </section>
 
         <section class="panel p-labels" aria-labelledby="h-labels">
@@ -1009,14 +1012,6 @@
               <span id="i-gyro-tol"></span>°).</span
             >
           </p>
-        </section>
-
-        <section class="panel p-strip" aria-labelledby="h-strip">
-          <header class="panel-head">
-            <h2 id="h-strip">Neighbours</h2>
-            <span class="panel-note" id="i-strip-note"></span>
-          </header>
-          <div class="strip" id="i-strip"></div>
         </section>
 
         <section class="panel p-session" aria-labelledby="h-session">
@@ -2394,7 +2389,10 @@
       </main>
     </div>
 
-    <!-- Predictor app: what the IDM predicts on a video, against the truth -->
+    <!-- Predictor app: what the IDM predicts on a video, against the truth.
+         What is read while watching sits next to the video: the neighbours
+         under it, the run, the predicted controller and the frames around
+         the playhead in a side column that keeps to the window. -->
     <div data-app-section="predictor" hidden>
       <main class="layout" id="predictor-layout">
         <section class="panel p-p-video" aria-labelledby="h-p-video">
@@ -2414,37 +2412,180 @@
             </p>
           </div>
           <div class="scrubber" id="p-scrubber"></div>
-          <div class="p-p-controller">
-            <div class="p-mini" id="p-mini"></div>
-            <div class="p-probs" id="p-probs"></div>
-          </div>
-          <!-- The frames around the current one, truth over prediction -->
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Frame</th>
-                  <th>Valid</th>
-                  <th>Buttons</th>
-                  <th>Left stick</th>
-                  <th>Right stick</th>
-                  <th>Gyro °</th>
-                </tr>
-              </thead>
-              <tbody id="p-rows"></tbody>
-            </table>
-          </div>
-          <p class="panel-note keys">
-            <kbd>Space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> one frame ·
-            <kbd>Shift</kbd> ten · <kbd>G</kbd> go to a frame or time.
-            <span id="p-pred-note" hidden
-              >Cells show truth over <span class="pred">prediction</span>; red
-              ones differ (buttons at all, sticks by more than 256, gyro by more
-              than 0.5°).</span
-            >
-          </p>
           <div class="strip" id="p-strip"></div>
         </section>
+
+        <div class="p-p-side">
+          <section class="panel p-p-run" aria-labelledby="h-p-run">
+            <header class="panel-head">
+              <h2 id="h-p-run">Predict</h2>
+              <span class="panel-note" id="p-gpu"></span>
+            </header>
+            <form class="v-form" id="p-form">
+              <div class="cf-row">
+                <select class="select" id="p-kind" aria-label="Kind of video">
+                  <option value="session">Session</option>
+                  <option value="review">Review</option>
+                  <option value="file">File</option>
+                </select>
+                <span class="cf-row cf-grow" id="p-session-row">
+                  <select
+                    class="select cf-grow"
+                    id="p-session"
+                    aria-label="Session"
+                  ></select>
+                  <select
+                    class="select"
+                    id="p-segment"
+                    aria-label="Segment"
+                    hidden
+                  ></select>
+                </span>
+                <select
+                  class="select cf-grow"
+                  id="p-review"
+                  aria-label="Review"
+                  hidden
+                ></select>
+                <input
+                  class="select cf-grow"
+                  id="p-file"
+                  type="text"
+                  placeholder="/full/path/to/video.mp4"
+                  aria-label="Video file"
+                  hidden
+                />
+              </div>
+              <div class="cf-row">
+                <select
+                  class="select cf-grow"
+                  id="p-ckpt"
+                  aria-label="Checkpoint"
+                ></select>
+                <label class="check" id="p-cpu-wrap" hidden
+                  ><input type="checkbox" id="p-cpu" /> CPU</label
+                >
+              </div>
+              <div class="cf-row p-range">
+                <input
+                  class="select num"
+                  id="p-start"
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="From s"
+                  aria-label="From (s)"
+                  title="From (s)"
+                />
+                <input
+                  class="select num"
+                  id="p-end"
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="To s"
+                  aria-label="To (s)"
+                  title="To (s)"
+                />
+                <button type="submit" class="btn btn-small" id="p-run">
+                  Run the IDM
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  id="p-cancel"
+                  hidden
+                >
+                  Cancel
+                </button>
+                <button type="button" class="btn btn-small" id="p-recheck">
+                  Recheck
+                </button>
+              </div>
+            </form>
+            <p class="panel-note" id="p-caps"></p>
+            <div class="meter" id="p-progress" hidden>
+              <div class="meter-head">
+                <span class="meter-label" id="p-state"></span>
+                <span class="meter-value num" id="p-count"></span>
+              </div>
+              <div class="meter-track"><div class="meter-fill"></div></div>
+              <div class="meter-note" id="p-job-note"></div>
+            </div>
+            <p class="notice" id="p-error" hidden></p>
+            <details class="p-log" id="p-log-wrap" hidden>
+              <summary>Command and output</summary>
+              <code id="p-command"></code>
+              <pre id="p-log"></pre>
+            </details>
+          </section>
+
+          <!-- The predicted controller and each button's probability -->
+          <section class="panel p-p-predicted" aria-labelledby="h-p-predicted">
+            <header class="panel-head">
+              <h2 id="h-p-predicted">Predicted</h2>
+              <span class="panel-note">this frame</span>
+            </header>
+            <div class="p-p-controller">
+              <div class="p-mini" id="p-mini"></div>
+              <div class="p-probs" id="p-probs"></div>
+            </div>
+          </section>
+
+          <!-- The frames around the current one, truth over prediction -->
+          <section class="panel p-p-frames" aria-labelledby="h-p-frames">
+            <header class="panel-head">
+              <h2 id="h-p-frames">Frames</h2>
+              <span class="panel-note">±3 around the playhead</span>
+            </header>
+            <div class="table-wrap">
+              <table class="data-table labels-compact">
+                <thead>
+                  <tr>
+                    <th title="Frame">#</th>
+                    <th>Buttons</th>
+                    <th title="Left stick">L stick</th>
+                    <th title="Right stick">R stick</th>
+                    <th title="Gyro, degrees over the frame">Gyro °</th>
+                  </tr>
+                </thead>
+                <tbody id="p-rows"></tbody>
+              </table>
+            </div>
+            <p class="panel-note keys">
+              <span id="p-pred-note" hidden
+                >Truth over <span class="pred">prediction</span>; red cells
+                differ (buttons at all, sticks by more than 256, gyro by more
+                than 0.5°).</span
+              >
+              <kbd>Space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> one frame
+              · <kbd>Shift</kbd> ten · <kbd>G</kbd> go to a frame or time.
+            </p>
+          </section>
+
+          <section class="panel p-p-agree" aria-labelledby="h-p-agree">
+            <header class="panel-head">
+              <h2 id="h-p-agree">Agreement</h2>
+              <span class="panel-note" id="p-agree-note"></span>
+              <select
+                class="select"
+                id="p-agree-mode"
+                aria-label="Frames compared"
+                hidden
+              >
+                <option value="view">In view</option>
+                <option value="all">Whole video</option>
+              </select>
+            </header>
+            <div id="p-agree">
+              <p class="panel-note">Open a prediction.</p>
+            </div>
+            <p class="panel-note">
+              F1 per button; correlation (r) for sticks, gyro and camera turn,
+              over frames with controller reports.
+            </p>
+          </section>
+        </div>
 
         <section class="panel p-p-timeline" aria-labelledby="h-p-timeline">
           <header class="panel-head">
@@ -2461,130 +2602,6 @@
             </select>
           </header>
           <canvas class="p-timeline" id="p-timeline"></canvas>
-        </section>
-
-        <section class="panel p-p-agree" aria-labelledby="h-p-agree">
-          <header class="panel-head">
-            <h2 id="h-p-agree">Agreement</h2>
-            <span class="panel-note" id="p-agree-note"></span>
-            <select
-              class="select"
-              id="p-agree-mode"
-              aria-label="Frames compared"
-              hidden
-            >
-              <option value="view">In view</option>
-              <option value="all">Whole video</option>
-            </select>
-          </header>
-          <div id="p-agree">
-            <p class="panel-note">Open a prediction.</p>
-          </div>
-          <p class="panel-note">
-            F1 per button; correlation (r) for sticks, gyro and camera turn,
-            over frames with controller reports.
-          </p>
-        </section>
-
-        <section class="panel p-p-run" aria-labelledby="h-p-run">
-          <header class="panel-head">
-            <h2 id="h-p-run">Predict</h2>
-            <span class="panel-note" id="p-gpu"></span>
-          </header>
-          <form class="v-form" id="p-form">
-            <div class="cf-row">
-              <select class="select" id="p-kind" aria-label="Kind of video">
-                <option value="session">Session</option>
-                <option value="review">Review</option>
-                <option value="file">File</option>
-              </select>
-              <span class="cf-row cf-grow" id="p-session-row">
-                <select
-                  class="select cf-grow"
-                  id="p-session"
-                  aria-label="Session"
-                ></select>
-                <select
-                  class="select"
-                  id="p-segment"
-                  aria-label="Segment"
-                  hidden
-                ></select>
-              </span>
-              <select
-                class="select cf-grow"
-                id="p-review"
-                aria-label="Review"
-                hidden
-              ></select>
-              <input
-                class="select cf-grow"
-                id="p-file"
-                type="text"
-                placeholder="/full/path/to/video.mp4"
-                aria-label="Video file"
-                hidden
-              />
-            </div>
-            <div class="v-range">
-              <label class="field"
-                ><span class="readout-label">From (s)</span
-                ><input
-                  class="select num"
-                  id="p-start"
-                  type="number"
-                  min="0"
-                  step="any"
-                  placeholder="start"
-              /></label>
-              <label class="field"
-                ><span class="readout-label">To (s)</span
-                ><input
-                  class="select num"
-                  id="p-end"
-                  type="number"
-                  min="0"
-                  step="any"
-                  placeholder="end"
-              /></label>
-            </div>
-            <div class="cf-row">
-              <select
-                class="select cf-grow"
-                id="p-ckpt"
-                aria-label="Checkpoint"
-              ></select>
-              <label class="check" id="p-cpu-wrap" hidden
-                ><input type="checkbox" id="p-cpu" /> CPU</label
-              >
-            </div>
-            <div class="cf-row">
-              <button type="submit" class="btn btn-small" id="p-run">
-                Run the IDM
-              </button>
-              <button type="button" class="btn btn-small" id="p-cancel" hidden>
-                Cancel
-              </button>
-              <button type="button" class="btn btn-small" id="p-recheck">
-                Recheck
-              </button>
-            </div>
-          </form>
-          <p class="panel-note" id="p-caps"></p>
-          <div class="meter" id="p-progress" hidden>
-            <div class="meter-head">
-              <span class="meter-label" id="p-state"></span>
-              <span class="meter-value num" id="p-count"></span>
-            </div>
-            <div class="meter-track"><div class="meter-fill"></div></div>
-            <div class="meter-note" id="p-job-note"></div>
-          </div>
-          <p class="notice" id="p-error" hidden></p>
-          <details class="p-log" id="p-log-wrap" hidden>
-            <summary>Command and output</summary>
-            <code id="p-command"></code>
-            <pre id="p-log"></pre>
-          </details>
         </section>
 
         <section class="panel p-p-runs" aria-labelledby="h-p-runs">

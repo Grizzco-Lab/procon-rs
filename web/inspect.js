@@ -55,7 +55,6 @@ const framePlayer = new Player({
   controls: $("i-player-controls"),
   scrubber: $("i-scrubber"),
   strip: $("i-strip"),
-  stripNote: $("i-strip-note"),
   table: $("i-rows"),
   predNote: $("i-pred-note"),
   remember: "inspect",

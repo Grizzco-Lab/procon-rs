@@ -143,8 +143,9 @@
 }
 
 /* --------------------------------------------------------- layouts
- * The Studio theme's grids: video and controller on top, docks under.
- * Wide screens only, so the narrow and phone layouts in style.css apply.
+ * The Studio theme's grid: video and controller on top, docks under (the
+ * other apps' grids come from style.css). Wide screens only, so the
+ * narrow and phone layouts in style.css apply.
  */
 
 @media (min-width: 1101px) {
@@ -153,13 +154,6 @@
     grid-template-areas:
       "video video video video controller controller controller controller"
       "recorder recorder replay replay stats stats motion motion";
-  }
-
-  [data-theme="salmon"]:not([data-layout="phone"]) #inspect-viewer {
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-    grid-template-areas:
-      "frame labels"
-      "strip session";
   }
 }
 
@@ -367,6 +361,25 @@
   --band: var(--sr-purple);
 }
 [data-theme="salmon"] .k-col + .k-col .panel:nth-of-type(6n + 3) {
+  --band: var(--sr-lime);
+}
+
+/* The Predictor's video leaves room for the thicker cards */
+[data-theme="salmon"] #predictor-layout {
+  --p-rest: 370px;
+}
+
+/* The Predictor's side column likewise, so it differs from the video */
+[data-theme="salmon"] .p-p-side .panel:nth-of-type(6n + 1) {
+  --band: var(--sr-teal);
+}
+[data-theme="salmon"] .p-p-side .panel:nth-of-type(6n + 2) {
+  --band: var(--sr-purple);
+}
+[data-theme="salmon"] .p-p-side .panel:nth-of-type(6n + 3) {
+  --band: var(--sr-gold);
+}
+[data-theme="salmon"] .p-p-side .panel:nth-of-type(6n + 4) {
   --band: var(--sr-lime);
 }
 

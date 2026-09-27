@@ -149,9 +149,9 @@ with the picture, and a model's predictions against them.
 - **A segment**: the frame at 360p in the player (see below) with its labels
   drawn over it (Overlay: Full, Minimal or None; with a predictions file the
   Full overlay shows the prediction against the truth), the segment's sound,
-  the three frames on each side, and a table of their labels (buttons,
-  sticks, gyro degrees over the frame; truth over prediction, mismatches in
-  red). R goes to a random frame where a button changes or the gyro turns
+  the three frames on each side right under it, and beside it a table of
+  their labels (buttons, sticks, gyro degrees over the frame; truth over
+  prediction, mismatches in red). R goes to a random frame where a button changes or the gyro turns
   (Shift+R: any frame).
 - **Delay**: the `video_delay_ms` box starts at the session's delay from the
   calibration file (`[inspect] calibration`, AgentZero's `calibration.json`),
@@ -380,11 +380,14 @@ it is for: labeling gameplay nobody recorded a controller for.
   `Predictions` next to the sessions' folder) as
   `<video>/<checkpoint>/pred.jsonl` and `run.json` (video, range, checkpoint,
   time taken).
-- **Prediction**: the video in the player; its Full overlay shows the
-  prediction against the truth (predicted keys marked, mismatches edged in
-  red, both sticks and gyro bars) and its table lists the frames around,
-  truth over prediction, as in the Inkspector. A small controller shows the
-  predicted buttons and sticks, with each button's probability.
+- **Prediction**: the video in the player, sized to fit the window with the
+  neighbours strip under it; its Full overlay shows the prediction against
+  the truth (predicted keys marked, mismatches edged in red, both sticks and
+  gyro bars). Beside it, in a column that stays in view while the page
+  scrolls: Predict, a small controller with the predicted buttons and sticks
+  and each button's probability, the frames around the playhead (truth over
+  prediction, as in the Inkspector) and Agreement. Narrow windows and phones
+  stack them: video, frames, controller, then the rest.
 - **Timeline**: 5 to 60 s around the playhead: a lane per button (truth in
   the lower half, the predicted probability above it, a mark when predicted
   pressed), the sticks, gyro pitch and yaw and the camera turn (truth

@@ -1,8 +1,10 @@
 // Predictor app: run AgentZero's inverse dynamics model (IDM) on a video
 // and watch what it predicts, frame by frame, next to the truth when the
 // video has a controller recording: the shared player (player.js) shows the
-// video with the Full overlay and the labels table comparing the two, as in
-// the Inkspector; the timeline and the agreement panels follow it. Runs
+// video with the Full overlay and the neighbours under it; the side column
+// holds the run, the predicted controller, the labels table comparing the
+// two (as in the Inkspector) and the agreement; the timeline and the stored
+// runs follow the video. Runs
 // after app.js and player.js and uses their helpers ($, escapeHtml,
 // stickPercent). Runs go through /api/predictor (see src/predictor.rs); the
 // video plays from /api/cuttlefish/video. State lives in the hash:
@@ -446,7 +448,7 @@
 
   // ------------------------------------------------------------ the viewer
 
-  /** A small controller next to the video, copied from the Studio */
+  /** A small controller beside the video, copied from the Studio */
   const mini = $("procon").cloneNode(true);
   for (const el of [mini, ...mini.querySelectorAll("[id]")]) {
     if (!el.closest("defs")) el.removeAttribute("id");
@@ -469,6 +471,7 @@
     scrubber: $("p-scrubber"),
     strip: $("p-strip"),
     table: $("p-rows"),
+    compact: true,
     predNote: $("p-pred-note"),
     remember: "predictor",
     neighbours: { radius: 3 },
