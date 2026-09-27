@@ -78,9 +78,7 @@ function markView() {
     );
   }
   for (const button of document.querySelectorAll("[data-toggle-rail]")) {
-    button.title = expanded
-      ? "Collapse the rail: icons only"
-      : "Expand the rail: icons with names";
+    button.title = t(expanded ? "view.rail.collapse" : "view.rail.expand");
     button.setAttribute("aria-expanded", String(expanded));
   }
 }
@@ -751,12 +749,9 @@ function updateClock(now) {
   // every animation frame makes the browser repaint it every frame
   if (chip.dataset.state !== recorder.state) {
     chip.dataset.state = recorder.state;
-    chip.title = `${REC_LABEL[recorder.state]}: recording is run from the Studio app`;
+    chip.title = t(`chip.rec.${recorder.state}Title`);
   }
-  const chipText =
-    recorder.state === "idle"
-      ? "Not recording"
-      : `${recorder.state === "paused" ? "Paused" : "REC"} ${text}`;
+  const chipText = t(`chip.rec.${recorder.state}`, { time: text });
   const chipLabel = chip.querySelector(".chip-text");
   if (chipLabel.textContent !== chipText) chipLabel.textContent = chipText;
 }
@@ -1204,27 +1199,52 @@ function setChip(id, level, text, title = "") {
   chip.querySelector(".chip-text").textContent = text;
 }
 
-function renderStatus(status) {
-  const link = status.link;
+/** The link as the last status gave it: undefined before the first, null
+ * while the dashboard is offline */
+let shownLink;
+
+/** The top bar's link chips: proxy, controller and latency */
+function renderLinkChips(link = shownLink) {
+  shownLink = link;
+  if (link === undefined) {
+    setChip("chip-link", "off", t("chip.connecting"));
+    setChip("chip-controller", "off", t("chip.controller"));
+    setChip("chip-latency", "off", t("chip.latencyUnknown"));
+    return;
+  }
+  if (link === null) {
+    setChip("chip-link", "off", t("chip.offline"));
+    setChip("chip-controller", "off", t("chip.noControllerTitle"));
+    setChip("chip-latency", "off", t("chip.latencyOff"));
+    return;
+  }
   const offset = `${link.clock_offset_ms >= 0 ? "+" : "−"}${Math.abs(link.clock_offset_ms)} ms`;
   setChip(
     "chip-link",
     link.connected ? "good" : "critical",
-    link.connected ? "Proxy" : "No proxy",
-    link.connected
-      ? `Proxy connected: ${link.address}, host clock ${offset} vs proxy`
-      : `Proxy not connected: ${link.address}`,
+    t(link.connected ? "chip.proxy" : "chip.noProxy"),
+    t(link.connected ? "chip.proxyTitle" : "chip.noProxyTitle", {
+      address: link.address,
+      offset,
+    }),
   );
   const input = link.connected && link.input_rate > 0;
   setChip(
     "chip-controller",
     input ? "good" : "critical",
-    input ? "Controller" : "No controller",
+    t(input ? "chip.controller" : "chip.noController"),
     input
-      ? `Controller input at ${link.input_rate.toFixed(1)} Hz`
-      : "No controller input",
+      ? t("chip.controllerTitle", { rate: link.input_rate.toFixed(1) })
+      : t("chip.noControllerTitle"),
   );
   renderLatency(link.forward_us);
+}
+
+function renderStatus(status) {
+  const link = status.link;
+  renderLinkChips(link);
+  const offset = `${link.clock_offset_ms >= 0 ? "+" : "−"}${Math.abs(link.clock_offset_ms)} ms`;
+  const input = link.connected && link.input_rate > 0;
   $("input-rate").textContent = input
     ? `${link.input_rate.toFixed(1)} Hz · clock ${offset}`
     : "No input";
@@ -1300,8 +1320,8 @@ function renderLatency(forward) {
     setChip(
       "chip-latency",
       "off",
-      "Latency –",
-      "Proxy latency unknown: no reports forwarded in the last half second",
+      t("chip.latencyUnknown"),
+      t("chip.latencyUnknownTitle"),
     );
     return;
   }
@@ -1311,9 +1331,7 @@ function renderLatency(forward) {
     "chip-latency",
     max < 4 ? "good" : max < 10 ? "warning" : "critical",
     `+${mean.toFixed(1)} ms`,
-    `Proxy latency. From the proxy reading a report to the Switch taking it: mean ${mean.toFixed(2)} ms, ` +
-      `max ${max.toFixed(2)} ms over the last half second. The controller's own USB ` +
-      `polling (up to 8 ms) comes on top, as it would without the proxy.`,
+    t("chip.latencyTitle", { mean: mean.toFixed(2), max: max.toFixed(2) }),
   );
 }
 
@@ -1450,9 +1468,7 @@ let latestState = null;
 let latestOrientation = null;
 
 function markOffline() {
-  setChip("chip-link", "off", "Dashboard offline, reconnecting…");
-  setChip("chip-controller", "off", "No controller input");
-  setChip("chip-latency", "off", "Proxy latency unknown");
+  renderLinkChips(null);
   procon.classList.add("is-idle");
   $("procon-3d").classList.add("is-idle");
 }
@@ -1500,5 +1516,13 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+// The shell's words that scripts write: the rail's tooltip, the status chips
+window.addEventListener("lang-change", () => {
+  markView();
+  renderLinkChips();
+  $("chip-rec").title = t(`chip.rec.${recorder.state}Title`);
+});
+
+renderLinkChips();
 connect();
 requestAnimationFrame(frame);

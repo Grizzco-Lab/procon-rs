@@ -56,41 +56,46 @@
       </div>
       <!-- Apps: a rail on the left or a segmented switch in this bar (see
            data-nav); each name shows as a tooltip where only icons fit -->
-      <nav class="app-nav" aria-label="Apps">
+      <nav class="app-nav" aria-label="Apps" data-i18n-aria-label="shell.apps">
         <a href="/studio" data-app="studio">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/app-studio.svg#i" />
           </svg>
-          <span class="app-name">Studio</span>
+          <span class="app-name" data-i18n="app.studio">Studio</span>
         </a>
         <a href="/inspect" data-app="inspect">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/app-inkspector.svg#i" />
           </svg>
-          <span class="app-name">Inkspector</span>
+          <span class="app-name" data-i18n="app.inspect">Inkspector</span>
         </a>
         <a href="/cuttlefish" data-app="cuttlefish">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/app-cuttlefish.svg#i" />
           </svg>
-          <span class="app-name">Cuttlefish</span>
+          <span class="app-name" data-i18n="app.cuttlefish">Cuttlefish</span>
         </a>
         <a href="/vision" data-app="vision">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/app-vision.svg#i" />
           </svg>
-          <span class="app-name">Vision</span>
+          <span class="app-name" data-i18n="app.vision">Vision</span>
         </a>
         <a href="/predictor" data-app="predictor">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/app-predictor.svg#i" />
           </svg>
-          <span class="app-name">Predictor</span>
+          <span class="app-name" data-i18n="app.predictor">Predictor</span>
         </a>
       </nav>
       <!-- Status: passive indicators (a dot and a word, details on hover),
            the open app's first, then the studio's own -->
-      <div class="status-strip" role="group" aria-label="Status">
+      <div
+        class="status-strip"
+        role="group"
+        aria-label="Status"
+        data-i18n-aria-label="shell.status"
+      >
         <!-- Inkspector only: the session's delay -->
         <span class="chip-group" data-app-only="inspect">
           <span class="chip" id="i-delay-chip" data-level="off" hidden>
@@ -161,7 +166,7 @@
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/ui-settings.svg#i" />
           </svg>
-          <span class="tool-name">View</span>
+          <span class="tool-name" data-i18n="view.name">View</span>
         </button>
         <!-- Rail only: widens it to icons with names, and back -->
         <button
@@ -178,19 +183,41 @@
       <!-- One grid: a label column and the options' column, so every row's
            first option lines up -->
       <div class="view-menu" id="view-menu" popover>
-        <span class="view-label">Theme</span>
+        <span class="view-label" data-i18n="view.theme">Theme</span>
         <div class="view-choices">
-          <button type="button" data-pick="studio">Studio</button>
-          <button type="button" data-pick="joy">Joy</button>
-          <button type="button" data-pick="telemetry">Telemetry</button>
-          <button type="button" data-pick="salmon">Salmon Run</button>
+          <button
+            type="button"
+            data-pick="studio"
+            data-i18n="view.theme.studio"
+          >
+            Studio
+          </button>
+          <button type="button" data-pick="joy" data-i18n="view.theme.joy">
+            Joy
+          </button>
+          <button
+            type="button"
+            data-pick="telemetry"
+            data-i18n="view.theme.telemetry"
+          >
+            Telemetry
+          </button>
+          <button
+            type="button"
+            data-pick="salmon"
+            data-i18n="view.theme.salmon"
+          >
+            Salmon Run
+          </button>
         </div>
-        <span class="view-label">Layout</span>
+        <span class="view-label" data-i18n="view.layout">Layout</span>
         <div class="view-choices">
           <button
             type="button"
             data-pick-layout="auto"
             title="Fit the window: panels side by side on wide screens"
+            data-i18n="view.layout.auto"
+            data-i18n-title="view.layout.autoTitle"
           >
             Auto
           </button>
@@ -198,6 +225,8 @@
             type="button"
             data-pick-layout="phone"
             title="Single-column phone layout"
+            data-i18n="view.layout.phone"
+            data-i18n-title="view.layout.phoneTitle"
           >
             Phone
           </button>
@@ -207,12 +236,14 @@
           <button type="button" data-pick-lang="en" lang="en">English</button>
           <button type="button" data-pick-lang="zh" lang="zh-CN"></button>
         </div>
-        <span class="view-label">Apps</span>
+        <span class="view-label" data-i18n="view.apps">Apps</span>
         <div class="view-choices">
           <button
             type="button"
             data-pick-nav="side"
             title="Apps in a left rail; drag them, or Alt+arrows on one, to reorder"
+            data-i18n="view.apps.side"
+            data-i18n-title="view.apps.sideTitle"
           >
             Side rail
           </button>
@@ -220,16 +251,22 @@
             type="button"
             data-pick-nav="top"
             title="Apps in the top bar; drag them, or Alt+arrows on one, to reorder"
+            data-i18n="view.apps.top"
+            data-i18n-title="view.apps.topTitle"
           >
             Top bar
           </button>
         </div>
-        <span class="view-label" data-rail-only>Rail</span>
+        <span class="view-label" data-rail-only data-i18n="view.rail"
+          >Rail</span
+        >
         <div class="view-choices" data-rail-only>
           <button
             type="button"
             data-pick-rail="compact"
             title="Icons only; the names show as tooltips"
+            data-i18n="view.rail.compact"
+            data-i18n-title="view.rail.compactTitle"
           >
             Compact
           </button>
@@ -237,6 +274,8 @@
             type="button"
             data-pick-rail="expanded"
             title="Icons with their names"
+            data-i18n="view.rail.expanded"
+            data-i18n-title="view.rail.expandedTitle"
           >
             Expanded
           </button>
