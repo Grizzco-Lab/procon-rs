@@ -25,7 +25,7 @@
 //! the VODs played in them.
 //! [`review::Reviewer`] retrieves what is relevant to a moment or question
 //! and asks the model through the Anthropic Messages API or the Claude Code
-//! CLI ([`llm`], [`claude_cli`]). The player's own corrections are expert
+//! CLI ([`llm`], [`claude_cli`]), with the video frames [`sampling`] picks. The player's own corrections are expert
 //! notes ([`notes`]), the most trusted source; a bank of deep questions
 //! ([`questions`]) is asked through [`deep_eval`] and the answers reviewed
 //! into notes.
@@ -69,6 +69,7 @@ pub mod pedia;
 pub mod php;
 pub mod questions;
 pub mod review;
+pub mod sampling;
 pub mod situation;
 pub mod slang;
 pub mod store;

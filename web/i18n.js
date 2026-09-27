@@ -496,6 +496,9 @@ const I18N = {
     "cf.ask.fromLabel": "Range start",
     "cf.ask.toLabel": "Range end",
     "cf.ask.badRange": "The range must end after it starts",
+    "cf.ask.longRange": "A range is at most {max} s",
+    "cf.ask.fpsLabel": "Frames per second of a range",
+    "cf.ask.heightLabel": "Frame height of a range (never above the video's)",
     "cf.ask.watching": "Cuttlefish is watching…",
     "cf.chat.entryNote":
       "a question about your play; each conversation is a review, with or without a video",
@@ -525,6 +528,10 @@ const I18N = {
     "cf.chat.ctxMoment": "this moment",
     "cf.chat.ctxRange": "a range",
     "cf.chat.ctxNone": "no frames",
+    "cf.cost.one": "≈ {tokens} image tokens ({frames} frames)",
+    "cf.cost.two": "≈ {scout} + up to {answer} image tokens (two passes)",
+    "cf.cost.title":
+      "Images the model reads, about width × height / 750 tokens each. A range over 20 s takes two passes: a sparse overview picks the key moments, then sharper frames around them.",
     "cf.chat.at": "at {time}",
     "cf.chat.sources": "Sources",
     "cf.chat.experts": "Expert comments given",

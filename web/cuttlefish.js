@@ -43,6 +43,22 @@
   const DANMAKU_CHARS = 120;
   /** Range reviewed by default: this long up to the current time */
   const RANGE_S = 15;
+  /** What the studio sends with a message about the video, as in
+   * `cuttlefish::sampling`: 15 frames around a moment at 720p, a range at
+   * the chosen rate and height (at most MAX_RANGE_S long, MAX_FRAMES
+   * frames), and past TWO_PASS_S an overview at SCOUT_FPS and SCOUT_HEIGHT,
+   * then KEY_FRAMES at most around the key moments. Never above the
+   * video's own height; an image costs about width × height / 750 tokens. */
+  const AI = {
+    MOMENT_FRAMES: 15,
+    MOMENT_HEIGHT: 720,
+    MAX_RANGE_S: 100,
+    MAX_FRAMES: 60,
+    TWO_PASS_S: 20,
+    SCOUT_FPS: 0.5,
+    SCOUT_HEIGHT: 360,
+    KEY_FRAMES: 25,
+  };
   /** Frame rate assumed until the video's is known */
   const DEFAULT_FPS = 30;
   /** Thumbnails on each side of the playhead in the neighbours strip */
@@ -92,6 +108,8 @@
     metaTimer: null,
     /** Whole second the YouTube links point at */
     linkSecond: null,
+    /** The open video's size, once known: {width, height} */
+    meta: null,
   };
 
   /** The chat with Cuttlefish */
@@ -138,6 +156,7 @@
       followLinks(now);
       if (player.playing) danmakuTick(now);
       else writeUrl();
+      markCost();
     },
     onSeek() {
       clearDanmaku();
@@ -758,6 +777,7 @@
     note.hidden = true;
     note.textContent = "";
     screen.style.aspectRatio = "";
+    cf.meta = null;
     clearDanmaku();
     markSaved(id ? "saved" : "new");
     drawChat();
@@ -788,6 +808,8 @@
       if (!response.ok) throw new Error(meta.error);
       if (cf.review !== review) return;
       player.setFps(meta.fps || DEFAULT_FPS);
+      cf.meta = { width: meta.width, height: meta.height };
+      markCost();
       drawMarkers();
       // The layer covers the picture exactly, so its fractions are the frame's
       if (meta.width && meta.height)
@@ -1879,6 +1901,7 @@
     const ctx = $("cf-ctx").value;
     $("cf-chat-range").hidden = ctx !== "range";
     $("cf-chat-review").hidden = ctx === "none";
+    markCost();
   }
 
   $("cf-ctx").value = remembered("context", "moment");
@@ -1886,12 +1909,98 @@
     remember("context", $("cf-ctx").value);
     markContext();
   };
+  for (const [id, key] of [
+    ["cf-chat-fps", "aiFps"],
+    ["cf-chat-height", "aiHeight"],
+  ]) {
+    const select = $(id);
+    select.value = remembered(key, select.value);
+    // A stored value no option has falls back to the default
+    if (!select.value) select.selectedIndex = 1;
+    select.onchange = () => {
+      remember(key, select.value);
+      markCost();
+    };
+  }
+  for (const id of ["cf-chat-from", "cf-chat-to"])
+    $(id).addEventListener("input", markCost);
+
+  /** A frame's size at `height`, never above the video's own */
+  function aiSize(height) {
+    const { width: w, height: h } = cf.meta ?? {};
+    if (!w || !h) return [Math.round((height * 16) / 9 / 2) * 2, height];
+    const out = Math.min(height, h);
+    return [Math.max(2, Math.round((w * out) / h / 2) * 2), out];
+  }
+
+  /** Image tokens of `frames` frames at `height` */
+  function aiTokens(frames, height) {
+    const [w, h] = aiSize(height);
+    return frames * Math.ceil((w * h) / 750);
+  }
+
+  function tokenText(tokens) {
+    return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
+  }
+
+  /** The image tokens the next message would send, as text; empty
+   * without a video or frames */
+  function costText() {
+    if (!cf.review?.video) return "";
+    const ctx = $("cf-ctx").value;
+    if (ctx === "none") return "";
+    if (ctx !== "range")
+      return t("cf.cost.one", {
+        tokens: tokenText(aiTokens(AI.MOMENT_FRAMES, AI.MOMENT_HEIGHT)),
+        frames: AI.MOMENT_FRAMES,
+      });
+    const range = rangeOf();
+    if (!range) return "";
+    const span = range.to - range.from;
+    if (span > AI.MAX_RANGE_S)
+      return t("cf.ask.longRange", { max: AI.MAX_RANGE_S });
+    const height = parseInt($("cf-chat-height").value, 10);
+    if (span > AI.TWO_PASS_S) {
+      const scout = Math.min(AI.MAX_FRAMES, Math.ceil(span * AI.SCOUT_FPS));
+      return t("cf.cost.two", {
+        scout: tokenText(aiTokens(scout, AI.SCOUT_HEIGHT)),
+        answer: tokenText(aiTokens(AI.KEY_FRAMES, height)),
+      });
+    }
+    const fps = parseFloat($("cf-chat-fps").value);
+    const frames = Math.max(1, Math.min(AI.MAX_FRAMES, Math.ceil(span * fps)));
+    return t("cf.cost.one", {
+      tokens: tokenText(aiTokens(frames, height)),
+      frames,
+    });
+  }
+
+  /** Show the estimate next to the "With the video" choice */
+  function markCost() {
+    const cost = $("cf-ctx-cost");
+    const text = costText();
+    if (cost.textContent !== text) cost.textContent = text;
+    cost.hidden = !text;
+  }
 
   function chatNote(text, error = false) {
     const note = $("cf-chat-note");
     note.textContent = text;
     note.classList.toggle("is-error", error);
     note.classList.toggle("is-warning", false);
+  }
+
+  /** The range the inputs name, else the open comment's, else the last
+   * RANGE_S seconds: {from, to} */
+  function rangeOf() {
+    const now = Math.round(player.time() * 1000) / 1000;
+    const active = activeComment();
+    const from =
+      parseTime($("cf-chat-from").value) ??
+      active?.t_s ??
+      Math.max(0, now - RANGE_S);
+    const to = parseTime($("cf-chat-to").value) ?? active?.t_end_s ?? now;
+    return { from, to };
   }
 
   /** The moment or range of the video the next message is about, from the
@@ -1902,13 +2011,10 @@
     const now = Math.round(player.time() * 1000) / 1000;
     if (ctx === "none") return null;
     if (ctx !== "range") return { t_s: now };
-    const active = activeComment();
-    const from =
-      parseTime($("cf-chat-from").value) ??
-      active?.t_s ??
-      Math.max(0, now - RANGE_S);
-    const to = parseTime($("cf-chat-to").value) ?? active?.t_end_s ?? now;
+    const { from, to } = rangeOf();
     if (to <= from) throw new Error(t("cf.ask.badRange"));
+    if (to - from > AI.MAX_RANGE_S)
+      throw new Error(t("cf.ask.longRange", { max: AI.MAX_RANGE_S }));
     $("cf-chat-from").value = shortTime(from);
     $("cf-chat-to").value = shortTime(to);
     return { t_s: from, t_end_s: to };
@@ -1951,6 +2057,10 @@
         .map((m) => ({ role: m.role, text: m.text })),
       video: review.video ?? null,
       ...context,
+      ...(context?.t_end_s != null && {
+        fps: parseFloat($("cf-chat-fps").value),
+        height: parseInt($("cf-chat-height").value, 10),
+      }),
     };
     let response;
     let data;

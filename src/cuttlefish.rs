@@ -82,17 +82,24 @@
 //!   answers with the download, whose `id` is the review's. `GET downloads`
 //!   lists this run's downloads
 //! - `POST chat` with `{"message", "history": [{"role", "text"}], "video"?,
-//!   "t_s"?, "t_end_s"?, "review"?}` sends a chat message to the `cuttlefish`
-//!   crate with the conversation so far and, when a video and `t_s` are
-//!   given, the frames of the range (or of a few seconds around `t_s`) from
-//!   ffmpeg, the review's comments near it and the moment as text
+//!   "t_s"?, "t_end_s"?, "fps"?, "height"?, "review"?}` sends a chat message
+//!   to the `cuttlefish` crate with the conversation so far and, when a
+//!   video and `t_s` are given, frames from ffmpeg ([`frames`], cached on
+//!   disk; which ones, [`cuttlefish::sampling`]: around `t_s`, dense near
+//!   it, or over the range of at most [`MAX_RANGE_S`] at `fps` and
+//!   `height`, more where the picture changes; a range longer than
+//!   [`sampling::TWO_PASS_S`] takes a first pass over a sparse overview
+//!   that picks the key moments, then sharper frames around those), the
+//!   review's comments near it and the moment as text
 //!   ([`cuttlefish::situation`]: the controller input of a session's
 //!   recording, else of the Predictor's newest run on the video in
 //!   `[predictor] results`; the HUD when a wave table sits beside the
 //!   video; boxes a person labelled on the session's frame at `t_s`);
 //!   knowledge comes from `[cuttlefish] knowledge`. Answers `{"text",
 //!   "sources", "experts", "comments": [{"t_s", "t_end_s"?, "text",
-//!   "shapes"}]}` (`experts`: every expert comment the model was given);
+//!   "shapes"}], "images": {"frames", "tokens"}}` (`experts`: every expert
+//!   comment the model was given; `images`: the frames sent and their
+//!   image tokens, about);
 //!   the page saves the message into the review and adds the comments as
 //!   Cuttlefish's. `501` while the
 //!   reviewer cannot start: no model backend (`ANTHROPIC_API_KEY`, the only
@@ -125,7 +132,8 @@ use anyhow::{Context, Result, bail, ensure};
 use cuttlefish::corpus_reviews::{Origin, Unplaced};
 use cuttlefish::game::Game;
 use cuttlefish::llm::{Role, Settings, Turn};
-use cuttlefish::review::{self as ai, ChatRequest, SourceRef, VideoContext};
+use cuttlefish::review::{self as ai, ChatRequest, KeyMoment, SourceRef, VideoContext};
+use cuttlefish::sampling::{self, MAX_RANGE_S};
 use cuttlefish::situation::{self, Input, InputSource, SeenObject, Situation};
 use cuttlefish::{corpus, corpus_reviews, expert};
 use gameplay_data::labels::{self, Label};
@@ -140,6 +148,9 @@ use std::sync::Mutex;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::{Method, Response, StatusCode};
+
+mod frames;
+use frames::FrameSource;
 
 /// Largest part of a video sent in one reply; the player asks for more
 const VIDEO_CHUNK: u64 = 4 << 20;
@@ -191,12 +202,6 @@ const THUMB_HEIGHT: u32 = 144;
 
 /// Thumbnails kept in memory
 const THUMB_CACHE: usize = 600;
-
-/// Seconds before and after `t_s` a question about a moment covers
-const MOMENT_S: (f64, f64) = (4.0, 2.0);
-
-/// Frames per second of video sent to the reviewer, before its own limit
-const AI_FPS: f64 = 2.0;
 
 /// Comments this far outside the range still go to the reviewer, seconds
 const NEAR_S: f64 = 10.0;
@@ -520,6 +525,16 @@ pub struct Cuttlefish {
     predictions: PathBuf,
     /// The Overfishing Pedia's mentions and fact cards
     pedia: Pedia,
+    /// The reviewer's frames, cached per video ([`frames`])
+    frame_cache: PathBuf,
+}
+
+/// What a chat message about the video looks at
+struct Watch {
+    context: VideoContext,
+    source: FrameSource,
+    /// A long range: the frames are an overview for the first pass
+    two_pass: bool,
 }
 
 /// A reply before it becomes an HTTP response
@@ -571,6 +586,7 @@ impl Cuttlefish {
             ),
             predictions,
             pedia: Pedia::default(),
+            frame_cache: cuttlefish::store::cache_dir().join("frames"),
         }
     }
 
@@ -1227,28 +1243,52 @@ impl Cuttlefish {
 
     // --------------------------------------------------------------- chat
 
-    /// The video context of a chat message: frames of `t_s`..`t_end_s` (or
-    /// of the moment around `t_s`), the review's comments near it and the
-    /// moment as text ([`Cuttlefish::situation`])
+    /// The video context of a chat message: the frames
+    /// ([`cuttlefish::sampling`]: of the moment around `t_s`, dense near it;
+    /// of the range `t_s`..`t_end_s` at `fps` and `height`, more where the
+    /// picture changes, or its overview for the first pass when it is long),
+    /// the review's comments near it and the moment as text
+    /// ([`Cuttlefish::situation`])
     fn video_context(
         &self,
         video: &VideoRef,
         t_s: f64,
         t_end_s: Option<f64>,
         review: Option<&str>,
-    ) -> Result<VideoContext> {
-        let (start_s, end_s) = match t_end_s {
-            Some(end) => (t_s, end),
-            None => ((t_s - MOMENT_S.0).max(0.0), t_s + MOMENT_S.1),
-        };
+        (fps, height): (f64, u32),
+    ) -> Result<Watch> {
+        let t_s = sampling::on_grid(t_s);
+        let (start_s, end_s) = sampling::span(t_s, t_end_s);
         ensure!(end_s > start_s, "the range must end after it starts");
+        ensure!(
+            end_s - start_s <= MAX_RANGE_S + 0.05,
+            "a range is at most {MAX_RANGE_S} s long"
+        );
         let path = self.video_path(video, review)?;
+        let source = FrameSource::open(&path, &self.frame_cache)?;
+        let two_pass = t_end_s.is_some() && end_s - start_s > sampling::TWO_PASS_S;
+        let frames = match t_end_s {
+            None => source.frames(
+                &sampling::moment_times(t_s, source.duration_s),
+                sampling::MOMENT_HEIGHT,
+            )?,
+            Some(_) => {
+                let (fps, height) = if two_pass {
+                    (sampling::SCOUT_FPS, sampling::SCOUT_HEIGHT)
+                } else {
+                    (fps, height)
+                };
+                let count = sampling::frame_count(end_s - start_s, fps);
+                source.frames(&source.range_times(start_s, end_s, count), height)?
+            }
+        };
+        ensure!(!frames.is_empty(), "no frames in that range");
         let comments = match review {
             Some(id) if !id.is_empty() => self.review(id)?.comments,
             _ => Vec::new(),
         };
         let situation = self.situation(video, review, &path, t_s, (start_s, end_s), t_end_s);
-        Ok(VideoContext {
+        let context = VideoContext {
             video: match video.kind {
                 VideoKind::Youtube => format!(
                     "{} (from {} s)",
@@ -1259,7 +1299,9 @@ impl Cuttlefish {
             },
             start_s,
             end_s,
-            frames: jpeg_frames(&path, start_s, end_s)?,
+            frames,
+            moment_s: t_end_s.is_none().then_some(t_s),
+            key_moments: Vec::new(),
             comments: comments
                 .iter()
                 .filter(|c| c.t_s >= start_s - NEAR_S && c.t_s <= end_s + NEAR_S)
@@ -1270,6 +1312,11 @@ impl Cuttlefish {
                 })
                 .collect(),
             situation,
+        };
+        Ok(Watch {
+            context,
+            source,
+            two_pass,
         })
     }
 
@@ -1430,25 +1477,80 @@ impl Cuttlefish {
         // No key: say so before extracting frames
         self.knowledge.client()?;
         let review = body["review"].as_str();
-        let context = match (&video, body["t_s"].as_f64()) {
+        let fps = body["fps"]
+            .as_f64()
+            .unwrap_or(sampling::RANGE_FPS)
+            .clamp(0.1, sampling::MAX_FPS);
+        let height = body["height"]
+            .as_u64()
+            .map_or(sampling::RANGE_HEIGHT, |h| h as u32)
+            .clamp(sampling::MIN_HEIGHT, sampling::MAX_HEIGHT);
+        let watch = match (&video, body["t_s"].as_f64()) {
             (Some(video), Some(t_s)) => Some(
-                self.video_context(video, t_s, body["t_end_s"].as_f64(), review)
+                self.video_context(video, t_s, body["t_end_s"].as_f64(), review, (fps, height))
                     .map_err(bad)?,
             ),
             _ => None,
         };
-        let request = ChatRequest {
+        let mut request = ChatRequest {
             history,
             message: message.to_string(),
-            video: context,
+            video: None,
         };
-        let reply = self.knowledge.chat(&request)?;
+        // Image tokens sent, about: each call's frames at their size
+        let mut images = (0, 0);
+        let mut count = |frames: usize, size: (u32, u32)| {
+            images.0 += frames;
+            images.1 += frames as u64 * sampling::image_tokens(size);
+        };
+        let reply = match watch {
+            None => self.knowledge.chat(&request)?,
+            Some(Watch {
+                context,
+                source,
+                two_pass,
+            }) => {
+                let first = context.frames.len();
+                request.video = Some(context);
+                if two_pass {
+                    count(first, source.size_at(sampling::SCOUT_HEIGHT));
+                    let (start_s, end_s) = (
+                        request.video.as_ref().map_or(0.0, |v| v.start_s),
+                        request.video.as_ref().map_or(0.0, |v| v.end_s),
+                    );
+                    let mut detail = |moments: &[KeyMoment]| {
+                        let times: Vec<f64> = moments.iter().map(|m| m.t_s).collect();
+                        let frames =
+                            source.frames(&sampling::key_times(&times, start_s, end_s), height)?;
+                        count(frames.len(), source.size_at(height));
+                        Ok(frames)
+                    };
+                    self.knowledge.chat_in_two_passes(&request, &mut detail)?
+                } else {
+                    let h = if request.video.as_ref().is_some_and(|v| v.moment_s.is_some()) {
+                        sampling::MOMENT_HEIGHT
+                    } else {
+                        height
+                    };
+                    count(first, source.size_at(h));
+                    self.knowledge.chat(&request)?
+                }
+            }
+        };
+        if images.0 > 0 {
+            log::info!(
+                "Cuttlefish looked at {} frames, about {} image tokens",
+                images.0,
+                images.1
+            );
+        }
         let comments: Vec<Value> = reply.comments.into_iter().map(page_comment).collect();
         Ok(json!({
             "text": reply.text,
             "sources": reply.sources,
             "experts": reply.experts,
             "comments": comments,
+            "images": {"frames": images.0, "tokens": images.1},
         }))
     }
 
@@ -1720,39 +1822,6 @@ async fn blocking(
         None => builder,
     };
     Ok(builder.body(reply.body).unwrap())
-}
-
-/// JPEG frames of `start_s`..`end_s` of a video at [`AI_FPS`], 720 lines
-/// high
-fn jpeg_frames(path: &Path, start_s: f64, end_s: f64) -> Result<Vec<ai::Frame>> {
-    let span = end_s - start_s;
-    let count = ((span * AI_FPS).ceil() as usize).max(1);
-    let output = Command::new("ffmpeg")
-        .args(["-v", "error", "-ss", &format!("{start_s:.3}"), "-t"])
-        .arg(format!("{span:.3}"))
-        .arg("-i")
-        .arg(path)
-        .args(["-vf", &format!("fps={AI_FPS},scale=-2:720"), "-frames:v"])
-        .arg(count.to_string())
-        .args(["-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "4", "-"])
-        .stdin(Stdio::null())
-        .output()
-        .context("cannot run ffmpeg")?;
-    ensure!(
-        output.status.success(),
-        "ffmpeg: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    let frames: Vec<ai::Frame> = split_jpegs(&output.stdout)
-        .into_iter()
-        .enumerate()
-        .map(|(i, jpeg)| ai::Frame {
-            t_s: start_s + i as f64 / AI_FPS,
-            jpeg: jpeg.to_vec(),
-        })
-        .collect();
-    ensure!(!frames.is_empty(), "no frames in that range");
-    Ok(frames)
 }
 
 /// A JPEG of the frame at `t_s` of a video, [`THUMB_HEIGHT`] lines high

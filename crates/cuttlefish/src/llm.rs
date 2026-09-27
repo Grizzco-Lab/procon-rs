@@ -55,12 +55,18 @@ pub struct Turn {
     pub text: String,
 }
 
-/// One request: a system prompt (cached across requests), the earlier turns
-/// of the conversation, if any, and the user turn to answer
-#[derive(Clone, Debug, PartialEq)]
+/// One request: a system prompt (cached across requests), the opening
+/// blocks (a chat's frames; cached too), the earlier turns of the
+/// conversation, if any, and the user turn to answer
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Prompt {
     /// Stable instructions and reference material
     pub system: String,
+    /// Blocks that open the conversation, before the earlier turns: a
+    /// chat's frames, which stay the same across follow-up questions about
+    /// the same moment, so the API reads them from its prompt cache (a
+    /// breakpoint follows the last one)
+    pub opening: Vec<Block>,
     /// Earlier turns, oldest first, alternating user and assistant
     pub history: Vec<Turn>,
     /// The user turn: knowledge, frames, the question
@@ -160,23 +166,31 @@ fn api_key() -> Option<String> {
         .filter(|k| !k.trim().is_empty())
 }
 
-/// The request body for a prompt
+/// A block as the API takes it
+pub fn block_json(block: &Block) -> Value {
+    match block {
+        Block::Text(t) => json!({"type": "text", "text": t}),
+        Block::Jpeg(bytes) => json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+            }
+        }),
+    }
+}
+
+/// The request body for a prompt. The system prompt and the opening
+/// blocks end with a cache breakpoint each; the opening blocks start the
+/// first user turn (before the earlier turns' text, or the new turn's), so
+/// a follow-up with the same opening reads it from the cache.
 pub fn build_body(settings: &Settings, prompt: &Prompt) -> Value {
-    let content: Vec<Value> = prompt
-        .user
-        .iter()
-        .map(|b| match b {
-            Block::Text(t) => json!({"type": "text", "text": t}),
-            Block::Jpeg(bytes) => json!({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": base64::engine::general_purpose::STANDARD.encode(bytes),
-                }
-            }),
-        })
-        .collect();
+    let mut opening: Vec<Value> = prompt.opening.iter().map(block_json).collect();
+    if let Some(last) = opening.last_mut() {
+        last["cache_control"] = json!({"type": "ephemeral"});
+    }
+    let content: Vec<Value> = prompt.user.iter().map(block_json).collect();
     let mut output_config = json!({"effort": settings.effort});
     if let Some(schema) = &prompt.schema {
         output_config["format"] = json!({"type": "json_schema", "schema": schema});
@@ -187,6 +201,15 @@ pub fn build_body(settings: &Settings, prompt: &Prompt) -> Value {
         .map(|turn| json!({"role": turn.role, "content": [{"type": "text", "text": turn.text}]}))
         .collect();
     messages.push(json!({"role": "user", "content": content}));
+    if !opening.is_empty() {
+        if messages[0]["role"] == "user" {
+            let first = messages[0]["content"].as_array_mut().expect("content");
+            opening.append(first);
+            messages[0]["content"] = Value::Array(opening);
+        } else {
+            messages.insert(0, json!({"role": "user", "content": opening}));
+        }
+    }
     json!({
         "model": settings.model.as_deref().unwrap_or(DEFAULT_MODEL),
         "max_tokens": settings.max_tokens,
@@ -466,6 +489,7 @@ pub(crate) mod tests {
     fn builds_bodies() {
         let prompt = Prompt {
             system: String::from("sys"),
+            opening: Vec::new(),
             history: alloc::vec![Turn {
                 role: Role::Assistant,
                 text: String::from("earlier")
@@ -490,6 +514,53 @@ pub(crate) mod tests {
         assert_eq!(body["output_config"]["format"]["type"], "json_schema");
         assert!(body.get("thinking").is_none());
         assert!(body.get("temperature").is_none());
+    }
+
+    #[test]
+    fn opening_blocks_lead_the_conversation_with_a_cache_breakpoint() {
+        let frames = alloc::vec![
+            Block::Text(String::from("Frame at 1.00 s:")),
+            Block::Jpeg(alloc::vec![1, 2, 3])
+        ];
+        let mut prompt = Prompt {
+            system: String::from("sys"),
+            opening: frames,
+            user: alloc::vec![Block::Text(String::from("Why?"))],
+            ..Default::default()
+        };
+        // Without history, the new turn starts with them
+        let body = build_body(&Settings::default(), &prompt);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 3);
+        assert_eq!(content[0]["text"], "Frame at 1.00 s:");
+        assert_eq!(content[1]["cache_control"]["type"], "ephemeral");
+        assert!(content[2].get("cache_control").is_none());
+        // With history, the first turn does, so a follow-up keeps the prefix
+        prompt.history = alloc::vec![
+            Turn {
+                role: Role::User,
+                text: String::from("Hi")
+            },
+            Turn {
+                role: Role::Assistant,
+                text: String::from("Hello")
+            },
+        ];
+        prompt.user = alloc::vec![Block::Text(String::from("And then?"))];
+        let follow_up = build_body(&Settings::default(), &prompt);
+        let messages = follow_up["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(
+            messages[0]["content"].as_array().unwrap()[..2],
+            content[..2]
+        );
+        assert_eq!(messages[0]["content"][2]["text"], "Hi");
+        assert_eq!(messages[2]["content"][0]["text"], "And then?");
+        // A history opening with the model gets a user turn of its own first
+        prompt.history.remove(0);
+        let odd = build_body(&Settings::default(), &prompt);
+        assert_eq!(odd["messages"][0]["role"], "user");
+        assert_eq!(odd["messages"][1]["role"], "assistant");
     }
 
     #[test]
@@ -529,6 +600,7 @@ pub(crate) mod tests {
             client
                 .send(&Prompt {
                     system: String::new(),
+                    opening: Vec::new(),
                     history: alloc::vec![],
                     user: alloc::vec![],
                     schema: None

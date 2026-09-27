@@ -1925,6 +1925,13 @@
                   </option>
                 </select></label
               >
+              <span
+                class="panel-note num cf-ctx-cost"
+                id="cf-ctx-cost"
+                title="Images the model reads, about width × height / 750 tokens each"
+                data-i18n-title="cf.cost.title"
+                hidden
+              ></span>
               <span class="cf-range" id="cf-chat-range" hidden
                 ><input
                   class="select num cf-time-input"
@@ -1933,7 +1940,8 @@
                   type="text"
                   aria-label="Range start"
                   data-i18n-placeholder="cf.ask.from"
-                  data-i18n-aria-label="cf.ask.fromLabel" />
+                  data-i18n-aria-label="cf.ask.fromLabel"
+                />
                 –
                 <input
                   class="select num cf-time-input"
@@ -1943,7 +1951,29 @@
                   aria-label="Range end"
                   data-i18n-placeholder="cf.ask.to"
                   data-i18n-aria-label="cf.ask.toLabel"
-              /></span>
+                />
+                <select
+                  class="select"
+                  id="cf-chat-fps"
+                  aria-label="Frames per second"
+                  data-i18n-aria-label="cf.ask.fpsLabel"
+                >
+                  <option value="0.5">0.5 fps</option>
+                  <option value="1" selected>1 fps</option>
+                  <option value="2">2 fps</option>
+                  <option value="4">4 fps</option>
+                </select>
+                <select
+                  class="select"
+                  id="cf-chat-height"
+                  aria-label="Frame height"
+                  data-i18n-aria-label="cf.ask.heightLabel"
+                >
+                  <option value="360">360p</option>
+                  <option value="480" selected>480p</option>
+                  <option value="720">720p</option>
+                </select></span
+              >
               <button
                 type="button"
                 class="mode-toggle"

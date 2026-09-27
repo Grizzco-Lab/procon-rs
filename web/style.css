@@ -5461,8 +5461,14 @@ body {
 
 .cf-range {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+/* The image tokens the next message sends, beside "With the video" */
+.cf-ctx-cost {
+  white-space: nowrap;
 }
 
 /* A review's video, channel and folder wrap, so Delete stays in view */

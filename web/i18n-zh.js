@@ -453,6 +453,9 @@ I18N.zh = {
   "cf.ask.fromLabel": "时间段开始",
   "cf.ask.toLabel": "时间段结束",
   "cf.ask.badRange": "时间段的结束必须晚于开始",
+  "cf.ask.longRange": "时间段最长 {max} 秒",
+  "cf.ask.fpsLabel": "时间段每秒帧数",
+  "cf.ask.heightLabel": "时间段画面高度（不超过视频本身）",
   "cf.ask.watching": "鱼干司令正在看…",
   "cf.chat.entryNote":
     "问问你的操作哪里可以更好；每段对话都是一个复盘，有没有视频都行",
@@ -480,6 +483,10 @@ I18N.zh = {
   "cf.chat.ctxMoment": "这一刻",
   "cf.chat.ctxRange": "一个时间段",
   "cf.chat.ctxNone": "不带画面",
+  "cf.cost.one": "约 {tokens} 图像 token（{frames} 帧）",
+  "cf.cost.two": "约 {scout} + 最多 {answer} 图像 token（两轮）",
+  "cf.cost.title":
+    "模型读取的图像，每张约 宽 × 高 / 750 个 token。超过 20 秒的时间段分两轮：先用稀疏的概览选出关键时刻，再看这些时刻附近更清晰的画面。",
   "cf.chat.at": "在 {time}",
   "cf.chat.sources": "来源",
   "cf.chat.experts": "提供的专家评论",

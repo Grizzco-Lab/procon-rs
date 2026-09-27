@@ -111,7 +111,7 @@ use cuttlefish::google::{self, GoogleFile};
 use cuttlefish::ingest::{self, Meta, Web};
 use cuttlefish::llm::{Client, Settings};
 use cuttlefish::notes::{self, Note};
-use cuttlefish::review::{self, ChatReply, ChatRequest};
+use cuttlefish::review::{self, ChatReply, ChatRequest, Frame, KeyMoment};
 use cuttlefish::slang::{self, AliasEdit, SuggestOptions, TermEdit, UserGlossary};
 use cuttlefish::store::{self, Store};
 use cuttlefish::{deep_eval, inbox, leanny, lock, questions, tables, wiki};
@@ -729,6 +729,23 @@ impl Knowledge {
             .map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))?;
         let store = loaded.store.read().unwrap();
         review::chat(&store, &loaded.embedder, &client, K, request)
+            .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))
+    }
+
+    /// Answer a chat message about a long range in two passes
+    /// ([`review::chat_in_two_passes`]): `detail` gives the frames around
+    /// the key moments the first pass picks
+    pub fn chat_in_two_passes(
+        &self,
+        request: &ChatRequest,
+        detail: &mut dyn FnMut(&[KeyMoment]) -> anyhow::Result<Vec<Frame>>,
+    ) -> Result<ChatReply, Status> {
+        let client = self.client()?;
+        let loaded = self
+            .loaded()
+            .map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))?;
+        let store = loaded.store.read().unwrap();
+        review::chat_in_two_passes(&store, &loaded.embedder, &client, K, request, detail)
             .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))
     }
 

@@ -15,6 +15,14 @@
 //! answer is text, citing sources as `[S1]`, plus timed comments when the
 //! player asks about the video. Translation requests are ordinary chat
 //! messages too; the persona knows to translate with the glossary's names.
+//! A chat's frames open the conversation ([`frame_blocks`], the prompt's
+//! `opening`), each captioned with its time and, about a moment, how far it
+//! is from it, so a follow-up about the same moment repeats the same prefix
+//! and the API reads the frames from its prompt cache. A long range takes
+//! two calls ([`chat_in_two_passes`]): a sparse low-resolution overview in
+//! which the model picks key moments ([`KeyMoment`], structured output),
+//! then the answer with sharper frames around them; see
+//! [`crate::sampling`] for which frames.
 //!
 //! About a moment of a video, both also get the moment as text (the
 //! `<moment>` block, [`Situation`]: HUD, controller input, labelled
@@ -35,6 +43,7 @@ use crate::embed::Embedder;
 use crate::expert::Expert;
 use crate::glossary::{Glossary, Term};
 use crate::llm::{Block, Client, Prompt, Role, Settings, Turn};
+use crate::sampling::KEY_MOMENTS;
 use crate::situation::Situation;
 use crate::store::{Hit, Store};
 use alloc::string::String;
@@ -44,8 +53,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::Path;
 
-/// Frames sent per review at most; more are thinned evenly
-pub const MAX_FRAMES: usize = 20;
+/// Frames sent per call at most; more are thinned evenly
+pub use crate::sampling::MAX_FRAMES;
 
 /// A video frame
 #[derive(Clone, Debug, PartialEq)]
@@ -182,10 +191,26 @@ pub struct VideoContext {
     pub end_s: f64,
     /// Frames from the stretch, in time order
     pub frames: Vec<Frame>,
+    /// The moment asked about, for a question about a moment: the frames'
+    /// captions say how far each is from it
+    pub moment_s: Option<f64>,
+    /// The key moments a first pass over a long range picked
+    /// ([`chat_in_two_passes`]); the frames are around them
+    pub key_moments: Vec<KeyMoment>,
     /// Comments already in or near the stretch
     pub comments: Vec<ExistingComment>,
     /// The stretch as text: HUD, controller input, objects
     pub situation: Option<Situation>,
+}
+
+/// A moment of a long range that matters for the question, picked by the
+/// first pass over a sparse overview
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct KeyMoment {
+    /// Time in the video, seconds
+    pub t_s: f64,
+    /// Why it matters
+    pub reason: String,
 }
 
 /// A chat message with its conversation so far
@@ -519,6 +544,7 @@ pub fn review_prompt(system: &str, req: &ReviewRequest, hits: &[Hit], terms: &[&
     )));
     Prompt {
         system: String::from(system),
+        opening: Vec::new(),
         history: Vec::new(),
         user,
         schema: Some(review_schema()),
@@ -631,6 +657,7 @@ pub fn ask_prompt(system: &str, question: &str, hits: &[Hit], terms: &[&Term]) -
     )));
     Prompt {
         system: String::from(system),
+        opening: Vec::new(),
         history: Vec::new(),
         user,
         schema: None,
@@ -689,6 +716,7 @@ pub fn translate_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
     user.push(Block::Text(alloc::format!("<text>\n{text}\n</text>")));
     Prompt {
         system,
+        opening: Vec::new(),
         history: Vec::new(),
         user,
         schema: None,
@@ -720,6 +748,7 @@ pub fn explain_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
     user.push(Block::Text(alloc::format!("<term>\n{text}\n</term>")));
     Prompt {
         system,
+        opening: Vec::new(),
         history: Vec::new(),
         user,
         schema: None,
@@ -946,17 +975,30 @@ pub fn chat_prompt(system: &str, req: &ChatRequest, hits: &[Hit], terms: &[&Term
         {
             user.push(Block::Text(moment));
         }
-        for f in thin(&v.frames, MAX_FRAMES) {
-            user.push(Block::Text(alloc::format!("Frame at {:.2} s:", f.t_s)));
-            user.push(Block::Jpeg(f.jpeg.clone()));
+        if !v.key_moments.is_empty() {
+            let mut s = String::from(
+                "<key_moments>\nA first look at the whole range, at low resolution, picked \
+                 these moments; the frames are around them.\n",
+            );
+            for (i, m) in v.key_moments.iter().enumerate() {
+                s.push_str(&alloc::format!("{}. {:.1} s: {}\n", i + 1, m.t_s, m.reason));
+            }
+            s.push_str("</key_moments>");
+            user.push(Block::Text(s));
         }
         task.push_str(&alloc::format!(
             "The player is watching {} and is at {:.1} s to {:.1} s of it (the frames \
-             above; times are seconds of the video). ",
+             at the start of the conversation; times are seconds of the video). ",
             v.video,
             v.start_s,
             v.end_s
         ));
+        if let Some(m) = v.moment_s {
+            task.push_str(&alloc::format!(
+                "The question is about the moment at {m:.1} s: look before and after it to \
+                 recognise what happens, and answer about that moment. "
+            ));
+        }
     }
     task.push_str(&alloc::format!(
         "The player says:\n\n{}\n\n",
@@ -983,10 +1025,143 @@ pub fn chat_prompt(system: &str, req: &ChatRequest, hits: &[Hit], terms: &[&Term
     user.push(Block::Text(task));
     Prompt {
         system: String::from(system),
+        opening: req.video.as_ref().map(frame_blocks).unwrap_or_default(),
         history: req.history.clone(),
         user,
         schema: Some(chat_schema()),
     }
+}
+
+/// A frame's caption: its time and, for a moment or key moments, how far
+/// it is from the nearest one
+pub fn caption(t_s: f64, v: &VideoContext) -> String {
+    let offset = |d: f64, what: &str| {
+        if d.abs() < 0.05 {
+            alloc::format!(" ({what})")
+        } else if d < 0.0 {
+            alloc::format!(" ({:.1} s before {what})", -d)
+        } else {
+            alloc::format!(" ({d:.1} s after {what})")
+        }
+    };
+    let near = if let Some(m) = v.moment_s {
+        offset(t_s - m, "the moment asked about")
+    } else {
+        v.key_moments
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (i, t_s - m.t_s))
+            .filter(|(_, d)| d.abs() <= 1.5)
+            .min_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+            .map(|(i, d)| offset(d, &alloc::format!("key moment {}", i + 1)))
+            .unwrap_or_default()
+    };
+    alloc::format!("Frame at {t_s:.2} s{near}:")
+}
+
+/// The frames of a video context as opening blocks: a line naming the
+/// video and the stretch, then each frame after its caption, in time order.
+/// Only the context decides them, so a follow-up about the same moment
+/// sends the same blocks and the API reads them from its cache.
+pub fn frame_blocks(v: &VideoContext) -> Vec<Block> {
+    if v.frames.is_empty() {
+        return Vec::new();
+    }
+    let mut blocks = alloc::vec![Block::Text(alloc::format!(
+        "<video>Frames of {} from {:.1} s to {:.1} s, in time order.</video>",
+        v.video,
+        v.start_s,
+        v.end_s
+    ))];
+    for f in thin(&v.frames, MAX_FRAMES) {
+        blocks.push(Block::Text(caption(f.t_s, v)));
+        blocks.push(Block::Jpeg(f.jpeg.clone()));
+    }
+    blocks
+}
+
+/// JSON schema of the first pass's answer: the key moments
+pub fn scout_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "moments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "t_s": {"type": "number"},
+                        "reason": {"type": "string"}
+                    },
+                    "required": ["t_s", "reason"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["moments"],
+        "additionalProperties": false
+    })
+}
+
+/// The prompt of the first pass over a long range: the overview frames
+/// (opening, as in [`chat_prompt`]), the conversation, the range as text,
+/// and the task of picking at most [`KEY_MOMENTS`] moments that matter
+/// for the message, with reasons
+pub fn scout_prompt(system: &str, req: &ChatRequest) -> Prompt {
+    let mut user = Vec::new();
+    let mut opening = Vec::new();
+    if let Some(v) = &req.video {
+        opening = frame_blocks(v);
+        if let Some(moment) = v.situation.as_ref().map(Situation::block)
+            && !moment.is_empty()
+        {
+            user.push(Block::Text(moment));
+        }
+        user.push(Block::Text(alloc::format!(
+            "The player is watching {} from {:.1} s to {:.1} s (the frames at the start of \
+             the conversation: a sparse, low-resolution overview, denser where the picture \
+             changes) and says:\n\n{}\n\n\
+             Do not answer yet. Pick up to {KEY_MOMENTS} key moments in that range that \
+             matter most for answering (a death, a boss or a wave arriving, egg deliveries, \
+             special use, a positioning mistake), each with t_s inside the range and a short \
+             reason. Sharper frames around them come next.",
+            v.video,
+            v.start_s,
+            v.end_s,
+            req.message.trim(),
+        )));
+    }
+    Prompt {
+        system: String::from(system),
+        opening,
+        history: req.history.clone(),
+        user,
+        schema: Some(scout_schema()),
+    }
+}
+
+/// Reads the first pass's answer: moments inside `start_s..=end_s`, in time
+/// order, at least a second apart, at most [`KEY_MOMENTS`]
+pub fn parse_scout(text: &str, start_s: f64, end_s: f64) -> Result<Vec<KeyMoment>> {
+    #[derive(Deserialize)]
+    struct Answer {
+        moments: Vec<KeyMoment>,
+    }
+    let answer: Answer =
+        serde_json::from_value(json_object(text)?).context("unexpected answer shape")?;
+    let mut moments: Vec<KeyMoment> = answer
+        .moments
+        .into_iter()
+        .filter(|m| m.t_s.is_finite())
+        .map(|m| KeyMoment {
+            t_s: m.t_s.clamp(start_s, end_s),
+            reason: String::from(m.reason.trim()),
+        })
+        .collect();
+    moments.sort_by(|a, b| a.t_s.total_cmp(&b.t_s));
+    moments.dedup_by(|b, a| b.t_s - a.t_s < 1.0);
+    moments.truncate(KEY_MOMENTS);
+    Ok(moments)
 }
 
 /// Reads a chat reply: the text with its cited sources, and its comments
@@ -1020,6 +1195,45 @@ pub fn parse_chat(text: &str, req: &ChatRequest, hits: &[Hit]) -> Result<ChatRep
             .filter(|r| r.expert.is_some())
             .collect(),
     })
+}
+
+/// Answers a chat message about a long range in two calls: the first
+/// ([`scout_prompt`]) sends the request's frames, a sparse low-resolution
+/// overview, and asks for the key moments; `detail` gives the sharper
+/// frames around them, which replace the overview in the second call, an
+/// ordinary [`chat`] that also lists the key moments. Without key moments
+/// the overview goes with the answer.
+pub fn chat_in_two_passes(
+    store: &Store,
+    embedder: &dyn Embedder,
+    client: &Client,
+    k: usize,
+    req: &ChatRequest,
+    detail: &mut dyn FnMut(&[KeyMoment]) -> Result<Vec<Frame>>,
+) -> Result<ChatReply> {
+    anyhow::ensure!(!req.message.trim().is_empty(), "say something");
+    let v = req.video.as_ref().context("no video to look at")?;
+    let system = system_prompt(store.digest().as_deref());
+    let reply = client.send(&scout_prompt(&system, req))?;
+    let moments = parse_scout(&reply.text, v.start_s, v.end_s)?;
+    log::info!(
+        "Key moments: {}",
+        moments
+            .iter()
+            .map(|m| alloc::format!("{:.1} s ({})", m.t_s, m.reason))
+            .collect::<Vec<_>>()
+            .join("; ")
+    );
+    let mut second = req.clone();
+    if !moments.is_empty() {
+        let frames = detail(&moments)?;
+        let video = second.video.as_mut().context("no video")?;
+        if !frames.is_empty() {
+            video.frames = frames;
+        }
+        video.key_moments = moments;
+    }
+    chat(store, embedder, client, k, &second)
 }
 
 /// Answers a chat message with `k` knowledge excerpts, the conversation so
@@ -1121,7 +1335,7 @@ mod tests {
             .iter()
             .filter(|b| matches!(b, Block::Jpeg(_)))
             .count();
-        assert_eq!(images, MAX_FRAMES);
+        assert_eq!(images, req.frames.len().min(MAX_FRAMES));
         assert_eq!(p.user[3], Block::Text(String::from("Frame at 10.00 s:")));
         let Some(Block::Text(task)) = p.user.last() else {
             panic!()
@@ -1268,6 +1482,7 @@ mod tests {
                     frames: req.frames.clone(),
                     comments: req.comments.clone(),
                     situation: req.situation.clone(),
+                    ..Default::default()
                 }),
             })
             .unwrap();
@@ -1288,20 +1503,17 @@ mod tests {
                 .unwrap()
                 .contains("grizzco-roller (en: Grizzco Roller")
         );
-        // The conversation went along, then the new turn with its frames
+        // The frames open the conversation (cached), then it went along,
+        // then the new turn
         let messages = sent[4]["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0]["content"][0]["text"], "Hi");
+        let first = messages[0]["content"].as_array().unwrap();
+        let images = |c: &[Value]| c.iter().filter(|b| b["type"] == "image").count();
+        assert_eq!(images(first), req.frames.len());
+        assert_eq!(first[first.len() - 2]["cache_control"]["type"], "ephemeral");
+        assert_eq!(first.last().unwrap()["text"], "Hi");
         assert_eq!(messages[1]["role"], "assistant");
-        assert_eq!(
-            messages[2]["content"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|b| b["type"] == "image")
-                .count(),
-            MAX_FRAMES
-        );
+        assert_eq!(images(messages[2]["content"].as_array().unwrap()), 0);
         assert_eq!(sent[4]["output_config"]["format"]["type"], "json_schema");
     }
 
@@ -1326,6 +1538,7 @@ mod tests {
                 frames: req.frames.clone(),
                 comments: req.comments.clone(),
                 situation: req.situation.clone(),
+                ..Default::default()
             }),
         }
     }
@@ -1372,12 +1585,13 @@ mod tests {
         let p = chat_prompt(&system_prompt(None), &req, &hits, &[]);
         let Block::Text(c) = &p.user[1] else { panic!() };
         assert!(c.contains("[12.0 s] player: basket starved here"));
+        assert!(p.user.iter().all(|b| matches!(b, Block::Text(_))));
         assert_eq!(
-            p.user
+            p.opening
                 .iter()
                 .filter(|b| matches!(b, Block::Jpeg(_)))
                 .count(),
-            MAX_FRAMES
+            req.video.as_ref().unwrap().frames.len()
         );
         let Some(Block::Text(task)) = p.user.last() else {
             panic!()
@@ -1533,6 +1747,180 @@ mod tests {
         assert!(system_prompt(None).contains("expert_notes block"));
         std::fs::remove_dir_all(&root).unwrap();
         std::fs::remove_dir_all(&corpus_root).unwrap();
+    }
+
+    #[test]
+    fn captions_mark_the_moment() {
+        let mut v = VideoContext {
+            video: String::from("s"),
+            start_s: 26.0,
+            end_s: 32.0,
+            frames: [26.0, 29.8, 30.0, 30.4]
+                .iter()
+                .map(|&t_s| Frame {
+                    t_s,
+                    jpeg: alloc::vec![0xff, 0xd8],
+                })
+                .collect(),
+            moment_s: Some(30.0),
+            ..Default::default()
+        };
+        assert_eq!(
+            caption(30.0, &v),
+            "Frame at 30.00 s (the moment asked about):"
+        );
+        assert_eq!(
+            caption(29.8, &v),
+            "Frame at 29.80 s (0.2 s before the moment asked about):"
+        );
+        assert_eq!(
+            caption(30.4, &v),
+            "Frame at 30.40 s (0.4 s after the moment asked about):"
+        );
+        let blocks = frame_blocks(&v);
+        assert_eq!(blocks.len(), 1 + 2 * 4);
+        assert!(matches!(&blocks[0], Block::Text(t) if t.starts_with("<video>")));
+        // The same context gives the same blocks, so the prefix caches
+        assert_eq!(blocks, frame_blocks(&v.clone()));
+        // Key moments instead: the nearest within 1.5 s
+        v.moment_s = None;
+        v.key_moments = alloc::vec![
+            KeyMoment {
+                t_s: 30.0,
+                reason: String::from("splatted")
+            },
+            KeyMoment {
+                t_s: 50.0,
+                reason: String::from("wave ends")
+            },
+        ];
+        assert_eq!(
+            caption(29.6, &v),
+            "Frame at 29.60 s (0.4 s before key moment 1):"
+        );
+        assert_eq!(caption(50.0, &v), "Frame at 50.00 s (key moment 2):");
+        assert_eq!(caption(40.0, &v), "Frame at 40.00 s:");
+    }
+
+    #[test]
+    fn scout_answers_become_key_moments() {
+        let text = r#"{"moments": [
+            {"t_s": 80, "reason": " wave 2 starts "},
+            {"t_s": 20.5, "reason": "splatted by a Steelhead"},
+            {"t_s": 21, "reason": "same moment"},
+            {"t_s": 500, "reason": "past the end"}
+        ]}"#;
+        let m = parse_scout(text, 10.0, 100.0).unwrap();
+        assert_eq!(
+            m.iter().map(|m| m.t_s).collect::<Vec<_>>(),
+            [20.5, 80.0, 100.0]
+        );
+        assert_eq!(m[1].reason, "wave 2 starts");
+        let many: Vec<Value> = (0..9)
+            .map(|i| json!({"t_s": 10 + i * 5, "reason": "x"}))
+            .collect();
+        let m = parse_scout(&json!({ "moments": many }).to_string(), 0.0, 100.0).unwrap();
+        assert_eq!(m.len(), KEY_MOMENTS);
+        assert!(parse_scout("no json", 0.0, 1.0).is_err());
+    }
+
+    #[test]
+    fn long_ranges_take_two_passes() {
+        let root =
+            std::env::temp_dir().join(alloc::format!("cuttlefish-two-pass-{}", std::process::id()));
+        let e = HashEmbedder { dim: 128 };
+        let store = Store::open(&root, &e).unwrap();
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let fake = Fake {
+            replies: Mutex::new(alloc::vec![
+                ok(
+                    r#"{"moments":[{"t_s":42,"reason":"splatted"},{"t_s":71.5,"reason":"basket starved"}]}"#
+                ),
+                ok(r#"{"text":"You went down at 0:42.","comments":[]}"#),
+            ]),
+            sent: sent.clone(),
+        };
+        let client = Client::with_transport(
+            Box::new(fake),
+            String::from("test-key"),
+            Settings::default(),
+        );
+        // A 60 s range: an overview of 30 small frames
+        let overview: Vec<Frame> = (0..30)
+            .map(|i| Frame {
+                t_s: 30.0 + 2.0 * i as f64,
+                jpeg: alloc::vec![0xff, 0xd8, 1],
+            })
+            .collect();
+        let req = ChatRequest {
+            message: String::from("What went wrong?"),
+            video: Some(VideoContext {
+                video: String::from("session-1"),
+                start_s: 30.0,
+                end_s: 90.0,
+                frames: overview,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut asked = Vec::new();
+        let mut detail = |moments: &[KeyMoment]| {
+            asked = moments.iter().map(|m| m.t_s).collect();
+            let times = crate::sampling::key_times(&asked, 30.0, 90.0);
+            Ok(times
+                .into_iter()
+                .map(|t_s| Frame {
+                    t_s,
+                    jpeg: alloc::vec![0xff, 0xd8, 2],
+                })
+                .collect())
+        };
+        let reply = chat_in_two_passes(&store, &e, &client, 4, &req, &mut detail).unwrap();
+        assert_eq!(reply.text, "You went down at 0:42.");
+        assert_eq!(asked, [42.0, 71.5]);
+        std::fs::remove_dir_all(&root).unwrap();
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        let images = |body: &Value| -> Vec<String> {
+            body["messages"][0]["content"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|b| b["type"] == "image")
+                .map(|b| b["source"]["data"].as_str().unwrap().to_string())
+                .collect()
+        };
+        // First pass: the overview, asking for key moments
+        let first = &sent[0];
+        assert_eq!(images(first).len(), 30);
+        assert!(images(first).iter().all(|d| d == "/9gB"));
+        assert_eq!(first["output_config"]["format"]["schema"], scout_schema());
+        let task = first["messages"][0]["content"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(task.contains("Pick up to 5 key moments"));
+        assert!(task.contains("What went wrong?"));
+        // Second pass: sharper frames around the moments only, which are listed
+        let second = &sent[1];
+        assert_eq!(images(second).len(), 10);
+        assert!(images(second).iter().all(|d| d == "/9gC"));
+        assert_eq!(second["system"], first["system"]);
+        let content = second["messages"][0]["content"].as_array().unwrap();
+        assert!(
+            content
+                .iter()
+                .any(|b| b["text"] == "Frame at 42.00 s (key moment 1):")
+        );
+        assert!(content.iter().any(|b| {
+            b["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("1. 42.0 s: splatted\n2. 71.5 s: basket starved"))
+        }));
     }
 
     #[test]

@@ -14,14 +14,20 @@
 //! leniently. The CLI never sees `ANTHROPIC_API_KEY` or
 //! `ANTHROPIC_AUTH_TOKEN`, which it would bill instead of the subscription.
 //!
+//! Prompt caching: the opening blocks (a chat's frames) come first here
+//! too, but the CLI places its own cache breakpoints (the system prompt
+//! and the end of the message), so only the system prompt is read back
+//! from the cache; a follow-up about the same moment sends its frames
+//! again at full price. Answers count against the subscription's limits,
+//! not per token.
+//!
 //! [`args`], [`message`] and [`parse_output`] are pure; the [`Runner`] trait
 //! is the only part that starts a process, so tests use a fake one.
 
-use crate::llm::{Block, Prompt, Reply, Role, Settings, Usage};
+use crate::llm::{Prompt, Reply, Role, Settings, Usage, block_json};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use anyhow::{Context, Result, bail};
-use base64::Engine;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 use serde_json::{Value, json};
@@ -208,11 +214,12 @@ pub fn args(settings: &Settings, system: &str) -> Vec<String> {
     args
 }
 
-/// The `stream-json` user message for a prompt, one line: the earlier turns
-/// rendered as text, the user blocks as text and image blocks, and the
-/// schema asked for in words
+/// The `stream-json` user message for a prompt, one line: the opening
+/// blocks (a chat's frames) first, then the earlier turns rendered as
+/// text, the user blocks as text and image blocks, and the schema asked
+/// for in words
 pub fn message(prompt: &Prompt) -> String {
-    let mut content: Vec<Value> = Vec::new();
+    let mut content: Vec<Value> = prompt.opening.iter().map(block_json).collect();
     if !prompt.history.is_empty() {
         let mut s = String::from("<conversation>\n");
         for turn in &prompt.history {
@@ -228,19 +235,7 @@ pub fn message(prompt: &Prompt) -> String {
         s.push_str("</conversation>\nThe conversation so far is above; the new message follows.");
         content.push(json!({"type": "text", "text": s}));
     }
-    for block in &prompt.user {
-        content.push(match block {
-            Block::Text(t) => json!({"type": "text", "text": t}),
-            Block::Jpeg(bytes) => json!({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": base64::engine::general_purpose::STANDARD.encode(bytes),
-                }
-            }),
-        });
-    }
+    content.extend(prompt.user.iter().map(block_json));
     if let Some(schema) = &prompt.schema {
         content.push(json!({
             "type": "text",
@@ -383,7 +378,7 @@ impl Drop for Slot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::{Backend, Client, Turn};
+    use crate::llm::{Backend, Block, Client, Turn};
     use std::sync::Arc;
 
     /// What the fake runner was asked to run
@@ -453,6 +448,7 @@ mod tests {
     fn prompt() -> Prompt {
         Prompt {
             system: String::from("You are Cuttlefish."),
+            opening: Vec::new(),
             history: alloc::vec![
                 Turn {
                     role: Role::User,
@@ -572,12 +568,30 @@ mod tests {
         // Nothing to say about history or schema when there are none
         let bare = Prompt {
             system: String::new(),
+            opening: Vec::new(),
             history: Vec::new(),
             user: alloc::vec![Block::Text(String::from("hi"))],
             schema: None,
         };
         let v: Value = serde_json::from_str(&message(&bare)).unwrap();
         assert_eq!(v["message"]["content"].as_array().unwrap().len(), 1);
+        // The opening blocks (a chat's frames) come before the conversation
+        let mut framed = prompt();
+        framed.opening = alloc::vec![
+            Block::Text(String::from("Frame at 1.00 s:")),
+            Block::Jpeg(alloc::vec![4, 5])
+        ];
+        let v: Value = serde_json::from_str(&message(&framed)).unwrap();
+        let content = v["message"]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 7);
+        assert_eq!(content[0]["text"], "Frame at 1.00 s:");
+        assert_eq!(content[1]["type"], "image");
+        assert!(
+            content[2]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("<conversation>")
+        );
     }
 
     #[test]

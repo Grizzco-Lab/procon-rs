@@ -1284,6 +1284,7 @@ pub fn suggest_prompt(g: &Glossary, user: &UserGlossary, batch: &Batch) -> Promp
     blocks.push(Block::Text(alloc::format!("<text>\n{text}</text>")));
     Prompt {
         system: String::from(SUGGEST_SYSTEM),
+        opening: Vec::new(),
         history: Vec::new(),
         user: blocks,
         schema: Some(suggest_schema()),

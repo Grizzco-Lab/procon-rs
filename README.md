@@ -236,7 +236,27 @@ seek the video when clicked, and when asked about the video they can add
 timed comments with drawings, linked from the answer. **With the video**
 chooses what a message takes along: the frames around the playhead (**this
 moment**), a **range**, or **no frames**; **Comment on this moment** sends a
-review request for the playhead. Every message is saved in the review's
+review request for the playhead. Beside the choice, the page estimates the
+image tokens the message will send (about width × height / 750 per frame):
+
+- **this moment**: 15 frames from 4 s before to 2 s after the playhead, five a
+  second within ±1 s of it and one a second further out, each captioned with
+  how far it is from the moment;
+- **a range** (at most 100 s): frames at the rate and height picked beside the
+  times (1 fps and 480p by default), placed where the picture changes (a
+  cheap frame difference) and around wave starts and ends when the video has
+  a wave table, fewer in calm stretches. A range longer than 20 s takes two
+  calls: a sparse overview (0.5 fps, 360p) in which Cuttlefish picks up to
+  five key moments with reasons, then sharper frames around those (five per
+  moment, at the height picked) with the answer.
+
+Frames are never upscaled (at most the video's own height; 720p for a moment),
+JPEG at ffmpeg quality 3, and cached on disk per video, time and height
+(`~/.cache/procon-cuttlefish/frames/`, never cleaned up by itself), so asking
+again about the same moment extracts nothing. They open the conversation, so
+with the API a follow-up about the same moment reads them from the prompt
+cache; the Claude Code CLI places its own cache breakpoints, and only its
+system prompt is read back from the cache. Every message is saved in the review's
 `review.json` (`messages`, with role, text, the moment or range it was asked
 with, sources and time), so reopening the review shows the conversation. The
 chat needs a model backend: `ANTHROPIC_API_KEY` in the studio's environment
