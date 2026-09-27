@@ -28,7 +28,7 @@ use std::process::{Command, Stdio};
 /// else the best single file up to 480 lines
 pub const FORMAT: &str = "bv*[height<=480]+ba/b[height<=480]";
 /// Seconds between two downloads
-pub const DEFAULT_DELAY: Range = Range::new(10.0, 30.0);
+pub const DEFAULT_DELAY: Range = Range::new(5.0, 5.0);
 /// Seconds between two metadata requests of a listing
 const LIST_DELAY: Range = Range::new(1.0, 3.0);
 /// Transient failures in a row that end a run (a block, the network)
@@ -679,7 +679,7 @@ mod tests {
         let mut rng = seed();
         for _ in 0..1000 {
             let d = draw(&mut rng, DEFAULT_DELAY);
-            assert!((10.0..=30.0).contains(&d));
+            assert!((5.0..=5.0).contains(&d));
         }
         assert_eq!(draw(&mut rng, Range::new(4.0, 4.0)), 4.0);
     }

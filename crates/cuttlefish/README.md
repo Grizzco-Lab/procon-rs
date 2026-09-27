@@ -552,7 +552,7 @@ YouTube VOD of the corpus (metadata only, one request at a time, cached in
 `media/youtube/<id>.info.json`) and adds up the size a download would take;
 `cuttlefish corpus videos` then downloads them, at most 480 lines
 (`bv*[height<=480]+ba/b[height<=480]`, merged into `<id>.mp4`), one at a
-time with a random pause of 10 to 30 s between videos (`--delay 10-30`),
+time with a pause of 5 s between videos (`--delay 5`, or a range such as `--delay 5-15`),
 `--max N` videos a run. It is resumable: a downloaded video is skipped, a
 partial one continues, a deleted or private video is remembered in its
 `info.json` as unavailable and not asked for again (`--retry-unavailable`
