@@ -24,6 +24,7 @@ use cuttlefish::lock::{self, WriteLock};
 use cuttlefish::review::{Reviewer, translate};
 use cuttlefish::store::{self, Store};
 use cuttlefish::{assets, env_file, inbox, tables};
+use cuttlefish::{corpus, corpus_reviews, corpus_videos};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -52,6 +53,10 @@ enum Command {
     /// Fetch raw material into a folder (the inbox reads it)
     #[command(subcommand)]
     Fetch(Fetch),
+    /// The #vod-review corpus: the reviewed VODs of the fetched archive,
+    /// their videos, and reviews of them for the studio
+    #[command(subcommand)]
+    Corpus(Corpus),
     /// Show the chunks closest to a query
     Search {
         /// What to look for, in any language
@@ -304,6 +309,48 @@ enum Fetch {
     },
 }
 
+#[derive(Subcommand)]
+enum Corpus {
+    /// Build <knowledge>/corpus/vod-review.jsonl from the archive in the
+    /// inbox: one line per reviewed VOD (its video, poster, date and era,
+    /// the comments with their moments, placed in the video or waiting
+    /// for its wave-start table), and print the counts
+    Build,
+    /// Download the corpus's YouTube VODs at 480p with yt-dlp into
+    /// <knowledge>/media/youtube/<id>.mp4 (with <id>.info.json), one at
+    /// a time with a random pause between them; resumes, skips what is
+    /// there, remembers deleted and private videos
+    Videos {
+        /// Only list the videos with yt-dlp's metadata (title, length,
+        /// size of the 480p download) and add up what a run would
+        /// download; downloads nothing
+        #[arg(long)]
+        list: bool,
+        /// With --list: ask yt-dlp again about videos already listed
+        #[arg(long)]
+        refresh: bool,
+        /// Seconds between two downloads, drawn anew from this range
+        #[arg(long, default_value_t = corpus_videos::DEFAULT_DELAY)]
+        delay: Range,
+        /// At most this many downloads this run
+        #[arg(long)]
+        max: Option<usize>,
+        /// Ask again for videos remembered as unavailable
+        #[arg(long)]
+        retry_unavailable: bool,
+    },
+    /// Create or update a review of the studio for every VOD whose video
+    /// is on disk: <reviews>/discord-<id>/review.json, the comments at
+    /// their moments, the rest as notes; re-running changes only what the
+    /// archive gave, never what was added in the studio
+    Reviews {
+        /// The reviews folder; by default the studio's ([cuttlefish]
+        /// reviews of --config, else Reviews next to the knowledge folder)
+        #[arg(long)]
+        reviews: Option<PathBuf>,
+    },
+}
+
 /// Adds documents to the store, saving the index every few documents,
 /// under the store's write lock
 struct Sink {
@@ -446,6 +493,28 @@ fn studio_knowledge(config: &Path) -> Result<PathBuf> {
         .join("Knowledge"))
 }
 
+/// The reviews folder as the studio finds it: `[cuttlefish] reviews` of the
+/// config (relative to it), else `Reviews` next to the knowledge folder
+fn reviews_folder(knowledge: &Path, config: Option<&Path>) -> Result<PathBuf> {
+    let config = config
+        .map(Path::to_path_buf)
+        .or_else(|| Some(PathBuf::from("config.toml")).filter(|c| c.is_file()));
+    if let Some(config) = config {
+        let text = std::fs::read_to_string(&config)
+            .with_context(|| format!("reading {}", config.display()))?;
+        let value: toml::Value =
+            toml::from_str(&text).with_context(|| format!("in {}", config.display()))?;
+        if let Some(reviews) = value
+            .get("cuttlefish")
+            .and_then(|c| c.get("reviews"))
+            .and_then(|r| r.as_str())
+        {
+            return Ok(config.parent().unwrap_or(Path::new(".")).join(reviews));
+        }
+    }
+    Ok(knowledge.parent().unwrap_or(Path::new(".")).join("Reviews"))
+}
+
 /// The knowledge folder: `--data`, else the studio's through `--config` (or
 /// `./config.toml` when there is one), else `$CUTTLEFISH_DATA`
 fn knowledge_folder(data: Option<PathBuf>, config: Option<PathBuf>) -> Result<PathBuf> {
@@ -483,6 +552,7 @@ fn main() -> Result<()> {
     let data = knowledge_folder(cli.data.clone(), cli.config.clone())?;
     match cli.command {
         Command::Fetch(_) => unreachable!(),
+        Command::Corpus(c) => corpus_command(&data, cli.config.as_deref(), c),
         Command::Ingest(i) => ingest(&data, i),
         Command::Search { query, k } => {
             let (store, embedder) = open(&data, true)?;
@@ -703,10 +773,7 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
                     )
                 })?;
             let guild = discord_fetch::guild_of(guild, &channel)?;
-            let stop = Arc::new(AtomicBool::new(false));
-            let flag = stop.clone();
-            ctrlc::set_handler(move || flag.store(true, Ordering::Relaxed))
-                .context("setting the Ctrl+C handler")?;
+            let stop = ctrl_c()?;
             println!(
                 "{} {} channel(s) with your own account, against Discord's terms: at your own risk. Ctrl+C stops after the request under way.",
                 if count { "Counting" } else { "Reading" },
@@ -793,6 +860,73 @@ fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<(
                     .map(|s| format!("; stopped: {s}"))
                     .unwrap_or_default()
             );
+            Ok(())
+        }
+    }
+}
+
+/// A flag Ctrl+C sets
+fn ctrl_c() -> Result<Arc<AtomicBool>> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    ctrlc::set_handler(move || flag.store(true, Ordering::Relaxed))
+        .context("setting the Ctrl+C handler")?;
+    Ok(stop)
+}
+
+/// `corpus`: the VOD-review corpus, its videos and its reviews
+fn corpus_command(data: &Path, config: Option<&Path>, cmd: Corpus) -> Result<()> {
+    let built = corpus::build(data)?;
+    match cmd {
+        Corpus::Build => {
+            let file = corpus::write(data, &built)?;
+            println!("{}", corpus::Stats::of(&built, data));
+            println!("written: {}", file.display());
+            Ok(())
+        }
+        Corpus::Videos {
+            list,
+            refresh,
+            delay,
+            max,
+            retry_unavailable,
+        } => {
+            let dir = corpus_videos::dir(data);
+            let stop = ctrl_c()?;
+            let mut report = |line: &str| println!("{line}");
+            if list {
+                let listing = corpus_videos::list(&built, &dir, refresh, &stop, &mut report)?;
+                println!("{}", listing.summary());
+                println!(
+                    "`cuttlefish corpus videos` downloads them into {} at 480p, one at a time with {} s between videos",
+                    dir.display(),
+                    corpus_videos::DEFAULT_DELAY
+                );
+                return Ok(());
+            }
+            println!(
+                "Downloading the corpus's YouTube VODs into {} at 480p, {delay} s between videos{}. Ctrl+C stops after the video under way.",
+                dir.display(),
+                max.map_or_else(String::new, |m| format!(", at most {m} this run"))
+            );
+            let options = corpus_videos::Options {
+                delay,
+                max,
+                retry_unavailable,
+            };
+            let summary = corpus_videos::run(&built, &dir, &options, &stop, &mut report)?;
+            println!("{summary}");
+            Ok(())
+        }
+        Corpus::Reviews { reviews } => {
+            let reviews = match reviews {
+                Some(r) => r,
+                None => reviews_folder(data, config)?,
+            };
+            corpus::write(data, &built)?;
+            let done = corpus_reviews::write(&built, data, &reviews)?;
+            println!("{done}");
+            println!("reviews in {}", reviews.display());
             Ok(())
         }
     }

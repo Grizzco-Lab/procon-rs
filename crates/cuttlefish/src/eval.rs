@@ -105,6 +105,8 @@ mod tests {
                 license: None,
                 language: None,
                 weight: 1.0,
+                game: None,
+                video: None,
                 text: String::new(),
             },
         };

@@ -374,6 +374,8 @@ impl Store {
                     license: doc.license.clone(),
                     language: doc.language.clone(),
                     weight: doc.weight,
+                    game: doc.era(),
+                    video: doc.video().map(String::from),
                     text: c.text.clone(),
                 };
                 self.index.add(entry, v)?;

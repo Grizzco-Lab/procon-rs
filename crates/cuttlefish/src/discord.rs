@@ -23,6 +23,7 @@
 //! [`crate::moments`]), linked to that video.
 
 use crate::doc::{Document, SourceKind};
+use crate::game::{self, Game};
 use crate::moments::{self, Moment, MomentKind};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -85,6 +86,9 @@ pub struct MessageRow {
     pub author: String,
     /// When it was posted
     pub time: DateTime<Utc>,
+    /// The game era, from the date ([`crate::game::era`])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<Game>,
     /// The message it replies to
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
@@ -295,29 +299,45 @@ fn with_links(m: &Message) -> String {
     text
 }
 
+/// Whether a file name or link names a video file
+fn is_video(s: &str) -> bool {
+    let s = s
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .to_lowercase();
+    VIDEO_EXTENSIONS
+        .iter()
+        .any(|e| s.ends_with(&alloc::format!(".{e}")))
+}
+
+/// Every video a message itself links, in order: its YouTube links (each
+/// with the link's start time), then its video attachments
+pub fn videos_in(m: &Message) -> Vec<(String, Option<f32>)> {
+    let mut out: Vec<(String, Option<f32>)> = moments::extract(&with_links(m))
+        .into_iter()
+        .filter_map(|x| Some((x.url?, x.seconds)))
+        .collect();
+    out.extend(m.links.iter().filter_map(|l| {
+        let (name, url) = l.rsplit_once(": ")?;
+        (is_video(name) || is_video(url)).then(|| (String::from(url), None))
+    }));
+    out
+}
+
 /// The video a message itself links: its first YouTube link (with the
 /// link's start time), else its first video attachment
 pub fn video_in(m: &Message) -> Option<(String, Option<f32>)> {
-    if let Some((url, t)) = moments::extract(&with_links(m))
-        .into_iter()
-        .find_map(|x| Some((x.url?, x.seconds)))
-    {
-        return Some((url, t));
-    }
-    let is_video = |s: &str| {
-        let s = s
-            .split(['?', '#'])
-            .next()
-            .unwrap_or_default()
-            .to_lowercase();
-        VIDEO_EXTENSIONS
-            .iter()
-            .any(|e| s.ends_with(&alloc::format!(".{e}")))
-    };
-    m.links.iter().find_map(|l| {
-        let (name, url) = l.rsplit_once(": ")?;
-        (is_video(name) || is_video(url)).then(|| (String::from(url), None))
-    })
+    videos_in(m).into_iter().next()
+}
+
+/// The link to a message of a channel
+pub fn message_link(channel: &Channel, message_id: &str) -> String {
+    alloc::format!(
+        "https://discord.com/channels/{}/{}/{message_id}",
+        channel.guild_id,
+        channel.id
+    )
 }
 
 /// A row for each message (oldest first): the reply relation, the thread
@@ -413,6 +433,7 @@ pub fn rows(channel: &Channel, messages: &[Message]) -> Vec<MessageRow> {
                 id: m.id.clone(),
                 author: m.author.clone(),
                 time: m.timestamp,
+                game: Some(game::era(m.timestamp)),
                 reply_to: m.reply_to.clone(),
                 reply_author,
                 thread: channel.thread.then(|| channel.id.clone()),
@@ -445,13 +466,28 @@ pub fn attachment_id(url: &str) -> Option<&str> {
 /// manifest, see [`crate::discord_media`])
 pub fn link_media(docs: &mut [Document], local: &dyn Fn(&str) -> Option<String>) {
     for doc in docs {
-        for row in &mut doc.messages {
-            row.video_local = row
-                .video_url
-                .as_deref()
-                .and_then(attachment_id)
-                .and_then(local);
-        }
+        link_media_rows(&mut doc.messages, local);
+    }
+}
+
+/// [`link_media`] for the rows of one conversation
+pub fn link_media_rows(rows: &mut [MessageRow], local: &dyn Fn(&str) -> Option<String>) {
+    for row in rows {
+        row.video_local = row
+            .video_url
+            .as_deref()
+            .and_then(attachment_id)
+            .and_then(local);
+    }
+}
+
+/// The conversations of a channel: one when `whole` (a thread or forum
+/// post), else [`conversations`]
+pub fn groups(messages: &[Message], whole: bool) -> Vec<Vec<usize>> {
+    if whole {
+        alloc::vec![(0..messages.len()).collect()]
+    } else {
+        conversations(messages)
     }
 }
 
@@ -459,7 +495,7 @@ pub fn link_media(docs: &mut [Document], local: &dyn Fn(&str) -> Option<String>)
 /// indices: a reply joins the conversation of the message it replies to; a
 /// message with a video of its own starts one; any other message joins the
 /// one before it, unless more than [`CONVERSATION_GAP_S`] passed
-fn conversations(messages: &[Message]) -> Vec<Vec<usize>> {
+pub fn conversations(messages: &[Message]) -> Vec<Vec<usize>> {
     let by_id: BTreeMap<&str, usize> = messages
         .iter()
         .enumerate()
@@ -492,13 +528,10 @@ fn conversations(messages: &[Message]) -> Vec<Vec<usize>> {
 /// Makes a document of each conversation of messages (oldest first).
 /// `whole` keeps them as one (a thread or forum post); else a video post
 /// with its replies, and what follows it without a long gap, is one
-/// ([`conversations`]). Each keeps its messages' [`rows`].
+/// ([`conversations`]). Each keeps its messages' [`rows`] and the game era
+/// of its first message's date.
 pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec<Document> {
-    let groups = if whole {
-        alloc::vec![(0..messages.len()).collect()]
-    } else {
-        conversations(messages)
-    };
+    let groups = groups(messages, whole);
     let all_rows = rows(channel, messages);
     let source = if channel.is_vod_review() {
         SourceKind::DiscordVodReview
@@ -510,12 +543,7 @@ pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec
         .filter(|g: &Vec<usize>| !g.is_empty())
         .map(|g| {
             let first = &messages[g[0]];
-            let url = alloc::format!(
-                "https://discord.com/channels/{}/{}/{}",
-                channel.guild_id,
-                channel.id,
-                first.id
-            );
+            let url = message_link(channel, &first.id);
             let place = match &channel.parent {
                 Some(p) => alloc::format!("#{p} > {}", channel.name),
                 None => alloc::format!("#{}", channel.name),
@@ -552,6 +580,7 @@ pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec
                 alloc::format!("{} ({})", authors.join(", "), channel.guild)
             });
             doc.license = Some(String::from(LICENSE));
+            doc.game = Some(game::era(first.timestamp));
             doc.messages = g.iter().map(|&i| all_rows[i].clone()).collect();
             doc
         })
@@ -891,7 +920,37 @@ mod tests {
             docs[0].attribution.as_deref(),
             Some("Alice, bob (Overfishing)")
         );
+        assert_eq!(docs[0].game, Some(Game::S3));
+        assert_eq!(docs[0].era(), Some(Game::S3));
+        assert_eq!(docs[0].video(), Some("https://cdn.example/clip.mp4"));
+        assert_eq!(docs[0].messages[0].game, Some(Game::S3));
         assert_eq!(to_documents(&ch, &msgs, true).len(), 1);
+    }
+
+    #[test]
+    fn every_video_of_a_message() {
+        let m = Message {
+            id: String::from("1"),
+            timestamp: Utc::now(),
+            author: String::from("a"),
+            content: String::from("two runs https://youtu.be/a?t=5 and https://youtu.be/b"),
+            links: alloc::vec![
+                String::from("clip.MP4: https://cdn.example/clip.MP4?ex=1"),
+                String::from("shot.png: https://cdn.example/shot.png"),
+            ],
+            reply_to: None,
+            quoted: None,
+        };
+        let videos = videos_in(&m);
+        assert_eq!(
+            videos,
+            [
+                (String::from("https://youtu.be/a?t=5"), Some(5.0)),
+                (String::from("https://youtu.be/b"), None),
+                (String::from("https://cdn.example/clip.MP4?ex=1"), None),
+            ]
+        );
+        assert_eq!(video_in(&m), videos.first().cloned());
     }
 
     const LINES: &str = r#"{"id": "12", "channel_id": "3", "timestamp": "2024-05-02T09:00:00+00:00", "content": "W1 :50 see https://youtu.be/x?t=83", "author": {"id": "5", "username": "alice", "global_name": "Alice"}, "attachments": [{"id": "7", "url": "https://cdn.example/clip.mp4", "filename": "clip.mp4"}]}

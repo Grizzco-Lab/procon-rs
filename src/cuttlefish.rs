@@ -105,8 +105,11 @@ use crate::objects::write_atomic;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
+use cuttlefish::corpus_reviews::{Origin, Unplaced};
+use cuttlefish::game::Game;
 use cuttlefish::llm::{Role, Settings, Turn};
 use cuttlefish::review::{self as ai, ChatRequest, SourceRef, VideoContext};
+use cuttlefish::{corpus, corpus_reviews};
 use gameplay_data::session::SessionInfo;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -254,7 +257,8 @@ pub struct Comment {
     /// End of the range the comment covers, in seconds
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub t_end_s: Option<f64>,
-    /// `user`, or `Cuttlefish` for the AI
+    /// `user`, `Cuttlefish` for the AI, or a reviewer's name for a comment
+    /// from the #vod-review archive
     pub author: String,
     pub text: String,
     /// Drawn on the frame at `t_s`
@@ -262,13 +266,16 @@ pub struct Comment {
     pub shapes: Vec<Shape>,
     /// When it was written, in Unix ms
     pub created_ms: u64,
+    /// Where an imported comment came from (`cuttlefish corpus reviews`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Origin>,
 }
 
 /// A note on the whole video, tied to no time or drawing
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Note {
     pub id: String,
-    /// `user`, or `Cuttlefish` for the AI
+    /// `user`, `Cuttlefish` for the AI, or a reviewer's name
     pub author: String,
     pub text: String,
     /// When it was written, in Unix ms
@@ -276,6 +283,13 @@ pub struct Note {
     /// When it was last changed, in Unix ms
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edited_ms: Option<u64>,
+    /// Where an imported note came from
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Origin>,
+    /// Moments of an imported note not placed in the video yet (wave
+    /// timers waiting for the video's wave-start table)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unplaced: Vec<Unplaced>,
 }
 
 /// A shape drawn on a frame
@@ -327,6 +341,16 @@ pub struct Review {
     /// attached
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<VideoRef>,
+    /// A title (an imported review's: the poster and the day); the
+    /// library names other reviews by their video or first message
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The game era the video is about, when known
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<Game>,
+    /// Where an imported review came from: the #vod-review conversation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Origin>,
     #[serde(default)]
     pub comments: Vec<Comment>,
     /// Notes on the whole video; older reviews have none
@@ -548,6 +572,9 @@ impl Cuttlefish {
                     json!({
                         "id": id,
                         "video": review.video,
+                        "title": review.title,
+                        "game": review.game,
+                        "from": review.source.as_ref().map(|s| &s.from),
                         "comments": review.comments.len(),
                         "messages": review.messages.len(),
                         "topic": topic,
@@ -690,6 +717,29 @@ impl Cuttlefish {
         video.file = Some(file);
         self.save_review(id, &review)?;
         Ok(review)
+    }
+
+    /// Build the #vod-review corpus from the knowledge folder's archive and
+    /// create or update a review for every VOD whose video is on disk
+    /// (`cuttlefish corpus reviews`); answers with the corpus's counts and
+    /// what was written
+    pub fn community_reviews(&self) -> Result<Value> {
+        let knowledge = self.knowledge.root();
+        let built = corpus::build(knowledge)?;
+        corpus::write(knowledge, &built)?;
+        let stats = corpus::Stats::of(&built, knowledge);
+        let _writing = self.writing.lock().unwrap();
+        let written = corpus_reviews::write(&built, knowledge, &self.reviews)?;
+        Ok(json!({
+            "corpus": stats.to_string(),
+            "vods": stats.vods,
+            "with_local_video": stats.with_local_video,
+            "reviews": written.to_string(),
+            "created": written.created,
+            "updated": written.updated,
+            "unchanged": written.unchanged,
+            "dir": self.reviews,
+        }))
     }
 
     /// Move reviews of the older layout, `<reviews>/<id>.json`, into
@@ -999,6 +1049,9 @@ impl Cuttlefish {
                     true => read_review(&review_file)?,
                     false => Review {
                         video: None,
+                        title: None,
+                        game: None,
+                        source: None,
                         comments: Vec::new(),
                         notes: Vec::new(),
                         messages: Vec::new(),
@@ -1287,6 +1340,9 @@ impl Cuttlefish {
                 Ok(Reply::json(json!(download)))
             }
             (&Method::POST, None) if path == "chat" => Ok(Reply::json(self.chat(&json_body()?)?)),
+            (&Method::POST, None) if path == "community-reviews" => {
+                Ok(Reply::json(self.community_reviews().map_err(bad)?))
+            }
             (&Method::POST, None) if path == "translate" => {
                 Ok(Reply::json(self.translate(&json_body()?)?))
             }
@@ -2107,6 +2163,8 @@ mod tests {
             text: "Too passive all game".into(),
             created_ms: 1790000000002,
             edited_ms: None,
+            source: None,
+            unplaced: Vec::new(),
         });
         let written = serde_json::to_value(&review).unwrap();
         assert_eq!(
@@ -2116,6 +2174,47 @@ mod tests {
         );
         let read: Review = serde_json::from_value(written).unwrap();
         assert_eq!(read, review);
+    }
+
+    #[test]
+    fn imported_reviews_keep_their_origin() {
+        // As `cuttlefish corpus reviews` writes one
+        let text = r#"{
+          "video": {"kind": "file", "ref": "/k/media/discord/1/2/300/wipe.mp4", "title": "wipe.mp4", "upload_date": "2023-06-01"},
+          "title": "Cy, 2023-06-01",
+          "game": "S3",
+          "source": {"from": "discord", "url": "https://discord.com/channels/1/2/300", "video": "https://cdn.discordapp.com/attachments/2/77/wipe.mp4?ex=1"},
+          "comments": [{"id": "discord-301-0", "t_s": 12.0, "author": "Dee", "text": "0:12 nobody had the Flyfish", "shapes": [], "created_ms": 1685614200000, "source": {"from": "discord", "url": "https://discord.com/channels/1/2/301"}}],
+          "notes": [{"id": "discord-300-note", "author": "Cy", "text": "wipe on W3", "created_ms": 1685613600000, "source": {"from": "discord", "url": "https://discord.com/channels/1/2/300"}, "unplaced": [{"raw": "W3", "kind": "unknown", "wave": 3}]}]
+        }"#;
+        let review: Review = serde_json::from_str(text).unwrap();
+        assert_eq!(review.title.as_deref(), Some("Cy, 2023-06-01"));
+        assert_eq!(review.game, Some(Game::S3));
+        assert_eq!(review.source.as_ref().unwrap().from, "discord");
+        assert_eq!(review.comments[0].author, "Dee");
+        assert_eq!(
+            review.comments[0].source.as_ref().unwrap().url,
+            "https://discord.com/channels/1/2/301"
+        );
+        assert_eq!(review.notes[0].unplaced[0].wave, Some(3));
+        review.validate().unwrap();
+        // Written back with everything the corpus gave
+        let written = serde_json::to_value(&review).unwrap();
+        let again: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(written, again);
+        // The listing tells the origin, title and era
+        let (dir, cuttlefish) = scratch("imported");
+        std::fs::create_dir_all(dir.join("discord-300")).unwrap();
+        std::fs::write(dir.join("discord-300/review.json"), text).unwrap();
+        let listed = cuttlefish.reviews().unwrap();
+        assert_eq!(listed["reviews"][0]["from"], "discord");
+        assert_eq!(listed["reviews"][0]["title"], "Cy, 2023-06-01");
+        assert_eq!(listed["reviews"][0]["game"], "S3");
+        // Nothing to build from an empty knowledge folder: no reviews made
+        let done = cuttlefish.community_reviews().unwrap();
+        assert_eq!(done["vods"], 0);
+        assert_eq!(done["created"], 0);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

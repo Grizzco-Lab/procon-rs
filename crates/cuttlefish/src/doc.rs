@@ -1,7 +1,8 @@
 //! Documents: one page, video transcript, conversation or file, with where
 //! it came from and under which terms it may be used.
 
-use crate::discord::MessageRow;
+use crate::discord::{MessageRow, VideoFrom};
+use crate::game::{self, Game};
 use crate::moments::Moment;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -74,6 +75,11 @@ pub struct Document {
     pub revision: Option<u64>,
     /// When it was fetched or imported
     pub fetched_at: DateTime<Utc>,
+    /// The game era it is about, when known: set from its date at import
+    /// (Discord conversations), to be corrected from evidence later; see
+    /// [`Document::era`]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<Game>,
     /// Retrieval weight, [`SourceKind::default_weight`] unless overridden
     pub weight: f32,
     /// Plain text; markdown headings (`#`) mark sections
@@ -103,11 +109,33 @@ impl Document {
             attribution: None,
             revision: None,
             fetched_at: Utc::now(),
+            game: None,
             weight: source.default_weight(),
             text,
             moments: Vec::new(),
             messages: Vec::new(),
         }
+    }
+}
+
+impl Document {
+    /// The era the document is about: `game` when set, else for a
+    /// conversation the era of its first message's date (documents
+    /// imported before `game` existed)
+    pub fn era(&self) -> Option<Game> {
+        self.game
+            .or_else(|| self.messages.first().map(|m| game::era(m.time)))
+    }
+
+    /// The video a conversation is about: the first message's own video,
+    /// else the first video any message is about
+    pub fn video(&self) -> Option<&str> {
+        let own = self
+            .messages
+            .iter()
+            .find(|m| m.video_from == Some(VideoFrom::Own));
+        own.or_else(|| self.messages.iter().find(|m| m.video_url.is_some()))
+            .and_then(|m| m.video_url.as_deref())
     }
 }
 

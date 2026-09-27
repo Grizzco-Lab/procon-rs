@@ -10,6 +10,7 @@
 //! little-endian `f32`, in entry order).
 
 use crate::doc::SourceKind;
+use crate::game::Game;
 use crate::store::write_atomic;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -42,6 +43,12 @@ pub struct Entry {
     pub language: Option<String>,
     /// Retrieval weight
     pub weight: f32,
+    /// The game era the document is about, when known
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<Game>,
+    /// The video a conversation is about (Discord documents)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<String>,
     /// Chunk text
     pub text: String,
 }
@@ -52,9 +59,20 @@ pub struct Entry {
 /// without burying a clearly better match
 pub const WEIGHT_SCALE: f32 = 0.1;
 
-/// Ranking score: cosine similarity plus the source weight's bonus
-pub fn score(cosine: f32, weight: f32) -> f32 {
-    cosine + WEIGHT_SCALE * (weight - 1.0)
+/// What a Splatoon 2 era source loses: a fifth of a weight step, so the
+/// current game's material comes first among close matches and the older
+/// game's still follows
+pub const S2_PENALTY: f32 = 0.02;
+
+/// Ranking score: cosine similarity plus the source weight's bonus, less
+/// [`S2_PENALTY`] for the older game
+pub fn score(cosine: f32, weight: f32, game: Option<Game>) -> f32 {
+    let era = if game == Some(Game::S2) {
+        S2_PENALTY
+    } else {
+        0.0
+    };
+    cosine + WEIGHT_SCALE * (weight - 1.0) - era
 }
 
 /// Search operations a store needs; implement it to swap the index
@@ -195,7 +213,7 @@ impl VectorIndex for FlatIndex {
             .enumerate()
             .map(|(i, v)| {
                 let cos: f32 = v.iter().zip(query).map(|(a, b)| a * b).sum();
-                (i, score(cos, self.entries[i].weight))
+                (i, score(cos, self.entries[i].weight, self.entries[i].game))
             })
             .collect();
         scored.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -227,6 +245,8 @@ mod tests {
             license: None,
             language: None,
             weight,
+            game: None,
+            video: None,
             text: String::from(text),
         }
     }
@@ -275,6 +295,24 @@ mod tests {
         assert_eq!(hits[0].0.doc_id, "vod");
         assert!((hits[0].1 - 1.02).abs() < 1e-4);
         assert!((hits[1].1 - 0.99).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_older_game_comes_second() {
+        let e = HashEmbedder { dim: 256 };
+        let mut index = FlatIndex::new(e.name(), e.dim());
+        let v = e.embed(&["egg flow"], Role::Passage).unwrap().remove(0);
+        let mut old = entry("s2", "egg flow", 1.2);
+        old.game = Some(Game::S2);
+        let mut new = entry("s3", "egg flow", 1.2);
+        new.game = Some(Game::S3);
+        index.add(old, v.clone()).unwrap();
+        index.add(new, v.clone()).unwrap();
+        let hits = index.search(&v, 2);
+        assert_eq!(hits[0].0.doc_id, "s3");
+        assert!((hits[0].1 - 1.02).abs() < 1e-4);
+        assert!((hits[1].1 - 1.0).abs() < 1e-4);
+        assert_eq!(score(0.5, 1.0, None), 0.5);
     }
 
     #[test]

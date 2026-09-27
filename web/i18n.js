@@ -94,6 +94,15 @@ const I18N = {
     "cf.kind.youtube": "YouTube",
     "cf.kind.chat": "Chat",
     "cf.reviews.noVideo": "no video yet",
+    "cf.reviews.noneFiltered": "No reviews of this kind.",
+    "cf.reviews.community": "from #vod-review",
+    "cf.filter.label": "Which reviews",
+    "cf.filter.all": "All",
+    "cf.filter.mine": "Mine",
+    "cf.filter.community": "Community",
+    "cf.era.S2": "Splatoon 2 era",
+    "cf.era.S3": "Splatoon 3 era",
+    "cf.source.discord": "The message on Discord",
     "cf.reviews.messages": ({ n }) => (n === 1 ? "1 message" : `${n} messages`),
     "cf.range.end": "end",
     "cf.youtube.lookingUp": "looking up the title…",
@@ -165,6 +174,11 @@ const I18N = {
     "cf.notes.edited": "edited",
     "cf.notes.delete": "Delete note",
     "cf.notes.deleteAsk": "Delete this note?",
+    "cf.notes.unplaced": "Not placed yet:",
+    "cf.notes.unplacedTimer": ({ wave, s }) =>
+      `wave ${wave}, ${s} s left on the timer; placed once the video's HUD is read`,
+    "cf.notes.unplacedWave": ({ wave }) =>
+      `wave ${wave}; placed once the video's HUD is read`,
 
     // Saving
     "cf.save.new": "not saved yet: comment or ask to start the review",
@@ -412,6 +426,11 @@ const I18N = {
     "k.th.fetched": "Fetched",
     "k.docs.shown": "{n} of {total}",
     "k.docs.none": "No documents yet: import some.",
+    "k.corpus.go": "Create reviews from #vod-review",
+    "k.corpus.note":
+      "each reviewed VOD whose video is on disk becomes a review with the community's comments; re-run any time",
+    "k.corpus.running": "Reading the archive…",
+    "k.corpus.failed": "Could not create the reviews: {error}",
 
     // Knowledge: the inbox, import reports, overview, assets
     "k.kind.inbox": "Inbox",

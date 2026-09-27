@@ -3689,6 +3689,7 @@ body {
   --mark-range: var(--accent);
   --mark-comment: var(--accent);
   --mark-ai: var(--s3);
+  --mark-community: var(--warning);
   position: absolute;
   inset: 0;
   width: 100%;
@@ -4798,6 +4799,66 @@ body {
 
 .cf-comment.is-ai .cf-author {
   color: var(--s3);
+}
+
+/* Comments and notes from the #vod-review archive: a reviewer's words */
+.cf-comment.is-community,
+.cf-note.is-community {
+  border-left-color: var(--warning);
+}
+
+.cf-comment.is-community .cf-author,
+.cf-note.is-community .cf-author {
+  color: var(--warning);
+}
+
+.cf-source {
+  margin-left: 6px;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+}
+
+/* Wave-timer moments of an imported note, waiting for the video's HUD */
+.cf-unplaced-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.cf-unplaced {
+  padding: 0 6px;
+  border: 1px dashed color-mix(in oklab, var(--warning) 60%, transparent);
+  border-radius: 999px;
+  color: var(--warning);
+  font-size: 11px;
+  white-space: pre;
+}
+
+/* The library's filter: all reviews, made here, or from the community */
+.cf-filter {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.cf-filter .mode-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The button that turns the #vod-review archive into reviews */
+.k-corpus {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.k-corpus-result {
+  white-space: pre-wrap;
 }
 
 .cf-meta {

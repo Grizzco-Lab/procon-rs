@@ -1178,6 +1178,38 @@
           <section class="panel p-cf-reviews" aria-labelledby="h-cf-reviews">
             <header class="panel-head">
               <h2 id="h-cf-reviews" data-i18n="cf.tab.reviews">Reviews</h2>
+              <div
+                class="seg cf-filter"
+                id="cf-filter"
+                role="group"
+                aria-label="Which reviews"
+                data-i18n-aria-label="cf.filter.label"
+              >
+                <button
+                  type="button"
+                  class="mode-toggle"
+                  data-filter="all"
+                  data-i18n="cf.filter.all"
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  class="mode-toggle"
+                  data-filter="mine"
+                  data-i18n="cf.filter.mine"
+                >
+                  Mine
+                </button>
+                <button
+                  type="button"
+                  class="mode-toggle"
+                  data-filter="community"
+                  data-i18n="cf.filter.community"
+                >
+                  Community
+                </button>
+              </div>
               <span
                 class="panel-note"
                 id="cf-reviews-note"
@@ -2186,6 +2218,27 @@
             </form>
             <p class="notice" id="k-import-error" hidden></p>
             <ul class="cf-downloads" id="k-jobs"></ul>
+            <div class="k-corpus">
+              <div class="cf-row">
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  id="k-corpus-go"
+                  data-i18n="k.corpus.go"
+                >
+                  Create reviews from #vod-review
+                </button>
+                <span class="panel-note" data-i18n="k.corpus.note"
+                  >each reviewed VOD whose video is on disk becomes a review
+                  with the community's comments; re-run any time</span
+                >
+              </div>
+              <pre
+                class="k-log k-corpus-result"
+                id="k-corpus-result"
+                hidden
+              ></pre>
+            </div>
           </section>
 
           <section class="panel p-k-search" aria-labelledby="h-k-search">

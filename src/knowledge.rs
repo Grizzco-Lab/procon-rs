@@ -87,7 +87,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 use std::time::SystemTime;
 use warp::filters::BoxedFilter;
@@ -526,6 +526,11 @@ impl Knowledge {
             catalogue: Mutex::default(),
             slang: Mutex::default(),
         }
+    }
+
+    /// The crate's data folder
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     /// The store and embedder, loaded on first use (the first time ever,

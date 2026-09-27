@@ -76,6 +76,15 @@ I18N.zh = {
   "cf.kind.chat": "对话",
   "cf.reviews.noVideo": "还没有视频",
   "cf.reviews.messages": "{n} 条消息",
+  "cf.reviews.noneFiltered": "没有这一类的复盘。",
+  "cf.reviews.community": "来自 #vod-review",
+  "cf.filter.label": "显示哪些复盘",
+  "cf.filter.all": "全部",
+  "cf.filter.mine": "我的",
+  "cf.filter.community": "社区",
+  "cf.era.S2": "斯普拉遁 2 时期",
+  "cf.era.S3": "斯普拉遁 3 时期",
+  "cf.source.discord": "Discord 上的原消息",
   "cf.range.end": "结尾",
   "cf.youtube.lookingUp": "正在获取标题…",
   "cf.youtube.open": "在 YouTube 上从此刻打开原视频",
@@ -142,6 +151,10 @@ I18N.zh = {
   "cf.notes.edited": "已编辑",
   "cf.notes.delete": "删除笔记",
   "cf.notes.deleteAsk": "删除这条笔记？",
+  "cf.notes.unplaced": "尚未定位：",
+  "cf.notes.unplacedTimer": ({ wave, s }) =>
+    `第 ${wave} 波，计时器剩 ${s} 秒；读取视频 HUD 后会定位到视频中`,
+  "cf.notes.unplacedWave": ({ wave }) => `第 ${wave} 波；读取视频 HUD 后会定位到视频中`,
 
   // Saving
   "cf.save.new": "尚未保存：写下评论或提问即开始复盘",
@@ -372,6 +385,11 @@ I18N.zh = {
   "k.th.fetched": "获取日期",
   "k.docs.shown": "{total} 个中的 {n} 个",
   "k.docs.none": "还没有文档：请导入一些。",
+  "k.corpus.go": "从 #vod-review 创建复盘",
+  "k.corpus.note":
+    "每个视频在本机的被点评 VOD 都会成为一个带社区评论的复盘；可随时重新运行",
+  "k.corpus.running": "正在读取存档…",
+  "k.corpus.failed": "无法创建复盘：{error}",
 
   // Knowledge: the inbox, import reports, overview, assets
   "k.kind.inbox": "收件箱",

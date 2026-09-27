@@ -183,7 +183,9 @@ pub fn extract(text: &str) -> Vec<Moment> {
         .captures_iter(&rest)
         .map(|c| {
             let whole = c.get(0).unwrap();
-            let raw = whole.as_str().trim_end_matches([' ', ',', '@', '-']);
+            let raw = whole
+                .as_str()
+                .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ',' | '@' | '-'));
             let wave = c[1].parse::<u8>().ok();
             let mut moment = Moment::new(raw, MomentKind::Unknown);
             moment.wave = wave;
@@ -269,6 +271,11 @@ mod tests {
         assert_eq!(
             kinds("wave 3 was fine"),
             [(String::from("wave 3"), MomentKind::Unknown, None, Some(3))]
+        );
+        // A wave at the end of a line
+        assert_eq!(
+            kinds("wipe on W3\nclip.mp4: https://cdn.example/clip.mp4")[0].0,
+            "W3"
         );
         assert_eq!(
             kinds("w3, 86s: two Steelheads"),

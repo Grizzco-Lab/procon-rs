@@ -239,9 +239,10 @@
     return ` · ${shortTime(v.start_s ?? 0)}–${end}`;
   }
 
-  /** What a video is called: a YouTube video by its title */
+  /** What a video is called: a YouTube video by its title, a file by its
+   * title when it has one (an imported VOD), else its name */
   function videoName(v) {
-    if (v.kind === "file") return v.ref.split("/").pop();
+    if (v.kind === "file") return v.title ?? v.ref.split("/").pop();
     if (v.kind === "youtube")
       return v.title ?? v.ref.replace(/^https?:\/\/(www\.)?/, "");
     return v.ref;
@@ -281,10 +282,29 @@
     return text.length > TOPIC_CHARS ? `${text.slice(0, TOPIC_CHARS)}…` : text;
   }
 
-  /** What a review is called: its video, or the chat's first message */
+  /** What a review is called: its title (an imported review's: the poster
+   * and the day), its video, or the chat's first message */
   function reviewName(review) {
+    if (review.title) return review.title;
     if (review.video) return videoName(review.video);
     return topicOf(review.messages?.find((m) => m.role === "user")?.text);
+  }
+
+  /** A comment or note from the #vod-review archive */
+  const isCommunity = (c) => c.source?.from === "discord";
+
+  /** The game era as shown */
+  const eraName = (game) => (game ? t(`cf.era.${game}`) : "");
+
+  /** The library's filter: all, mine (made here) or community (imported) */
+  const FILTER_KEY = "procon-cuttlefish-filter";
+  function libraryFilter() {
+    try {
+      const f = localStorage.getItem(FILTER_KEY);
+      return ["mine", "community"].includes(f) ? f : "all";
+    } catch {
+      return "all";
+    }
   }
 
   /** Author as shown */
@@ -447,19 +467,31 @@
     const data = cf.listing;
     if (!data) return;
     const body = $("cf-reviews");
+    const filter = libraryFilter();
+    for (const button of $("cf-filter").querySelectorAll("[data-filter]")) {
+      button.setAttribute("aria-pressed", String(button.dataset.filter === filter));
+    }
+    const community = (r) => r.from === "discord";
+    const reviews = data.reviews.filter((r) =>
+      filter === "all" ? true : filter === "community" ? community(r) : !community(r),
+    );
     $("cf-reviews-note").textContent = t("cf.reviews.count", {
-      n: data.reviews.length,
+      n: reviews.length,
       dir: data.dir,
     });
     body.replaceChildren();
-    if (!data.reviews.length) {
-      body.innerHTML = `<tr><td colspan="4" class="panel-note">${escapeHtml(t("cf.reviews.none"))}</td></tr>`;
+    if (!reviews.length) {
+      const empty = data.reviews.length
+        ? t("cf.reviews.noneFiltered")
+        : t("cf.reviews.none");
+      body.innerHTML = `<tr><td colspan="4" class="panel-note">${escapeHtml(empty)}</td></tr>`;
     }
     const fetching = new Set(data.fetching ?? []);
-    for (const review of data.reviews) {
+    for (const review of reviews) {
       const v = review.video;
       const tr = document.createElement("tr");
       const details = [];
+      if (review.title && v) details.push(videoName(v));
       if (v?.kind === "youtube") {
         if (!v.title && fetching.has(review.id))
           details.push(t("cf.youtube.lookingUp"));
@@ -467,6 +499,8 @@
       }
       if (v?.file) details.push(t("cf.reviews.fileIn", { file: v.file }));
       if (!v) details.push(t("cf.reviews.noVideo"));
+      if (review.game) details.push(eraName(review.game));
+      if (community(review)) details.push(t("cf.reviews.community"));
       if (review.messages)
         details.push(t("cf.reviews.messages", { n: review.messages }));
       details.push(review.id);
@@ -476,7 +510,7 @@
         : "";
       // A review without a video is named by its first message
       const kind = v ? kindName(v.kind) : kindName("chat");
-      const name = v ? videoName(v) : topicOf(review.topic);
+      const name = review.title ?? (v ? videoName(v) : topicOf(review.topic));
       tr.innerHTML = `
         <td><span class="cf-kind">${escapeHtml(kind)}</span> <span class="cf-video-name">${escapeHtml(name)}</span>${v ? escapeHtml(rangeText(v)) : ""}<br><span class="panel-note">${escapeHtml(details.join(" · "))}${link}</span></td>
         <td class="num">${review.comments}</td>
@@ -493,6 +527,17 @@
       body.append(tr);
     }
   }
+
+  $("cf-filter").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-filter]");
+    if (!button) return;
+    try {
+      localStorage.setItem(FILTER_KEY, button.dataset.filter);
+    } catch {
+      // The choice holds until reload
+    }
+    drawReviews();
+  });
 
   async function deleteReview(id, file) {
     const question = file
@@ -1153,15 +1198,17 @@
         const li = document.createElement("li");
         li.className = "cf-comment";
         li.dataset.id = comment.id;
-        const ai = comment.author !== "user";
+        const community = isCommunity(comment);
+        const ai = comment.author !== "user" && !community;
         if (ai) li.classList.add("is-ai");
+        if (community) li.classList.add("is-community");
         const active = comment.id === cf.active;
         li.classList.toggle("is-active", active);
         li.innerHTML = `
           <div class="cf-comment-head">
             <button type="button" class="cf-time num" data-act="open">${timeText(comment)}</button>
             <span class="cf-author">${escapeHtml(authorName(comment.author))}</span>
-            <span class="cf-meta panel-note">${escapeHtml(drawingsText(comment.shapes.length))}</span>
+            <span class="cf-meta panel-note">${escapeHtml(drawingsText(comment.shapes.length))}${sourceLink(comment)}</span>
             <button type="button" class="cf-x" data-act="delete" title="${escapeHtml(t("cf.comment.delete"))}" aria-label="${escapeHtml(t("cf.comment.delete"))}">✕</button>
           </div>
           ${
@@ -1179,6 +1226,26 @@
       }),
     );
     markLive(player.time());
+  }
+
+  /** A link to the Discord message an imported comment or note came from */
+  function sourceLink(c) {
+    if (!isCommunity(c)) return "";
+    return ` <a class="cf-source" href="${escapeHtml(c.source.url)}" target="_blank" rel="noopener" title="${escapeHtml(t("cf.source.discord"))}">Discord ↗</a>`;
+  }
+
+  /** The moments of an imported note that wait for the video's HUD to be
+   * read (wave timers), as chips */
+  function unplacedChips(note) {
+    if (!note.unplaced?.length) return "";
+    const chips = note.unplaced.map((m) => {
+      const what =
+        m.timer_s != null
+          ? t("cf.notes.unplacedTimer", { wave: m.wave ?? "?", s: m.timer_s })
+          : t("cf.notes.unplacedWave", { wave: m.wave ?? "?" });
+      return `<span class="cf-unplaced num" title="${escapeHtml(what)}">${escapeHtml(m.raw)}</span>`;
+    });
+    return `<div class="cf-unplaced-row"><span class="panel-note">${escapeHtml(t("cf.notes.unplaced"))}</span> ${chips.join(" ")}</div>`;
   }
 
   /** Mark the comments playback is passing */
@@ -1225,7 +1292,12 @@
   function drawMarkers() {
     if (!cf.review) return player.setMarks({});
     const at = (seconds) => Math.round(seconds * player.fps);
-    const kind = (comment) => (comment.author === "user" ? "comment" : "ai");
+    const kind = (comment) =>
+      comment.author === "user"
+        ? "comment"
+        : isCommunity(comment)
+          ? "community"
+          : "ai";
     const comments = cf.review.comments;
     player.setMarks({
       ticks: comments.map((comment) => ({
@@ -1261,14 +1333,16 @@
         const li = document.createElement("li");
         li.className = "cf-note";
         li.dataset.id = note.id;
-        if (note.author !== "user") li.classList.add("is-ai");
+        const community = isCommunity(note);
+        if (note.author !== "user" && !community) li.classList.add("is-ai");
+        if (community) li.classList.add("is-community");
         const when = new Date(note.created_ms).toLocaleString(i18nLocale());
         const edited = note.edited_ms ? ` · ${t("cf.notes.edited")}` : "";
         const editing = note.id === cf.editingNote;
         li.innerHTML = `
           <div class="cf-comment-head">
             <span class="cf-author">${escapeHtml(authorName(note.author))}</span>
-            <span class="cf-meta panel-note">${escapeHtml(when + edited)}</span>
+            <span class="cf-meta panel-note">${escapeHtml(when + edited)}${sourceLink(note)}</span>
             ${editing ? "" : `<button type="button" class="mode-toggle" data-act="edit">${escapeHtml(t("cf.notes.edit"))}</button>`}
             <button type="button" class="cf-x" data-act="delete" title="${escapeHtml(t("cf.notes.delete"))}" aria-label="${escapeHtml(t("cf.notes.delete"))}">✕</button>
           </div>
@@ -1279,7 +1353,7 @@
                    <button type="button" class="mode-toggle" data-act="cancel">${escapeHtml(t("cf.cancel"))}</button>
                    <button type="button" class="btn cf-done" data-act="save">${escapeHtml(t("cf.notes.save"))}</button>
                  </div>`
-              : `<p class="cf-text">${escapeHtml(note.text)}</p>`
+              : `<p class="cf-text">${escapeHtml(note.text)}</p>${unplacedChips(note)}`
           }`;
         return li;
       }),
