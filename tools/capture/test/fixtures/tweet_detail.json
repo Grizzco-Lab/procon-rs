@@ -1,0 +1,194 @@
+{
+  "data": {
+    "threaded_conversation_with_injections_v2": {
+      "instructions": [
+        {
+          "type": "TimelineAddEntries",
+          "entries": [
+            {
+              "entryId": "tweet-1971000000000000010",
+              "content": {
+                "entryType": "TimelineTimelineItem",
+                "itemContent": {
+                  "itemType": "TimelineTweet",
+                  "tweet_results": {
+                    "result": {
+                      "__typename": "Tweet",
+                      "rest_id": "1971000000000000010",
+                      "core": {
+                        "user_results": {
+                          "result": {
+                            "__typename": "User",
+                            "rest_id": "42",
+                            "legacy": {
+                              "screen_name": "ikura_coach",
+                              "name": "Ikura Coach"
+                            }
+                          }
+                        }
+                      },
+                      "note_tweet": {
+                        "note_tweet_results": {
+                          "result": {
+                            "text": "バクダンは湧いた瞬間に処理。テッパンはカゴまで誘導してから倒すと納品が楽になる。長文なので続きは動画で https://t.co/long1",
+                            "entity_set": {
+                              "urls": [
+                                {
+                                  "url": "https://t.co/long1",
+                                  "expanded_url": "https://youtu.be/abc123"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "legacy": {
+                        "created_at": "Wed Sep 24 12:00:00 +0000 2026",
+                        "conversation_id_str": "1971000000000000010",
+                        "full_text": "バクダンは湧いた瞬間に処理。テッパンはカゴまで誘導してから倒すと納品が… https://t.co/long1",
+                        "lang": "ja",
+                        "entities": {
+                          "urls": [
+                            {
+                              "url": "https://t.co/long1",
+                              "expanded_url": "https://youtu.be/abc123"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "entryId": "conversationthread-1971000000000000020",
+              "content": {
+                "entryType": "TimelineTimelineModule",
+                "items": [
+                  {
+                    "entryId": "conversationthread-1971000000000000020-tweet-1971000000000000020",
+                    "item": {
+                      "itemContent": {
+                        "itemType": "TimelineTweet",
+                        "tweet_results": {
+                          "result": {
+                            "__typename": "Tweet",
+                            "rest_id": "1971000000000000020",
+                            "core": {
+                              "user_results": {
+                                "result": {
+                                  "__typename": "User",
+                                  "rest_id": "99",
+                                  "legacy": {
+                                    "screen_name": "wave3_enjoyer",
+                                    "name": "Wave 3"
+                                  }
+                                }
+                              }
+                            },
+                            "legacy": {
+                              "created_at": "Wed Sep 24 12:20:00 +0000 2026",
+                              "conversation_id_str": "1971000000000000010",
+                              "in_reply_to_status_id_str": "1971000000000000010",
+                              "in_reply_to_screen_name": "ikura_coach",
+                              "full_text": "@ikura_coach カタパッドが2体同時のときはどうしてますか？",
+                              "lang": "ja",
+                              "entities": {}
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "entryId": "conversationthread-1971000000000000020-tweet-1971000000000000021",
+                    "item": {
+                      "itemContent": {
+                        "itemType": "TimelineTweet",
+                        "tweet_results": {
+                          "result": {
+                            "__typename": "Tweet",
+                            "rest_id": "1971000000000000021",
+                            "core": {
+                              "user_results": {
+                                "result": {
+                                  "__typename": "User",
+                                  "rest_id": "42",
+                                  "legacy": {
+                                    "screen_name": "ikura_coach",
+                                    "name": "Ikura Coach"
+                                  }
+                                }
+                              }
+                            },
+                            "legacy": {
+                              "created_at": "Wed Sep 24 12:30:00 +0000 2026",
+                              "conversation_id_str": "1971000000000000010",
+                              "in_reply_to_status_id_str": "1971000000000000020",
+                              "in_reply_to_screen_name": "wave3_enjoyer",
+                              "full_text": "@wave3_enjoyer 片方はスペシャルで、もう片方はボムを2個持って行きます",
+                              "lang": "ja",
+                              "entities": {}
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "entryId": "tweet-1971000000000000030",
+              "content": {
+                "entryType": "TimelineTimelineItem",
+                "itemContent": {
+                  "itemType": "TimelineTweet",
+                  "tweet_results": {
+                    "result": {
+                      "__typename": "Tweet",
+                      "rest_id": "1971000000000000030",
+                      "core": {
+                        "user_results": {
+                          "result": {
+                            "__typename": "User",
+                            "rest_id": "100",
+                            "legacy": {
+                              "screen_name": "eggs_zh",
+                              "name": "打工人"
+                            }
+                          }
+                        }
+                      },
+                      "legacy": {
+                        "created_at": "Wed Sep 24 13:00:00 +0000 2026",
+                        "conversation_id_str": "1971000000000000010",
+                        "in_reply_to_status_id_str": "1971000000000000010",
+                        "in_reply_to_screen_name": "ikura_coach",
+                        "full_text": "@ikura_coach 铁板鱼引到蛋筐前再打，学到了",
+                        "lang": "zh",
+                        "entities": {}
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "entryId": "cursor-showmorethreads-1",
+              "content": {
+                "entryType": "TimelineTimelineItem",
+                "itemContent": {
+                  "itemType": "TimelineTimelineCursor",
+                  "cursorType": "ShowMoreThreads",
+                  "value": "NwAAAPAyHBmWgMD"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

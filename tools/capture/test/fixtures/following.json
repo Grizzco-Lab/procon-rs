@@ -1,0 +1,82 @@
+{
+  "data": {
+    "user": {
+      "result": {
+        "__typename": "User",
+        "timeline": {
+          "timeline": {
+            "instructions": [
+              { "type": "TimelineClearCache" },
+              {
+                "type": "TimelineAddEntries",
+                "entries": [
+                  {
+                    "entryId": "user-42",
+                    "content": {
+                      "entryType": "TimelineTimelineItem",
+                      "itemContent": {
+                        "itemType": "TimelineUser",
+                        "user_results": {
+                          "result": {
+                            "__typename": "User",
+                            "rest_id": "42",
+                            "legacy": {
+                              "screen_name": "ikura_coach",
+                              "name": "Ikura Coach"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "entryId": "user-88",
+                    "content": {
+                      "entryType": "TimelineTimelineItem",
+                      "itemContent": {
+                        "itemType": "TimelineUser",
+                        "user_results": {
+                          "result": {
+                            "__typename": "User",
+                            "rest_id": "88",
+                            "core": {
+                              "screen_name": "salmon_lab",
+                              "name": "Salmon Lab"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "entryId": "user-1",
+                    "content": {
+                      "entryType": "TimelineTimelineItem",
+                      "itemContent": {
+                        "itemType": "TimelineUser",
+                        "user_results": {
+                          "result": {
+                            "__typename": "UserUnavailable",
+                            "reason": "Suspended"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "entryId": "cursor-bottom-2",
+                    "content": {
+                      "entryType": "TimelineTimelineCursor",
+                      "cursorType": "Bottom",
+                      "value": "1234|5678"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

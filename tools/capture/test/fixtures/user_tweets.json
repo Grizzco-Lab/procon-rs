@@ -1,0 +1,348 @@
+{
+  "data": {
+    "user": {
+      "result": {
+        "__typename": "User",
+        "timeline_v2": {
+          "timeline": {
+            "instructions": [
+              {
+                "type": "TimelinePinEntry",
+                "entry": {
+                  "entryId": "tweet-1970000000000000001",
+                  "content": {
+                    "entryType": "TimelineTimelineItem",
+                    "itemContent": {
+                      "itemType": "TimelineTweet",
+                      "tweet_results": {
+                        "result": {
+                          "__typename": "Tweet",
+                          "rest_id": "1970000000000000001",
+                          "core": {
+                            "user_results": {
+                              "result": {
+                                "__typename": "User",
+                                "rest_id": "42",
+                                "legacy": {
+                                  "screen_name": "ikura_coach",
+                                  "name": "Ikura Coach"
+                                }
+                              }
+                            }
+                          },
+                          "legacy": {
+                            "created_at": "Mon Sep 01 09:00:00 +0000 2026",
+                            "conversation_id_str": "1970000000000000001",
+                            "full_text": "サーモンランの立ち回りまとめ（固定ツイート） https://t.co/pin1",
+                            "lang": "ja",
+                            "entities": {
+                              "urls": [
+                                {
+                                  "url": "https://t.co/pin1",
+                                  "expanded_url": "https://example.org/salmon-guide"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "TimelineAddEntries",
+                "entries": [
+                  {
+                    "entryId": "tweet-1971000000000000010",
+                    "content": {
+                      "entryType": "TimelineTimelineItem",
+                      "itemContent": {
+                        "itemType": "TimelineTweet",
+                        "tweet_results": {
+                          "result": {
+                            "__typename": "Tweet",
+                            "rest_id": "1971000000000000010",
+                            "core": {
+                              "user_results": {
+                                "result": {
+                                  "__typename": "User",
+                                  "rest_id": "42",
+                                  "core": {
+                                    "screen_name": "ikura_coach",
+                                    "name": "Ikura Coach"
+                                  }
+                                }
+                              }
+                            },
+                            "note_tweet": {
+                              "note_tweet_results": {
+                                "result": {
+                                  "text": "バクダンは湧いた瞬間に処理。テッパンはカゴまで誘導してから倒すと納品が楽になる。長文なので続きは動画で https://t.co/long1",
+                                  "entity_set": {
+                                    "urls": [
+                                      {
+                                        "url": "https://t.co/long1",
+                                        "expanded_url": "https://youtu.be/abc123"
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "legacy": {
+                              "created_at": "Wed Sep 24 12:00:00 +0000 2026",
+                              "conversation_id_str": "1971000000000000010",
+                              "full_text": "バクダンは湧いた瞬間に処理。テッパンはカゴまで誘導してから倒すと納品が… https://t.co/long1 https://t.co/media1",
+                              "lang": "ja",
+                              "entities": {
+                                "urls": [
+                                  {
+                                    "url": "https://t.co/long1",
+                                    "expanded_url": "https://youtu.be/abc123"
+                                  }
+                                ],
+                                "media": [
+                                  {
+                                    "url": "https://t.co/media1",
+                                    "media_url_https": "https://pbs.twimg.com/media/one.jpg",
+                                    "type": "photo"
+                                  }
+                                ]
+                              },
+                              "extended_entities": {
+                                "media": [
+                                  {
+                                    "url": "https://t.co/media1",
+                                    "media_url_https": "https://pbs.twimg.com/media/one.jpg",
+                                    "type": "photo"
+                                  },
+                                  {
+                                    "url": "https://t.co/media1",
+                                    "media_url_https": "https://pbs.twimg.com/ext_tw_video_thumb/two.jpg",
+                                    "type": "video",
+                                    "video_info": {
+                                      "variants": [
+                                        {
+                                          "content_type": "application/x-mpegURL",
+                                          "url": "https://video.twimg.com/two.m3u8"
+                                        },
+                                        {
+                                          "content_type": "video/mp4",
+                                          "bitrate": 832000,
+                                          "url": "https://video.twimg.com/two-low.mp4"
+                                        },
+                                        {
+                                          "content_type": "video/mp4",
+                                          "bitrate": 2176000,
+                                          "url": "https://video.twimg.com/two-high.mp4"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "entryId": "tweet-1971000000000000011",
+                    "content": {
+                      "entryType": "TimelineTimelineItem",
+                      "itemContent": {
+                        "itemType": "TimelineTweet",
+                        "tweet_results": {
+                          "result": {
+                            "__typename": "TweetWithVisibilityResults",
+                            "tweet": {
+                              "__typename": "Tweet",
+                              "rest_id": "1971000000000000011",
+                              "core": {
+                                "user_results": {
+                                  "result": {
+                                    "__typename": "User",
+                                    "rest_id": "42",
+                                    "legacy": {
+                                      "screen_name": "ikura_coach",
+                                      "name": "Ikura Coach"
+                                    }
+                                  }
+                                }
+                              },
+                              "legacy": {
+                                "created_at": "Wed Sep 24 13:00:00 +0000 2026",
+                                "conversation_id_str": "1971000000000000011",
+                                "full_text": "今日のランチはカレー",
+                                "lang": "ja",
+                                "entities": {}
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "entryId": "tweet-1971000000000000012",
+                    "content": {
+                      "entryType": "TimelineTimelineItem",
+                      "itemContent": {
+                        "itemType": "TimelineTweet",
+                        "tweet_results": {
+                          "result": {
+                            "__typename": "Tweet",
+                            "rest_id": "1971000000000000012",
+                            "core": {
+                              "user_results": {
+                                "result": {
+                                  "__typename": "User",
+                                  "rest_id": "42",
+                                  "legacy": {
+                                    "screen_name": "ikura_coach",
+                                    "name": "Ikura Coach"
+                                  }
+                                }
+                              }
+                            },
+                            "legacy": {
+                              "created_at": "Wed Sep 24 14:00:00 +0000 2026",
+                              "conversation_id_str": "1971000000000000012",
+                              "full_text": "RT @grizzco_fan: Eggstra Work this weekend, Spawning Grounds! https://t.co/rt1",
+                              "lang": "en",
+                              "entities": { "urls": [] },
+                              "retweeted_status_result": {
+                                "result": {
+                                  "__typename": "Tweet",
+                                  "rest_id": "1971000000000000005",
+                                  "core": {
+                                    "user_results": {
+                                      "result": {
+                                        "__typename": "User",
+                                        "rest_id": "77",
+                                        "legacy": {
+                                          "screen_name": "grizzco_fan",
+                                          "name": "Grizzco Fan"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "legacy": {
+                                    "created_at": "Wed Sep 24 11:00:00 +0000 2026",
+                                    "conversation_id_str": "1971000000000000005",
+                                    "full_text": "Eggstra Work this weekend, Spawning Grounds!",
+                                    "lang": "en",
+                                    "entities": {}
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "entryId": "tweet-1971000000000000013",
+                    "content": {
+                      "entryType": "TimelineTimelineItem",
+                      "itemContent": {
+                        "itemType": "TimelineTweet",
+                        "tweet_results": {
+                          "result": {
+                            "__typename": "Tweet",
+                            "rest_id": "1971000000000000013",
+                            "core": {
+                              "user_results": {
+                                "result": {
+                                  "__typename": "User",
+                                  "rest_id": "42",
+                                  "legacy": {
+                                    "screen_name": "ikura_coach",
+                                    "name": "Ikura Coach"
+                                  }
+                                }
+                              }
+                            },
+                            "legacy": {
+                              "created_at": "Wed Sep 24 15:00:00 +0000 2026",
+                              "conversation_id_str": "1971000000000000013",
+                              "full_text": "これは本当にそう https://t.co/q1",
+                              "lang": "ja",
+                              "is_quote_status": true,
+                              "quoted_status_id_str": "1971000000000000006",
+                              "entities": {
+                                "urls": [
+                                  {
+                                    "url": "https://t.co/q1",
+                                    "expanded_url": "https://x.com/salmon_lab/status/1971000000000000006"
+                                  }
+                                ]
+                              }
+                            },
+                            "quoted_status_result": {
+                              "result": {
+                                "__typename": "Tweet",
+                                "rest_id": "1971000000000000006",
+                                "core": {
+                                  "user_results": {
+                                    "result": {
+                                      "__typename": "User",
+                                      "rest_id": "88",
+                                      "legacy": {
+                                        "screen_name": "salmon_lab",
+                                        "name": "Salmon Lab"
+                                      }
+                                    }
+                                  }
+                                },
+                                "legacy": {
+                                  "created_at": "Wed Sep 24 10:00:00 +0000 2026",
+                                  "conversation_id_str": "1971000000000000006",
+                                  "full_text": "干潮のハコビヤはカゴ前で待つのが一番安定する",
+                                  "lang": "ja",
+                                  "entities": {}
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "entryId": "tweet-1971000000000000014",
+                    "content": {
+                      "entryType": "TimelineTimelineItem",
+                      "itemContent": {
+                        "itemType": "TimelineTweet",
+                        "tweet_results": {
+                          "result": {
+                            "__typename": "TweetTombstone",
+                            "tombstone": {
+                              "text": { "text": "This Post is unavailable." }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "entryId": "cursor-bottom-1",
+                    "content": {
+                      "entryType": "TimelineTimelineCursor",
+                      "cursorType": "Bottom",
+                      "value": "DAABCgABGl4zGZq__9sKAAIaXX-Z2Rn"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
