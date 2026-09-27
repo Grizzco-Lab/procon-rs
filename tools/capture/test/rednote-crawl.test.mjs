@@ -49,12 +49,12 @@ const list = (notes, hasMore) =>
       })),
     },
   });
-const followings = (users, hasMore) =>
-  answer(`${API}/v1/user/followings?cursor=`, {
+/** The @ picker's accounts, as `intimacy_list` answers */
+const followings = (users) =>
+  answer(`${API}/v1/intimacy/intimacy_list`, {
     code: 0,
     data: {
-      has_more: hasMore,
-      users: users.map(([id, n]) => ({ userid: id, nickname: n })),
+      items: users.map(([id, n]) => ({ userid: id, nickname: n, rid: "1" })),
     },
   });
 
@@ -99,6 +99,10 @@ class FakePage {
     if (!batches?.length) return false;
     this.queue.push(...batches.shift());
     return true;
+  }
+  async type(text) {
+    this.visited.push(`type ${text}`);
+    this.queue.push(...(this.entry().typed ?? []));
   }
   async key(key) {
     this.visited.push(`key ${key}`);
@@ -437,19 +441,19 @@ test("the per-run notes limit leaves the rest for the next run", async () => {
 test("the following list is read from the account's own profile", async () => {
   const dir = scratch();
   const script = firstVisit();
+  const myNote = `${SITE}/explore/mine`;
   script[`${SITE}/user/profile/me1`] = {
-    count: [
-      [
-        followings(
-          [
-            [A, "Grizzco Coach"],
-            ["me1", "Me"],
-          ],
-          true,
-        ),
-      ],
+    clicks: { "section.note-item a.cover": { location: myNote } },
+  };
+  script[myNote] = {
+    clicks: { "#content-textarea": { location: myNote } },
+    typed: [
+      followings([
+        [A, "Grizzco Coach"],
+        ["me1", "Me"],
+        [B, "Other"],
+      ]),
     ],
-    scrolls: [[followings([[B, "Other"]], false)]],
   };
   script[PROFILE_B] = { responses: [list([], false)] };
   const page = new FakePage(script);
@@ -457,11 +461,15 @@ test("the following list is read from the account's own profile", async () => {
   const s = await c.run();
   assert.equal(s.stopped, undefined, c.lines.join("\n"));
   assert.equal(s.creators, 2);
-  assert.deepEqual(page.visited.slice(0, 5), [
+  // "@" typed into a note's comment box and taken back; nothing sent
+  assert.deepEqual(page.visited.slice(0, 8), [
     SITE,
     `${SITE}/user/profile/me1`,
-    "click count",
-    "scroll",
+    "click section.note-item a.cover",
+    "click #content-textarea",
+    "type @",
+    "key Backspace",
+    "key Escape",
     "key Escape",
   ]);
   const st = state.load(dir, rn.TOOL);
@@ -476,9 +484,9 @@ test("the following list is read from the account's own profile", async () => {
   // Known and fresh: not read again
   const again = new FakePage(firstVisit());
   await crawl(again, dir).run();
-  assert.ok(!again.visited.includes("click count"));
+  assert.ok(!again.visited.includes("type @"));
 
-  // Without a count to click, the run says what to do
+  // Without a note of the account's own, the run says what to do
   const bare = firstVisit();
   bare[`${SITE}/user/profile/me1`] = {};
   const s3 = await crawl(new FakePage(bare), scratch(), {

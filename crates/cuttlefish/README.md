@@ -968,8 +968,8 @@ The Chinese Salmon Run community writes on Xiaohongshu (小红书, RedNote):
 guides, clears, and discussion in the comments. `tools/capture/rednote.mjs`
 (Node 22+, no packages; the folder's README has the guide) drives the same
 logged-in Chrome as `xcap.mjs`, on the same profile folder
-(`~/.config/procon/browser-profile`, one login for both sites): it opens
-your following list once, each creator's notes list (笔记), and each note
+(`~/.config/procon/browser-profile`, one login for both sites): it reads
+your following list once (from a comment box's @ picker; nothing is sent), each creator's notes list (笔记), and each note
 about Salmon Run for its comments and replies, scrolling and clicking like
 a reader, and keeps the JSON the page loaded for itself (the site's signed
 headers, `x-s`/`x-t`, are never made or replayed; the page's server state

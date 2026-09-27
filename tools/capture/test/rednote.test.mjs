@@ -428,7 +428,7 @@ test("a page that wants a person is told by its address or its words", () => {
     null,
   );
   assert.equal(rn.challenge(undefined, undefined), null);
-  assert.ok(rn.PAGE.following.length && rn.PAGE.moreReplies.length);
+  assert.ok(rn.PAGE.moreReplies.length);
   assert.ok(rn.isSiteApi(`${API}/v1/feed`));
   assert.ok(
     rn.isSiteApi("https://edith.xiaohongshu.com/api/sns/web/v2/user/me"),

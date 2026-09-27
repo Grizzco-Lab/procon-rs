@@ -324,6 +324,19 @@ export class Page {
     return this.clickAt(await this.evaluate(textBoxOf(words, digit)));
   }
 
+  /** Types `text` into the focused element, a character at a time */
+  async type(text) {
+    for (const ch of text) {
+      await this.send("Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key: ch,
+        text: ch,
+      });
+      await this.send("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
+      await sleep(90 + Math.random() * 160);
+    }
+  }
+
   /** A key pressed and released (`"Escape"`, 27) */
   async key(key, code) {
     for (const type of ["keyDown", "keyUp"])

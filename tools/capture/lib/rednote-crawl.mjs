@@ -36,8 +36,6 @@ export const DEFAULTS = Object.freeze({
   listScrolls: 40,
   /** Scrolls down a note's comments, at most */
   commentScrolls: 15,
-  /** Scrolls down the following list, at most */
-  followingScrolls: 80,
   /** The following list is read again after this many days */
   followingTtlDays: 7,
 });
@@ -45,7 +43,11 @@ export const DEFAULTS = Object.freeze({
 /** HTTP statuses the site answers to what it takes for a script */
 const BLOCKED = [403, 461, 471];
 
-const isFollowings = (r) => /follow/.test(r.url);
+/** A note tile of the account's own profile, and a note's comment box */
+const OWN_NOTE = "section.note-item a.cover";
+const COMMENT_BOX = "#content-textarea";
+
+const isFollowings = (r) => /intimacy_list|follow/.test(r.url);
 const isList = (r) => /user_posted/.test(r.url);
 const isNoteAnswer = (r) => /comment\/page|\/feed/.test(r.url);
 const isComments = (r) => /comment/.test(r.url);
@@ -199,45 +201,35 @@ export class Crawl {
         "the account's id is not known, so its following list cannot be opened; give the creators with --creators (their profile links)",
       );
     const found = new Map();
-    let more = true;
     const take = () => {
-      let added = 0;
       for (const p of this.drain()) {
         if (p.kind !== "followings") continue;
-        more = p.has_more;
-        for (const u of p.users) {
-          if (u.user_id === me || found.has(u.user_id)) continue;
-          found.set(u.user_id, u);
-          added++;
-        }
+        for (const u of p.users)
+          if (u.user_id !== me && !found.has(u.user_id))
+            found.set(u.user_id, u);
       }
-      return added;
     };
     await this.action(() =>
       this.page.goto(`${this.origin}/user/profile/${me}`),
     );
     take();
-    // The following count opens the list
-    const clicked = await this.action(() =>
-      this.page.clickText(rn.PAGE.following, { digit: true }),
-    );
-    if (!clicked)
+    // The web profile does not open the following list; the @ picker of a
+    // note's comment box lists the accounts followed. One of the account's
+    // own notes is opened, "@" typed and taken back, nothing is sent.
+    const opened = await this.action(() => this.page.click(OWN_NOTE));
+    if (!opened)
       throw new Stop(
         "empty",
-        "no following count found on the profile page; give the creators with --creators (their profile links)",
+        "no note of yours to open the comment box of; give the creators with --creators (their profile links)",
       );
-    await this.page.waitFor(isFollowings, 8000);
+    await this.action(() => this.page.click(COMMENT_BOX));
+    await this.action(async () => {
+      await this.page.type("@");
+      await this.page.waitFor(isFollowings, 8000);
+    });
     take();
-    let idle = 0;
-    for (
-      let i = 0;
-      i < this.options.followingScrolls && more && idle < 2;
-      i++
-    ) {
-      await this.action(() => this.page.scroll());
-      await this.page.waitFor(isFollowings, 5000);
-      idle = take() === 0 ? idle + 1 : 0;
-    }
+    await this.page.key("Backspace", 8);
+    await this.page.key("Escape", 27);
     if (!found.size)
       throw new Stop(
         "empty",

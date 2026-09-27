@@ -174,8 +174,10 @@ a captcha**: anything that wants a person stops the run at once.
   everyday Chrome and its profile are never touched.
 - **What it visits.** The home page (are we logged in, and as whom: the
   site's `user/me` answer, else the page state), your own profile once for
-  the following list (the following count is clicked and the list
-  scrolled; kept in the state for a week, `--refresh-following` reads it
+  the following list (the web profile does not open it, so one of your own
+  notes is opened, "@" typed into its comment box, whose picker lists the
+  accounts you follow (`intimacy_list`), and taken back: nothing is sent;
+  kept in the state for a week, `--refresh-following` reads it
   again, `--creators` gives creators yourself as profile links, ids or
   `@<file>`), each creator's profile, scrolling the notes list until it
   ends or, on later visits, until it shows only notes seen before, and each

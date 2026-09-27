@@ -58,11 +58,9 @@ export const MARKERS = Object.freeze({
   codes: [-100, -101, 300011, 300012, 300013, 300015],
 });
 
-/** Texts of page elements the flow clicks: the following count on a
- * profile ("N following"), the button that unfolds more replies under a
- * comment */
+/** Texts of page elements the flow clicks: the button that unfolds more
+ * replies under a comment */
 export const PAGE = Object.freeze({
-  following: ["关注"],
   moreReplies: ["展开", "条回复", "更多回复"],
 });
 
@@ -261,7 +259,8 @@ function query(url, name) {
  * - `{kind: "me", user_id, guest, fields}`: the user (`/user/me`); a
  *   guest has an id too, so only an account's name (nickname or red_id, the handle)
  *   counts as logged in; `fields` names what the answer held
- * - `{kind: "followings", users, has_more}`: a page of followed accounts
+ * - `{kind: "followings", users, has_more}`: a page of followed accounts,
+ *   or the accounts the comment box's @ picker offers (`intimacy_list`)
  * - `{kind: "list", notes, has_more}`: a page of a creator's notes
  * - `{kind: "notes", notes}`: note details (`/feed`), without comments
  * - `{kind: "comments", note_id, root, comments, has_more}`: a page of
@@ -290,6 +289,12 @@ export function recognise(url, body) {
         field(data, ["guest"]) === true ||
         !(text(data, ["nickname"]) || text(data, ["red_id", "redId"])),
       fields: Object.keys(data).sort(),
+    };
+  if (/intimacy_list/.test(url ?? "") && Array.isArray(data.items))
+    return {
+      kind: "followings",
+      users: data.items.map(authorOf).filter((u) => u.user_id),
+      has_more: false,
     };
   if (Array.isArray(data.users))
     return {
