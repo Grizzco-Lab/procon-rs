@@ -7,7 +7,9 @@
 //! - [`track`]: boxes over frames to tracks with ids (SORT-like);
 //! - [`labels`]: the object label files shared with the labeling tool, and
 //!   the rule for merging model boxes into them;
-//! - [`render`]: frames with boxes drawn, as PNG.
+//! - [`render`]: frames with boxes drawn, as PNG;
+//! - [`hud`]: the Salmon Run HUD (wave, timer, eggs) read from frames, and
+//!   a video's wave table from it.
 //!
 //! See the crate README for the plan toward Salmon Run-specific detection
 //! and 3D placement.
@@ -16,6 +18,7 @@ extern crate alloc;
 
 pub mod detect;
 pub mod frames;
+pub mod hud;
 pub mod labels;
 pub mod render;
 pub mod track;

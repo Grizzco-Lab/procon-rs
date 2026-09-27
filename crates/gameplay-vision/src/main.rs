@@ -6,6 +6,10 @@
 //! gameplay-vision track    <objects.jsonl> [--output tracks.jsonl]
 //! gameplay-vision prelabel <session> [--annotations DIR] [--input objects.jsonl] [--track]
 //! gameplay-vision render   <session> <objects.jsonl> --out DIR [--frames 1,2,3]
+//! gameplay-vision hud scan  <video> [--every 0.5s] [--out wave_starts.json]
+//! gameplay-vision hud read  <video> --at 12.5,30 [--png DIR]
+//! gameplay-vision hud time  <wave_starts.json> <wave> <timer_s>
+//! gameplay-vision hud learn <video>... [--fit] [--game s3] --out templates.txt
 //! ```
 //!
 //! `detect` and `prelabel` print each frame's timings (decode, preprocess,
@@ -15,6 +19,11 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 use gameplay_vision::detect::{self, Detector, Timing, Weights};
 use gameplay_vision::frames::{FrameRange, FrameReader, Segment};
+use gameplay_vision::hud::glyph::{Blob, Templates};
+use gameplay_vision::hud::learn::{self, Anchor, Learner};
+use gameplay_vision::hud::video::{self as hud_video, Region, VideoInfo};
+use gameplay_vision::hud::waves::WaveTable;
+use gameplay_vision::hud::{self, HudCrop, Parts, Reader};
 use gameplay_vision::labels::{self, FrameObjects};
 use gameplay_vision::render;
 use gameplay_vision::track::{self, TrackerConfig};
@@ -95,6 +104,123 @@ enum Cmd {
         #[arg(long, value_delimiter = ',')]
         frames: Vec<u64>,
     },
+    /// Salmon Run HUD: wave number and timer from any video
+    Hud {
+        #[command(subcommand)]
+        command: HudCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum HudCmd {
+    /// Read the HUD through a video and write its wave table
+    Scan {
+        /// Video file
+        video: PathBuf,
+        /// Seconds between samples (`0.5`, `1s`)
+        #[arg(long, default_value = "0.5", value_parser = parse_seconds)]
+        every: f64,
+        /// Output file; default: `<video stem>.wave_starts.json` next to it
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Also write every sample's reading as JSON lines
+        #[arg(long)]
+        track: Option<PathBuf>,
+        #[command(flatten)]
+        hud: HudOpts,
+    },
+    /// Read the HUD at some times and print it
+    Read {
+        /// Video file
+        video: PathBuf,
+        /// Video times in seconds, comma-separated
+        #[arg(long, value_delimiter = ',', required = true)]
+        at: Vec<f64>,
+        /// Save each HUD crop as `<dir>/<time>.png`
+        #[arg(long)]
+        png: Option<PathBuf>,
+        #[command(flatten)]
+        hud: HudOpts,
+    },
+    /// Video time of a wave's timer value, from a wave table
+    Time {
+        /// `wave_starts.json` from `hud scan`
+        table: PathBuf,
+        /// Wave number
+        wave: u8,
+        /// Timer value in seconds
+        timer_s: f64,
+    },
+    /// Build glyph templates from videos labeled by their own countdown
+    Learn {
+        /// Video files
+        #[arg(required = true)]
+        videos: Vec<PathBuf>,
+        /// Label frames with the wave table read by the current templates
+        /// instead of the switch from 100 to 99
+        #[arg(long)]
+        fit: bool,
+        /// Number of each video's first wave (without `--fit`)
+        #[arg(long, default_value_t = 1)]
+        first_wave: u8,
+        /// Game tag of the templates; templates of other games are kept
+        #[arg(long, default_value = "s3")]
+        game: String,
+        /// Output templates file
+        #[arg(long)]
+        out: PathBuf,
+        #[command(flatten)]
+        hud: HudOpts,
+    },
+}
+
+/// Where the game picture is and which templates read it
+#[derive(Args)]
+struct HudOpts {
+    /// The game picture in source pixels, `x,y,w,h`; default: the frame
+    /// without black bars
+    #[arg(long, value_parser = parse_region)]
+    region: Option<Region>,
+    /// Templates file instead of the built-in one
+    #[arg(long)]
+    templates: Option<PathBuf>,
+}
+
+impl HudOpts {
+    fn reader(&self) -> Result<Reader> {
+        let templates = match &self.templates {
+            Some(path) => Templates::parse(
+                &std::fs::read_to_string(path)
+                    .with_context(|| format!("cannot read {}", path.display()))?,
+            )?,
+            None => Reader::builtin().templates.clone(),
+        };
+        Ok(Reader { templates })
+    }
+
+    fn region(&self, video: &Path, info: &VideoInfo) -> Result<Region> {
+        match self.region {
+            Some(r) => Ok(r),
+            None => hud_video::detect_region(video, info),
+        }
+    }
+}
+
+fn parse_region(s: &str) -> Result<Region, String> {
+    Region::parse(s).map_err(|e| e.to_string())
+}
+
+/// Seconds, with or without a trailing `s`
+fn parse_seconds(s: &str) -> Result<f64, String> {
+    let v: f64 = s
+        .trim_end_matches('s')
+        .parse()
+        .map_err(|_| format!("expected seconds, got {s:?}"))?;
+    if v > 0.0 {
+        Ok(v)
+    } else {
+        Err("must be above 0".into())
+    }
 }
 
 /// Which frames of which segment
@@ -247,6 +373,7 @@ fn main() -> Result<()> {
                 .collect::<Vec<_>>();
             render_all(&segment, &frames, &out, &colors)?;
         }
+        Cmd::Hud { command } => run_hud(command)?,
     }
     Ok(())
 }
@@ -457,5 +584,201 @@ fn render_all(
         render::render_frame(segment, f.frame, &f.boxes, colors, &out)?;
     }
     println!("saved {} frames in {}", frames.len(), dir.display());
+    Ok(())
+}
+
+fn run_hud(command: HudCmd) -> Result<()> {
+    match command {
+        HudCmd::Scan {
+            video,
+            every,
+            out,
+            track,
+            hud,
+        } => {
+            let reader = hud.reader()?;
+            let start = Instant::now();
+            let (table, samples) = hud::scan(&video, every, hud.region, &reader)?;
+            let took = start.elapsed().as_secs_f64();
+            if let Some(path) = track {
+                let mut text = String::new();
+                for s in &samples {
+                    let line = serde_json::json!({ "t": s.t, "hud": s.hud, "fit": table.at(s.t) });
+                    text.push_str(&line.to_string());
+                    text.push('\n');
+                }
+                std::fs::write(&path, text)
+                    .with_context(|| format!("cannot write {}", path.display()))?;
+            }
+            let out = out.unwrap_or_else(|| {
+                let stem = video.file_stem().unwrap_or_default().to_string_lossy();
+                video.with_file_name(format!("{stem}.wave_starts.json"))
+            });
+            std::fs::write(&out, serde_json::to_string_pretty(&table)? + "\n")
+                .with_context(|| format!("cannot write {}", out.display()))?;
+            print_wave_table(&table);
+            println!(
+                "{} samples ({} with a HUD) in {:.1} s: {:.1} s per minute of video",
+                table.samples,
+                table.hud_samples,
+                took,
+                took * 60.0 / table.duration_s.max(1.0)
+            );
+            println!("wrote {}", out.display());
+        }
+        HudCmd::Read {
+            video,
+            at,
+            png,
+            hud,
+        } => {
+            let reader = hud.reader()?;
+            let info = hud_video::probe(&video)?;
+            let region = hud.region(&video, &info)?;
+            println!("{}x{}, game picture {region:?}", info.width, info.height);
+            if let Some(dir) = &png {
+                std::fs::create_dir_all(dir)?;
+            }
+            for t in at {
+                let mut crops =
+                    hud_video::CropReader::start(&video, region, None, info.fps, t, Some(0.5))?;
+                let Some(item) = crops.next() else {
+                    println!("{t:8.2}: no frame");
+                    continue;
+                };
+                let (_, crop) = item?;
+                let found = Parts::find(&crop).map_or_else(
+                    || "no timer".to_string(),
+                    |p| {
+                        format!(
+                            "timer [{}] wave [{}] eggs [{}]",
+                            blob_list(&p.timer),
+                            blob_list(p.wave.as_slice()),
+                            blob_list(&p.eggs)
+                        )
+                    },
+                );
+                println!("{t:8.2}: {:?} | {found}", reader.read(&crop));
+                if let Some(dir) = &png {
+                    save_crop_png(&crop, &dir.join(format!("{t:08.2}.png")))?;
+                }
+            }
+        }
+        HudCmd::Time {
+            table,
+            wave,
+            timer_s,
+        } => {
+            let text = std::fs::read_to_string(&table)
+                .with_context(|| format!("cannot read {}", table.display()))?;
+            let table: WaveTable = serde_json::from_str(&text)?;
+            match table.to_video_time(wave, timer_s) {
+                Some(t) => println!("{t:.2}"),
+                None => bail!("wave {wave} at {timer_s} s is not in {}", table.video),
+            }
+        }
+        HudCmd::Learn {
+            videos,
+            fit,
+            first_wave,
+            game,
+            out,
+            hud,
+        } => {
+            let reader = hud.reader()?;
+            let mut learner = Learner::default();
+            let anchor = if fit {
+                Anchor::Fit
+            } else {
+                Anchor::Start { first_wave }
+            };
+            for video in &videos {
+                let info = hud_video::probe(video)?;
+                let region = hud.region(video, &info)?;
+                let countdowns =
+                    learn::learn_video(&mut learner, &reader, video, &info, region, anchor)?;
+                println!("{}:", video.display());
+                for c in countdowns {
+                    let nine = c.t9.map_or("not seen".to_string(), |t9| {
+                        format!("{t9:.3} ({:+.3} s from 90 s later)", t9 - c.t99 - 90.0)
+                    });
+                    println!(
+                        "  wave {}: 99 at {:.3} s (countdown from {:.3} s); 9 at {nine}",
+                        c.wave,
+                        c.t99,
+                        c.t99 - 1.0
+                    );
+                }
+            }
+            for (role, ch, n) in learner.counts() {
+                println!("  {} {ch}: {n} glyphs", role.name());
+            }
+            let templates = learn::replace_game(&reader.templates, &game, learner.templates(&game));
+            std::fs::write(&out, templates.to_text())
+                .with_context(|| format!("cannot write {}", out.display()))?;
+            println!(
+                "wrote {} templates to {}",
+                templates.list.len(),
+                out.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Blobs as `wxh@x,y`
+fn blob_list(blobs: &[Blob]) -> String {
+    blobs
+        .iter()
+        .map(|b| format!("{}x{}@{},{}", b.w, b.h, b.x, b.y))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn print_wave_table(table: &WaveTable) {
+    if table.waves.is_empty() {
+        println!("no waves found");
+    }
+    for w in &table.waves {
+        println!(
+            "wave {}{}: {:8.2} - {:8.2} s, timer {:6.2} at start, {} readings, {:.0}% agree",
+            w.wave,
+            if w.extra {
+                " (extra)"
+            } else if w.wave_read {
+                ""
+            } else {
+                " (counted)"
+            },
+            w.start_video_s,
+            w.end_video_s,
+            w.timer_at_start,
+            w.readings,
+            w.agree * 100.0
+        );
+    }
+}
+
+/// Save a HUD crop as PNG through ffmpeg
+fn save_crop_png(crop: &HudCrop, out: &Path) -> Result<()> {
+    use std::io::Write;
+    let mut child = std::process::Command::new("ffmpeg")
+        .args([
+            "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s",
+        ])
+        .arg(format!("{}x{}", hud::CROP_W, hud::CROP_H))
+        .args(["-i", "-", "-frames:v", "1"])
+        .arg(out)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .context("cannot run ffmpeg")?;
+    child
+        .stdin
+        .take()
+        .context("ffmpeg has no stdin")?
+        .write_all(&crop.rgb)?;
+    if !child.wait()?.success() {
+        bail!("ffmpeg could not write {}", out.display());
+    }
     Ok(())
 }
