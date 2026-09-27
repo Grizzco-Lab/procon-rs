@@ -78,9 +78,11 @@ can be rendered, tracked or prelabeled.
 The annotations folder defaults to `Annotations` next to the dataset folder
 that holds the session; `prelabel` refuses a folder inside the dataset. If
 `classes.json` is missing, `prelabel` writes a starter list (the Salmonids,
-`golden_egg`, `player`, `dead_player`, `basket` and the King Salmonids
-`cohozuna`, `horrorboros`, `megalodontia`, then `snatcher`, the same list as the labeling tool's)
-and says so. Boxes of classes not in `classes.json` are
+`golden_egg`, `player`, `dead_player`, `basket`, the King Salmonids
+`cohozuna`, `horrorboros`, `megalodontia`, then `snatcher` and the Salmonids
+of the known occurrences `goldie`, `griller`, `mudmouth`, `gold_mudmouth`,
+`chinook`, `mothership`: every named row of Lean's `CoopEnemyInfo`, the same
+list as the labeling tool's) and says so. Boxes of classes not in `classes.json` are
 dropped (and counted); `--map from=to` renames first.
 
 **Merge rule.** A frame a person has labeled is never changed: one that holds

@@ -31,8 +31,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Classes written to a new `classes.json`: (name, label, color). The same
-/// list, in the same order, as `gameplay_vision::labels::STARTER_CLASSES`.
-pub const STARTER_CLASSES: [(&str, &str, &str); 22] = [
+/// list, in the same order, as `gameplay_vision::labels::STARTER_CLASSES`
+/// (which says where it comes from). Only ever appended to: labels name
+/// classes, and the keys of the labeling mode follow the order.
+pub const STARTER_CLASSES: [(&str, &str, &str); 28] = [
     ("smallfry", "Smallfry", "#8bd450"),
     ("chum", "Chum", "#4fb3ff"),
     ("cohock", "Cohock", "#2f6fdf"),
@@ -55,6 +57,12 @@ pub const STARTER_CLASSES: [(&str, &str, &str); 22] = [
     ("horrorboros", "Horrorboros", "#c0392b"),
     ("megalodontia", "Megalodontia", "#8e44ad"),
     ("snatcher", "Snatcher", "#d35fb7"),
+    ("goldie", "Goldie", "#e6a500"),
+    ("griller", "Griller", "#2e8b57"),
+    ("mudmouth", "Mudmouth", "#8b5a2b"),
+    ("gold_mudmouth", "Gold Mudmouth", "#eedd82"),
+    ("chinook", "Chinook", "#87ceeb"),
+    ("mothership", "Mothership", "#ff00ff"),
 ];
 
 /// Name of the class list in the annotations folder

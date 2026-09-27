@@ -31,10 +31,15 @@ pub const OBJECTS_EXT: &str = ".objects.jsonl";
 
 /// The class list written when `classes.json` is missing: Salmon Run's
 /// lesser Salmonids, then the bosses, golden eggs, players (alive and
-/// waiting for rescue), the egg basket, the King Salmonids and the Snatcher.
-/// `(name, label, color)`, in the order and colors of the labeling tool's
-/// list (`procon::objects::STARTER_CLASSES`).
-pub const STARTER_CLASSES: [(&str, &str, &str); 22] = [
+/// waiting for rescue), the egg basket, the King Salmonids, the Snatcher,
+/// and the Salmonids of the known occurrences (Goldie, Griller, Mudmouth and
+/// its gold one, Chinook, Mothership). Every row of Lean's `CoopEnemyInfo`
+/// that has a name is covered; both Goldies (`SakelienGolden`,
+/// `SakelienGeyser`) are one class. `(name, label, color)`, in the order and
+/// colors of the labeling tool's list (`procon::objects::STARTER_CLASSES`);
+/// only ever appended to, since labels name classes and the labeling mode's
+/// keys follow the order.
+pub const STARTER_CLASSES: [(&str, &str, &str); 28] = [
     ("smallfry", "Smallfry", "#8bd450"),
     ("chum", "Chum", "#4fb3ff"),
     ("cohock", "Cohock", "#2f6fdf"),
@@ -57,6 +62,12 @@ pub const STARTER_CLASSES: [(&str, &str, &str); 22] = [
     ("horrorboros", "Horrorboros", "#c0392b"),
     ("megalodontia", "Megalodontia", "#8e44ad"),
     ("snatcher", "Snatcher", "#d35fb7"),
+    ("goldie", "Goldie", "#e6a500"),
+    ("griller", "Griller", "#2e8b57"),
+    ("mudmouth", "Mudmouth", "#8b5a2b"),
+    ("gold_mudmouth", "Gold Mudmouth", "#eedd82"),
+    ("chinook", "Chinook", "#87ceeb"),
+    ("mothership", "Mothership", "#ff00ff"),
 ];
 
 /// One class in `classes.json`
