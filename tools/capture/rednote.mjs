@@ -310,7 +310,7 @@ async function run() {
       const tick = () => {
         if (interrupted) return resolve(false);
         if (Date.now() >= end) return resolve(true);
-        setTimeout(tick, Math.min(200, end - Date.now()));
+        setTimeout(tick, Math.max(0, Math.min(200, end - Date.now())));
       };
       tick();
     });
