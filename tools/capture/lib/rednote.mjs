@@ -59,9 +59,12 @@ export const MARKERS = Object.freeze({
 });
 
 /** Texts of page elements the flow clicks: the button that unfolds more
- * replies under a comment */
+ * replies under a comment (`.show-more`: "展开 3 条回复", "展开更多回复" on
+ * xiaohongshu.com; "View 3 replies", "View 1 reply", "Show more replies"
+ * on rednote.com, whose page is in English). The site's "Reply" button
+ * matches none of them. */
 export const PAGE = Object.freeze({
-  moreReplies: ["展开", "条回复", "更多回复"],
+  moreReplies: ["展开", "条回复", "更多回复", "replies", "1 reply"],
 });
 
 /** Why a page address or text means a challenge, or null */

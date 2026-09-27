@@ -428,7 +428,18 @@ test("a page that wants a person is told by its address or its words", () => {
     null,
   );
   assert.equal(rn.challenge(undefined, undefined), null);
-  assert.ok(rn.PAGE.moreReplies.length);
+  // The unfold button's words in both languages of the site; never the
+  // "Reply" button or a reply count
+  const unfolds = (t) => rn.PAGE.moreReplies.some((w) => t.includes(w));
+  for (const t of [
+    "展开 3 条回复",
+    "展开更多回复",
+    "View 3 replies",
+    "View 1 reply",
+    "Show more replies",
+  ])
+    assert.ok(unfolds(t), t);
+  for (const t of ["Reply", "回复", "Like", "12"]) assert.ok(!unfolds(t), t);
   assert.ok(rn.isSiteApi(`${API}/v1/feed`));
   assert.ok(
     rn.isSiteApi("https://edith.xiaohongshu.com/api/sns/web/v2/user/me"),
