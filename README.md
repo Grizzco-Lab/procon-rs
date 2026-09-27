@@ -556,7 +556,8 @@ it is for: labeling gameplay nobody recorded a controller for.
 
 A session is a folder named from the path prefix and the start time: prefix
 `/data/procon/mk8-` records into `/data/procon/mk8-2026-09-24_21-40-05/`. The
-prefix's folder must exist.
+prefix's folder must exist. Before a recording day, go through
+[doc/recording-checklist.md](doc/recording-checklist.md).
 
 | File | Contents |
 |---|---|
