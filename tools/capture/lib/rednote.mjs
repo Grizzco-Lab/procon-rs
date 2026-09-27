@@ -240,7 +240,9 @@ function query(url, name) {
 
 /** What a JSON answer of the site holds, by its shape (and its address for
  * what the shape does not say):
- * - `{kind: "me", user_id, guest}`: the logged-in user (`/user/me`)
+ * - `{kind: "me", user_id, guest, fields}`: the user (`/user/me`); a
+ *   guest has an id too, so only an account's name (nickname or red_id, the handle)
+ *   counts as logged in; `fields` names what the answer held
  * - `{kind: "followings", users, has_more}`: a page of followed accounts
  * - `{kind: "list", notes, has_more}`: a page of a creator's notes
  * - `{kind: "notes", notes}`: note details (`/feed`), without comments
@@ -266,7 +268,10 @@ export function recognise(url, body) {
     return {
       kind: "me",
       user_id: text(data, ["user_id", "userId"]),
-      guest: field(data, ["guest"]) === true,
+      guest:
+        field(data, ["guest"]) === true ||
+        !(text(data, ["nickname"]) || text(data, ["red_id", "redId"])),
+      fields: Object.keys(data).sort(),
     };
   if (Array.isArray(data.users))
     return {

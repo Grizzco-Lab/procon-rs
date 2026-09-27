@@ -154,16 +154,18 @@ export class Crawl {
       const st = await this.page.evaluate(rn.JS_STATE);
       const info = st?.user?.userInfo;
       const id = rn.field(info, ["userId", "user_id"]);
-      if (typeof id === "string" && id) known = id;
+      const name = rn.field(info, ["nickname", "redId", "red_id"]);
+      if (typeof name === "string" && name && typeof id === "string")
+        known = id;
       else if (typeof st?.user?.loggedIn === "boolean")
         known = st.user.loggedIn ? "" : null;
     }
     if (known === null)
       throw new Stop("login", "the site sees a guest: run `login` first");
-    const me = this.options.me ?? (known || this.state.following.me);
     if (known === undefined)
-      this.log("could not confirm the login from the home page; going on");
-    else this.log(me ? `logged in as ${me}` : "logged in");
+      throw new Stop("login", "could not confirm the login: run `login` first");
+    const me = this.options.me ?? (known || this.state.following.me);
+    this.log(me ? `logged in as ${me}` : "logged in");
     return me || null;
   }
 

@@ -344,9 +344,23 @@ test("lists, followings, the account and refusals are recognised", () => {
     rn.recognise(`${API}/v2/user/me`, {
       code: 0,
       success: true,
-      data: { user_id: "me1", guest: false },
+      data: { user_id: "me1", guest: false, nickname: "Me" },
     }),
-    { kind: "me", user_id: "me1", guest: false },
+    {
+      kind: "me",
+      user_id: "me1",
+      guest: false,
+      fields: ["guest", "nickname", "user_id"],
+    },
+  );
+  // A guest has an id too, and may not say it is one
+  assert.equal(
+    rn.recognise(`${API}/v2/user/me`, {
+      code: 0,
+      success: true,
+      data: { user_id: "g1", guest: false },
+    }).guest,
+    true,
   );
   assert.deepEqual(
     rn.recognise(`${API}/v1/feed`, {

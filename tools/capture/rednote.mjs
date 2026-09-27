@@ -200,16 +200,21 @@ const openPage = () => cdp.openPage(port, { keep: rn.isSiteApi });
 /** Whether the page shows a logged-in account: the site's `user/me`
  * answer among those drained, else the page state; undefined when
  * nothing tells */
+let shownFields = false;
 async function loggedIn(page) {
   let known;
   for (const r of page.drain()) {
     const p = rn.recognise(r.url, r.json);
-    if (p?.kind === "me") known = !p.guest;
+    if (p?.kind === "me") {
+      known = !p.guest;
+      if (!shownFields) log(`user/me holds: ${p.fields.join(", ")}`);
+      shownFields = true;
+    }
   }
   if (known !== undefined) return known;
   const st = await page.evaluate(rn.JS_STATE).catch(() => null);
-  const id = rn.field(st?.user?.userInfo, ["userId", "user_id"]);
-  if (typeof id === "string" && id) return true;
+  const name = rn.field(st?.user?.userInfo, ["nickname", "redId", "red_id"]);
+  if (typeof name === "string" && name) return true;
   if (typeof st?.user?.loggedIn === "boolean") return st.user.loggedIn;
   return undefined;
 }

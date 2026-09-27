@@ -29,7 +29,9 @@ const me = (guest) =>
   answer(`${API}/v2/user/me`, {
     code: 0,
     success: true,
-    data: { user_id: "me1", guest },
+    data: guest
+      ? { user_id: "me1", guest }
+      : { user_id: "me1", guest, nickname: "Me" },
   });
 const list = (notes, hasMore) =>
   answer(`${API}/v1/user_posted?num=30&cursor=&user_id=${A}`, {
@@ -410,13 +412,12 @@ test("a refused answer, a blocked status and a guest stop the run", async () => 
   assert.match(s.stopped.message, /run `login` first/);
   assert.deepEqual(page.visited, [SITE]);
 
-  // Nothing tells: the run goes on and says so
+  // Nothing tells: a guest may look like that, so the run stops too
   const silent = firstVisit();
   silent[SITE].responses = [];
-  const c = crawl(new FakePage(silent), dir, { creators: [A] });
-  s = await c.run();
-  assert.equal(s.stopped, undefined);
-  assert.ok(c.lines.some((l) => l.includes("could not confirm the login")));
+  s = await crawl(new FakePage(silent), dir, { creators: [A] }).run();
+  assert.equal(s.stopped.reason, "login");
+  assert.match(s.stopped.message, /could not confirm the login/);
   rmSync(dir, { recursive: true });
 });
 
