@@ -663,6 +663,13 @@ impl OpenSegment {
     }
 
     /// Decode `count` frames from frame `first` on as 640x360 JPEGs
+    ///
+    /// The input seek goes to the keyframe before `first` and decodes
+    /// forward, dropping the frames before it. Every decoded frame is kept
+    /// (`passthrough`) at the file's own time base: the encoder's default,
+    /// 1/fps, rounds the 1 ms container times minus the seek offset onto
+    /// the same tick for some neighbours, and the muxer then fails on "non
+    /// monotonically increasing dts".
     fn decode(&self, first: usize, count: usize) -> Result<Vec<Vec<u8>>> {
         let mut args: Vec<String> = ["-v", "error", "-ss"].map(String::from).to_vec();
         args.push(format!("{:.4}", self.seek_s(first)));
@@ -675,10 +682,16 @@ impl OpenSegment {
             ]);
         }
         args.extend(
-            ["-an", "-fps_mode", "passthrough", "-f", "image2pipe"]
-                .into_iter()
-                .chain(["-c:v", "mjpeg", "-q:v", "3", "-"])
-                .map(String::from),
+            [
+                "-an",
+                "-fps_mode",
+                "passthrough",
+                "-enc_time_base:v",
+                "demux",
+            ]
+            .into_iter()
+            .chain(["-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "3", "-"])
+            .map(String::from),
         );
         let output = Command::new("ffmpeg")
             .args(&args)
