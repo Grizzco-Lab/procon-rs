@@ -8340,7 +8340,8 @@ body {
   resize: vertical;
 }
 
-.pd-form-slot:empty {
+.pd-form-slot:empty,
+.pd-facts-slot:empty {
   display: none;
 }
 

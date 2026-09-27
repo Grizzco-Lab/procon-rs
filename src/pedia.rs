@@ -6,8 +6,13 @@
 //! Translate view does), so edits through the slang endpoints show at
 //! once. The mentions in the corpus's expert comments are searched once
 //! and kept until the corpus file or the names of the terms in scope
-//! change ([`Wild`]); the fact cards of game data until the documents
-//! folder changes.
+//! change ([`Wild`]). The knowledge and reviews folders may be a network
+//! mount that other work loads heavily, so nothing a request answers with
+//! reads many files from them: the fact cards of game data (every stored
+//! document) are read on a thread when the store's index file changed,
+//! and the entry says `cards_pending` until they are there ([`Cards`]);
+//! the reviews of #vod-review VODs are listed once a minute
+//! ([`REVIEWED_FOR`]), not looked up per quoted comment.
 //!
 //! Endpoints under `/api/cuttlefish/` (see [`crate::cuttlefish`]):
 //!
@@ -19,7 +24,8 @@
 //! - `GET pedia/<term id>?quotes=`: one entry: the term (official names,
 //!   aliases with their note, source and, for those of the user file, the
 //!   alias's id), the user file's own record of a new term, the relations
-//!   both ways, a stat.ink icon from the asset catalogue, fact cards, the
+//!   both ways, a stat.ink icon from the asset catalogue, fact cards
+//!   (`cards_pending` while a thread still reads them: ask again), the
 //!   top `quotes` comments that mention it (default [`QUOTES`], each with
 //!   reviewer, date, era, the Discord link and, when the VOD is a review
 //!   here with the moment placed, the review to open at `t_s`), the
@@ -39,10 +45,11 @@ use anyhow::{Context, Result};
 use cuttlefish::assets::Catalogue;
 use cuttlefish::chunk::{ChunkConfig, chunk_text};
 use cuttlefish::corpus::{self, ReviewMessage, Vod};
-use cuttlefish::corpus_reviews::{ID_PREFIX, REVIEW_FILE};
+use cuttlefish::corpus_reviews::ID_PREFIX;
 use cuttlefish::doc::{Document, doc_id};
 use cuttlefish::expert::{self, ExpertComment};
 use cuttlefish::glossary::{AliasStatus, Glossary, RelationKind, Term};
+use cuttlefish::index::FlatIndex;
 use cuttlefish::notes;
 use cuttlefish::pedia::{self, FactCard, Section};
 use cuttlefish::questions::Bank;
@@ -52,7 +59,7 @@ use cuttlefish::tables;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 /// Quotes an entry shows unless asked for more
 pub const QUOTES: usize = 6;
@@ -76,8 +83,25 @@ pub struct Wild {
     mentions: BTreeMap<String, Vec<usize>>,
 }
 
-/// The fact cards as read, with the documents folder's time
-type Cards = (PathBuf, Option<SystemTime>, Arc<Vec<FactCard>>);
+/// The fact cards as read, with the knowledge folder and the size and
+/// time of the store's index file they were read for (a file: every
+/// import rewrites it, while a folder's time may never change on a
+/// network mount)
+struct Cards {
+    stamp: (PathBuf, u64, Option<SystemTime>),
+    cards: Arc<Vec<FactCard>>,
+}
+
+/// The fact cards between requests: the ones read last, and whether a
+/// thread is reading them now
+#[derive(Default)]
+struct CardState {
+    read: Option<Cards>,
+    reading: bool,
+}
+
+/// How long the list of reviews here is trusted
+const REVIEWED_FOR: Duration = Duration::from_secs(60);
 
 /// The size and time of the files a [`Loaded`] is made from
 /// (`glossary.toml`, the `terms/` folder, `glossary-user.toml`, the corpus)
@@ -88,7 +112,10 @@ type Inputs = (PathBuf, [(u64, Option<SystemTime>); 4]);
 pub struct Pedia {
     loaded: Mutex<Option<(Inputs, Arc<Loaded>)>>,
     wild: Mutex<Option<Arc<Wild>>>,
-    cards: Mutex<Option<Cards>>,
+    cards: Arc<Mutex<CardState>>,
+    /// The ids of the reviews here of #vod-review VODs, and when they were
+    /// listed
+    reviewed: Mutex<Option<(Instant, Arc<BTreeSet<String>>)>>,
 }
 
 /// The glossary with what the Pedia adds to it
@@ -163,7 +190,13 @@ impl Pedia {
         {
             return Ok(Arc::clone(loaded));
         }
+        let started = Instant::now();
         let loaded = Arc::new(self.make(root)?);
+        log::debug!(
+            "Pedia: glossary of {} terms loaded in {} ms",
+            loaded.glossary.terms.len(),
+            started.elapsed().as_millis()
+        );
         *self.loaded.lock().unwrap() = Some((now, Arc::clone(&loaded)));
         Ok(loaded)
     }
@@ -288,20 +321,66 @@ impl Pedia {
         Ok(wild)
     }
 
-    /// The fact cards of game data, read again when the documents folder
-    /// changed
-    fn cards(&self, root: &Path, g: &Glossary) -> Arc<Vec<FactCard>> {
-        let (_, time) = stamp_of(&root.join("docs"));
-        let mut cached = self.cards.lock().unwrap();
-        if let Some((r, t, cards)) = &*cached
-            && r == root
-            && *t == time
-        {
-            return Arc::clone(cards);
+    /// The fact cards of game data as read last (none before the first
+    /// read is done), and whether a thread is reading them now: one starts
+    /// when the store's index file changed since, so no request waits for
+    /// every stored document to be read
+    fn cards(&self, root: &Path, loaded: &Arc<Loaded>) -> (Arc<Vec<FactCard>>, bool) {
+        let (len, time) = stamp_of(&FlatIndex::entries_file(&root.join("index")));
+        let stamp = (root.to_path_buf(), len, time);
+        let mut state = self.cards.lock().unwrap();
+        let have = state
+            .read
+            .as_ref()
+            .map(|c| Arc::clone(&c.cards))
+            .unwrap_or_default();
+        if state.read.as_ref().is_some_and(|c| c.stamp == stamp) {
+            return (have, false);
         }
-        let cards = Arc::new(pedia::fact_cards(root, g));
-        *cached = Some((root.to_path_buf(), time, Arc::clone(&cards)));
-        cards
+        if !state.reading {
+            state.reading = true;
+            let state = Arc::clone(&self.cards);
+            let loaded = Arc::clone(loaded);
+            let root = root.to_path_buf();
+            std::thread::spawn(move || {
+                let started = Instant::now();
+                let cards = pedia::fact_cards(&root, &loaded.glossary);
+                log::info!(
+                    "Pedia: {} fact cards read in {:.1} s",
+                    cards.len(),
+                    started.elapsed().as_secs_f32()
+                );
+                let mut state = state.lock().unwrap();
+                state.read = Some(Cards {
+                    stamp,
+                    cards: Arc::new(cards),
+                });
+                state.reading = false;
+            });
+        }
+        (have, true)
+    }
+
+    /// The ids of the reviews here of #vod-review VODs (folders named
+    /// `discord-<vod>`), listed again after [`REVIEWED_FOR`]: an entry
+    /// asks for the VODs of hundreds of comments
+    fn reviewed(&self, reviews: &Path) -> Arc<BTreeSet<String>> {
+        let mut cached = self.reviewed.lock().unwrap();
+        if let Some((at, ids)) = &*cached
+            && at.elapsed() < REVIEWED_FOR
+        {
+            return Arc::clone(ids);
+        }
+        let ids: BTreeSet<String> = std::fs::read_dir(reviews)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|id| id.starts_with(ID_PREFIX))
+            .collect();
+        let ids = Arc::new(ids);
+        *cached = Some((Instant::now(), Arc::clone(&ids)));
+        ids
     }
 
     /// `GET pedia`: every term in scope and the sections
@@ -352,7 +431,15 @@ impl Pedia {
     }
 
     /// `GET pedia/<id>`: one entry, with up to `quotes` quotes
-    pub fn entry(&self, root: &Path, reviews: &Path, id: &str, quotes: usize) -> Result<Value> {
+    pub fn entry(
+        &self,
+        root: &Path,
+        reviews: &Path,
+        catalogue: &Catalogue,
+        id: &str,
+        quotes: usize,
+    ) -> Result<Value> {
+        let started = Instant::now();
         let loaded = self.load(root)?;
         let g = &loaded.glossary;
         let t = loaded
@@ -396,7 +483,6 @@ impl Pedia {
             .collect();
 
         // A stat.ink icon linked to it: an SVG first, else the largest
-        let catalogue = Catalogue::load(root);
         let icon = catalogue
             .assets
             .iter()
@@ -404,12 +490,8 @@ impl Pedia {
             .max_by_key(|a| (a.format == "svg", a.width.unwrap_or(0)))
             .map(|a| a.id.clone());
 
-        let cards: Vec<FactCard> = self
-            .cards(root, g)
-            .iter()
-            .filter(|c| c.term == t.id)
-            .cloned()
-            .collect();
+        let (all_cards, cards_pending) = self.cards(root, &loaded);
+        let cards: Vec<&FactCard> = all_cards.iter().filter(|c| c.term == t.id).collect();
         // Expert notes about it, and the deep questions that name it (with
         // the note answering each, if one does)
         let all_notes = notes::list(root)?;
@@ -427,9 +509,10 @@ impl Pedia {
         // In the wild: the best comments, placed ones first
         let wild = &loaded.wild;
         let found: &[usize] = wild.mentions.get(&t.id).map_or(&[], Vec::as_slice);
+        let reviewed = self.reviewed(reviews);
         let review_of = |c: &ExpertComment| {
             let id = format!("{ID_PREFIX}{}", c.expert.vod);
-            reviews.join(&id).join(REVIEW_FILE).is_file().then_some(id)
+            reviewed.contains(&id).then_some(id)
         };
         let names: Vec<&str> = t.names().collect();
         let shown: Vec<Value> = pedia::rank_quotes(found, &wild.comments, &|c| {
@@ -467,6 +550,7 @@ impl Pedia {
             .iter()
             .filter(|a| a.status == AliasStatus::Pending && a.find(g) == place)
             .collect();
+        log::debug!("Pedia: entry {id} in {} ms", started.elapsed().as_millis());
         Ok(json!({
             "term": t,
             "name": pedia::english(t),
@@ -481,6 +565,7 @@ impl Pedia {
             "related": { "out": outgoing, "in": incoming },
             "icon": icon,
             "cards": cards,
+            "cards_pending": cards_pending,
             "notes": notes,
             "questions": questions,
             "mentions": loaded.count(&t.id),
@@ -514,7 +599,8 @@ impl Pedia {
         if !url.is_empty() {
             let loaded = self.load(root)?;
             if let Some(&(v, m)) = loaded.wild.messages.get(url) {
-                return Ok(Self::comment(&loaded.wild.vods[v], m, reviews));
+                let reviewed = self.reviewed(reviews);
+                return Ok(Self::comment(&loaded.wild.vods[v], m, &reviewed));
             }
         }
         // A document's chunk: by id and position, else the document of the
@@ -576,8 +662,9 @@ impl Pedia {
 
     /// A #vod-review message in its conversation: the message it replies
     /// to, the replies to it, the VOD and its moments placed in the video,
-    /// each with the review to open when the VOD is one here
-    fn comment(vod: &Vod, at: usize, reviews: &Path) -> Value {
+    /// each with the review to open when the VOD is one here (`reviewed`,
+    /// [`Pedia::reviewed`])
+    fn comment(vod: &Vod, at: usize, reviewed: &BTreeSet<String>) -> Value {
         let m = &vod.messages[at];
         let reply_to = m
             .reply_to
@@ -590,7 +677,7 @@ impl Pedia {
             .map(message_value)
             .collect();
         let review = format!("{ID_PREFIX}{}", vod.id);
-        let has_review = reviews.join(&review).join(REVIEW_FILE).is_file();
+        let has_review = reviewed.contains(&review);
         let moments: Vec<Value> = m
             .moments
             .iter()

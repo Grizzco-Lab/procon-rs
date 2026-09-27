@@ -911,7 +911,7 @@ impl Knowledge {
     }
 
     /// The asset catalogue, read again when its file changed
-    fn catalogue(&self) -> Arc<Catalogue> {
+    pub fn catalogue(&self) -> Arc<Catalogue> {
         let time = std::fs::metadata(self.root.join("assets.json"))
             .and_then(|m| m.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);

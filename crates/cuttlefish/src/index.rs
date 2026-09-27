@@ -19,7 +19,7 @@ use alloc::vec::Vec;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A chunk with what a citation needs from its document
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -152,6 +152,13 @@ impl FlatIndex {
             .collect()
     }
 
+    /// The entries file of an index folder: every save rewrites it, so its
+    /// size and time tell when the documents changed (a folder's own time
+    /// may not, on a network mount)
+    pub fn entries_file(dir: &Path) -> PathBuf {
+        dir.join("entries.jsonl")
+    }
+
     /// Reads an index folder; `None` if it has none yet
     pub fn load(dir: &Path) -> Result<Option<Self>> {
         let meta_path = dir.join("meta.json");
@@ -159,7 +166,7 @@ impl FlatIndex {
             return Ok(None);
         }
         let meta: Meta = serde_json::from_str(&std::fs::read_to_string(&meta_path)?)?;
-        let file = std::fs::File::open(dir.join("entries.jsonl"))?;
+        let file = std::fs::File::open(Self::entries_file(dir))?;
         let mut entries = Vec::new();
         for line in std::io::BufReader::new(file).lines() {
             let line = line?;
@@ -201,7 +208,7 @@ impl FlatIndex {
             serde_json::to_writer(&mut lines, e)?;
             lines.push(b'\n');
         }
-        write_atomic(&dir.join("entries.jsonl"), &lines)?;
+        write_atomic(&Self::entries_file(dir), &lines)?;
         let bytes: Vec<u8> = self.vectors.iter().flat_map(|v| v.to_le_bytes()).collect();
         write_atomic(&dir.join("vectors.f32"), &bytes)
     }

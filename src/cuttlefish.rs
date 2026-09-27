@@ -1682,7 +1682,7 @@ impl Cuttlefish {
                 let root = self.knowledge.root();
                 Ok(Reply::json(
                     self.pedia
-                        .entry(root, &self.reviews, id, quotes)
+                        .entry(root, &self.reviews, &self.knowledge.catalogue(), id, quotes)
                         .map_err(bad)?,
                 ))
             }

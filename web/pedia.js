@@ -5,8 +5,9 @@
 // language (slang included), filters by era and source, and A–Z or "most
 // discussed" (comments of #vod-review mentioning the term). An entry has
 // the official names, the slang, the definition, related terms both ways,
-// an icon, fact cards, quotes "in the wild" (each linking its Discord
-// message and, when the VOD is a review here, the review at its moment),
+// an icon, fact cards (filled in when the server is still reading them),
+// quotes "in the wild" (each linking its Discord message and, when the VOD
+// is a review here, the review at its moment),
 // expert notes and deep questions, and "Ask Cuttlefish". Everything can be
 // corrected in place: the definition, kind and relation through the
 // term-edit API (editTerm below, the one place that knows it), aliases
@@ -24,6 +25,8 @@
   const MORE_QUOTES = 10;
   /** Typing pauses this long (ms) before the index filters */
   const SEARCH_MS = 120;
+  /** How often (ms) an entry asks again for fact cards still being read */
+  const CARDS_MS = 2000;
   /** Relations a term can have to a broader one */
   const RELATIONS = ["part-of", "kind-of", "related-to"];
   /** Languages offered for a new alias, each named in itself */
@@ -460,6 +463,7 @@
     drawEntry();
     if (keepScroll) window.scrollTo(0, y);
     else window.scrollTo(0, 0);
+    if (entry.cards_pending) setTimeout(() => fillCards(entry), CARDS_MS);
   }
 
   /** Official names by language: the main languages first */
@@ -598,6 +602,36 @@
     </li>`;
   }
 
+  /** The fact cards of game data, when the term has some */
+  function factsHtml(e) {
+    if (!e.cards.length) return "";
+    return `<section class="panel pd-part" aria-labelledby="pd-h-facts">
+      <header class="panel-head pd-part-head"><h2 id="pd-h-facts">${escapeHtml(t("pedia.facts"))}</h2></header>
+      <ul class="pd-facts">${e.cards.map(cardFactHtml).join("")}</ul>
+    </section>`;
+  }
+
+  /** Asks for an entry's fact cards again while the server is still
+   * reading them (`cards_pending`), and fills them in once they are there;
+   * stops when another entry is shown */
+  async function fillCards(entry) {
+    if (pd.entry !== entry) return;
+    let fresh;
+    try {
+      fresh = await api(
+        `pedia/${encodeURIComponent(entry.term.id)}?quotes=${pd.quotes}`,
+      );
+    } catch {
+      return;
+    }
+    if (pd.entry !== entry) return;
+    entry.cards = fresh.cards;
+    entry.cards_pending = fresh.cards_pending;
+    const box = slot("facts");
+    if (box) box.innerHTML = factsHtml(entry);
+    if (entry.cards_pending) setTimeout(() => fillCards(entry), CARDS_MS);
+  }
+
   /** The entry's article */
   function drawEntry() {
     const e = pd.entry;
@@ -683,14 +717,7 @@
           </section>`
               : ""
           }
-          ${
-            e.cards.length
-              ? `<section class="panel pd-part" aria-labelledby="pd-h-facts">
-            <header class="panel-head pd-part-head"><h2 id="pd-h-facts">${escapeHtml(t("pedia.facts"))}</h2></header>
-            <ul class="pd-facts">${e.cards.map(cardFactHtml).join("")}</ul>
-          </section>`
-              : ""
-          }
+          <div class="pd-facts-slot" data-slot="facts">${factsHtml(e)}</div>
           ${
             e.questions.length
               ? `<section class="panel pd-part" aria-labelledby="pd-h-questions">
