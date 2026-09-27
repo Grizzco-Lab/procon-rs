@@ -3,8 +3,8 @@
 // video. The video plays in the shared player (player.js: transport, keys,
 // scrubber with the comments as marks, neighbours every half second), with
 // the drawings and the danmaku as layers over it. Runs after i18n.js,
-// app.js, sketch.js and player.js and uses their helpers (t, $, Sketch,
-// Player, clock, escapeHtml, appUrl). Its state lives in the address:
+// app.js, sketch.js, player.js and stages.js and uses their helpers (t, $,
+// Sketch, Player, clock, escapeHtml, appUrl, StageMap). Its state lives in the address:
 // /cuttlefish (the library: the reviews, "open a video" and the chat bar,
 // whose first message starts a review without a video),
 // /cuttlefish/review/<review>?t=<s> (a saved review),
@@ -507,6 +507,8 @@
       if (v?.file) details.push(t("cf.reviews.fileIn", { file: v.file }));
       if (!v) details.push(t("cf.reviews.noVideo"));
       if (review.game) details.push(eraName(review.game));
+      if (stageById(review.stage))
+        details.push(stageName(stageById(review.stage)));
       if (community(review)) details.push(t("cf.reviews.community"));
       if (review.messages)
         details.push(t("cf.reviews.messages", { n: review.messages }));
@@ -764,6 +766,7 @@
     player.open(videoSource(review.video, id), Math.round(at * DEFAULT_FPS));
     markCopy();
     drawInfo();
+    drawStage();
     drawNotes();
     // A video opens paused, ready to draw on
     sketch.setEditable(true);
@@ -816,6 +819,7 @@
     }
     if (!changed) return;
     drawInfo();
+    drawStage();
     markSaved(...cf.saved);
   }
 
@@ -861,6 +865,25 @@
         );
     }
     box.innerHTML = `${title}<span class="panel-note">${escapeHtml(details.join(" · "))}</span>`;
+  }
+
+  /** The review's stage and the links to Gungee's maps: the stage picked
+   * (saved with the review), else the one the video's title names */
+  const stageMap = new StageMap($("cf-stage"), (id) => {
+    if (!cf.review) return;
+    if (id) cf.review.stage = id;
+    else delete cf.review.stage;
+    scheduleSave();
+  });
+
+  function drawStage() {
+    const review = cf.review;
+    stageMap.set(
+      review?.stage ??
+        stageFromText(review?.video?.title) ??
+        stageFromText(review?.title) ??
+        "",
+    );
   }
 
   /** "Copy into review": a saved review of a local file not copied yet */

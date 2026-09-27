@@ -43,7 +43,9 @@
 //! given (`experts`) and the ids of the timed comments it added
 //! (`comments`). Older reviews have no `notes` or
 //! `messages`; neither is written when empty, and `video` is left out of a
-//! review without one.
+//! review without one. `stage`, when picked on the page, is the Salmon Run
+//! stage by its glossary id (`"stage": "spawning-grounds"`); the page links
+//! it to Gungee's community maps (`web/stages.js`).
 //!
 //! Opening a YouTube range creates its review: `yt-dlp` downloads it into a
 //! new review folder on a thread of its own (the page polls the progress), and
@@ -71,6 +73,9 @@
 //!   ranges, `r` naming the review whose folder holds it; `GET meta?…`: its
 //!   frame rate, duration and size; `GET thumb?…&t_ms=`: a small JPEG of
 //!   the frame at that time, for the neighbours strip, cached in memory
+//! - `GET stage-map?stage=<Gungee's key>&tide=<Low|Mid|High>`: Gungee's
+//!   top-down map of a Salmon Run stage (salmon-learn-nw.gungee.jp), fetched
+//!   once into the local cache; the page credits him wherever it shows one
 //! - `POST download` with `{"url", "start_s", "end_s", "review"?}` starts
 //!   downloading a YouTube range into a new review (or finds the review that
 //!   has it), or with `review` into that review, which has no video yet;
@@ -145,6 +150,23 @@ const REVIEW_FILE: &str = "review.json";
 
 /// A downloaded YouTube range in its review folder
 const VIDEO_FILE: &str = "video.mp4";
+
+/// Gungee's community Salmon Run tools, whose stage maps the page shows
+const GUNGEE: &str = "https://salmon-learn-nw.gungee.jp";
+
+/// Gungee's stage keys (his `/map/?stage=`), as `web/stages.js` has them
+const GUNGEE_STAGES: [&str; 7] = [
+    "Shakeup",
+    "Shakespiral",
+    "Shakedent",
+    "Shakeship",
+    "Shakehighway",
+    "Shakelift",
+    "Shakerail",
+];
+
+/// The tides Gungee's maps come in
+const GUNGEE_TIDES: [&str; 3] = ["Low", "Mid", "High"];
 
 /// The Translate view's history, next to the review folders
 const TRANSLATIONS_FILE: &str = "translations.jsonl";
@@ -360,6 +382,10 @@ pub struct Review {
     /// The game era the video is about, when known
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<Game>,
+    /// The Salmon Run stage, by its glossary id (`spawning-grounds`), when
+    /// picked on the page; it links to Gungee's community maps
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
     /// Where an imported review came from: the #vod-review conversation
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<Origin>,
@@ -478,6 +504,9 @@ pub struct Cuttlefish {
     writing: Arc<Mutex<()>>,
     lookups: Arc<Mutex<MetaLookups>>,
     thumbs: Mutex<Thumbs>,
+    /// Held while one of Gungee's stage maps is fetched, so each is fetched
+    /// once
+    stage_maps: Mutex<()>,
     /// The `cuttlefish` crate's store, shared by the reviewer and the
     /// knowledge view
     knowledge: Arc<Knowledge>,
@@ -529,6 +558,7 @@ impl Cuttlefish {
             writing: Arc::default(),
             lookups: Arc::default(),
             thumbs: Mutex::default(),
+            stage_maps: Mutex::default(),
             knowledge: Arc::new(
                 Knowledge::new(knowledge, settings, translate_model).with_auto_apply(auto_apply),
             ),
@@ -594,6 +624,7 @@ impl Cuttlefish {
                         "video": review.video,
                         "title": review.title,
                         "game": review.game,
+                        "stage": review.stage,
                         "from": review.source.as_ref().map(|s| &s.from),
                         "comments": review.comments.len(),
                         "messages": review.messages.len(),
@@ -1005,6 +1036,36 @@ impl Cuttlefish {
         })
     }
 
+    /// Gungee's top-down picture of a stage at a tide (his
+    /// `/assets/img/map/model/<key>_<tide>.png`), fetched once into
+    /// `gungee/` in the cache ([`cuttlefish::store::cache_dir`]) and served
+    /// from there; never kept in the repository
+    fn stage_map(&self, key: &str, tide: &str) -> Result<Reply> {
+        ensure!(GUNGEE_STAGES.contains(&key), "no stage {key}");
+        ensure!(GUNGEE_TIDES.contains(&tide), "no tide {tide}");
+        let dir = cuttlefish::store::cache_dir().join("gungee");
+        let file = dir.join(format!("{key}_{tide}.png"));
+        {
+            let _one = self.stage_maps.lock().unwrap();
+            if !file.is_file() {
+                std::fs::create_dir_all(&dir)
+                    .with_context(|| format!("cannot create {}", dir.display()))?;
+                let url = format!("{GUNGEE}/assets/img/map/model/{key}_{tide}.png");
+                log::info!("Fetching Gungee's stage map {url}");
+                cuttlefish::crawl::download(&url, &file)?;
+            }
+        }
+        let body =
+            std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
+        Ok(Reply {
+            status: StatusCode::OK,
+            body,
+            content_type: "image/png",
+            content_range: None,
+            cacheable: true,
+        })
+    }
+
     // ---------------------------------------------------------- downloads
 
     /// Every download of this run
@@ -1118,6 +1179,7 @@ impl Cuttlefish {
                         video: None,
                         title: None,
                         game: None,
+                        stage: None,
                         source: None,
                         comments: Vec::new(),
                         notes: Vec::new(),
@@ -1483,6 +1545,10 @@ impl Cuttlefish {
                     .ok_or_else(|| bad(anyhow::anyhow!("give t_ms")))?;
                 self.thumb(&video()?, query.get("r").map(String::as_str), t_ms)
                     .map_err(bad)
+            }
+            None if path == "stage-map" => {
+                let arg = |name: &str| query.get(name).map_or("", String::as_str);
+                self.stage_map(arg("stage"), arg("tide")).map_err(bad)
             }
             None if path == "meta" => Ok(Reply::json(
                 self.meta(&video()?, query.get("r").map(String::as_str))
@@ -2485,6 +2551,7 @@ mod tests {
           "video": {"kind": "file", "ref": "/k/media/discord/1/2/300/wipe.mp4", "title": "wipe.mp4", "upload_date": "2023-06-01"},
           "title": "Cy, 2023-06-01",
           "game": "S3",
+          "stage": "marooners-bay",
           "source": {"from": "discord", "url": "https://discord.com/channels/1/2/300", "video": "https://cdn.discordapp.com/attachments/2/77/wipe.mp4?ex=1"},
           "comments": [{"id": "discord-301-0", "t_s": 12.0, "author": "Dee", "text": "0:12 nobody had the Flyfish", "shapes": [], "created_ms": 1685614200000, "source": {"from": "discord", "url": "https://discord.com/channels/1/2/301"}}],
           "notes": [{"id": "discord-300-note", "author": "Cy", "text": "wipe on W3", "created_ms": 1685613600000, "source": {"from": "discord", "url": "https://discord.com/channels/1/2/300"}, "unplaced": [{"raw": "W3", "kind": "unknown", "wave": 3}]}]
@@ -2492,6 +2559,7 @@ mod tests {
         let review: Review = serde_json::from_str(text).unwrap();
         assert_eq!(review.title.as_deref(), Some("Cy, 2023-06-01"));
         assert_eq!(review.game, Some(Game::S3));
+        assert_eq!(review.stage.as_deref(), Some("marooners-bay"));
         assert_eq!(review.source.as_ref().unwrap().from, "discord");
         assert_eq!(review.comments[0].author, "Dee");
         assert_eq!(
@@ -2504,7 +2572,7 @@ mod tests {
         let written = serde_json::to_value(&review).unwrap();
         let again: Value = serde_json::from_str(text).unwrap();
         assert_eq!(written, again);
-        // The listing tells the origin, title and era
+        // The listing tells the origin, title, era and stage
         let (dir, cuttlefish) = scratch("imported");
         std::fs::create_dir_all(dir.join("reviews/discord-300")).unwrap();
         std::fs::write(dir.join("reviews/discord-300/review.json"), text).unwrap();
@@ -2512,6 +2580,7 @@ mod tests {
         assert_eq!(listed["reviews"][0]["from"], "discord");
         assert_eq!(listed["reviews"][0]["title"], "Cy, 2023-06-01");
         assert_eq!(listed["reviews"][0]["game"], "S3");
+        assert_eq!(listed["reviews"][0]["stage"], "marooners-bay");
         // The job runs on a thread; an empty knowledge folder gives no
         // VODs and no reviews
         let job = cuttlefish.community_reviews().map_err(|e| e.1).unwrap();
@@ -2685,5 +2754,14 @@ mod tests {
         let shapes: Vec<Shape> = serde_json::from_value(page["shapes"].clone()).unwrap();
         assert_eq!(shapes[0].kind, ShapeKind::Rect);
         assert_eq!(shapes[0].points, vec![[0.25, 0.5], [0.75, 1.0]]);
+    }
+
+    #[test]
+    fn stage_maps_only_for_known_stages_and_tides() {
+        let (_dir, cuttlefish) = scratch("stage-map");
+        // Refused before anything is fetched
+        assert!(cuttlefish.stage_map("../Shakeup", "Mid").is_err());
+        assert!(cuttlefish.stage_map("Shakeup", "Mid/../x").is_err());
+        assert!(cuttlefish.stage_map("", "").is_err());
     }
 }

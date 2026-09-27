@@ -1,7 +1,8 @@
 // Inkspector app: pick a recorded session, then check its controller labels
 // against the video frame by frame in the shared player (player.js: exact
 // frames from the studio, overlays, neighbours, keys, labels table). Runs
-// next to app.js and uses its helpers ($, root, appUrl); its state lives in
+// next to app.js and stages.js and uses their helpers ($, root, appUrl,
+// StageMap); its state lives in
 // the address as /inspect/<session>?seg=<file>&n=<frame>&delay=<ms>&pred=<path>
 // (and label=1 to open in the labeling mode).
 
@@ -321,6 +322,18 @@ function drawSession() {
   ].join("");
   $("i-session-note").textContent =
     `1 frame = ${(1000 / info.fps).toFixed(1)} ms`;
+  drawStage(`${info.session}/${info.segment}`);
+}
+
+/** Links to Gungee's maps of the segment's stage, when a Cuttlefish review
+ * of it names the stage */
+const sessionStage = new StageMap($("i-stage"));
+async function drawStage(ref) {
+  if (sessionStage.ref === ref) return;
+  sessionStage.ref = ref;
+  sessionStage.set("");
+  const stage = await stageOfVideo({ kind: "session", ref });
+  if (sessionStage.ref === ref) sessionStage.set(stage);
 }
 
 /** Labels of frame n as [truth, prediction or undefined] */

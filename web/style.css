@@ -5074,6 +5074,87 @@ body {
   text-decoration: underline;
 }
 
+/* A stage picker and the links to Gungee's maps (stages.js) */
+.stage-map {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 13px;
+}
+
+.stage-map[hidden] {
+  display: none;
+}
+
+.stage-pick {
+  width: auto;
+}
+
+.stage-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+
+.stage-links-label {
+  color: var(--text-3);
+}
+
+.stage-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.stage-link:hover {
+  text-decoration: underline;
+}
+
+/* Gungee's top-down map of the stage, credited under it */
+.stage-figure {
+  display: grid;
+  flex: 1 1 100%;
+  gap: 6px;
+  margin: 0;
+}
+
+.stage-figure[hidden] {
+  display: none;
+}
+
+.stage-tides {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.stage-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 560px;
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+}
+
+/* Room for the map while it loads */
+.stage-img.is-missing {
+  height: 160px;
+  background: var(--inset);
+}
+
+.stage-credit {
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.stage-credit a {
+  color: var(--accent);
+}
+
 .cf-video-name {
   overflow-wrap: anywhere;
 }
@@ -5876,43 +5957,83 @@ body {
   text-decoration: none;
 }
 
+/* The tracks over a frame beside their table on a wide panel, above it
+ * on a narrow one */
+.p-v-tracks {
+  container-type: inline-size;
+}
+
+.v-tracks-body,
+.v-tracks-view,
+.v-tracks-side {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+
+@container (min-width: 820px) {
+  .v-tracks-body {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 16px;
+  }
+}
+
+/* The tracks over a frame of the segment (a canvas) */
 .v-trail {
   display: block;
   width: 100%;
   height: auto;
   aspect-ratio: 16 / 9;
   border-radius: var(--radius-sm);
+  background: var(--screen);
 }
 
-.v-trail-bg {
-  fill: var(--screen);
+.v-trail[hidden] {
+  display: none;
 }
 
-.v-trail-line {
-  fill: none;
-  stroke-linejoin: round;
-  stroke-linecap: round;
+/* The selected track's boxes as small crops, a row that scrolls sideways */
+.v-crops {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
-.v-trail-now {
-  fill: none;
-  stroke-width: 2;
+.v-crops[hidden] {
+  display: none;
 }
 
-.v-trail-id {
-  fill: #ffffff;
-  font:
-    600 11px var(--font-num),
-    monospace;
-  paint-order: stroke;
-  stroke: rgb(0 0 0 / 0.6);
-  stroke-width: 3px;
+.v-crop {
+  display: grid;
+  flex: none;
+  justify-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font-size: 11px;
+  cursor: pointer;
 }
 
-.v-trail-empty {
-  fill: rgb(255 255 255 / 0.55);
-  font-size: 13px;
-  text-anchor: middle;
+.v-crop canvas {
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--screen);
+}
+
+.v-crop:hover canvas,
+.v-crop:focus-visible canvas {
+  border-color: var(--accent);
+}
+
+.v-tracks-view .panel-note,
+.v-tracks-limit {
+  margin: 0;
 }
 
 .v-classes-wrap,

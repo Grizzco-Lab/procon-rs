@@ -4,8 +4,10 @@
 // classes panel opens on the labeled dataset. The segment plays in the
 // shared player (player.js: the Inkspector's frames, keys, scrubber with
 // the processed frames as marks, neighbours) with the boxes as a layer over
-// it. Runs after app.js and player.js and uses their helpers ($,
-// escapeHtml, appUrl). Runs go through /api/vision (see src/vision.rs).
+// it; the Tracks panel draws the tracks over the frames too. Runs after
+// app.js, player.js and stages.js and uses their helpers ($, escapeHtml,
+// appUrl, t, StageMap, stageOfVideo). Runs go through /api/vision (see
+// src/vision.rs).
 // State lives in the address: /vision/<session>?seg=<file>&n=<frame>.
 "use strict";
 
@@ -15,6 +17,13 @@
   /** Frame size of the box coordinates in the SVGs */
   const W = 640;
   const H = 360;
+  /** Seconds of trail on each side of the playhead */
+  const TRAIL_S = 2;
+  /** Frames kept for the trails' picture and the crops */
+  const TRAIL_IMAGES = 40;
+  /** Crops of a highlighted track at most, and their size in pixels */
+  const CROPS = 12;
+  const CROP_PX = 72;
   /** Class colors, picked by a hash of the name */
   const PALETTE = [
     "#ff5c8a",
@@ -53,8 +62,12 @@
     playerKey: null,
     /** Frames in the selected segment, once known */
     frames: null,
-    /** Track highlighted in the trail */
+    /** Track highlighted in the table and the trails */
     track: null,
+    /** The results' tracks by id, see indexTracks */
+    trackIndex: new Map(),
+    /** The trails' latest drawing: an older one's picture is dropped */
+    trailToken: null,
     pollTimer: null,
   };
 
@@ -460,6 +473,7 @@
     if (vis.playerKey !== key && vis.frames != null) {
       vis.playerKey = key;
       vis.track = null;
+      loadStage(s, seg);
       player.open(
         {
           frames: vis.frames,
@@ -550,7 +564,7 @@
           : "")
       : "";
     drawBoxes(line?.boxes ?? []);
-    drawTrail(line);
+    drawTrail(n);
     const { s, seg } = selected();
     rememberView(replaceRoute("vision", { s, seg, n }));
   }
@@ -635,93 +649,271 @@
       : "";
   }
 
+  // ---------------------------------------------------------- the tracks
+
+  /** Each track's boxes by frame, from the results: id → {id, class,
+   * points: [{f, x, y, box}]} with x, y the box center (fractions) */
+  function indexTracks() {
+    const index = new Map();
+    for (const line of vis.results?.frames ?? []) {
+      for (const box of line.boxes) {
+        if (box.id == null) continue;
+        let track = index.get(box.id);
+        if (!track) {
+          track = { id: box.id, class: box.class, points: [] };
+          index.set(box.id, track);
+        }
+        track.points.push({
+          f: line.frame,
+          x: box.x + box.w / 2,
+          y: box.y + box.h / 2,
+          box,
+        });
+      }
+    }
+    vis.trackIndex = index;
+  }
+
   function renderTracks() {
     const { tracks } = vis.results;
+    indexTracks();
     $("v-tracks-note").textContent = tracks.length ? `${tracks.length}` : "";
     const body = $("v-tracks");
     body.replaceChildren();
     if (!tracks.length) {
-      body.innerHTML = `<tr><td colspan="5" class="panel-note">No tracks: run with Track on.</td></tr>`;
+      body.innerHTML = `<tr><td colspan="5" class="panel-note">${escapeHtml(t("v.tracks.none"))}</td></tr>`;
     }
-    for (const t of tracks) {
+    for (const track of tracks) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td class="num">#${t.id}</td><td><i class="v-swatch" style="background:${colorOf(t.class)}"></i>${escapeHtml(labelOf(t.class))}</td><td class="num">${t.frames}</td><td class="num">${t.first}</td><td class="num">${t.last}</td>`;
-      if (vis.track === t.id) tr.className = "current";
-      tr.onclick = () => {
-        vis.track = vis.track === t.id ? null : t.id;
-        renderTracks();
-        if (vis.track != null) player.go(t.first);
-        else drawFrame(player.frame);
-      };
+      tr.innerHTML = `<td class="num">#${track.id}</td><td><i class="v-swatch" style="background:${colorOf(track.class)}"></i>${escapeHtml(labelOf(track.class))}</td><td class="num">${track.frames}</td><td class="num">${track.first}</td><td class="num">${track.last}</td>`;
+      if (vis.track === track.id) tr.className = "current";
+      tr.onclick = () => selectTrack(vis.track === track.id ? null : track.id);
       body.append(tr);
+    }
+    drawCrops();
+  }
+
+  /** Highlight a track (null: none): the player goes to its first frame */
+  function selectTrack(id) {
+    vis.track = id;
+    renderTracks();
+    const first = vis.trackIndex.get(id)?.points[0]?.f;
+    if (first != null) player.go(first);
+    else drawFrame(player.frame);
+  }
+
+  /** Recent frames, for the trails' picture and the crops */
+  const images = new Map();
+  function frameImage(n) {
+    const { s, seg } = selected();
+    const url = frameUrl(s, seg, n);
+    let img = images.get(url);
+    if (!img) {
+      img = new Image();
+      img.loaded = new Promise((resolve) => {
+        img.onload = () => resolve(true);
+        img.onerror = () => resolve(false);
+      });
+      img.src = url;
+      images.set(url, img);
+      // The oldest go first
+      if (images.size > TRAIL_IMAGES) images.delete(images.keys().next().value);
+    }
+    return img;
+  }
+
+  /** The canvas at the device's resolution, in frame units (W × H) */
+  function trailContext() {
+    const canvas = $("v-trail");
+    const scale = Math.min(2, window.devicePixelRatio || 1);
+    if (canvas.width !== W * scale) {
+      canvas.width = W * scale;
+      canvas.height = H * scale;
+    }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    return ctx;
+  }
+
+  /** The tracks over a frame: short trails around the playhead (n), or the
+   * highlighted track's whole path over its middle frame */
+  function drawTrail(n) {
+    const canvas = $("v-trail");
+    canvas.hidden = vis.frames == null;
+    if (canvas.hidden) return;
+    const focus = vis.trackIndex?.get(vis.track) ?? null;
+    const background = focus
+      ? focus.points[Math.floor(focus.points.length / 2)].f
+      : n;
+    const token = (vis.trailToken = {});
+    const img = focus ? frameImage(background) : player.image(n);
+    img.loaded.then((ok) => {
+      if (vis.trailToken !== token) return;
+      const ctx = trailContext();
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, W, H);
+      if (ok) {
+        ctx.drawImage(img, 0, 0, W, H);
+        // Dimmed, so the trails stand out
+        ctx.fillStyle = "rgb(0 0 0 / 0.35)";
+        ctx.fillRect(0, 0, W, H);
+      }
+      if (focus) drawWholeTrack(ctx, focus, n, background);
+      else drawRecentTrails(ctx, n);
+    });
+    const fps = player.fps || 30;
+    $("v-trail-note").textContent = focus
+      ? t("v.tracks.focus", {
+          id: focus.id,
+          label: labelOf(focus.class),
+          n: focus.points.length,
+          first: focus.points[0].f,
+          last: focus.points[focus.points.length - 1].f,
+          middle: background,
+        })
+      : vis.trackIndex?.size
+        ? t("v.tracks.window", {
+            s: TRAIL_S,
+            frames: Math.round(TRAIL_S * fps),
+          })
+        : t(vis.results?.frames.length ? "v.tracks.none" : "v.tracks.empty");
+  }
+
+  /** A trail's line from point to point, faded by `alpha(point)` */
+  function strokePath(ctx, points, color, width, alpha) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (let i = 1; i < points.length; i++) {
+      const [a, b] = [points[i - 1], points[i]];
+      ctx.globalAlpha = alpha(b);
+      ctx.beginPath();
+      ctx.moveTo(a.x * W, a.y * H);
+      ctx.lineTo(b.x * W, b.y * H);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** A track's id next to a point, readable on any picture */
+  function tag(ctx, point, text, color) {
+    const [x, y] = [point.x * W, point.y * H];
+    ctx.font = "600 11px ui-monospace, monospace";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgb(0 0 0 / 0.75)";
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeText(text, x + 8, y + 4);
+    ctx.fillText(text, x + 8, y + 4);
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  /** Every track's trail within TRAIL_S of frame n: brightest at the
+   * playhead, fading with the time away from it; the id where it is now
+   * (or was last seen within the window) */
+  function drawRecentTrails(ctx, n) {
+    const span = TRAIL_S * (player.fps || 30);
+    const alpha = (p) => Math.max(0.12, 1 - Math.abs(p.f - n) / span);
+    for (const track of vis.trackIndex.values()) {
+      const points = track.points.filter((p) => Math.abs(p.f - n) <= span);
+      if (!points.length) continue;
+      const color = colorOf(track.class);
+      strokePath(ctx, points, color, 2.5, alpha);
+      // The latest point up to the playhead, else the first after it
+      const now = points.filter((p) => p.f <= n).pop() ?? points[0];
+      ctx.globalAlpha = alpha(now);
+      tag(ctx, now, `#${track.id}`, color);
+      ctx.globalAlpha = 1;
     }
   }
 
-  /** Every track's path on screen (box centers over time), the current
-   * frame's positions marked when it was processed (`line`) */
-  function drawTrail(line) {
-    const layer = $("v-trail");
-    layer.replaceChildren(
-      svg("rect", { class: "v-trail-bg", x: 0, y: 0, width: W, height: H }),
-    );
-    const frames = vis.results?.frames ?? [];
-    const paths = new Map();
-    for (const line of frames) {
-      for (const b of line.boxes) {
-        if (b.id == null) continue;
-        const path = paths.get(b.id) ?? { class: b.class, points: [] };
-        path.points.push([(b.x + b.w / 2) * W, (b.y + b.h / 2) * H]);
-        paths.set(b.id, path);
-      }
+  /** The highlighted track's whole path, its box on the picture's frame and
+   * a ring where it is at the playhead (n) */
+  function drawWholeTrack(ctx, track, n, background) {
+    const color = colorOf(track.class);
+    strokePath(ctx, track.points, color, 3, () => 0.95);
+    const first = track.points[0];
+    const last = track.points[track.points.length - 1];
+    ctx.beginPath();
+    ctx.arc(first.x * W, first.y * H, 3, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(last.x * W, last.y * H, 5, 0, 2 * Math.PI);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+    const shown = track.points.find((p) => p.f === background);
+    if (shown) {
+      const b = shown.box;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = color;
+      ctx.strokeRect(b.x * W, b.y * H, b.w * W, b.h * H);
     }
-    for (const [id, path] of paths) {
-      const color = colorOf(path.class);
-      const focus = vis.track == null || vis.track === id;
-      const points = path.points
-        .map((p) => p.map((v) => v.toFixed(1)).join(","))
-        .join(" ");
-      layer.append(
-        svg("polyline", {
-          points,
-          stroke: color,
-          class: "v-trail-line",
-          opacity: focus ? 0.85 : 0.15,
-          "stroke-width": vis.track === id ? 3 : 1.5,
-        }),
-      );
-      const [x, y] = path.points[0];
-      layer.append(
-        svg("circle", {
-          cx: x,
-          cy: y,
-          r: 2.5,
-          fill: color,
-          opacity: focus ? 0.9 : 0.2,
-        }),
-      );
+    const now = track.points.filter((p) => p.f <= n).pop();
+    if (now && now !== shown) {
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      const b = now.box;
+      ctx.strokeRect(b.x * W, b.y * H, b.w * W, b.h * H);
+      ctx.setLineDash([]);
     }
-    for (const b of line?.boxes ?? []) {
-      if (b.id == null) continue;
-      const [x, y] = [(b.x + b.w / 2) * W, (b.y + b.h / 2) * H];
-      layer.append(
-        svg("circle", {
-          class: "v-trail-now",
-          cx: x,
-          cy: y,
-          r: 6,
-          stroke: colorOf(b.class),
-        }),
-        svg("text", { class: "v-trail-id", x: x + 8, y: y + 4 }, `#${b.id}`),
-      );
-    }
-    if (!paths.size) {
-      layer.append(
-        svg(
-          "text",
-          { class: "v-trail-empty", x: W / 2, y: H / 2 },
-          frames.length ? "No tracks in these results" : "Tracks appear here",
-        ),
-      );
+    tag(ctx, shown ?? first, `#${track.id} ${labelOf(track.class)}`, color);
+  }
+
+  /** The highlighted track's boxes as small crops, spread over its frames:
+   * what it followed; a crop goes to its frame */
+  function drawCrops() {
+    const box = $("v-crops");
+    const track = vis.trackIndex?.get(vis.track);
+    box.hidden = !track;
+    box.replaceChildren();
+    if (!track) return;
+    const { points } = track;
+    const count = Math.min(CROPS, points.length);
+    for (let i = 0; i < count; i++) {
+      const p =
+        points[Math.round((i * (points.length - 1)) / Math.max(1, count - 1))];
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "v-crop";
+      button.title = t("v.tracks.cropTitle", { n: p.f });
+      const canvas = document.createElement("canvas");
+      canvas.width = CROP_PX;
+      canvas.height = CROP_PX;
+      const caption = document.createElement("span");
+      caption.className = "num";
+      caption.textContent = p.f;
+      button.append(canvas, caption);
+      button.onclick = () => player.go(p.f);
+      box.append(button);
+      const img = frameImage(p.f);
+      img.loaded.then((ok) => {
+        if (!ok) return;
+        // A square around the box, a little larger than it
+        const { x, y, w, h } = p.box;
+        const side =
+          Math.max(w * img.naturalWidth, h * img.naturalHeight) * 1.3;
+        const cx = (x + w / 2) * img.naturalWidth;
+        const cy = (y + h / 2) * img.naturalHeight;
+        canvas
+          .getContext("2d")
+          .drawImage(
+            img,
+            cx - side / 2,
+            cy - side / 2,
+            side,
+            side,
+            0,
+            0,
+            CROP_PX,
+            CROP_PX,
+          );
+      });
     }
   }
 
@@ -787,6 +979,26 @@
       $("v-send").disabled = false;
     }
   };
+
+  // ------------------------------------------------------------ the stage
+
+  /** The segment's stage (from a Cuttlefish review of this segment, or
+   * picked here, not saved): Gungee's map of it for reference, credited,
+   * and the links to his viewers */
+  const stageMap = new StageMap($("v-stage"), () => {}, { picture: true });
+
+  async function loadStage(s, seg) {
+    stageMap.set("");
+    const stage = await stageOfVideo({ kind: "session", ref: `${s}/${seg}` });
+    const now = selected();
+    if (now.s === s && now.seg === seg) stageMap.set(stage);
+  }
+
+  window.addEventListener("lang-change", () => {
+    if (!vis.results) return;
+    renderTracks();
+    drawFrame(player.frame);
+  });
 
   // -------------------------------------------------------------- routing
 

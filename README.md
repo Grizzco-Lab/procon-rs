@@ -442,8 +442,17 @@ YOLOv8 in candle):
   frames done. The model loads once and is reused.
 - **Results**: the segment in the player with the boxes (class color, score,
   track id) over the processed frames, which are marks on the scrubber
-  (**‹ Boxes** / **Boxes ›**, P/N, jump between them), a table per class, the
-  tracks and their paths on screen.
+  (**‹ Boxes** / **Boxes ›**, P/N, jump between them) and a table per class.
+- **Tracks**: the tracks drawn over the frame at the playhead, each a short
+  trail (±2 s, fading with time, colored by class, with its id). Selecting a
+  track in the table jumps to its first frame, draws its whole path and its
+  box over its middle frame, and shows its boxes as small crops (a click goes
+  to that frame), so you see what it followed. Trails are positions on the
+  screen: the camera keeps turning, so they are not places on the stage; map
+  positions need camera localisation, which is planned. Beside them, the
+  stage (from a Cuttlefish review of the segment, or picked there) with
+  Gungee's top-down map of it at a tide, for reference, and links to his 2D
+  and 3D viewers (see **Stage maps** below).
   Only our classes are shown (those of `classes.json`, after the renames such
   as `person=player`), with their names and colors; the note says how many
   other boxes are hidden. **Experimental: show all COCO classes** shows the
@@ -463,6 +472,22 @@ COCO models know nothing of Salmon Run (Salmonids come out as `bowl`, `boat`
 or nothing), hence our classes only; the app is the workflow for our own
 weights. On a 16-core CPU a frame takes about 130 ms (n), 250 ms (s) and
 470 ms (m); build with `--features cuda` for the GPU.
+
+#### Stage maps
+
+The Salmon Run stage maps come from **Gungee**'s free community tools,
+[salmon-learn-nw.gungee.jp](https://salmon-learn-nw.gungee.jp/maplist/): a
+2D viewer for every stage and a
+[3D one](https://salmon-learn-nw.gungee.jp/maplist3d/) for Gone Fission
+Hydroplant, Marooner's Bay and Jammin' Salmon Junction. Thank you, Gungee!
+A Cuttlefish review has a stage picker in its header (saved as `stage` in
+`review.json`; a YouTube title naming the stage fills it in until one is
+picked), with **Map by Gungee: 2D ↗ 3D ↗** links that open his viewers in
+a new tab. Vision, the Inkspector's Session card and the Predictor show the
+same links when a review of the video names the stage. Vision also shows his
+top-down picture of the stage, credited under it; the studio fetches each
+picture once, when first shown, into `~/.cache/procon-cuttlefish/gungee/`
+(`GET /api/cuttlefish/stage-map`), and none is kept in this repository.
 
 ### Predictor
 

@@ -5,8 +5,8 @@
 // holds the run, the predicted controller, the labels table comparing the
 // two (as in the Inkspector) and the agreement; the timeline and the stored
 // runs follow the video. Runs
-// after app.js and player.js and uses their helpers ($, escapeHtml,
-// stickPercent, appUrl). Runs go through /api/predictor (see
+// after app.js, player.js and stages.js and uses their helpers ($,
+// escapeHtml, stickPercent, appUrl, StageMap). Runs go through /api/predictor (see
 // src/predictor.rs); the video plays from /api/cuttlefish/video. State lives
 // in the address: /predictor/<video>/<checkpoint>?t=<seconds>.
 "use strict";
@@ -502,6 +502,7 @@
       return;
     }
     pred.chunk = null;
+    drawStage(run);
     const thumb = (k) => {
       const query = new URLSearchParams(run.play);
       query.set("t_ms", Math.round((k * 1000) / player.fps));
@@ -518,6 +519,16 @@
       },
       n,
     );
+  }
+
+  /** Links to Gungee's maps of the run's stage, when its review (or a
+   * review of the same video) names it, or its title does */
+  const stageMap = new StageMap($("p-stage"));
+  async function drawStage(run) {
+    stageMap.set("");
+    const { r, kind, ref } = run.play;
+    const stage = await stageOfVideo({ r, kind, ref, title: run.title });
+    if (pred.run === run) stageMap.set(stage);
   }
 
   const fps = () => player.fps;

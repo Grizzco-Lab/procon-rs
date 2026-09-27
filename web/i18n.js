@@ -46,6 +46,41 @@ const I18N = {
     "player.strip.seconds":
       "±{span} s around the playhead, updated while paused",
 
+    // Salmon Run stages and Gungee's community maps (stages.js)
+    "stage.pick": "Stage",
+    "stage.pickTitle": "The Salmon Run stage, for the links to Gungee's maps",
+    "stage.unknown": "Stage…",
+    "stage.tide": "Tide",
+    "stage.tide.Low": "Low tide",
+    "stage.tide.Mid": "Normal",
+    "stage.tide.High": "High tide",
+    "stage.mapAlt": "{stage} from above, by Gungee",
+    "stage.credit":
+      "Map by <b>Gungee</b>, from his community tools at {link}. Thank you, Gungee! For reference only: tracks are not placed on it yet.",
+    "stage.map": "Map by Gungee:",
+    "stage.map2d":
+      "Gungee's 2D stage map (salmon-learn-nw.gungee.jp), in a new tab",
+    "stage.map3d":
+      "Gungee's 3D stage map (salmon-learn-nw.gungee.jp), in a new tab",
+
+    // Vision: the Tracks panel
+    "v.tracks": "Tracks",
+    "v.tracks.canvas": "Tracks over the frame",
+    "v.tracks.track": "Track",
+    "v.tracks.class": "Class",
+    "v.tracks.frames": "Frames",
+    "v.tracks.first": "First",
+    "v.tracks.last": "Last",
+    "v.tracks.window":
+      "Trails ±{s} s ({frames} frames) around the playhead, fading with time; select a track for its whole path",
+    "v.tracks.focus":
+      "#{id} {label}: {n} boxes, frames {first}–{last}, over frame {middle}; the dashed box is where it is at the playhead",
+    "v.tracks.none": "No tracks: run with Track on.",
+    "v.tracks.empty": "No results for this segment yet: run a detection.",
+    "v.tracks.cropTitle": "Frame {n}: go there",
+    "v.tracks.limit":
+      "Trails are positions on the screen, and the camera keeps turning, so they are not places on the stage. Map positions need camera localisation, which is planned.",
+
     // Cuttlefish: the views
     "cf.name": "Cuttlefish",
     "cf.tab.reviews": "Reviews",

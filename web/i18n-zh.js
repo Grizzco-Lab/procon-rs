@@ -31,6 +31,44 @@ I18N.zh = {
   "player.strip.frames": "前后各 {n} 帧，暂停时更新",
   "player.strip.seconds": "播放位置前后 ±{span} 秒，暂停时更新",
 
+  // Salmon Run stages and Gungee's community maps (stages.js)
+  "stage.pick": "场地",
+  "stage.pickTitle": "鲑鱼跑的场地，用于打开 Gungee 的地图",
+  "stage.unknown": "场地…",
+  "stage.tide": "潮位",
+  "stage.tide.Low": "干潮",
+  "stage.tide.Mid": "普通",
+  "stage.tide.High": "满潮",
+  "stage.mapAlt": "{stage} 俯视图，Gungee 制作",
+  "stage.credit":
+    "地图由 <b>Gungee</b> 制作，来自他的社区工具 {link}。感谢 Gungee！仅供参考：轨迹还没有放到地图上。",
+  "stage.map": "Gungee 的地图：",
+  "stage.map2d":
+    "Gungee 的 2D 场地地图（salmon-learn-nw.gungee.jp），在新标签页打开",
+  "stage.map3d":
+    "Gungee 的 3D 场地地图（salmon-learn-nw.gungee.jp），在新标签页打开",
+  "stage.spawning-grounds": "鲑坝",
+  "stage.marooners-bay": "漂浮落难船",
+  "stage.gone-fission-hydroplant": "麦年海洋发电所",
+  "stage.sockeye-station": "新卷堡",
+
+  // Vision: the Tracks panel
+  "v.tracks": "追踪",
+  "v.tracks.canvas": "画面上的追踪轨迹",
+  "v.tracks.track": "轨迹",
+  "v.tracks.class": "类别",
+  "v.tracks.frames": "帧数",
+  "v.tracks.first": "首帧",
+  "v.tracks.last": "末帧",
+  "v.tracks.window":
+    "播放位置前后 {s} 秒（{frames} 帧）的轨迹，越远越淡；选择一条轨迹可看完整路径",
+  "v.tracks.focus":
+    "#{id} {label}：{n} 个框，第 {first}–{last} 帧，背景为第 {middle} 帧；虚线框是它在播放位置的位置",
+  "v.tracks.none": "没有轨迹：请勾选“Track”再运行。",
+  "v.tracks.empty": "这个片段还没有结果：请先运行检测。",
+  "v.tracks.cropTitle": "第 {n} 帧：跳转到这里",
+  "v.tracks.limit":
+    "轨迹是画面上的位置，而镜头一直在转动，所以它们不是场地上的位置。场地上的位置需要镜头定位，这已在计划中。",
   // Cuttlefish: the views
   "cf.name": "鱼干司令",
   "cf.tab.reviews": "复盘",

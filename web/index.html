@@ -1034,6 +1034,7 @@
           </header>
           <div class="tiles" id="i-session-tiles"></div>
           <p class="panel-note" id="i-session-note"></p>
+          <div id="i-stage"></div>
         </section>
       </main>
     </div>
@@ -1476,6 +1477,8 @@
           </header>
           <!-- The video's title, channel and date, linked to YouTube -->
           <p class="cf-info" id="cf-info"></p>
+          <!-- The stage, picked or named by the title, with links to Gungee's maps -->
+          <div class="cf-stage" id="cf-stage"></div>
           <!-- The video (the shared player's), with danmaku and the comments'
                drawings over it; the comments are marks on the scrubber -->
           <div class="screen cf-screen" id="cf-screen">
@@ -2702,28 +2705,50 @@
 
         <section class="panel p-v-tracks" aria-labelledby="h-v-tracks">
           <header class="panel-head">
-            <h2 id="h-v-tracks">Tracks</h2>
+            <h2 id="h-v-tracks" data-i18n="v.tracks">Tracks</h2>
             <span class="panel-note" id="v-tracks-note"></span>
           </header>
-          <svg
-            class="v-trail"
-            id="v-trail"
-            viewBox="0 0 640 360"
-            aria-label="Where tracks went on screen"
-          ></svg>
-          <div class="table-wrap v-tracks-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Track</th>
-                  <th>Class</th>
-                  <th>Frames</th>
-                  <th>First</th>
-                  <th>Last</th>
-                </tr>
-              </thead>
-              <tbody id="v-tracks"></tbody>
-            </table>
+          <!-- The tracks over a frame of the segment: short trails around the
+               playhead, or the selected track's whole path over its middle
+               frame, and the table; the stage and Gungee's map of it beside
+               them on a wide panel -->
+          <div class="v-tracks-body">
+            <div class="v-tracks-view">
+              <canvas
+                class="v-trail"
+                id="v-trail"
+                width="640"
+                height="360"
+                aria-label="Tracks over the frame"
+                data-i18n-aria-label="v.tracks.canvas"
+                hidden
+              ></canvas>
+              <p class="panel-note" id="v-trail-note"></p>
+              <!-- The selected track's boxes, spread over its frames -->
+              <div class="v-crops" id="v-crops" hidden></div>
+              <div class="table-wrap v-tracks-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th data-i18n="v.tracks.track">Track</th>
+                      <th data-i18n="v.tracks.class">Class</th>
+                      <th data-i18n="v.tracks.frames">Frames</th>
+                      <th data-i18n="v.tracks.first">First</th>
+                      <th data-i18n="v.tracks.last">Last</th>
+                    </tr>
+                  </thead>
+                  <tbody id="v-tracks"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="v-tracks-side">
+              <p class="panel-note v-tracks-limit" data-i18n="v.tracks.limit">
+                Trails are positions on the screen, and the camera keeps
+                turning, so they are not places on the stage. Map positions need
+                camera localisation, which is planned.
+              </p>
+              <div class="v-stage" id="v-stage"></div>
+            </div>
           </div>
         </section>
       </main>
@@ -2753,6 +2778,7 @@
           </div>
           <div class="scrubber" id="p-scrubber"></div>
           <div class="strip" id="p-strip"></div>
+          <div id="p-stage"></div>
         </section>
 
         <div class="p-p-side">
@@ -2974,6 +3000,7 @@
     <script src="/app.js"></script>
     <script src="/sketch.js"></script>
     <script src="/player.js"></script>
+    <script src="/stages.js"></script>
     <script src="/inspect.js"></script>
     <script src="/label.js"></script>
     <script src="/cuttlefish.js"></script>
