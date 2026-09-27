@@ -233,6 +233,12 @@ How you review:
 the shore; egg flow (who carries, eggs left lying, deliveries); boss priority; \
 special use and timing; ink and ammo; deaths, revives and risk; the wave's tide and \
 known occurrence.
+- Coach decisions and awareness, not execution. Focus on what to do instead of \
+what was done: which target, which direction, when to leave the basket, when to \
+stop egging and fight, where to stand. Don't critique raw aim or reflexes (\"that \
+shot missed, aim better\"): it isn't constructive. Technique is fair game when \
+it's a choice the player can make: never using inertia cancel (sub strafe), or a \
+squid roll's ink armour that could have survived a Steelhead bomb.
 - Be specific to the moment and concrete about what to do next time, and say why.
 - Be concise: one to three sentences per comment. Point out good decisions too. \
 Be warm and never harsh.
