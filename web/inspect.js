@@ -172,6 +172,7 @@ function rememberView(url) {
 
 // ------------------------------------------------------------------ picker
 
+/** List the sessions afresh (sessions get recorded while the page is open) */
 async function loadSessions() {
   const response = await fetch("/api/inspect/sessions");
   const data = await response.json();
@@ -182,11 +183,15 @@ async function loadSessions() {
   }
   inspector.sessions = data.sessions;
   const select = $("i-session");
-  for (const summary of data.sessions) {
-    select.add(new Option(summary.name, summary.name));
-  }
+  const chosen = select.value;
+  select.replaceChildren(
+    new Option("All sessions", ""),
+    ...data.sessions.map((s) => new Option(s.name, s.name)),
+  );
+  select.value = chosen;
   $("i-sessions-note").textContent = `${data.sessions.length} in ${data.root}`;
   const body = $("i-sessions");
+  body.replaceChildren();
   for (const summary of data.sessions) {
     const tr = document.createElement("tr");
     const level = LEVELS[summary.calibration?.applied?.source] ?? "";
@@ -463,8 +468,11 @@ $("i-gyro-tol").textContent = GYRO_TOLERANCE;
 
 /** Show what the address names: a segment, or the picker */
 async function routeInspector(state) {
-  if (!inspector.sessions) await loadSessions();
   const session = state.get("s");
+  // The picker, or a session not listed yet, lists them again
+  if (!session || !inspector.sessions?.some((s) => s.name === session)) {
+    await loadSessions();
+  }
   if (!session) return showPicker();
   const segment = state.get("seg") || null;
   const { info } = inspector;

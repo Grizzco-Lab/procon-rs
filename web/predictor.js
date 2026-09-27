@@ -178,8 +178,9 @@
     checkForm();
   }
 
+  /** List the sessions afresh each time the app or the kind is shown, as
+   * sessions get recorded while the page is open; the choice stays */
   async function loadSessions() {
-    if (pred.sessions) return;
     try {
       const response = await fetch("/api/inspect/sessions");
       const data = await response.json();
@@ -192,10 +193,10 @@
       );
       return;
     }
+    const kept = $("p-session").value || remembered("session", "");
     $("p-session").replaceChildren(
       ...pred.sessions.map((s) => new Option(s.name, s.name)),
     );
-    const kept = remembered("session", "");
     if (pred.sessions.some((s) => s.name === kept)) $("p-session").value = kept;
     fillSegments();
   }
@@ -203,9 +204,11 @@
   function fillSegments() {
     const summary = pred.sessions?.find((s) => s.name === $("p-session").value);
     const select = $("p-segment");
+    const kept = select.value;
     select.replaceChildren(
       ...(summary?.segments ?? []).map((s) => new Option(s.file, s.file)),
     );
+    if (summary?.segments.some((s) => s.file === kept)) select.value = kept;
     select.hidden = (summary?.segments.length ?? 0) < 2;
   }
 
