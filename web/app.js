@@ -121,7 +121,7 @@ markView();
 const APPS = ["studio", "inspect", "cuttlefish", "vision", "predictor"];
 
 /** Cuttlefish's views besides the reviews, each at /cuttlefish/<view> */
-const CUTTLEFISH_VIEWS = ["translate", "knowledge"];
+const CUTTLEFISH_VIEWS = ["translate", "knowledge", "pedia"];
 
 /**
  * The path of an app's state. `state` (URLSearchParams or an object) holds
@@ -130,8 +130,9 @@ const CUTTLEFISH_VIEWS = ["translate", "knowledge"];
  *
  * - `/studio`
  * - `/inspect`, `/inspect/<session>?seg=&n=&delay=&pred=&label=1` (`s`)
- * - `/cuttlefish`, `/cuttlefish/translate`, `/cuttlefish/knowledge` (`view`),
- *   `/cuttlefish/review/<id>?t=` (`r`),
+ * - `/cuttlefish`, `/cuttlefish/translate`, `/cuttlefish/knowledge`,
+ *   `/cuttlefish/pedia` (`view`), `/cuttlefish/pedia/<term id>` (`view`,
+ *   `term`), `/cuttlefish/review/<id>?t=` (`r`),
  *   `/cuttlefish/video?kind=&ref=&start_s=&end_s=&t=` (a video not reviewed
  *   yet)
  * - `/vision`, `/vision/<session>?seg=&n=` (`s`)
@@ -153,8 +154,10 @@ function appUrl(app, state = {}) {
   } else if (app === "cuttlefish") {
     const view = take("view");
     const review = take("r");
+    const term = view === "pedia" ? take("term") : null;
     if (review) segments.push("review", review);
     else if (CUTTLEFISH_VIEWS.includes(view)) segments.push(view);
+    if (term) segments.push(term);
     else if (query.get("kind")) segments.push("video");
   }
   const search = query.toString();
@@ -183,7 +186,11 @@ function routeOf(url) {
   } else if (app === "cuttlefish") {
     if (rest[0] === "review" && rest.length > 1)
       state.set("r", rest.slice(1).join("/"));
-    else if (CUTTLEFISH_VIEWS.includes(rest[0])) state.set("view", rest[0]);
+    else if (CUTTLEFISH_VIEWS.includes(rest[0])) {
+      state.set("view", rest[0]);
+      if (rest[0] === "pedia" && rest.length > 1)
+        state.set("term", rest.slice(1).join("/"));
+    }
   }
   return { app, state };
 }

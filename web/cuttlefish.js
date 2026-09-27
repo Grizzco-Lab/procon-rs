@@ -9,9 +9,11 @@
 // whose first message starts a review without a video),
 // /cuttlefish/review/<review>?t=<s> (a saved review),
 // /cuttlefish/video?kind=<kind>&ref=<ref>&start_s=&end_s= (a video not
-// reviewed yet), /cuttlefish/translate (the translator, see translate.js) or
-// /cuttlefish/knowledge (the knowledge view, see knowledge.js). The
-// tab strip above the library, #cf-tabs, switches the three views.
+// reviewed yet), /cuttlefish/translate (the translator, see translate.js),
+// /cuttlefish/knowledge (the knowledge view, see knowledge.js) or
+// /cuttlefish/pedia[/<term>] (the Overfishing Pedia, see pedia.js). The
+// tab strip above the library, #cf-tabs, switches the four views. Cited
+// sources open in the source popover (source.js).
 // Reviews are saved as JSON through /api/cuttlefish/reviews/<id>, each in a
 // folder of its own with its YouTube (or copied) video and its chat; the
 // format is in src/cuttlefish.rs. The page owns the review: a chat message
@@ -1687,16 +1689,20 @@
     input.addEventListener("input", () => grow(input));
   }
 
-  /** A source of a message as a list item: its id, title (linked) and
-   * section; an expert comment of #vod-review as its reviewer and date
-   * linked to the Discord message, the era and the moment it is about; an
-   * expert note as its label ("Expert note (user), date") linked to the
-   * Notes panel, then the question it answers */
-  function sourceItem(s) {
+  /** A source of a message as a list item: its id, title and section; an
+   * expert comment of #vod-review as its reviewer and date, the era and the
+   * moment it is about; an expert note as its label ("Expert note (user),
+   * date"), then the question it answers. The title opens the source
+   * popover (source.js: the comment in its conversation, or the chunk
+   * cited); the original is a small link after it. `list` and `i` say
+   * where the source is in the message (`sources` or `experts`). */
+  function sourceItem(s, i, list) {
     const link = (text) =>
-      s.url
-        ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`
-        : escapeHtml(text);
+      `<button type="button" class="src-link" data-src-list="${list}" data-src-index="${i}">${escapeHtml(text)}</button>${
+        s.url
+          ? ` <a class="cf-src-out" href="${escapeHtml(s.url)}" target="_blank" rel="noopener" title="${escapeHtml(t("src.original"))}">↗</a>`
+          : ""
+      }`;
     if (s.source === "expert-note") {
       return `<li><b>${escapeHtml(s.id)}</b> ${link(s.heading || t("k.source.expertNote"))} <span class="cf-kind">${escapeHtml(t("k.source.expertNote"))}</span> › ${escapeHtml(s.title)}</li>`;
     }
@@ -1714,14 +1720,13 @@
     let html = escapeHtml(message.text);
     const sources = message.sources ?? [];
     html = html.replace(/\[(S\d+)\]/g, (match, id) => {
-      const source = sources.find((s) => s.id === id);
-      if (!source) return match;
+      const i = sources.findIndex((s) => s.id === id);
+      if (i < 0) return match;
+      const source = sources[i];
       const title = escapeHtml(
         source.heading ? `${source.title} › ${source.heading}` : source.title,
       );
-      return source.url
-        ? `<a class="cf-cite" href="${escapeHtml(source.url)}" target="_blank" rel="noopener" title="${title}">${id}</a>`
-        : `<span class="cf-cite" title="${title}">${id}</span>`;
+      return `<button type="button" class="cf-cite" data-src-list="sources" data-src-index="${i}" title="${title}">${id}</button>`;
     });
     if (!cf.review?.video) return html;
     const seekButton = (label, seconds) =>
@@ -1775,8 +1780,12 @@
               : t("cf.chat.at", { time: clock(message.t_s) });
           context = `<button type="button" class="cf-time num" data-seek="${message.t_s}">${escapeHtml(label)}</button>`;
         }
-        const sources = (message.sources ?? []).map(sourceItem).join("");
-        const experts = (message.experts ?? []).map(sourceItem).join("");
+        const sources = (message.sources ?? [])
+          .map((s, i) => sourceItem(s, i, "sources"))
+          .join("");
+        const experts = (message.experts ?? [])
+          .map((s, i) => sourceItem(s, i, "experts"))
+          .join("");
         const added = (message.comments ?? [])
           .map((id) => review.comments.find((c) => c.id === id))
           .filter(Boolean)
@@ -1824,6 +1833,15 @@
   }
 
   $("cf-chat").addEventListener("click", (event) => {
+    // A cited source opens in the popover (source.js)
+    const cite = event.target.closest("[data-src-list]");
+    if (cite) {
+      const id = cite.closest(".cf-msg")?.dataset.id;
+      const message = cf.review?.messages.find((m) => m.id === id);
+      const source = message?.[cite.dataset.srcList]?.[cite.dataset.srcIndex];
+      if (source) window.cuttlefishSource.open(cite, source);
+      return;
+    }
     const memo = event.target.closest("[data-memo]");
     if (memo) {
       const id = memo.closest(".cf-msg")?.dataset.id;
@@ -2070,19 +2088,22 @@
   // ---------------------------------------------------------------- routing
 
   /** The views the tab strip switches, besides the library */
-  const VIEWS = ["translate", "knowledge"];
+  const VIEWS = ["translate", "knowledge", "pedia"];
 
   /** Show what the address names: a review, a video, the translate or
    * knowledge view, or the library */
   async function route(state) {
     const view = state.get("view");
     if (VIEWS.includes(view)) {
-      // translate.js and knowledge.js show their own views
+      // translate.js, knowledge.js and pedia.js show their own views; the
+      // Pedia is remembered at its entry
       leavePlayer();
       $("cf-player").hidden = true;
       $("cf-library").hidden = true;
       setChip("");
-      rememberView(`/cuttlefish/${view}`);
+      rememberView(
+        view === "pedia" ? location.pathname : `/cuttlefish/${view}`,
+      );
       clearTimeout(cf.pollTimer);
       clearTimeout(cf.listTimer);
       return;

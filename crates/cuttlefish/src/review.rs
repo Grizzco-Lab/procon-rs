@@ -136,6 +136,12 @@ pub struct SourceRef {
     /// Discord message
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expert: Option<Expert>,
+    /// The document's id and the chunk's position in it, so the page can
+    /// show the chunk cited (absent in answers saved before)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ordinal: Option<u32>,
 }
 
 /// A comment from Cuttlefish
@@ -531,6 +537,8 @@ fn source_refs(hits: &[Hit]) -> Vec<SourceRef> {
             source: h.entry.source,
             license: h.entry.license.clone(),
             expert: h.entry.expert.clone(),
+            doc: Some(h.entry.doc_id.clone()),
+            ordinal: Some(h.entry.ordinal),
         })
         .collect()
 }

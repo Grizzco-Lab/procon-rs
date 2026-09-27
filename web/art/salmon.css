@@ -725,3 +725,104 @@
     opacity: 0.9;
   }
 }
+
+/* ------------------------------------------------- overfishing pedia */
+
+[data-theme="salmon"] .pd-title,
+[data-theme="salmon"] .pd-entry-title,
+[data-theme="salmon"] .pd-group-head h2 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+[data-theme="salmon"] .pd-entry-title {
+  text-shadow: 3px 3px 0 var(--sr-ink);
+}
+
+/* Section headings as stickers in the section's hue */
+[data-theme="salmon"] .pd-group-head {
+  border-bottom: 0;
+}
+
+[data-theme="salmon"] .pd-group-head h2 {
+  padding: 3px 14px 2px;
+  border: 2px solid var(--sr-ink);
+  border-radius: 999px;
+  background: var(--pd-hue);
+  box-shadow: 2px 3px 0 var(--sr-ink);
+  color: #1a1320;
+  font-size: 18px;
+  transform: rotate(-1.5deg);
+}
+
+[data-theme="salmon"] .pd-card,
+[data-theme="salmon"] .pd-search,
+[data-theme="salmon"] .pd-section-chip {
+  border: 2px solid var(--sr-ink);
+  box-shadow: 2px 3px 0 var(--sr-ink);
+}
+
+[data-theme="salmon"] .pd-card {
+  border-left: 8px solid var(--pd-hue);
+  background:
+    url("/art/panel-tile.svg") 0 0 / 240px 240px,
+    var(--panel);
+}
+
+[data-theme="salmon"] .pd-card:hover {
+  border-color: var(--sr-ink);
+  border-left-color: var(--pd-hue);
+  transform: translateY(-2px) rotate(-0.4deg);
+}
+
+[data-theme="salmon"] .pd-section-chip {
+  font-family: var(--font-display);
+  font-size: 14px;
+}
+
+[data-theme="salmon"] .pd-section-chip[aria-current="page"] {
+  background: var(--pd-hue);
+  color: #1a1320;
+  font-weight: 400;
+}
+
+[data-theme="salmon"] .pd-section-chip[aria-current="page"] .num {
+  color: #1a1320;
+}
+
+[data-theme="salmon"] .pd-entry-head {
+  --band: var(--pd-hue);
+}
+
+[data-theme="salmon"] .pd-kicker {
+  color: var(--sr-gold);
+}
+
+[data-theme="salmon"] .pd-definition,
+[data-theme="salmon"] .pd-quote blockquote {
+  font-family: var(--font-ui);
+}
+
+[data-theme="salmon"] .pd-quote blockquote {
+  border-left-width: 5px;
+}
+
+[data-theme="salmon"] .src-pop {
+  border: 3px solid var(--sr-ink);
+  box-shadow:
+    0 0 0 2px var(--sr-ink),
+    0 6px 0 var(--sr-ink);
+}
+
+[data-theme="salmon"] .src-kind {
+  border: 2px solid var(--sr-ink);
+  background: var(--sr-teal);
+  color: var(--sr-ink);
+}
+
+[data-theme="salmon"] .pd-search input {
+  border: 0;
+  box-shadow: none;
+  background: none;
+}

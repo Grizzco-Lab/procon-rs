@@ -863,6 +863,25 @@ those numbers and tells the model not to build fine claims on it, and the
 persona repeats the rule. Update the constant when a better IDM exists; set
 its `trusted` once the estimates are good enough, which drops the warning.
 
+## Overfishing Pedia
+
+`pedia` is the studio's encyclopedia view over the glossary: which terms are
+about Salmon Run (`candidate`, `in_scope`: the seed's and the user's terms,
+terms with slang, a definition or a relation, the Salmon Run tables' bosses,
+events, tides, stages and titles, and the Splatoon 2 and 3 weapons, specials,
+subs and stages #vod-review talks about; gear, brands, battle modes and
+stages' short names are left out), a friendly `Section` per term (its kind,
+a few known ids, else the section of the broader term it belongs to), the
+games of its names (`games`, from the name tables it came from) and where it
+comes from (`facets`: official, community, user). `mentions` searches every
+expert comment of the corpus (`expert::comments`, the reply context left
+out) for the names of the terms in scope with `Glossary::find_in`, once per
+corpus and set of names (`names_key`); `rank_quotes` and `snippet` pick and
+cut the quotes. `fact_cards` reads the `game-data` documents,
+`note_is_about` and `names_term` link expert notes and deep questions.
+`review::SourceRef` carries the cited chunk's document id and position, so
+the page can show the chunk itself.
+
 ## Library API (for the studio)
 
 ```rust

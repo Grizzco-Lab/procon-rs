@@ -1122,6 +1122,18 @@
             </svg>
             <span data-i18n="cf.tab.knowledge">Knowledge</span>
           </a>
+          <a
+            class="cf-view"
+            href="/cuttlefish/pedia"
+            data-tab="pedia"
+            title="Overfishing Pedia: Salmon Run terms, techniques and slang, with what the community says about each"
+            data-i18n-title="cf.tab.pediaNote"
+          >
+            <svg class="cf-view-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <use href="/icons/app-pedia.svg#i" />
+            </svg>
+            <span data-i18n="cf.tab.pedia">Pedia</span>
+          </a>
         </div>
       </nav>
 
@@ -2572,6 +2584,124 @@
         </div>
       </main>
 
+      <!-- Overfishing Pedia (pedia.js): the glossary as an encyclopedia of
+           Salmon Run. The index (search, filters, sections of cards) or one
+           entry, which pedia.js draws -->
+      <main class="pd" id="cf-pedia" hidden>
+        <section class="pd-browse" id="pd-browse" aria-labelledby="pd-title">
+          <header class="panel pd-hero">
+            <svg class="pd-hero-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <use href="/icons/app-pedia.svg#i" />
+            </svg>
+            <div class="pd-hero-text">
+              <h1 class="pd-title" id="pd-title" data-i18n="pedia.title">
+                Overfishing Pedia
+              </h1>
+              <p class="pd-lede" id="pd-lede"></p>
+            </div>
+            <button
+              type="button"
+              class="mode-toggle pd-random"
+              id="pd-random"
+              data-i18n="pedia.random"
+            >
+              Surprise me
+            </button>
+          </header>
+          <div class="pd-tools">
+            <label class="pd-search">
+              <svg
+                class="pd-search-icon"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <use href="/icons/ui-search.svg#i" />
+              </svg>
+              <input
+                type="search"
+                id="pd-q"
+                autocomplete="off"
+                placeholder="Search in any language, slang included…"
+                data-i18n-placeholder="pedia.search"
+                aria-label="Search the Pedia"
+                data-i18n-aria-label="pedia.searchLabel"
+              />
+            </label>
+            <div class="pd-filters">
+              <div
+                class="pd-seg"
+                id="pd-era"
+                role="group"
+                aria-label="Game"
+                data-i18n-aria-label="pedia.era"
+              >
+                <button type="button" data-value="" data-i18n="pedia.anyGame">
+                  Any game
+                </button>
+                <button type="button" data-value="S3">S3</button>
+                <button type="button" data-value="S2">S2</button>
+              </div>
+              <div
+                class="pd-seg"
+                id="pd-source"
+                role="group"
+                aria-label="Source"
+                data-i18n-aria-label="pedia.sourceLabel"
+              >
+                <button type="button" data-value="" data-i18n="pedia.anySource">
+                  All
+                </button>
+                <button
+                  type="button"
+                  data-value="official"
+                  data-i18n="pedia.facet.official"
+                >
+                  Official
+                </button>
+                <button
+                  type="button"
+                  data-value="community"
+                  data-i18n="pedia.facet.community"
+                >
+                  Community
+                </button>
+                <button
+                  type="button"
+                  data-value="user"
+                  data-i18n="pedia.facet.user"
+                >
+                  Yours
+                </button>
+              </div>
+              <div
+                class="pd-seg"
+                id="pd-order"
+                role="group"
+                aria-label="Order"
+                data-i18n-aria-label="pedia.orderLabel"
+              >
+                <button type="button" data-value="az" data-i18n="pedia.az">
+                  A–Z
+                </button>
+                <button type="button" data-value="talk" data-i18n="pedia.talk">
+                  Most discussed
+                </button>
+              </div>
+            </div>
+          </div>
+          <nav
+            class="pd-sections"
+            id="pd-sections"
+            aria-label="Sections"
+            data-i18n-aria-label="pedia.sections"
+          ></nav>
+          <p class="pd-notice" id="pd-notice" hidden></p>
+          <div class="pd-groups" id="pd-groups"></div>
+          <p class="panel-note pd-empty" id="pd-empty" hidden></p>
+        </section>
+        <article class="pd-entry" id="pd-entry" hidden></article>
+      </main>
+
       <!-- The expert note editor, shared by the chat ("Correct / add to
            memory"), the deep questions and the Notes panel (knowledge.js) -->
       <dialog class="cf-dialog" id="cf-note-dialog">
@@ -3217,6 +3347,8 @@
     <script src="/cuttlefish.js"></script>
     <script src="/knowledge.js"></script>
     <script src="/translate.js"></script>
+    <script src="/source.js"></script>
+    <script src="/pedia.js"></script>
     <script src="/vision.js"></script>
     <script src="/predictor.js"></script>
     <script type="module" src="/controller3d.js"></script>

@@ -111,7 +111,7 @@ Salmon Run), the layout (Auto, or Phone, which narrow screens also use),
 where the app links go (Side rail or Top bar), the rail's width (Compact or
 Expanded) and the language (English or
 Simplified Chinese, by default the browser's; so far the app names, status and View menu, and Cuttlefish with its
-Translate and Knowledge views, are translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
+Translate, Knowledge and Pedia views, are translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
 Studio's preview pauses, and each app stops its own work while hidden.
 
 ### Studio
@@ -206,8 +206,8 @@ Labels come from `crates/gameplay-data`, the same code the training side uses.
 A chat with Cuttlefish, the AI reviewer, and video reviews: a recorded
 segment, a video file on the PC or a range of a YouTube video with comments at
 its times and shapes drawn on the paused frame, a notebook of mistakes and
-lessons to flip through later. The app has three views, **Reviews**,
-**Translate** and **Knowledge**; Cuttlefish's avatar sits next to every box
+lessons to flip through later. The app has four views, **Reviews**,
+**Translate**, **Knowledge** and **Pedia**; Cuttlefish's avatar sits next to every box
 where he can be asked.
 
 **Reviews** is the entry: the reviews so far, **Open a video** (a session, a
@@ -382,7 +382,39 @@ the closest **expert comments**, single #vod-review comments of high-level
 players about similar moments ("Centritide, 2023 (S3), about a W2 :50
 moment"), listed under the answer as **Expert comments given** with links to
 Discord. The Knowledge view's **Create reviews from #vod-review** indexes
-them (`cuttlefish corpus index` does it alone). The **Knowledge** view (the third tab above the library) manages that
+them (`cuttlefish corpus index` does it alone).
+
+**Pedia** (Overfishing Pedia, 乱获百科; the fourth tab, `/cuttlefish/pedia`)
+turns the glossary into an encyclopedia of Salmon Run for new players. The
+index groups the Salmon Run terms in sections (movement techniques, bosses
+and Salmonids with their parts and attacks, King Salmonids, special events
+and tides, egg flow, roles and strategy, weapons, stages, modes and
+mechanics), with a search in any language (slang included: *sub strafe*
+finds inertia cancel, 熊刷 the Grizzco Roller), filters by game (S3, S2) and
+by source (official names, community slang and terms, yours), and A–Z or
+**Most discussed** (how many #vod-review comments mention the term or its
+slang). An entry (`/cuttlefish/pedia/<term id>`) has the official names in
+every language, the slang with its language and origin, the definition,
+related terms both ways (part of, a kind of, related to), the stat.ink icon
+or the class icon, game-data fact cards when imported, **In the wild** (the
+best #vod-review comments using the term, with reviewer, date and era;
+**Conversation** shows the whole comment with its replies, and a comment on
+a VOD that is a review here opens it at its moment), the expert notes and
+deep questions about it, and **Ask Cuttlefish about this**. Everything is
+corrected in place: **Edit** the definition and kind, add or remove slang,
+**Link to a term**, **Flag as wrong** (a term the suggestions added is
+rejected, with Undo; a glossary term is corrected), **Add a note**. Edits are
+yours in `glossary-user.toml` (overrides of glossary terms, which imports
+never change) and the chat and the translator use them at once.
+
+Wherever an answer cites a source (`[S1]`, the sources and expert comments
+listed under it) or the Pedia quotes a comment, a click opens it in the
+page: a #vod-review comment in full with the message it answers, the replies
+and the moments it names (each opening the community review there), a wiki,
+guide, game-data or expert-note chunk with its title, section, licence and
+credit. Discord and the original page stay as small links.
+
+The **Knowledge** view (the third tab above the library) manages that
 store (`crates/cuttlefish`, folder `[cuttlefish] knowledge`) and nothing else:
 asking is the chat's job, translating and looking up the glossary the
 Translate view's. It is laid out in two columns, feeding and searching on the

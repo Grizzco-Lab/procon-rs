@@ -768,7 +768,7 @@ pub fn build(source: &str, members: &[Member]) -> Table {
 }
 
 /// Folder of the tables in a data folder
-fn dir(root: &Path) -> std::path::PathBuf {
+pub fn dir(root: &Path) -> std::path::PathBuf {
     root.join("terms")
 }
 

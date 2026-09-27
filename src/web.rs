@@ -6,7 +6,8 @@
 //!   `/vision/...`, `/predictor/...`, see [`APPS`]): the page, which shows
 //!   the app its path names; `/style.css`, `/app.js`, `/controller3d.js`,
 //!   `/inspect.js`, `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`,
-//!   `/translate.js`, `/stages.js`, `/vision.js`, `/predictor.js`, `/i18n.js`, `/i18n-zh.js`:
+//!   `/translate.js`, `/source.js`, `/pedia.js`, `/stages.js`, `/vision.js`,
+//!   `/predictor.js`, `/i18n.js`, `/i18n-zh.js`:
 //!   the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
 //!   report, `{"type":"status"}` text twice a second, and the video preview
@@ -152,9 +153,10 @@ pub async fn serve(
         )
     });
 
-    // The drawing layer, the shared video player, the stage map links, the Inkspector's labeling
-    // mode, the Cuttlefish app with its knowledge and translate views, the
-    // Vision app, the Predictor and the page's dictionaries
+    // The drawing layer, the shared video player, the stage map links, the
+    // Inkspector's labeling mode, the Cuttlefish app with its knowledge,
+    // translate and Pedia views and its source popover, the Vision app, the
+    // Predictor and the page's dictionaries
     let scripts = warp::path!(String).and_then(|name: String| async move {
         let body = match name.as_str() {
             "sketch.js" => include_str!("../web/sketch.js"),
@@ -164,6 +166,8 @@ pub async fn serve(
             "cuttlefish.js" => include_str!("../web/cuttlefish.js"),
             "knowledge.js" => include_str!("../web/knowledge.js"),
             "translate.js" => include_str!("../web/translate.js"),
+            "source.js" => include_str!("../web/source.js"),
+            "pedia.js" => include_str!("../web/pedia.js"),
             "vision.js" => include_str!("../web/vision.js"),
             "predictor.js" => include_str!("../web/predictor.js"),
             "i18n.js" => include_str!("../web/i18n.js"),

@@ -105,6 +105,10 @@
 //!   `created_ms`, to the history `<reviews>/translations.jsonl` (one JSON
 //!   object per line, the last [`TRANSLATIONS_KEPT`] kept); `GET
 //!   translations` lists it newest first, `DELETE translations` removes it
+//! - `GET pedia`, `GET pedia/<term id>?quotes=`: the Overfishing Pedia;
+//!   `GET source?url=&doc=&ordinal=&title=&heading=`: the context of a
+//!   cited source or a quote, for the page's source popover; see
+//!   [`crate::pedia`]
 //! - `knowledge/...`: the knowledge view (overview, search, imports,
 //!   glossary, assets), see [`crate::knowledge`]; its store and embedder
 //!   also serve `chat`
@@ -114,6 +118,7 @@
 use crate::inspect::{Inspector, ffprobe};
 use crate::knowledge::{AutoApply, Knowledge, Status, Translation, now_ms};
 use crate::objects::write_atomic;
+use crate::pedia::Pedia;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
@@ -513,6 +518,8 @@ pub struct Cuttlefish {
     /// The Predictor's runs (`[predictor] results`): their predictions give
     /// the controller input of videos without a recording
     predictions: PathBuf,
+    /// The Overfishing Pedia's mentions and fact cards
+    pedia: Pedia,
 }
 
 /// A reply before it becomes an HTTP response
@@ -563,6 +570,7 @@ impl Cuttlefish {
                 Knowledge::new(knowledge, settings, translate_model).with_auto_apply(auto_apply),
             ),
             predictions,
+            pedia: Pedia::default(),
         }
     }
 
@@ -1555,6 +1563,26 @@ impl Cuttlefish {
                     .map_err(bad)?,
             )),
             Some(("knowledge", rest)) => Ok(Reply::json(self.knowledge.get(rest, query)?)),
+            None if path == "pedia" => Ok(Reply::json(
+                self.pedia.list(self.knowledge.root()).map_err(bad)?,
+            )),
+            None if path == "source" => Ok(Reply::json(
+                self.pedia
+                    .source(self.knowledge.root(), &self.reviews, query)
+                    .map_err(bad)?,
+            )),
+            Some(("pedia", id)) => {
+                let quotes = query
+                    .get("quotes")
+                    .and_then(|q| q.parse().ok())
+                    .unwrap_or(crate::pedia::QUOTES);
+                let root = self.knowledge.root();
+                Ok(Reply::json(
+                    self.pedia
+                        .entry(root, &self.reviews, id, quotes)
+                        .map_err(bad)?,
+                ))
+            }
             Some(("reviews", id)) => {
                 let path = self.review_path(id).map_err(bad)?;
                 if !path.is_file() {
@@ -2743,6 +2771,8 @@ mod tests {
                 source: cuttlefish::doc::SourceKind::Guide,
                 license: None,
                 expert: None,
+                doc: None,
+                ordinal: None,
             }],
         };
         let page = page_comment(comment);

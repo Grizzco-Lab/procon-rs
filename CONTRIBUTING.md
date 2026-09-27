@@ -95,6 +95,7 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/follow.rs` | Follow: boxes carried over the next frames by AgentZero's SAM 2 tracker, proxied from a thread; starts the tracker |
 | `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` with the chat, and the video, optional), video bytes with ranges, yt-dlp downloads into new or existing reviews, migration of the older flat layout, the chat endpoint over the shared knowledge store |
 | `src/knowledge.rs` | Cuttlefish's Knowledge view: the store and embedder loaded once (the chat's retrieval too), search, glossary lookups and `Knowledge::translate` for the Translate view, import jobs, inbox uploads, overview, assets and thumbnails, document deletion |
+| `src/pedia.rs` | Cuttlefish's Overfishing Pedia: the terms in scope with sections, games and facets (`cuttlefish::pedia`), their #vod-review mentions searched once and cached until the corpus or the names change, entries with quotes, fact cards, notes and deep questions; `GET source`, the context of a cited source or a quote for the page's source popover (`web/source.js`) |
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results through our classes, dataset overview, send to labels |
 | `src/predictor.rs` | Predictor app backend: `agentzero-predict` runs as a child process, stored predictions, windows of predictions and truth, agreement numbers |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |

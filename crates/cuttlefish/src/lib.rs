@@ -60,6 +60,7 @@ pub mod lock;
 pub mod messages;
 pub mod moments;
 pub mod notes;
+pub mod pedia;
 pub mod php;
 pub mod questions;
 pub mod review;
