@@ -97,6 +97,23 @@ export const CJK_TERMS = [
   "漂浮落难船",
   "麦年海洋发电所",
   "新卷堡",
+  "生筋子",
+  "烟熏工房",
+  "斗技场",
+  // Simplified Chinese jargon, as the glossary's aliases have it: the
+  // stages' short names, the shop and its weapons, carrying eggs
+  "鬼坝",
+  "破船",
+  "落难船",
+  "发电所",
+  "熊商会",
+  "熊武",
+  "熊刷",
+  "搬蛋",
+  "运蛋",
+  "外围蛋",
+  "蛋筐",
+  "筐边",
 ];
 
 /** Terms in Latin script: matched as whole words, any case */
