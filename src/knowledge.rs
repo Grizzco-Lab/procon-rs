@@ -81,7 +81,7 @@ use cuttlefish::llm::{Client, Settings};
 use cuttlefish::review::{self, ChatReply, ChatRequest};
 use cuttlefish::slang::{self, AliasEdit, SuggestOptions, UserGlossary};
 use cuttlefish::store::{self, Store};
-use cuttlefish::{inbox, tables, wiki};
+use cuttlefish::{inbox, lock, tables, wiki};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -687,6 +687,7 @@ impl Knowledge {
     /// Deletes documents and their chunks, and writes the index
     pub fn delete(&self, ids: &[String]) -> Result<Value> {
         ensure!(!ids.is_empty(), "no documents given");
+        let _lock = lock::acquire(&self.root, "procon studio delete")?;
         let loaded = self.loaded()?;
         let mut store = loaded.store.write().unwrap();
         let mut deleted = Vec::new();
@@ -1015,8 +1016,17 @@ impl Knowledge {
         }
     }
 
-    /// Load the store, import, and write the index even when stopped
+    /// Take the store's write lock (not for a dry run, which stores
+    /// nothing), load the store, import, and write the index even when
+    /// stopped
     fn run_import(&self, id: u64, request: &IngestRequest) -> Result<usize> {
+        let dry_run = matches!(&request.source, Source::Wiki(w) if w.dry_run)
+            || matches!(&request.source, Source::Site(s) if s.dry_run);
+        let _lock = if dry_run {
+            None
+        } else {
+            Some(lock::acquire(&self.root, "procon studio import")?)
+        };
         self.update(id, |job| {
             job.lines.push("loading the knowledge store".to_string())
         });
@@ -1693,6 +1703,40 @@ mod tests {
         assert!(written.get("translation").is_none());
         assert!(translate_with(&g, None, "  ", "en").is_err());
         assert!(translate_with(&g, None, "x", "en/../").is_err());
+    }
+
+    #[test]
+    fn imports_wait_for_the_store_lock() {
+        let root =
+            std::env::temp_dir().join(format!("procon-knowledge-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let held = lock::acquire(&root, "cuttlefish ingest").unwrap();
+        let knowledge = Arc::new(Knowledge::new(root.clone(), Settings::default(), None));
+        let job = knowledge
+            .ingest(request(r#"{"kind": "youtube", "url": "https://youtu.be/x"}"#).unwrap())
+            .ok()
+            .expect("the job starts");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let error = loop {
+            let jobs = knowledge.jobs.lock().unwrap().clone();
+            let j = jobs.iter().find(|j| j.id == job.id).unwrap();
+            if j.state != JobState::Running {
+                assert_eq!(j.state, JobState::Failed);
+                break j.error.clone().unwrap();
+            }
+            assert!(std::time::Instant::now() < deadline, "the job never ended");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(
+            error.starts_with("the knowledge store is being written by cuttlefish ingest pid "),
+            "{error}"
+        );
+        assert!(error.contains("delete "), "{error}");
+        // Deleting waits the same
+        let e = knowledge.delete(&["x".to_string()]).unwrap_err();
+        assert!(e.to_string().contains("being written by"), "{e}");
+        drop(held);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

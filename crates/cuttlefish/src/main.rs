@@ -19,6 +19,7 @@ use cuttlefish::embed::E5Embedder;
 use cuttlefish::eval::EvalSet;
 use cuttlefish::ingest::{self, Meta};
 use cuttlefish::llm::{Backend, Client, Settings};
+use cuttlefish::lock::{self, WriteLock};
 use cuttlefish::review::{Reviewer, translate};
 use cuttlefish::store::{self, Store};
 use cuttlefish::{assets, env_file, inbox, tables};
@@ -286,11 +287,14 @@ enum Fetch {
     },
 }
 
-/// Adds documents to the store, saving the index every few documents
+/// Adds documents to the store, saving the index every few documents,
+/// under the store's write lock
 struct Sink {
     store: Store,
     embedder: E5Embedder,
     added: usize,
+    /// Released last, after the index is written
+    _lock: WriteLock,
 }
 
 /// Opens the store: brings the data folder of the older layout over (by
@@ -326,11 +330,13 @@ fn open(data: &Path, catch_up: bool) -> Result<(Store, E5Embedder)> {
 
 impl Sink {
     fn open(data: &Path) -> Result<Self> {
+        let lock = lock::acquire(data, "cuttlefish ingest")?;
         let (store, embedder) = open(data, true)?;
         Ok(Sink {
             store,
             embedder,
             added: 0,
+            _lock: lock,
         })
     }
 
@@ -606,6 +612,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Delete { ids } => {
+            let _lock = lock::acquire(&data, "cuttlefish delete")?;
             let (mut store, _) = open(&data, false)?;
             for id in &ids {
                 if store.delete(id)? {
@@ -617,6 +624,7 @@ fn main() -> Result<()> {
             store.save()
         }
         Command::Reindex => {
+            let _lock = lock::acquire(&data, "cuttlefish reindex")?;
             let index = data.join("index");
             if index.exists() {
                 std::fs::remove_dir_all(&index)?;

@@ -84,13 +84,30 @@ kept, the rest waits for the next opening). `cuttlefish reindex` re-embeds every
 change of embedder or chunk sizes; `cuttlefish delete <id>` removes a document.
 
 The data folder can be a synced folder (Dropbox, rclone mount). Every file is
-written whole (temporary file, then rename) and nothing is locked. Files that
-do not read (half-synced, `(conflicted copy)`) are skipped with a warning.
-Documents are the truth: opening the store drops chunks of documents that are
-gone, rebuilds an index that does not read, and embeds documents that arrived
-from another machine. The index is rewritten every 50 documents of an import
-and at its end. The folder's parent must exist, so an unmounted synced folder
-is not silently replaced.
+written whole (temporary file, then rename). Files that do not read
+(half-synced, `(conflicted copy)`) are skipped with a warning. Documents are
+the truth: opening the store drops chunks of documents that are gone, rebuilds
+an index that does not read, and embeds documents that arrived from another
+machine. The index is rewritten every 50 documents of an import and at its
+end. The folder's parent must exist, so an unmounted synced folder is not
+silently replaced.
+
+**One writer at a time.** Every writer (`ingest`, `delete` and `reindex` of
+the CLI; the studio's imports and deletes) holds `<data>/.lock` while it
+writes: an exclusive `flock`, which the system releases when the process
+ends however it ends, and a record of who holds it (program, pid, host, start
+time), cleared when done. A second writer stops with
+
+```
+the knowledge store is being written by cuttlefish ingest pid 41234 on studio-pc since 2026-09-26 21:04:10 UTC; wait for it, or if that process is gone, delete /path/to/Knowledge/.lock
+```
+
+and the studio fails the import job with the same line. `flock` does not
+reach across machines, so on a synced folder the record does: a record naming
+another host stops writers here too, until that machine's writer clears it
+(or you delete the file after checking that nothing runs there). A record
+left by a process of this machine that is gone is taken over. Searching,
+asking, `stats` and `docs` never wait for the lock.
 
 The data folder of before (`$XDG_DATA_HOME/cuttlefish`, usually
 `~/.local/share/cuttlefish`) is shared with another program, so

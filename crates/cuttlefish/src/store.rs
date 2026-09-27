@@ -26,9 +26,11 @@
 //! folder there, leaving the rest alone.
 //!
 //! Safe on a synced folder: every file is written whole through a
-//! temporary file and a rename ([`write_atomic`]), nothing is locked, and
-//! files that arrive half-synced or as conflict copies are skipped with a
-//! warning. Documents are the truth and the index follows them: chunks of
+//! temporary file and a rename ([`write_atomic`]), and files that arrive
+//! half-synced or as conflict copies are skipped with a warning. Writers
+//! (imports, deletes, reindexing) take the folder's write lock
+//! ([`crate::lock`], `.lock`) so two never write at once; readers need no
+//! lock. Documents are the truth and the index follows them: chunks of
 //! documents that are gone are dropped on opening, an index that does not
 //! read is rebuilt, and [`Store::catch_up`] embeds documents synced in from
 //! elsewhere.

@@ -40,6 +40,7 @@ pub mod inbox;
 pub mod index;
 pub mod ingest;
 pub mod llm;
+pub mod lock;
 pub mod messages;
 pub mod moments;
 pub mod php;
