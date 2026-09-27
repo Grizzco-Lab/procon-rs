@@ -1,8 +1,9 @@
 // Page language: a dictionary per language and `t(key, values)` to look a
 // string up. English is here; each other language has a file of its own that
 // adds its table to I18N (i18n-zh.js: Simplified Chinese). Loaded before the
-// apps' scripts. The Cuttlefish app (with its Knowledge view) is translated;
-// other apps can adopt it key by key.
+// apps' scripts. The shell (app names, status chips, the View menu) and the
+// Cuttlefish app (with its views) are translated; other apps can adopt it key
+// by key.
 //
 // Elements carry their key in data-i18n (text), data-i18n-html (markup of
 // our own), data-i18n-placeholder, data-i18n-title or data-i18n-aria-label;

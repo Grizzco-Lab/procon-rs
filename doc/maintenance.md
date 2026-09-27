@@ -25,26 +25,33 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
 - **Retake doc/index.html screenshots.** The shared player (`web/player.js`,
   `8834637`) moved the Inkspector's frame chip into the player's controls,
   and the shell, rail, themes and Cuttlefish have changed since.
-- **Translate the shell.** App names, status words and the View menu stay
-  English in Chinese mode; only Cuttlefish and Knowledge are translated.
+- [x] **Translate the shell.** App names, the status chips and the View menu
+  go through `i18n.js`; `app.js` redraws the words it writes on
+  `lang-change`.
 - **Load apps on first use.** All 16 scripts and styles (about 730 KB
   uncompressed) load with the page today. Hidden apps do no work, but the
   first load grows with each app; load an app's script the first time it is
   opened. Big models in the studio stay loaded (the user's call); if memory
   ever gets tight, decide from the machine's free memory rather than an idle
   timer.
-- **Layout regression checks.** A scripted headless-Chrome pass that measures
-  key boxes (the 3D stage, the chat bar, the one-row top bar) in every theme,
-  so layout breakage shows up before the user sees it.
+- [x] **Layout regression checks.** `scripts/layout-check.mjs` (see
+  CONTRIBUTING.md) measures the 3D stage, the chat bar, the one-row top bar
+  and sideways overflow in every app, theme and language, at 1440 px and
+  phone width. Its first run found two phone overflows (the Inkspector's
+  sessions note, the Vision frame panel's head), fixed.
 
 ## Server
 
-- **Unknown paths answer 405, not 404**, because the POST-only routes reject
-  every other path first; `/favicon.ico` hits it too. Add a favicon (the app
-  icon) and a proper 404 for unknown paths.
-- **Inkspector frames sometimes fail with 400**: ffmpeg reports "non
-  monotonically increasing dts" for some frame ranges right after a restart
-  (reproduced with curl). Look at how windows are cut (seek, `-copyts`).
+- [x] **Unknown paths answer 405, not 404**, because the POST-only routes
+  reject every other path first. Routes now check their path before their
+  method, and the apps' method-first routes are gated by their prefix;
+  `/favicon.ico` and the page's icon link are the Studio's app icon.
+- [x] **Inkspector frames sometimes fail with 400** ("non monotonically
+  increasing dts", 25 of 60 random windows, not only after a restart): the
+  encoder's default 1/fps time base rounded neighbouring frames onto one
+  tick after the seek offset. Windows are encoded at the file's time base
+  (`-enc_time_base demux`); 200 random windows decode, and a window's frames
+  match those decoded from the start.
 
 ## Process
 

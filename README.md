@@ -110,8 +110,8 @@ for details). The **View** menu picks the theme (Studio, Joy, Telemetry or
 Salmon Run), the layout (Auto, or Phone, which narrow screens also use),
 where the app links go (Side rail or Top bar), the rail's width (Compact or
 Expanded) and the language (English or
-Simplified Chinese, by default the browser's; so far Cuttlefish with its
-Translate and Knowledge views is translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
+Simplified Chinese, by default the browser's; so far the app names, status and View menu, and Cuttlefish with its
+Translate and Knowledge views, are translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
 Studio's preview pauses, and each app stops its own work while hidden.
 
 ### Studio
