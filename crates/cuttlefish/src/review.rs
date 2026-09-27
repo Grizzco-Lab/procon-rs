@@ -205,6 +205,9 @@ Be warm and never harsh.
 numbers (damage, health, timings) that are not in the provided knowledge.
 - Use the community's names for bosses, stages and events (see the glossary \
 excerpts), and answer in the language the player writes in (English by default).
+- Players use slang and abbreviations. The glossary lists known slang as \
+\"alias → official\"; resolve slang through it. When you are not sure what a slang \
+word means, say so and ask instead of guessing.
 
 In a conversation, keep to what was said before; the player may ask follow-up \
 questions, ask you to look at the video they are watching, or ask for a \
@@ -373,7 +376,7 @@ pub fn review_prompt(system: &str, req: &ReviewRequest, hits: &[Hit], terms: &[&
 
 /// The JSON object in a text (the whole text, or from the first `{` to the
 /// last `}` if the model wrapped it)
-fn json_object(text: &str) -> Result<Value> {
+pub(crate) fn json_object(text: &str) -> Result<Value> {
     if let Ok(v) = serde_json::from_str(text.trim()) {
         return Ok(v);
     }
@@ -514,7 +517,12 @@ pub fn translate_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
          {lang}-speaking community uses for bosses, stages, weapons, specials and events. \
          Where the glossary gives a {lang} name, use it. Where it does not, use the \
          official localized name if you are sure of it, otherwise keep the original \
-         term. Output only the translation."
+         term. Players write in slang and abbreviations: the glossary lists known slang \
+         as \"alias → official\"; resolve it through the glossary and render its meaning \
+         (in {lang} slang when the glossary gives one, else the official name). When \
+         you are not sure what a slang word means, keep it as written and add one line \
+         after the translation saying which word you were unsure of. Output only the \
+         translation (and that line)."
     );
     let lang_key = target.split('-').next().unwrap_or(target);
     let mut user = Vec::new();
@@ -542,8 +550,10 @@ pub fn explain_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
          mentor. A player gives you a term or a callout from the community's jargon. \
          Explain in {lang}, in two or three plain sentences, what it means and when a \
          player would say it, using the names the {lang}-speaking community uses (the \
-         glossary lists them). If the glossary does not cover it and you are not sure, \
-         say so instead of guessing. Output only the explanation."
+         glossary lists them). Players use slang and abbreviations: the glossary lists \
+         known slang as \"alias → official\"; resolve it through the glossary. If the \
+         glossary does not cover it and you are not sure, say so instead of guessing. \
+         Output only the explanation."
     );
     let lang_key = target.split('-').next().unwrap_or(target);
     let mut user = Vec::new();

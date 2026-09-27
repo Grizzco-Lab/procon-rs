@@ -59,6 +59,7 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   inbox/             drop anything here (see "The inbox")
   inbox.json         what each inbox file gave, with its size, time and hash
   glossary.toml      your glossary; the crate's glossary.toml seed until you add one
+  glossary-user.toml slang you taught or approved in the studio (never overwritten)
   terms/<id>.json    name tables imported from the inbox, merged into the glossary
   assets.json        images and icons from the inbox
   reports/<t>.json   one report per inbox import (the last 30)
@@ -155,9 +156,12 @@ language. The category names the kind of the terms (`salmon-boss3` → `boss`,
 S1); both go on the terms (`kind`, `game`) and into prompts (`[boss]`, `[stage,
 Splatoon 2]`). Tables of Splatoon 3 merge into the glossary first, then
 untagged ones, then older games, so an older name never comes before the
-current one. Names that differ from the glossary's own (`glossary.toml` or the
-seed) are listed in the import report (`name differs: spawning-grounds: zh
-"鲑鱼坝" here, "鲑坝" in ...`); both names are kept, the glossary's first.
+current one. A table's main name that is none of the official names of the
+glossary's own term (`glossary.toml` or the seed) is listed in the import
+report (`name differs: steelhead: zh "炸弹鱼" here, "铁盔" in ...`); both
+names are kept, the glossary's first. The seed follows stat.ink's
+Simplified Chinese names, so stat.ink's tables report no Chinese
+differences.
 
 **Assets** (`assets.rs`). Each image gets an entry in `assets.json`: path,
 size, dimensions from its header, a name from the file name and its folder,
@@ -342,15 +346,54 @@ sources agree on, a few thousand tokens. It sits in the system prompt, which
 is cached, so it costs a tenth of normal input after the first call. Keep it
 short and opinionated; retrieval covers the long tail.
 
-**3. Glossary for jargon.** `glossary.toml` lists terms with names per
-language and a definition. Terms found in a query add their other-language
-names to the query (a Japanese question finds English notes; the embedder
-is multilingual too), and the matched terms go into the prompt so answers
-and translations use the community's names. The seed has English, Japanese,
-the Simplified Chinese names where they are known, and the player's own
-jargon (惯性取消, 搬蛋, 熊刷, 镭射, 出差, 小枪, 外围蛋) with English
-equivalents; lines marked `# unsure:` are names to check. Add Spanish,
-Russian and French names there.
+**3. Glossary for jargon.** `glossary.toml` lists terms with official names
+per language (`forms`), a definition, and aliases: the slang players use,
+each with its language, a note on its origin or use, a source (`seed`,
+`user`, `suggested`, `imported`) and a status (`approved`, `pending`,
+`rejected`):
+
+```toml
+[[term]]
+id = "grizzco-roller"
+definition = "The Grizzco Roller, a Grizzco weapon."
+forms = { en = ["Grizzco Roller"], ja = ["クマサン印のローラー"], zh = ["熊先生印章滚筒"] }
+aliases = [
+  { lang = "en", text = "G Roller" },
+  { lang = "zh", text = "熊刷", note = "'bear brush'" },
+]
+```
+
+Terms found in a query (by an official name or an approved alias) add their
+other-language official names to the query (a Japanese question finds
+English notes; the embedder is multilingual too), and the matched terms go
+into the prompt, each alias on a line of its own (`zh slang: 熊刷 →
+熊先生印章滚筒 (en: Grizzco Roller): 'bear brush'`), so answers and
+translations use the community's names and resolve its slang; the prompts
+say players use slang and to say when a slang word is unclear. The seed has
+English, Japanese, the official Simplified Chinese names (stat.ink's zh-CN
+translations where it has them: 金鲑鱼, 鲑坝, 喇叭镭射5.1ch, 熊先生印章滚筒,
+蛋筐), Chinese players' slang (熊刷, 鬼坝, 破船, 喇叭 and 雷神 for the
+Sploosh-o-matic, 小绿 for the Splattershot, 筐, 家里, ...), and the player's
+own jargon (惯性取消, 搬蛋, 熊武, 镭射, 出差, 小枪, 外围蛋) as aliases of terms
+with descriptive English names; lines marked `# unsure:` are names to check.
+Add Spanish, Russian and French names there.
+
+**Slang the user teaches** (`slang.rs`) lives in `<data>/glossary-user.toml`,
+apart from the generated glossary, so re-importing name tables never
+overwrites it; `Store::load_glossary` adds its approved aliases last. Each
+alias there names its term by id and by the English name it had when taught,
+which finds the term again when a re-import gives it another id.
+`UserGlossary::add`, `edit` and `remove` change it (an official name of any
+term cannot be an alias). **Suggestions**: `slang::plan` cuts the community
+documents (all but wikis, most trusted first) into batches of text not read
+yet (the file's `[scanned]` table keeps how far each document was read) and
+says how many there are; `slang::suggest_batch` sends one batch with the
+glossary entries of the terms it mentions and the core terms in brief, and
+keeps the candidates (alias, language, term, a quote, a confidence, a note)
+that the text contains, whose term the glossary has, and that are no name
+yet, as `pending` aliases with source `suggested`. The user approves (status
+`approved`), edits or rejects them (kept as `rejected`, never proposed
+again). A run reads at most `max_batches` (5 by default, 50 at most).
 
 **4. Source quality.** Each document has a weight: #vod-review 1.2, guides
 1.15, wikis/Discord/files 1.0, web pages and video transcripts 0.9

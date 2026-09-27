@@ -1,25 +1,40 @@
 # Cuttlefish glossary seed: Salmon Run terms across languages.
 #
-# Each [[term]] has an `id`, a short English `definition` and `forms`: the
-# names used per language code (en, ja, zh, es, ru, fr, ...), official name
-# first, then community slang. Retrieval matches any form in queries and
-# comments; translation uses the target language's first form.
+# Each [[term]] has an `id`, a short English `definition`, `forms`: the
+# official names per language code (en, ja, zh, es, ru, fr, ...), the main one
+# first, and `aliases`: the slang and abbreviations players use, each with its
+# language and a short note on its origin or use. Retrieval matches official
+# names and aliases in queries and comments; translation uses the target
+# language's first official name, and prompts show slang as
+# "alias → official".
 #
-# This seed has English and Japanese names, the Simplified Chinese names the
-# official release uses where they are known, and the player jargon at the
-# end (the studio's chat examples). A line starting with "# unsure:" marks a
-# name to check. Copy it to <data>/glossary.toml, check it and add the other
-# languages there (the file in the data folder replaces this one).
+# This seed has English and Japanese names, the Simplified Chinese names of
+# the official release (stat.ink's zh-CN translations where it has them),
+# the slang Chinese players use, and the player jargon at the end (the
+# studio's chat examples); a jargon term has no name in the game, so its
+# `forms` are descriptive. A line starting with "# unsure:" marks a name to
+# check. Copy it to <data>/glossary.toml, check it and add the other languages
+# there (the file in the data folder replaces this one). What you teach or
+# approve in the studio goes to <data>/glossary-user.toml instead.
 
 [[term]]
 id = "salmon-run"
 definition = "The co-op PvE mode: four players collect Golden Eggs over three waves (plus an optional Xtrawave)."
-forms = { en = ["Salmon Run", "Salmon Run Next Wave", "SR"], ja = ["サーモンラン", "サーモンラン NEXT WAVE", "サモラン"], zh = ["鲑鱼跑", "打工"] }
+forms = { en = ["Salmon Run", "Salmon Run Next Wave"], ja = ["サーモンラン", "サーモンラン NEXT WAVE"], zh = ["鲑鱼跑"] }
+aliases = [
+  { lang = "en", text = "SR", note = "abbreviation" },
+  { lang = "ja", text = "サモラン", note = "short for サーモンラン" },
+  { lang = "zh", text = "打工", note = "'part-time work': Grizzco's jobs" },
+]
 
 [[term]]
 id = "golden-egg"
 definition = "Egg dropped by Boss Salmonids; delivering enough to the basket clears the wave."
-forms = { en = ["Golden Egg", "gold egg"], ja = ["金イクラ"], zh = ["金鲑鱼卵", "金蛋"] }
+forms = { en = ["Golden Egg"], ja = ["金イクラ"], zh = ["金鲑鱼卵"] }
+aliases = [
+  { lang = "en", text = "gold egg" },
+  { lang = "zh", text = "金蛋", note = "'gold egg'" },
+]
 
 [[term]]
 id = "power-egg"
@@ -29,7 +44,14 @@ forms = { en = ["Power Egg"], ja = ["イクラ"], zh = ["鲑鱼卵"] }
 [[term]]
 id = "egg-basket"
 definition = "The goal where Golden Eggs are delivered."
-forms = { en = ["Egg Basket", "basket"], ja = ["イクラコンテナ", "コンテナ"], zh = ["鲑鱼卵容器", "容器", "篮子"] }
+forms = { en = ["Egg Basket"], ja = ["イクラコンテナ"], zh = ["蛋筐"] }
+aliases = [
+  { lang = "en", text = "basket" },
+  { lang = "ja", text = "コンテナ", note = "short for イクラコンテナ" },
+  { lang = "zh", text = "筐", note = "short for 蛋筐" },
+  { lang = "zh", text = "筐边", note = "'by the basket'" },
+  { lang = "zh", text = "家里", note = "'home': at the basket" },
+]
 
 [[term]]
 id = "hazard-level"
@@ -39,17 +61,22 @@ forms = { en = ["Hazard Level"], ja = ["キケン度"], zh = ["危险度"] }
 [[term]]
 id = "eggsecutive-vp"
 definition = "Highest rank; its points go up to 999."
-forms = { en = ["Eggsecutive VP", "EVP"], ja = ["でんせつ"], zh = ["传说"] }
+forms = { en = ["Eggsecutive VP"], ja = ["でんせつ"], zh = ["传说"] }
+aliases = [{ lang = "en", text = "EVP", note = "abbreviation" }]
 
 [[term]]
 id = "evp-999"
 definition = "Eggsecutive VP at the maximum of 999 points."
-forms = { en = ["EVP 999", "max rank"], ja = ["カンスト"] }
+forms = { en = ["EVP 999"] }
+aliases = [
+  { lang = "en", text = "max rank" },
+  { lang = "ja", text = "カンスト", note = "'counter stop': the counter maxed out" },
+]
 
 [[term]]
 id = "xtrawave"
 definition = "Fourth wave against a King Salmonid once the meter is full."
-forms = { en = ["Xtrawave", "XTRAWAVE"], ja = ["EX-WAVE"] }
+forms = { en = ["Xtrawave"], ja = ["EX-WAVE"] }
 
 [[term]]
 id = "big-run"
@@ -59,7 +86,8 @@ forms = { en = ["Big Run"], ja = ["ビッグラン"], zh = ["大型跑"] }
 [[term]]
 id = "eggstra-work"
 definition = "Limited-time contest: five waves with a fixed weapon set, scored by Golden Eggs."
-forms = { en = ["Eggstra Work"], ja = ["バイトチームコンテスト", "チームコンテスト"] }
+forms = { en = ["Eggstra Work"], ja = ["バイトチームコンテスト"], zh = ["团队打工竞赛"] }
+aliases = [{ lang = "ja", text = "チームコンテスト", note = "short form" }]
 
 [[term]]
 id = "grizzco"
@@ -69,19 +97,21 @@ forms = { en = ["Grizzco"], ja = ["クマサン商会"], zh = ["熊先生商会"
 [[term]]
 id = "high-tide"
 definition = "Water level with a smaller shore area."
-# unsure: the zh names of the tides
-forms = { en = ["High Tide"], ja = ["満潮"], zh = ["满潮", "涨潮"] }
+forms = { en = ["High Tide"], ja = ["満潮"], zh = ["满潮"] }
+# unsure: whether players say it
+aliases = [{ lang = "zh", text = "涨潮", note = "'rising tide'" }]
 
 [[term]]
 id = "normal-tide"
 definition = "The regular water level."
-forms = { en = ["Normal Tide", "mid tide"], ja = ["通常"] }
+forms = { en = ["Normal Tide", "Mid Tide"], ja = ["通常"] }
 
 [[term]]
 id = "low-tide"
 definition = "Water level exposing the lower shore; the basket moves down."
-# unsure: the zh names of the tides
-forms = { en = ["Low Tide"], ja = ["干潮"], zh = ["干潮", "退潮"] }
+forms = { en = ["Low Tide"], ja = ["干潮"], zh = ["干潮"] }
+# unsure: whether players say it
+aliases = [{ lang = "zh", text = "退潮", note = "'ebbing tide'" }]
 
 [[term]]
 id = "steelhead"
@@ -120,13 +150,14 @@ forms = { en = ["Drizzler"], ja = ["コウモリ"], zh = ["蝙蝠鱼"] }
 
 [[term]]
 id = "fish-stick"
-definition = "Boss that plants a pillar and inks around it; players climb the pillar to kill it. Chinese players say 柱子 (the pillar) for climbing it."
-forms = { en = ["Fish Stick"], ja = ["ハシラ"], zh = ["柱鱼", "柱子"] }
+definition = "Boss that plants a pillar and inks around it; players climb the pillar to kill it."
+forms = { en = ["Fish Stick"], ja = ["ハシラ"], zh = ["柱鱼"] }
+aliases = [{ lang = "zh", text = "柱子", note = "'the pillar'; 上柱子 is climbing it" }]
 
 [[term]]
 id = "flipper-flopper"
 definition = "Boss that dives at a marked circle; ink the circle to make it land stunned."
-forms = { en = ["Flipper-Flopper"], ja = ["ダイバー"] }
+forms = { en = ["Flipper-Flopper"], ja = ["ダイバー"], zh = ["潜水鱼"] }
 
 [[term]]
 id = "big-shot"
@@ -156,7 +187,7 @@ forms = { en = ["Cohock"], ja = ["ドスコイ"] }
 [[term]]
 id = "goldie"
 definition = "Golden Salmonid that drops Golden Eggs when hit."
-forms = { en = ["Goldie"], ja = ["キンシャケ"], zh = ["黄金鲑鱼"] }
+forms = { en = ["Goldie"], ja = ["キンシャケ"], zh = ["金鲑鱼"] }
 
 [[term]]
 id = "griller"
@@ -221,12 +252,14 @@ forms = { en = ["Mudmouth Eruptions"], ja = ["ドロシャケ噴出"] }
 [[term]]
 id = "spawning-grounds"
 definition = "Salmon Run stage."
-forms = { en = ["Spawning Grounds"], ja = ["シェケナダム"], zh = ["鲑鱼坝"] }
+forms = { en = ["Spawning Grounds"], ja = ["シェケナダム"], zh = ["鲑坝"] }
+aliases = [{ lang = "zh", text = "鬼坝", note = "a play on 鲑 (guī) as 鬼 (guǐ, 'ghost')" }]
 
 [[term]]
 id = "marooners-bay"
 definition = "Salmon Run stage."
 forms = { en = ["Marooner's Bay"], ja = ["難破船ドン・ブラコ"], zh = ["漂浮落难船"] }
+aliases = [{ lang = "zh", text = "破船", note = "'the wrecked ship'" }]
 
 [[term]]
 id = "gone-fission-hydroplant"
@@ -254,47 +287,105 @@ definition = "Salmon Run stage."
 forms = { en = ["Bonerattle Arena"], ja = ["どんぴこ闘技場"] }
 
 # ---------------------------------------------------------------------------
-# Player jargon (the studio's chat examples). English forms marked "unsure"
-# are literal or descriptive: the English community may have no fixed word.
+# Weapons and specials with Chinese slang
+
+[[term]]
+id = "sploosh-o-matic"
+definition = "Very short-ranged shooter with a wide spray and a fast rate of fire."
+forms = { en = ["Sploosh-o-matic"], ja = ["ボールドマーカー"], zh = ["广域标记枪"] }
+aliases = [
+  { lang = "zh", text = "喇叭", note = "'horn', as in 贴牌喇叭枪, the Sploosh-o-matic 7's official name" },
+  { lang = "zh", text = "雷神", note = "named after 雷神步" },
+]
+
+[[term]]
+id = "splattershot"
+definition = "The standard all-round shooter."
+forms = { en = ["Splattershot"], ja = ["スプラシューター"], zh = ["斯普拉射击枪"] }
+aliases = [{ lang = "zh", text = "小绿", note = "'little green'" }]
+
+[[term]]
+id = "grizzco-roller"
+definition = "The Grizzco Roller, a Grizzco weapon."
+forms = { en = ["Grizzco Roller"], ja = ["クマサン印のローラー"], zh = ["熊先生印章滚筒"] }
+aliases = [
+  { lang = "en", text = "G Roller" },
+  { lang = "zh", text = "熊刷", note = "'bear brush'" },
+]
+
+[[term]]
+id = "killer-wail-51"
+definition = "Special weapon: six laser megaphones lock on and fire; in Salmon Run it clears lesser Salmonids and hits bosses at range."
+forms = { en = ["Killer Wail 5.1"], ja = ["メガホンレーザー5.1ch"], zh = ["喇叭镭射5.1ch"] }
+aliases = [
+  { lang = "en", text = "wail" },
+  { lang = "ja", text = "メガホン", note = "'megaphone'" },
+  { lang = "zh", text = "镭射", note = "'laser', short for 喇叭镭射5.1ch" },
+]
+
+# ---------------------------------------------------------------------------
+# Player jargon (the studio's chat examples): no names in the game, so the
+# official forms are descriptive English and the players' words are aliases.
+# English forms marked "unsure" are literal: the English community may have
+# no fixed word.
 
 [[term]]
 id = "inertia-cancel"
 definition = "Movement technique that cancels the momentum of a jump or dash so the player stops or turns at once; used to keep egg runs tight."
 # unsure: no established English community term found; "inertia cancel" is literal
-forms = { en = ["inertia cancel", "momentum cancel"], zh = ["惯性取消"] }
+forms = { en = ["inertia cancel"] }
+aliases = [
+  { lang = "en", text = "momentum cancel" },
+  { lang = "zh", text = "惯性取消", note = "'inertia cancel'" },
+]
 
 [[term]]
 id = "egg-run"
 definition = "Carrying Golden Eggs to the basket."
-forms = { en = ["egg run", "egg running", "carry eggs", "running eggs"], ja = ["納品"], zh = ["搬蛋", "运蛋"] }
+forms = { en = ["egg run"], ja = ["納品"] }
+aliases = [
+  { lang = "en", text = "egg running" },
+  { lang = "en", text = "running eggs" },
+  { lang = "en", text = "carry eggs" },
+  { lang = "zh", text = "搬蛋", note = "'moving eggs'" },
+  { lang = "zh", text = "运蛋", note = "'carrying eggs'" },
+]
 
 [[term]]
 id = "grizzco-weapon"
-definition = "A Grizzco-brand weapon, one of the gold rental weapons of Salmon Run; in English also G weapon."
-forms = { en = ["Grizzco weapon", "G weapon", "bear weapon"], ja = ["クマブキ", "クマサン武器"], zh = ["熊武", "熊武器"] }
-
-[[term]]
-id = "grizzco-roller"
-definition = "The Grizzco Roller, a Grizzco weapon; Chinese players call it 熊刷."
-forms = { en = ["Grizzco Roller", "G Roller"], zh = ["熊刷"] }
-
-[[term]]
-id = "killer-wail-51"
-definition = "Special weapon: six laser megaphones lock on and fire; in Salmon Run it clears lesser Salmonids and hits bosses at range."
-forms = { en = ["Killer Wail 5.1", "wail"], ja = ["メガホンレーザー5.1ch", "メガホン"], zh = ["喇叭镭射5.1", "镭射", "喇叭"] }
+definition = "A Grizzco-brand weapon, one of the gold rental weapons of Salmon Run."
+forms = { en = ["Grizzco weapon"] }
+aliases = [
+  { lang = "en", text = "G weapon" },
+  { lang = "en", text = "bear weapon" },
+  { lang = "ja", text = "クマブキ", note = "'bear weapon'" },
+  { lang = "ja", text = "クマサン武器" },
+  { lang = "zh", text = "熊武", note = "short for 熊武器" },
+  { lang = "zh", text = "熊武器", note = "'bear weapon'" },
+]
 
 [[term]]
 id = "fetch-eggs"
 definition = "Leaving the basket area to collect Golden Eggs lying farther out, then coming back; a short trip, not a post."
-forms = { en = ["shore run", "fetch eggs"], zh = ["出差"] }
+forms = { en = ["shore run"] }
+aliases = [
+  { lang = "en", text = "fetch eggs" },
+  { lang = "zh", text = "出差", note = "'a business trip': out for eggs and back" },
+]
 
 [[term]]
 id = "short-range-weapon"
 definition = "A light, short-ranged weapon (Splattershot Jr., Sploosh-o-matic, Aerospray, ...): quick at running eggs, weak against bosses at range."
-# unsure: 小枪 ("small gun") is descriptive; English players say "short-range weapon" or name the weapon
-forms = { en = ["short-range weapon", "short-range shooter", "light weapon"], zh = ["小枪"] }
+# unsure: English players say "short-range weapon" or name the weapon
+forms = { en = ["short-range weapon"] }
+aliases = [
+  { lang = "en", text = "short-range shooter" },
+  { lang = "en", text = "light weapon" },
+  { lang = "zh", text = "小枪", note = "'small gun'" },
+]
 
 [[term]]
 id = "outer-eggs"
 definition = "Golden Eggs lying at the edge of the stage, away from the basket."
-forms = { en = ["far eggs", "shore eggs"], zh = ["外围蛋"] }
+forms = { en = ["far eggs", "shore eggs"] }
+aliases = [{ lang = "zh", text = "外围蛋", note = "'outer eggs'" }]

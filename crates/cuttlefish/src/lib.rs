@@ -6,7 +6,9 @@
 //! [`google`], YouTube transcripts through [`youtube`], Discord
 //! conversations through [`discord`], local files through [`mod@file`]), split
 //! into chunks ([`chunk`]), embedded ([`embed`]) and indexed ([`index`]) in a
-//! data folder ([`store`]); [`ingest`] runs the importers. A [`glossary`] maps jargon across languages.
+//! data folder ([`store`]); [`ingest`] runs the importers. A [`glossary`] maps jargon across
+//! languages: official names and the slang players use, which the user teaches and approves
+//! ([`slang`], with suggestions the model finds in the store).
 //! The [`inbox`] takes anything dropped into the data folder: prose becomes
 //! documents, multilingual name tables become glossary terms ([`tables`];
 //! message folders such as stat.ink's PHP ones through [`messages`] and
@@ -38,6 +40,7 @@ pub mod llm;
 pub mod messages;
 pub mod php;
 pub mod review;
+pub mod slang;
 pub mod store;
 pub mod tables;
 pub mod youtube;

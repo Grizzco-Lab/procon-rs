@@ -6,6 +6,7 @@
 //!   inbox/             anything dropped here, read by [`crate::inbox`]
 //!   inbox.json         what the inbox import took from each file (hashes)
 //!   glossary.toml      your glossary (the crate's seed until you add one)
+//!   glossary-user.toml slang you taught or approved ([`crate::slang`])
 //!   terms/<id>.json    name tables imported from the inbox ([`crate::tables`])
 //!   assets.json        images and icons from the inbox ([`crate::assets`])
 //!   reports/<t>.json   what each inbox import did
@@ -247,12 +248,15 @@ impl Store {
     }
 
     /// The data folder's `glossary.toml` (or the seed without one), with
-    /// the name tables imported from the inbox merged in, newest game first
+    /// the name tables imported from the inbox merged in, newest game
+    /// first, and the aliases the user approved
+    /// (`glossary-user.toml`, [`crate::slang`])
     pub fn load_glossary(root: &Path) -> Result<Glossary> {
         let mut glossary = Self::own_glossary(root)?;
         for table in crate::tables::load_all(root) {
             glossary.merge(&table.terms);
         }
+        crate::slang::UserGlossary::load(root)?.apply(&mut glossary);
         Ok(glossary)
     }
 
@@ -532,7 +536,13 @@ fn copy_tree(from: &Path, to: &Path) -> Result<usize> {
 const DATA_DIRS: [&str; 6] = ["docs", "index", "raw", "terms", "reports", "inbox"];
 
 /// Files of a data folder that are ours
-const DATA_FILES: [&str; 4] = ["glossary.toml", "digest.md", "assets.json", "inbox.json"];
+const DATA_FILES: [&str; 5] = [
+    "glossary.toml",
+    "glossary-user.toml",
+    "digest.md",
+    "assets.json",
+    "inbox.json",
+];
 
 /// Our entries in a data folder of the older layout: its data, and the
 /// embedding model it once kept (not copied: it is downloaded again)

@@ -1550,11 +1550,12 @@ mod tests {
             "{:?}",
             report.notes
         );
+        // The seed has stat.ink's name of the stage
         assert!(
-            report
+            !report
                 .notes
                 .iter()
-                .any(|n| n.starts_with("name differs: spawning-grounds: zh")),
+                .any(|n| n.starts_with("name differs: spawning-grounds")),
             "{:?}",
             report.notes
         );

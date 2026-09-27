@@ -8,12 +8,21 @@
 //! id = "steelhead"
 //! definition = "Boss that grows a bomb on its head; shoot the bomb."
 //! forms = { en = ["Steelhead"], ja = ["バクダン"] }
+//! aliases = [{ lang = "en", text = "bomb guy", note = "from the bomb it grows" }]
 //! ```
 //!
+//! A term has official names per language ([`Term::forms`]) and aliases:
+//! the slang and abbreviations players use ([`Alias`]), each with its
+//! language, a note on its origin or use, where it came from and whether it
+//! is approved. Approved aliases count as names: [`Glossary::lookup`] and
+//! [`Glossary::find_in`] find a term by them. What the user teaches or
+//! approves is kept apart from the generated glossary ([`crate::slang`]).
+//!
 //! Retrieval finds the terms used in a query and adds their other-language
-//! forms ([`Glossary::expand`]), so a Japanese question also matches English
-//! notes; prompts list the matched terms ([`Glossary::prompt_lines`]) so the
-//! model uses the community's names.
+//! official names ([`Glossary::expand`]), so a Japanese question also
+//! matches English notes; prompts list the matched terms
+//! ([`Glossary::prompt_lines`], slang as `alias → official`) so the model
+//! uses the community's names and resolves its slang.
 //!
 //! Name tables imported from the inbox ([`crate::tables`]) add terms without
 //! definitions, each with where it came from ([`Term::from`]);
@@ -29,6 +38,51 @@ use std::path::Path;
 /// The seed shipped with the crate
 pub const SEED: &str = include_str!("../glossary.toml");
 
+/// Where an alias came from
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AliasSource {
+    /// Written in a glossary file (the seed or the data folder's own)
+    #[default]
+    Seed,
+    /// Taught by the user
+    User,
+    /// Proposed by the model from the knowledge base ([`crate::slang`])
+    Suggested,
+    /// Brought by an import
+    Imported,
+}
+
+/// Whether an alias is in use
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AliasStatus {
+    /// A name of its term: looked up, found in text, listed in prompts
+    #[default]
+    Approved,
+    /// A suggestion waiting for the user
+    Pending,
+    /// A suggestion the user turned down; kept so it is not proposed again
+    Rejected,
+}
+
+/// A name players use for a term besides its official ones: slang, an
+/// abbreviation, a nickname
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Alias {
+    /// The alias as written (`G Roller`)
+    pub text: String,
+    /// Language code (`zh`, `en`, `ja`, ...)
+    pub lang: String,
+    /// Its origin or how it is used
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+    #[serde(default)]
+    pub source: AliasSource,
+    #[serde(default)]
+    pub status: AliasStatus,
+}
+
 /// One term
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Term {
@@ -37,10 +91,14 @@ pub struct Term {
     /// Short English definition; empty for imported names
     #[serde(default)]
     pub definition: String,
-    /// Names per language code, official name first; a regional variant
-    /// (`en-GB`, `es-MX`) holds only the names that differ from its
-    /// language's
+    /// Official names per language code, the main one first; a regional
+    /// variant (`en-GB`, `es-MX`) holds only the names that differ from its
+    /// language's. A term of player jargon, with no name in the game, has
+    /// descriptive ones here.
     pub forms: BTreeMap<String, Vec<String>>,
+    /// Slang and abbreviations; only approved ones are names of the term
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<Alias>,
     /// Where imported names came from: `<file>#<key>`
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub from: Vec<String>,
@@ -58,6 +116,43 @@ impl Term {
     /// The main name in `lang`, if the glossary has one
     pub fn name(&self, lang: &str) -> Option<&str> {
         self.forms.get(lang)?.first().map(String::as_str)
+    }
+
+    /// Approved aliases
+    pub fn approved(&self) -> impl Iterator<Item = &Alias> {
+        self.aliases
+            .iter()
+            .filter(|a| a.status == AliasStatus::Approved)
+    }
+
+    /// Every name: official ones, then approved aliases
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.forms
+            .values()
+            .flatten()
+            .map(String::as_str)
+            .chain(self.approved().map(|a| a.text.as_str()))
+    }
+
+    /// Whether `text` is one of its names (official or an approved alias),
+    /// ignoring case
+    pub fn has_name(&self, text: &str) -> bool {
+        let text = key(text);
+        self.names().any(|n| key(n) == text)
+    }
+
+    /// Adds an alias unless it is an official name of the term; an alias
+    /// of the same text and language is replaced. Returns whether it was
+    /// added.
+    pub fn add_alias(&mut self, alias: Alias) -> bool {
+        let k = key(&alias.text);
+        if k.is_empty() || self.forms.values().flatten().any(|f| key(f) == k) {
+            return false;
+        }
+        self.aliases
+            .retain(|a| !(key(&a.text) == k && a.lang == alias.lang));
+        self.aliases.push(alias);
+        true
     }
 }
 
@@ -127,6 +222,24 @@ impl Index {
     }
 }
 
+/// An alias's line under its term in a prompt: `  - <lang> slang: <alias>
+/// → <official> (en: <English name>): <note>`; the official name is the
+/// one in the alias's language, else the English one, else the id
+fn alias_line(t: &Term, a: &Alias) -> String {
+    let english = t.name("en");
+    let official = t.name(&a.lang).or(english).unwrap_or(&t.id);
+    let mut line = alloc::format!("  - {} slang: {} → {official}", a.lang, a.text);
+    if let Some(en) = english.filter(|en| *en != official) {
+        line.push_str(&alloc::format!(" (en: {en})"));
+    }
+    if !a.note.is_empty() {
+        line.push_str(": ");
+        line.push_str(&a.note);
+    }
+    line.push('\n');
+    line
+}
+
 /// True for scripts written without spaces, where a form may sit inside a
 /// longer word
 fn is_cjk(c: char) -> bool {
@@ -151,24 +264,70 @@ impl Glossary {
         Self::parse(SEED).expect("the seed glossary parses")
     }
 
-    /// The term with this id or any form equal to `name` (ignoring case)
+    /// The term with this id or name (ignoring case): an official name
+    /// first, else an approved alias
     pub fn lookup(&self, name: &str) -> Option<&Term> {
-        let name = name.trim().to_lowercase();
+        let name = key(name);
         self.terms
             .iter()
-            .find(|t| t.id == name || t.forms.values().flatten().any(|f| f.to_lowercase() == name))
+            .find(|t| t.id == name || t.forms.values().flatten().any(|f| key(f) == name))
+            .or_else(|| {
+                self.terms
+                    .iter()
+                    .find(|t| t.approved().any(|a| key(&a.text) == name))
+            })
     }
 
-    /// Terms mentioned in `text`, in order of first mention. Latin forms must
-    /// stand as whole words; longer matches win over forms inside them
-    /// (`キンシャケ` is Goldie, not Chum).
+    /// Up to `limit` terms with an id or name (official or an approved
+    /// alias) containing `query`, ignoring case: whole names first, then
+    /// names starting with it, then the rest, each in glossary order
+    pub fn search(&self, query: &str, limit: usize) -> Vec<&Term> {
+        let q = key(query);
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let rank = |t: &Term| -> Option<u8> {
+            core::iter::once(t.id.as_str())
+                .chain(t.names())
+                .filter_map(|n| {
+                    let n = key(n);
+                    if n == q {
+                        Some(0)
+                    } else if n.starts_with(&q) {
+                        Some(1)
+                    } else {
+                        n.contains(&q).then_some(2)
+                    }
+                })
+                .min()
+        };
+        let mut found: Vec<(u8, usize)> = self
+            .terms
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| rank(t).map(|r| (r, i)))
+            .collect();
+        found.sort();
+        found
+            .into_iter()
+            .take(limit)
+            .map(|(_, i)| &self.terms[i])
+            .collect()
+    }
+
+    /// Terms mentioned in `text` by an official name or an approved alias,
+    /// in order of first mention. Latin names must stand as whole words;
+    /// longer matches win over names inside them (`キンシャケ` is Goldie,
+    /// not Chum), and an official name over an alias as long.
     pub fn find_in(&self, text: &str) -> Vec<&Term> {
         let hay = text.to_lowercase();
-        // (start, end, term index) of every occurrence
-        let mut hits: Vec<(usize, usize, usize)> = Vec::new();
+        // (start, end, is an alias, term index) of every occurrence
+        let mut hits: Vec<(usize, usize, bool, usize)> = Vec::new();
         for (ti, term) in self.terms.iter().enumerate() {
-            for form in term.forms.values().flatten() {
-                let needle = form.to_lowercase();
+            let official = term.forms.values().flatten().map(|f| (f.as_str(), false));
+            let aliases = term.approved().map(|a| (a.text.as_str(), true));
+            for (name, alias) in official.chain(aliases) {
+                let needle = name.to_lowercase();
                 if needle.is_empty() {
                     continue;
                 }
@@ -179,22 +338,23 @@ impl Glossary {
                     let after = hay[end..].chars().next();
                     let bounded = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric());
                     if cjk || (bounded(before) && bounded(after)) {
-                        hits.push((start, end, ti));
+                        hits.push((start, end, alias, ti));
                     }
                 }
             }
         }
-        // Longest first, dropping matches that overlap a longer one
-        hits.sort_by_key(|&(s, e, _)| (core::cmp::Reverse(e - s), s));
-        let mut taken: Vec<(usize, usize, usize)> = Vec::new();
+        // Longest first, official before alias, dropping matches that
+        // overlap one taken before
+        hits.sort_by_key(|&(s, e, alias, _)| (core::cmp::Reverse(e - s), s, alias));
+        let mut taken: Vec<(usize, usize, bool, usize)> = Vec::new();
         for h in hits {
             if taken.iter().all(|t| h.1 <= t.0 || h.0 >= t.1) {
                 taken.push(h);
             }
         }
-        taken.sort_by_key(|&(s, _, _)| s);
+        taken.sort_by_key(|&(s, _, _, _)| s);
         let mut out: Vec<&Term> = Vec::new();
-        for (_, _, ti) in taken {
+        for (_, _, _, ti) in taken {
             let term = &self.terms[ti];
             if !out.iter().any(|t| t.id == term.id) {
                 out.push(term);
@@ -203,8 +363,8 @@ impl Glossary {
         out
     }
 
-    /// `text` followed by every form of the terms it mentions, so the query
-    /// embedding also points at documents in other languages
+    /// `text` followed by every official name of the terms it mentions, so
+    /// the query embedding also points at documents in other languages
     pub fn expand(&self, text: &str) -> String {
         let mut out = String::from(text);
         for term in self.find_in(text) {
@@ -232,6 +392,7 @@ impl Glossary {
                 None => {
                     let mut new = Term {
                         forms: BTreeMap::new(),
+                        aliases: Vec::new(),
                         from: Vec::new(),
                         ..t.clone()
                     };
@@ -255,6 +416,9 @@ impl Glossary {
                     index.add(lang, f, i);
                 }
             }
+            for a in &t.aliases {
+                term.add_alias(a.clone());
+            }
             for f in &t.from {
                 if !term.from.contains(f) {
                     term.from.push(f.clone());
@@ -271,9 +435,11 @@ impl Glossary {
 
     /// Names of `terms` that differ from this glossary's: for each imported
     /// term that [`Glossary::merge`] would fold into a term here, the
-    /// languages where the main names differ, as lines `<id>: <lang>
-    /// "<here>" here, "<there>" in <source>` (the source is the term's
-    /// first origin)
+    /// languages where its main name is none of the term's official names
+    /// here, as lines `<id>: <lang> "<here>" here, "<there>" in <source>`
+    /// (the main name here; the source is the term's first origin). An
+    /// imported name that is only an alias here is a difference: the
+    /// import's names are official.
     pub fn conflicts(&self, terms: &[Term]) -> Vec<String> {
         let index = Index::new(&self.terms);
         let mut out = Vec::new();
@@ -285,7 +451,8 @@ impl Glossary {
                 let (Some(here), Some(there)) = (ours.name(lang), forms.first()) else {
                     continue;
                 };
-                if here.trim().to_lowercase() != there.trim().to_lowercase() {
+                let known = ours.forms[lang].iter().any(|f| key(f) == key(there));
+                if !known {
                     let source = t
                         .from
                         .first()
@@ -313,8 +480,9 @@ impl Glossary {
         counts
     }
 
-    /// One line per term for a prompt: its names and definition, with the
-    /// `lang` name first when given
+    /// One line per term for a prompt: its official names and definition,
+    /// with the `lang` name first when given; then a line per approved
+    /// alias, `<lang> slang: <alias> → <official> (en: <English>): <note>`
     pub fn prompt_lines(terms: &[&Term], lang: Option<&str>) -> String {
         let mut out = String::new();
         for t in terms {
@@ -352,6 +520,9 @@ impl Glossary {
                 out.push_str(&alloc::format!(" [{}]", tags.join(", ")));
             }
             out.push('\n');
+            for a in t.approved() {
+                out.push_str(&alias_line(t, a));
+            }
         }
         out
     }
@@ -374,6 +545,18 @@ mod tests {
         assert_eq!(g.lookup("バクダン").unwrap().id, "steelhead");
         assert_eq!(g.lookup("  STEELHEAD ").unwrap().id, "steelhead");
         assert!(g.lookup("nothing").is_none());
+    }
+
+    #[test]
+    fn searches_names_as_typed() {
+        let g = Glossary::seed();
+        let ids =
+            |q: &str| -> Vec<String> { g.search(q, 3).iter().map(|t| t.id.clone()).collect() };
+        // A whole name first, then names starting with it, then the rest
+        assert_eq!(ids("Maws"), ["maws"]);
+        assert_eq!(ids("gri"), ["grizzco", "griller", "grizzco-roller"]);
+        assert_eq!(ids("熊刷"), ["grizzco-roller"]);
+        assert!(ids(" ").is_empty());
     }
 
     #[test]
@@ -415,10 +598,33 @@ mod tests {
         assert_eq!(ids("我还剩一个镭射"), ["killer-wail-51"]);
         assert_eq!(
             g.lookup("Killer Wail 5.1").unwrap().name("zh"),
-            Some("喇叭镭射5.1")
+            Some("喇叭镭射5.1ch")
         );
         // The longest Chinese name wins: a Goldie is not a Chum
-        assert_eq!(ids("黄金鲑鱼掉金鲑鱼卵"), ["goldie", "golden-egg"]);
+        assert_eq!(ids("金鲑鱼掉金鲑鱼卵"), ["goldie", "golden-egg"]);
+        // The slang the player gave
+        assert_eq!(ids("鬼坝和破船"), ["spawning-grounds", "marooners-bay"]);
+        assert_eq!(ids("喇叭和雷神"), ["sploosh-o-matic"]);
+        assert_eq!(g.lookup("雷神").unwrap().id, "sploosh-o-matic");
+        assert_eq!(g.lookup("小绿").unwrap().name("zh"), Some("斯普拉射击枪"));
+        assert_eq!(ids("回筐边，家里没人"), ["egg-basket"]);
+        assert_eq!(g.lookup("蛋筐").unwrap().name("en"), Some("Egg Basket"));
+        let roller = g.lookup("熊刷").unwrap();
+        assert_eq!(roller.name("zh"), Some("熊先生印章滚筒"));
+        let lines = Glossary::prompt_lines(&[roller], Some("en"));
+        assert!(
+            lines.contains(
+                "\n  - zh slang: 熊刷 → 熊先生印章滚筒 (en: Grizzco Roller): 'bear brush'\n"
+            ),
+            "{lines}"
+        );
+        assert!(
+            lines.contains("\n  - en slang: G Roller → Grizzco Roller\n"),
+            "{lines}"
+        );
+        // Aliases stay out of the expansion
+        assert!(!g.expand("Grizzco Roller").contains("G Roller"));
+        assert!(g.expand("熊刷").contains("Grizzco Roller"));
     }
 
     #[test]
@@ -476,7 +682,7 @@ mod tests {
             game = "S3"
             [[term]]
             id = "spawning-grounds"
-            forms = { en = ["Spawning Grounds"], zh = ["鲑坝"] }
+            forms = { en = ["Spawning Grounds"], zh = ["鲑鱼坝"] }
             from = ["inbox/s.zip/messages/*/map3.php#Spawning Grounds"]
             kind = "stage"
             game = "S3"
@@ -491,12 +697,12 @@ mod tests {
         // Only the stage's Chinese name differs from the seed's
         assert_eq!(
             g.conflicts(&imported.terms),
-            ["spawning-grounds: zh \"鲑鱼坝\" here, \"鲑坝\" in inbox/s.zip/messages/*/map3.php"]
+            ["spawning-grounds: zh \"鲑坝\" here, \"鲑鱼坝\" in inbox/s.zip/messages/*/map3.php"]
         );
         g.merge(&imported.terms);
         let grounds = g.lookup("Spawning Grounds").unwrap();
         // Both names stay, the seed's first
-        assert_eq!(grounds.forms["zh"], ["鲑鱼坝", "鲑坝"]);
+        assert_eq!(grounds.forms["zh"], ["鲑坝", "鲑鱼坝"]);
         assert_eq!(grounds.kind.as_deref(), Some("stage"));
         let s2 = g.lookup("Lost Outpost").unwrap();
         assert_eq!(s2.game.as_deref(), Some("S2"));
@@ -505,7 +711,13 @@ mod tests {
             "- lost-outpost (en: Lost Outpost; ja: 海上集落シャケト場) [stage, Splatoon 2]\n"
         );
         let s3 = Glossary::prompt_lines(&[grounds], Some("zh"));
-        assert!(s3.ends_with("Salmon Run stage. [stage]\n"), "{s3}");
+        assert!(
+            s3.ends_with(
+                "Salmon Run stage. [stage]\n  - zh slang: 鬼坝 → 鲑坝 (en: Spawning Grounds): \
+                 a play on 鲑 (guī) as 鬼 (guǐ, 'ghost')\n"
+            ),
+            "{s3}"
+        );
         // The seed's own terms carry no tags
         assert!(!Glossary::prompt_lines(&[g.lookup("Maws").unwrap()], None).contains('['));
     }
