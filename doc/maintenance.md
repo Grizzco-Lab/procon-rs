@@ -27,10 +27,12 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
   and the shell, rail, themes and Cuttlefish have changed since.
 - **Translate the shell.** App names, status words and the View menu stay
   English in Chinese mode; only Cuttlefish and Knowledge are translated.
-- **Load apps on first use.** Every app's script loads with the page today.
-  Hidden apps do no work, but the page grows with each app; load an app's
-  script the first time it is opened, and free big models (embedder, YOLO)
-  in the studio after a long idle time.
+- **Load apps on first use.** All 16 scripts and styles (about 730 KB
+  uncompressed) load with the page today. Hidden apps do no work, but the
+  first load grows with each app; load an app's script the first time it is
+  opened. Big models in the studio stay loaded (the user's call); if memory
+  ever gets tight, decide from the machine's free memory rather than an idle
+  timer.
 - **Layout regression checks.** A scripted headless-Chrome pass that measures
   key boxes (the 3D stage, the chat bar, the one-row top bar) in every theme,
   so layout breakage shows up before the user sees it.
