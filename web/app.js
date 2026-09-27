@@ -114,17 +114,105 @@ markView();
 
 // ------------------------------------------------------------------ apps
 
-// One page, several apps: #studio (the default), #inspect/<state>,
-// #cuttlefish/<state>, #vision/<state> and #predictor/<state>. Switching only shows another
-// section, so the socket, preview and capture keep running.
+// One page, several apps, each at its own path (see appUrl): /studio (also
+// /), /inspect, /cuttlefish, /vision and /predictor, with the app's state
+// after it. Switching only shows another section, so the socket, preview and
+// capture keep running; the History API keeps the address, and back and
+// forward move between app states. The server answers every app path with
+// this page.
 const APPS = ["studio", "inspect", "cuttlefish", "vision", "predictor"];
 
-/** Show the app the hash names and tell it the rest of the hash */
+/** Cuttlefish's views besides the reviews, each at /cuttlefish/<view> */
+const CUTTLEFISH_VIEWS = ["translate", "knowledge"];
+
+/**
+ * The path of an app's state. `state` (URLSearchParams or an object) holds
+ * the keys the apps read; those naming what is open go in the path, the rest
+ * (a frame, a time, options) in the query:
+ *
+ * - `/studio`
+ * - `/inspect`, `/inspect/<session>?seg=&n=&delay=&pred=&label=1` (`s`)
+ * - `/cuttlefish`, `/cuttlefish/translate`, `/cuttlefish/knowledge` (`view`),
+ *   `/cuttlefish/review/<id>?t=` (`r`),
+ *   `/cuttlefish/video?kind=&ref=&start_s=&end_s=&t=` (a video not reviewed
+ *   yet)
+ * - `/vision`, `/vision/<session>?seg=&n=` (`s`)
+ * - `/predictor`, `/predictor/<video key>/<checkpoint>?t=` (`key`, `ckpt`)
+ */
+function appUrl(app, state = {}) {
+  const query = new URLSearchParams(state);
+  const take = (key) => {
+    const value = query.get(key);
+    query.delete(key);
+    return value;
+  };
+  const segments = [app];
+  if (app === "inspect" || app === "vision") {
+    const session = take("s");
+    if (session) segments.push(session);
+  } else if (app === "predictor" && query.get("key") && query.get("ckpt")) {
+    segments.push(take("key"), take("ckpt"));
+  } else if (app === "cuttlefish") {
+    const view = take("view");
+    const review = take("r");
+    if (review) segments.push("review", review);
+    else if (CUTTLEFISH_VIEWS.includes(view)) segments.push(view);
+    else if (query.get("kind")) segments.push("video");
+  }
+  const search = query.toString();
+  const path = segments.map(encodeURIComponent).join("/");
+  return `/${path}${search ? `?${search}` : ""}`;
+}
+
+/** The app a URL (or `location`) shows and its state, the reverse of
+ * appUrl */
+function routeOf(url) {
+  let parts;
+  try {
+    parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  } catch {
+    parts = [];
+  }
+  const app = APPS.includes(parts[0]) ? parts[0] : "studio";
+  const state = new URLSearchParams(url.search);
+  const rest = parts.slice(1);
+  if (!rest.length) return { app, state };
+  if (app === "inspect" || app === "vision") {
+    state.set("s", rest.join("/"));
+  } else if (app === "predictor" && rest.length > 1) {
+    state.set("key", rest[0]);
+    state.set("ckpt", rest.slice(1).join("/"));
+  } else if (app === "cuttlefish") {
+    if (rest[0] === "review" && rest.length > 1)
+      state.set("r", rest.slice(1).join("/"));
+    else if (CUTTLEFISH_VIEWS.includes(rest[0])) state.set("view", rest[0]);
+  }
+  return { app, state };
+}
+
+/** A link from before paths (`#inspect/s=…&n=…`) as its path, or null; the
+ * page's own query (`?theme=`) is kept */
+function urlOfHash(hash) {
+  const match = /^#([a-z]+)(?:\/(.*))?$/.exec(hash);
+  if (!match || !APPS.includes(match[1])) return null;
+  const state = new URLSearchParams(location.search);
+  for (const [key, value] of new URLSearchParams(match[2] ?? "")) {
+    state.set(key, value);
+  }
+  return appUrl(match[1], state);
+}
+
+/** Where an app's link leads: its view as the app stored it (a path, or a
+ * hash from before paths), else the app's first page */
+function storedView(app, stored) {
+  const url = stored?.startsWith("#") ? urlOfHash(stored) : stored;
+  if (!url?.startsWith("/")) return `/${app}`;
+  return routeOf(new URL(url, location.origin)).app === app ? url : `/${app}`;
+}
+
+/** Show the app the address names and tell it the rest of its state */
 function routeApp() {
-  const hash = location.hash.slice(1);
-  const slash = hash.indexOf("/");
-  const name = slash < 0 ? hash : hash.slice(0, slash);
-  const app = APPS.includes(name) ? name : "studio";
+  const { app, state } = routeOf(location);
   root.dataset.app = app;
   for (const section of document.querySelectorAll("[data-app-section]")) {
     section.hidden = section.dataset.appSection !== app;
@@ -133,11 +221,59 @@ function routeApp() {
     if (link.dataset.app === app) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
-  const state = new URLSearchParams(slash < 0 ? "" : hash.slice(slash + 1));
   window.dispatchEvent(
     new CustomEvent("app-route", { detail: { app, state } }),
   );
 }
+
+/** Go to an app path in the page, never reloading it: a new history entry,
+ * or with `replace` in place of the current one */
+function navigate(url, { replace = false } = {}) {
+  const target = new URL(url, location.href);
+  if (target.href === location.href) return;
+  if (replace) history.replaceState(null, "", target);
+  else history.pushState(null, "", target);
+  routeApp();
+}
+
+/** Put an app's state in the address without a new history entry (the
+ * frame while scrubbing, the playhead), only while that app is shown; the
+ * path, for the app's link */
+function replaceRoute(app, state) {
+  const url = appUrl(app, state);
+  if (root.dataset.app === app) history.replaceState(null, "", url);
+  return url;
+}
+
+// Old links (#inspect/s=…) open at their paths
+{
+  const url = urlOfHash(location.hash);
+  if (url) history.replaceState(null, "", url);
+}
+
+// Links into the apps navigate in the page on a plain left click; a middle
+// click, a modifier key or copying the link work as for any link
+document.addEventListener("click", (event) => {
+  if (event.defaultPrevented || event.button !== 0) return;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const link = event.target.closest?.("a[href]");
+  const href = link?.getAttribute("href");
+  if (!href || href.startsWith("#") || link.hasAttribute("download")) return;
+  if (link.target && link.target !== "_self") return;
+  const url = new URL(href, location.href);
+  const first = url.pathname.split("/")[1];
+  if (url.origin !== location.origin || (first && !APPS.includes(first)))
+    return;
+  event.preventDefault();
+  navigate(url);
+});
+
+window.addEventListener("popstate", routeApp);
+// An old link typed into the address bar of the open page
+window.addEventListener("hashchange", () => {
+  const url = urlOfHash(location.hash);
+  if (url) navigate(url, { replace: true });
+});
 
 /** The Studio app is on screen, so its live views are worth drawing */
 const studioShown = () => root.dataset.app === "studio" && !document.hidden;
@@ -232,7 +368,6 @@ appNav.addEventListener("dragover", (event) => {
 });
 appNav.addEventListener("drop", (event) => event.preventDefault());
 
-window.addEventListener("hashchange", routeApp);
 // Every app's script has run by then
 document.addEventListener("DOMContentLoaded", routeApp);
 

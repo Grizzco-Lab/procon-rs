@@ -12,7 +12,7 @@
 
 @font-face {
   font-family: "Lilita One";
-  src: url("LilitaOne-Regular.ttf") format("truetype");
+  src: url("/art/LilitaOne-Regular.ttf") format("truetype");
   font-display: swap;
 }
 
@@ -66,7 +66,7 @@
 
 [data-theme="salmon"] body {
   background:
-    url("splat-tile.svg") 0 0 / 320px 320px,
+    url("/art/splat-tile.svg") 0 0 / 320px 320px,
     var(--bg);
 }
 
@@ -98,7 +98,7 @@
   width: 170px;
   height: 38px;
   overflow: hidden;
-  background: url("wordmark.svg") left center / contain no-repeat;
+  background: url("/art/wordmark.svg") left center / contain no-repeat;
   color: transparent;
   font-size: 0;
 }
@@ -169,7 +169,7 @@
   border-radius: var(--radius-sm);
   background:
     radial-gradient(circle at 50% 45%, #2a3a33, transparent 65%),
-    url("panel-tile.svg") 0 0 / 240px 240px,
+    url("/art/panel-tile.svg") 0 0 / 240px 240px,
     var(--screen);
 }
 
@@ -193,7 +193,7 @@
   --divider: #3f453a;
   /* The rail: ink with the panel tile, stickers on it, the open one on an
      orange tile with its drop, a lime mark on the edge */
-  --rail-bg: url("panel-tile.svg") 0 0 / 240px 240px, var(--sr-ink);
+  --rail-bg: url("/art/panel-tile.svg") 0 0 / 240px 240px, var(--sr-ink);
   --rail-border: var(--sr-lime);
   --rail-shadow: none;
   --rail-radius: 16px;
@@ -329,7 +329,7 @@
   border-top: 9px solid var(--band);
   border-bottom: 9px solid var(--band);
   background:
-    url("panel-tile.svg") 0 0 / 240px 240px,
+    url("/art/panel-tile.svg") 0 0 / 240px 240px,
     var(--panel);
   box-shadow:
     0 0 0 2px var(--sr-ink),
@@ -625,7 +625,7 @@
 [data-theme="salmon"] .no-signal::before {
   width: min(300px, 60vw);
   aspect-ratio: 360 / 240;
-  background-image: url("studio-sign.svg");
+  background-image: url("/art/studio-sign.svg");
 }
 
 /* The screen is 16:9: leave room for the caption on narrow ones */
@@ -644,13 +644,13 @@
 [data-theme="salmon"] #v-empty::before {
   width: min(230px, 50vw);
   aspect-ratio: 300 / 228;
-  background-image: url("vision.svg");
+  background-image: url("/art/vision.svg");
 }
 
 [data-theme="salmon"] #p-empty::before {
   width: min(210px, 50vw);
   aspect-ratio: 260 / 240;
-  background-image: url("predictor.svg");
+  background-image: url("/art/predictor.svg");
 }
 
 [data-theme="salmon"] .no-signal p,
@@ -694,12 +694,12 @@
 }
 
 [data-theme="salmon"] #inspect-picker::after {
-  background-image: url("inkspector.svg");
+  background-image: url("/art/inkspector.svg");
 }
 
 [data-theme="salmon"] #cf-library::after,
 [data-theme="salmon"] #cf-translate::after {
-  background-image: url("cuttlefish.svg");
+  background-image: url("/art/cuttlefish.svg");
 }
 
 @media (max-width: 720px) {

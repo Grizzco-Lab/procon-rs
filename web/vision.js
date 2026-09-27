@@ -5,8 +5,8 @@
 // shared player (player.js: the Inkspector's frames, keys, scrubber with
 // the processed frames as marks, neighbours) with the boxes as a layer over
 // it. Runs after app.js and player.js and uses their helpers ($,
-// escapeHtml). Runs go through /api/vision (see src/vision.rs). State lives
-// in the hash: #vision/s=<session>&seg=<file>&n=<frame>.
+// escapeHtml, appUrl). Runs go through /api/vision (see src/vision.rs).
+// State lives in the address: /vision/<session>?seg=<file>&n=<frame>.
 "use strict";
 
 (() => {
@@ -142,7 +142,7 @@
           .map((s) => {
             const name = `${s.session} · ${s.file ?? s.stem}`;
             const link = s.file
-              ? `<a href="#inspect/${new URLSearchParams({ s: s.session, seg: s.file, label: 1 })}">${escapeHtml(name)}</a>`
+              ? `<a href="${escapeHtml(appUrl("inspect", { s: s.session, seg: s.file, label: 1 }))}">${escapeHtml(name)}</a>`
               : escapeHtml(name);
             return `<tr><td>${link}</td><td class="num">${s.labeled} of ${s.frames}</td><td class="num">${s.user} + ${s.model} model</td></tr>`;
           })
@@ -552,12 +552,7 @@
     drawBoxes(line?.boxes ?? []);
     drawTrail(line);
     const { s, seg } = selected();
-    history.replaceState(
-      null,
-      "",
-      `#vision/${new URLSearchParams({ s, seg, n })}`,
-    );
-    rememberView();
+    rememberView(replaceRoute("vision", { s, seg, n }));
   }
 
   /** The processed frame before (-1) or after (+1) the current one */
@@ -775,7 +770,9 @@
         .map(([c, n]) => `${escapeHtml(c)} ${n}`)
         .join(", ");
       const frame = lineAt(player.frame)?.frame ?? sent.first ?? 0;
-      const link = `#inspect/${new URLSearchParams({ s, seg, n: frame, label: 1 })}`;
+      const link = escapeHtml(
+        appUrl("inspect", { s, seg, n: frame, label: 1 }),
+      );
       out.innerHTML = `
         <p><b>${sent.boxes}</b> boxes written: ${sent.added} frames added, ${sent.replaced} replaced (model boxes only), ${sent.kept} kept (labeled by a person).</p>
         ${dropped ? `<p class="panel-note">Left out, not in classes.json: ${dropped}.</p>` : ""}
@@ -793,12 +790,10 @@
 
   // -------------------------------------------------------------- routing
 
-  function rememberView() {
-    const hash = location.hash.startsWith("#vision")
-      ? location.hash
-      : "#vision";
-    document.querySelector('.app-nav [data-app="vision"]').href = hash;
-    remember("view", hash);
+  /** The last view, for the app link after leaving or a reload */
+  function rememberView(url) {
+    document.querySelector('.app-nav [data-app="vision"]').href = url;
+    remember("view", url);
   }
 
   async function route(state) {
@@ -842,8 +837,8 @@
 
   showTab(remembered("tab", "dataset"));
 
-  document.querySelector('.app-nav [data-app="vision"]').href = remembered(
-    "view",
-    "#vision",
+  document.querySelector('.app-nav [data-app="vision"]').href = storedView(
+    "vision",
+    remembered("view"),
   );
 })();

@@ -1,4 +1,4 @@
-// Cuttlefish's Translate view (#cuttlefish/view=translate): jargon and
+// Cuttlefish's Translate view (/cuttlefish/translate): jargon and
 // callouts across languages, in the names each community uses. A chat-like
 // page: the history above, the box at the bottom of the window with the
 // mentor's avatar, a target-language picker and Send. A bare term shows its

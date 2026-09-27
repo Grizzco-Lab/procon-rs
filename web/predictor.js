@@ -6,9 +6,9 @@
 // two (as in the Inkspector) and the agreement; the timeline and the stored
 // runs follow the video. Runs
 // after app.js and player.js and uses their helpers ($, escapeHtml,
-// stickPercent). Runs go through /api/predictor (see src/predictor.rs); the
-// video plays from /api/cuttlefish/video. State lives in the hash:
-// #predictor/key=<video>&ckpt=<checkpoint>&t=<seconds>.
+// stickPercent, appUrl). Runs go through /api/predictor (see
+// src/predictor.rs); the video plays from /api/cuttlefish/video. State lives
+// in the address: /predictor/<video>/<checkpoint>?t=<seconds>.
 "use strict";
 
 (() => {
@@ -339,7 +339,7 @@
     // Just finished: list it and show it
     if (running(before) && pred.job?.state === "done") {
       await loadRuns();
-      location.hash = hashOf(pred.job.key, pred.job.checkpoint, 0);
+      navigate(runUrl(pred.job.key, pred.job.checkpoint, 0));
     }
   }
 
@@ -417,8 +417,9 @@
     renderRuns();
   }
 
-  const hashOf = (key, ckpt, t) =>
-    `#predictor/${new URLSearchParams({ key, ckpt, t: t.toFixed(2) })}`;
+  /** The state of a run's view at `t` seconds */
+  const runState = (key, ckpt, t) => ({ key, ckpt, t: t.toFixed(2) });
+  const runUrl = (...view) => appUrl("predictor", runState(...view));
 
   function renderRuns() {
     const body = $("p-runs");
@@ -440,7 +441,7 @@
       if (pred.run?.key === run.key && pred.run?.checkpoint === run.checkpoint)
         tr.className = "current";
       tr.onclick = () => {
-        location.hash = hashOf(run.key, run.checkpoint, 0);
+        navigate(runUrl(run.key, run.checkpoint, 0));
       };
       body.append(tr);
     }
@@ -573,12 +574,8 @@
     ensureChunk(n);
     draw();
     scheduleAgreement();
-    history.replaceState(
-      null,
-      "",
-      hashOf(pred.run.key, pred.run.checkpoint, n / fps()),
-    );
-    rememberView();
+    const state = runState(pred.run.key, pred.run.checkpoint, n / fps());
+    rememberView(replaceRoute("predictor", state));
   }
 
   $("p-span").value = String(pred.span);
@@ -925,12 +922,10 @@
 
   // -------------------------------------------------------------- routing
 
-  function rememberView() {
-    const hash = location.hash.startsWith("#predictor")
-      ? location.hash
-      : "#predictor";
-    document.querySelector('.app-nav [data-app="predictor"]').href = hash;
-    remember("view", hash);
+  /** The last view, for the app link after leaving or a reload */
+  function rememberView(url) {
+    document.querySelector('.app-nav [data-app="predictor"]').href = url;
+    remember("view", url);
   }
 
   async function route(state) {
@@ -964,8 +959,8 @@
     else poll();
   });
 
-  document.querySelector('.app-nav [data-app="predictor"]').href = remembered(
-    "view",
-    "#predictor",
+  document.querySelector('.app-nav [data-app="predictor"]').href = storedView(
+    "predictor",
+    remembered("view"),
   );
 })();

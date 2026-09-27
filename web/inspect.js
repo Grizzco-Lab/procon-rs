@@ -1,9 +1,9 @@
 // Inkspector app: pick a recorded session, then check its controller labels
 // against the video frame by frame in the shared player (player.js: exact
 // frames from the studio, overlays, neighbours, keys, labels table). Runs
-// next to app.js and uses its helpers ($, root); its state lives in the hash
-// as #inspect/s=<session>&seg=<file>&n=<frame>&delay=<ms>&pred=<path> (and
-// label=1 to open in the labeling mode).
+// next to app.js and uses its helpers ($, root, appUrl); its state lives in
+// the address as /inspect/<session>?seg=<file>&n=<frame>&delay=<ms>&pred=<path>
+// (and label=1 to open in the labeling mode).
 
 /** Frames per labels request */
 const LABEL_CHUNK = 64;
@@ -61,7 +61,7 @@ const framePlayer = new Player({
   neighbours: { radius: 3 },
   onFrame(n) {
     inspector.frame = n;
-    writeHash();
+    writeUrl();
     $("i-delay").value = inspector.delay;
     // For the labeling mode (label.js), which draws this frame's boxes
     window.dispatchEvent(new CustomEvent("inspect-frame"));
@@ -140,27 +140,33 @@ function api(path, params = {}) {
   return `/api/inspect/${path}?${query}`;
 }
 
-/** The hash of a view: a segment at a frame, delay and predictions */
-function hashOf(session, segment, extra = {}) {
-  const params = new URLSearchParams({ s: session, seg: segment ?? "" });
-  for (const [key, value] of Object.entries(extra)) {
-    if (value !== "" && value != null) params.set(key, value);
-  }
-  return `#inspect/${params}`;
+/** The state of a view: a segment at a frame, delay and predictions */
+function viewState(session, segment, extra = {}) {
+  const state = { s: session, seg: segment, ...extra };
+  return Object.fromEntries(
+    Object.entries(state).filter(([, value]) => value !== "" && value != null),
+  );
 }
 
-function writeHash() {
+/** The path of a view, see viewState */
+const viewUrl = (...view) => appUrl("inspect", viewState(...view));
+
+/** Keep the view in the address, replacing the current history entry */
+function writeUrl() {
   const { info, frame, delay, pred } = inspector;
   if (!info) return;
-  const hash = hashOf(info.session, info.segment, { n: frame, delay, pred });
-  history.replaceState(null, "", hash);
-  rememberView(hash);
+  const state = viewState(info.session, info.segment, {
+    n: frame,
+    delay,
+    pred,
+  });
+  rememberView(replaceRoute("inspect", state));
 }
 
 /** Where the Inkspector's app link leads: back to this view, even after a reload */
-function rememberView(hash) {
-  document.querySelector('.app-nav [data-app="inspect"]').href = hash;
-  remember("view", hash);
+function rememberView(url) {
+  document.querySelector('.app-nav [data-app="inspect"]').href = url;
+  remember("view", url);
 }
 
 // ------------------------------------------------------------------ picker
@@ -199,7 +205,7 @@ async function loadSessions() {
       <td class="level-${level}">${delayText(summary.calibration)}</td>`;
     tr.onclick = (event) => {
       const seg = event.target.dataset?.seg ?? summary.segments[0]?.file;
-      location.hash = hashOf(summary.name, seg);
+      navigate(viewUrl(summary.name, seg));
     };
     body.append(tr);
   }
@@ -208,7 +214,7 @@ async function loadSessions() {
 function showPicker() {
   framePlayer.close();
   inspector.resume = false;
-  rememberView("#inspect");
+  rememberView("/inspect");
   inspector.info = null;
   $("inspect-viewer").hidden = true;
   $("inspect-picker").hidden = false;
@@ -218,7 +224,7 @@ function showPicker() {
 
 // ------------------------------------------------------------------ viewer
 
-/** Load a segment's info and show it at the hash's frame and delay */
+/** Load a segment's info and show it at the address's frame and delay */
 async function showSegment(session, segment, state) {
   framePlayer.close();
   $("inspect-picker").hidden = true;
@@ -434,15 +440,15 @@ $("i-random-any").onclick = () => random(false);
 $("i-session").onchange = (event) => {
   const name = event.target.value;
   const summary = inspector.sessions.find((s) => s.name === name);
-  location.hash = name ? hashOf(name, summary?.segments[0]?.file) : "#inspect";
+  navigate(name ? viewUrl(name, summary?.segments[0]?.file) : "/inspect");
 };
 $("i-segment").onchange = (event) => {
-  location.hash = hashOf(inspector.info.session, event.target.value);
+  navigate(viewUrl(inspector.info.session, event.target.value));
 };
 $("i-stick-tol").textContent = STICK_TOLERANCE;
 $("i-gyro-tol").textContent = GYRO_TOLERANCE;
 
-/** Show what the hash names: a segment, or the picker */
+/** Show what the address names: a segment, or the picker */
 async function routeInspector(state) {
   if (!inspector.sessions) await loadSessions();
   const session = state.get("s");
@@ -483,11 +489,9 @@ window.addEventListener("app-route", (event) => {
   framePlayer.enabled = inspector.shown;
   if (inspector.shown) routeInspector(state);
 });
-$("i-back").onclick = () => {
-  location.hash = "#inspect";
-};
+$("i-back").onclick = () => navigate("/inspect");
 // The last view, for the app link after a reload
-document.querySelector('.app-nav [data-app="inspect"]').href = remembered(
-  "view",
-  "#inspect",
+document.querySelector('.app-nav [data-app="inspect"]').href = storedView(
+  "inspect",
+  remembered("view"),
 );

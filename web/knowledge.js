@@ -1,4 +1,4 @@
-// Cuttlefish's knowledge view (#cuttlefish/view=knowledge): managing what
+// Cuttlefish's knowledge view (/cuttlefish/knowledge): managing what
 // Cuttlefish knows. Imports (uploads into the inbox and its import report
 // included), what the store holds, documents, the asset browser and search,
 // through /api/cuttlefish/knowledge/... (see src/knowledge.rs). Questions

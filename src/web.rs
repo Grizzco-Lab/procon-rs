@@ -1,7 +1,9 @@
 //! Studio dashboard server: live controller view, video preview, recording controls
 //!
-//! - `GET /`, `/style.css`, `/app.js`, `/controller3d.js`, `/inspect.js`,
-//!   `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`,
+//! - `GET /` and every app path (`/studio`, `/inspect/...`, `/cuttlefish/...`,
+//!   `/vision/...`, `/predictor/...`, see [`APPS`]): the page, which shows
+//!   the app its path names; `/style.css`, `/app.js`, `/controller3d.js`,
+//!   `/inspect.js`, `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`,
 //!   `/translate.js`, `/vision.js`, `/predictor.js`, `/i18n.js`, `/i18n-zh.js`:
 //!   the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
@@ -106,7 +108,18 @@ pub async fn serve(
     let status = watch::Sender::new(String::new());
     tokio::spawn(publish_status(Arc::clone(&studio), status.clone()));
 
-    let index = warp::path::end().map(|| warp::reply::html(include_str!("../web/index.html")));
+    let index = warp::path::end().map(page);
+    // The page again under every app path, after the asset and API routes;
+    // other paths never get the page
+    let app_pages = warp::path::param::<String>()
+        .and(warp::path::tail())
+        .and_then(|app: String, _: warp::path::Tail| async move {
+            if APPS.contains(&app.as_str()) {
+                Ok(page())
+            } else {
+                Err(warp::reject::not_found())
+            }
+        });
     let style = warp::path!("style.css")
         .map(|| asset(include_str!("../web/style.css"), "text/css; charset=utf-8"));
     let script = warp::path!("app.js").map(|| {
@@ -295,7 +308,8 @@ pub async fn serve(
                 .or(scripts)
                 .or(icons)
                 .or(art)
-                .or(inspect),
+                .or(inspect)
+                .or(app_pages),
         )
         .or(websocket)
         .or(api)
@@ -413,6 +427,15 @@ fn embedded_dir(
                 content_type,
             ))
         })
+}
+
+/// The apps the page holds, each at `/<app>` with its state after it (see
+/// `appUrl` in `web/app.js`)
+const APPS: [&str; 5] = ["studio", "inspect", "cuttlefish", "vision", "predictor"];
+
+/// The dashboard page
+fn page() -> warp::reply::Html<&'static str> {
+    warp::reply::html(include_str!("../web/index.html"))
 }
 
 /// Reply with an embedded static file

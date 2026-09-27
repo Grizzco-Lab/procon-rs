@@ -1,5 +1,5 @@
 // Inline the icon set. Some browsers (Safari) do not draw
-// `<use href="icons/NAME.svg#i">` from another file, so each icon used on
+// `<use href="/icons/NAME.svg#i">` from another file, so each icon used on
 // the page is fetched once, copied into a hidden sprite as `#icon-NAME`, and
 // the `<use>` is pointed at that copy. Icons added later are handled too.
 (() => {
@@ -22,12 +22,9 @@
   /** Fetch icon `name` once and copy its drawing into the sprite */
   function symbol(name) {
     if (!symbols.has(name)) {
-      const url = new URL(`icons/${name}.svg`, document.baseURI);
-      if (location.pathname.startsWith("/icons/"))
-        url.pathname = `/icons/${name}.svg`;
       symbols.set(
         name,
-        fetch(url)
+        fetch(`/icons/${name}.svg`)
           .then((response) => response.text())
           .then((text) => {
             const svg = new DOMParser().parseFromString(text, "image/svg+xml");

@@ -4,13 +4,13 @@
 // scrubber with the comments as marks, neighbours every half second), with
 // the drawings and the danmaku as layers over it. Runs after i18n.js,
 // app.js, sketch.js and player.js and uses their helpers (t, $, Sketch,
-// Player, clock, escapeHtml). Its state lives in the hash:
-// #cuttlefish (the library: the reviews, "open a video" and the chat bar,
+// Player, clock, escapeHtml, appUrl). Its state lives in the address:
+// /cuttlefish (the library: the reviews, "open a video" and the chat bar,
 // whose first message starts a review without a video),
-// #cuttlefish/r=<review>&t=<s> (a saved review),
-// #cuttlefish/kind=<kind>&ref=<ref>&start_s=&end_s= (a video not reviewed
-// yet), #cuttlefish/view=translate (the translator, see translate.js) or
-// #cuttlefish/view=knowledge (the knowledge view, see knowledge.js). The
+// /cuttlefish/review/<review>?t=<s> (a saved review),
+// /cuttlefish/video?kind=<kind>&ref=<ref>&start_s=&end_s= (a video not
+// reviewed yet), /cuttlefish/translate (the translator, see translate.js) or
+// /cuttlefish/knowledge (the knowledge view, see knowledge.js). The
 // tab strip above the library, #cf-tabs, switches the three views.
 // Reviews are saved as JSON through /api/cuttlefish/reviews/<id>, each in a
 // folder of its own with its YouTube (or copied) video and its chat; the
@@ -135,7 +135,7 @@
       markLive(now);
       followLinks(now);
       if (player.playing) danmakuTick(now);
-      else writeHash();
+      else writeUrl();
     },
     onSeek() {
       clearDanmaku();
@@ -153,7 +153,7 @@
       } else {
         sketch.setEditable(true);
         danmakuLayer.classList.add("is-paused");
-        writeHash();
+        writeUrl();
       }
     },
     onMark(tick) {
@@ -206,7 +206,7 @@
   }
 
   /** The query naming a video, for the video and meta endpoints and the
-   * hash; with the review `id`, a video in its folder plays from there */
+   * address; with the review `id`, a video in its folder plays from there */
   function videoQuery(v, id) {
     const query = new URLSearchParams({ kind: v.kind, ref: v.ref });
     if (v.start_s != null) query.set("start_s", v.start_s);
@@ -306,9 +306,9 @@
   }
 
   /** The last view, for the app link after leaving or a reload */
-  function rememberView(hash) {
-    document.querySelector('.app-nav [data-app="cuttlefish"]').href = hash;
-    remember("view", hash);
+  function rememberView(url) {
+    document.querySelector('.app-nav [data-app="cuttlefish"]').href = url;
+    remember("view", url);
   }
 
   /** The top bar's chip: the video (a link to YouTube when it is one) and
@@ -348,7 +348,7 @@
     $("cf-player").hidden = true;
     $("cf-library").hidden = false;
     setChip("");
-    rememberView("#cuttlefish");
+    rememberView("/cuttlefish");
     loadSessions();
     loadReviews();
     pollDownloads();
@@ -488,7 +488,7 @@
           deleteReview(review.id, v?.file);
           return;
         }
-        location.hash = `#cuttlefish/${new URLSearchParams({ r: review.id })}`;
+        navigate(appUrl("cuttlefish", { r: review.id }));
       };
       body.append(tr);
     }
@@ -507,13 +507,13 @@
     loadReviews();
   }
 
-  function openReviewHash(id) {
-    location.hash = `#cuttlefish/${new URLSearchParams({ r: id })}`;
+  function openReviewUrl(id) {
+    navigate(appUrl("cuttlefish", { r: id }));
   }
 
   /** Open a video not reviewed yet */
-  function openVideoHash(v) {
-    location.hash = `#cuttlefish/${videoQuery(v)}`;
+  function openVideoUrl(v) {
+    navigate(appUrl("cuttlefish", videoQuery(v)));
   }
 
   function openError(message) {
@@ -528,11 +528,11 @@
   $("cf-form-session").onsubmit = (event) => {
     event.preventDefault();
     const v = pickedSession("cf-session", "cf-segment");
-    if (v) openVideoHash(v);
+    if (v) openVideoUrl(v);
   };
   $("cf-form-file").onsubmit = (event) => {
     event.preventDefault();
-    openVideoHash({ kind: "file", ref: $("cf-file").value.trim() });
+    openVideoUrl({ kind: "file", ref: $("cf-file").value.trim() });
   };
 
   /** Start downloading a YouTube range: into a new review, or into the
@@ -579,7 +579,7 @@
       attachVideo(stored.video);
       return;
     }
-    openReviewHash(id);
+    openReviewUrl(id);
   }
 
   $("cf-form-youtube").onsubmit = (event) => {
@@ -704,7 +704,7 @@
     drawChat();
     checkKey();
     if (!withVideo) {
-      writeHash(0);
+      writeUrl(0);
       pollDownloads();
       return;
     }
@@ -717,7 +717,7 @@
     sketch.setEditable(true);
     drawComments();
     drawMarkers();
-    writeHash(at);
+    writeUrl(at);
     lookForMeta(review, id, META_POLLS);
     try {
       const response = await fetch(
@@ -856,15 +856,15 @@
     sketch.set([]);
   }
 
-  function writeHash(at = player.time()) {
+  /** Keep the review and its playhead in the address, replacing the
+   * current history entry */
+  function writeUrl(at = player.time()) {
     if (!cf.review) return;
     const params = cf.id
       ? new URLSearchParams({ r: cf.id })
       : videoQuery(cf.review.video);
     if (cf.review.video && at > 0) params.set("t", at.toFixed(3));
-    const hash = `#cuttlefish/${params}`;
-    history.replaceState(null, "", hash);
-    rememberView(hash);
+    rememberView(replaceRoute("cuttlefish", params));
   }
 
   /** Pause at a time in seconds */
@@ -1358,16 +1358,16 @@
     }
   }
 
-  /** Name the open review if it has no folder yet, and put it in the hash */
+  /** Name the open review if it has no folder yet, and put it in the address */
   function ensureId() {
     if (!cf.id) {
       cf.id = newReviewId();
-      writeHash();
+      writeUrl();
     }
     return cf.id;
   }
 
-  /** Write the review; the first save names it and puts it in the hash */
+  /** Write the review; the first save names it and puts it in the address */
   function save() {
     cf.saveTimer = null;
     const review = cf.review;
@@ -1772,7 +1772,7 @@
   $("cf-add").onclick = () => addComment();
   $("cf-delete-shape").onclick = () => sketch.removeSelected();
   $("cf-back").onclick = () => {
-    location.hash = "#cuttlefish";
+    navigate("/cuttlefish");
   };
   for (const button of document.querySelectorAll(".cf-tools [data-tool]")) {
     button.onclick = () => setTool(button.dataset.tool);
@@ -1842,7 +1842,7 @@
   /** The views the tab strip switches, besides the library */
   const VIEWS = ["translate", "knowledge"];
 
-  /** Show what the hash names: a review, a video, the translate or
+  /** Show what the address names: a review, a video, the translate or
    * knowledge view, or the library */
   async function route(state) {
     const view = state.get("view");
@@ -1852,7 +1852,7 @@
       $("cf-player").hidden = true;
       $("cf-library").hidden = true;
       setChip("");
-      rememberView(`#cuttlefish/view=${view}`);
+      rememberView(`/cuttlefish/${view}`);
       clearTimeout(cf.pollTimer);
       clearTimeout(cf.listTimer);
       return;
@@ -1919,8 +1919,8 @@
   // Unsaved text is written before the page goes away
   window.addEventListener("pagehide", flushSave);
 
-  document.querySelector('.app-nav [data-app="cuttlefish"]').href = remembered(
-    "view",
-    "#cuttlefish",
+  document.querySelector('.app-nav [data-app="cuttlefish"]').href = storedView(
+    "cuttlefish",
+    remembered("view"),
   );
 })();

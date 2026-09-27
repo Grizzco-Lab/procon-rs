@@ -14,7 +14,7 @@
     <style>
       @font-face {
         font-family: "Lilita One";
-        src: url("../art/LilitaOne-Regular.ttf") format("truetype");
+        src: url("/art/LilitaOne-Regular.ttf") format("truetype");
         font-display: swap;
       }
       :root {
@@ -26,7 +26,7 @@
         margin: 0;
         padding: 16px;
         background:
-          url("../art/splat-tile.svg") 0 0 / 320px 320px,
+          url("/art/splat-tile.svg") 0 0 / 320px 320px,
           #11140f;
         color: var(--paper);
         font:
@@ -78,7 +78,7 @@
         border-bottom: 7px solid var(--band, #ff6a13);
         border-radius: 14px;
         background:
-          url("../art/panel-tile.svg") 0 0 / 240px 240px,
+          url("/art/panel-tile.svg") 0 0 / 240px 240px,
           #1c1f1a;
       }
       .card:nth-child(5n + 2) {
@@ -209,7 +209,7 @@
       one with
       <code
         >&lt;svg class="app-icon"&gt;&lt;use
-        href="icons/app-studio.svg#i"/&gt;&lt;/svg&gt;</code
+        href="/icons/app-studio.svg#i"/&gt;&lt;/svg&gt;</code
       >. Each icon carries its own colours; a theme tints them with
       <code>--icon-line</code> (outlines and pupils),
       <code>--icon-accent</code> (the one ink accent) and
@@ -235,7 +235,7 @@
       lists, and the tiles behind the page and inside the cards.
     </p>
     <div class="art" id="art"></div>
-    <script src="inline.js"></script>
+    <script src="/icons/inline.js"></script>
     <script>
       const PALETTE = [
         ["Workwear orange", "#ff6a13", "accent, active app, bands"],
@@ -309,7 +309,7 @@
         ],
       };
       const icon = (name, px) =>
-        `<svg width="${px}" height="${px}" viewBox="0 0 24 24"><use href="${name}.svg#i"/></svg>`;
+        `<svg width="${px}" height="${px}" viewBox="0 0 24 24"><use href="/icons/${name}.svg#i"/></svg>`;
       const THEMES = [
         ["studio", "Studio panel"],
         ["joy", "Joy panel"],
@@ -348,13 +348,13 @@
       document.getElementById("art").innerHTML =
         ART.map(
           ([name, caption]) =>
-            `<figure><img src="../art/${name}.svg" alt=""${name === "wordmark" ? ' style="height:70px"' : ""}><figcaption>${caption}</figcaption></figure>` +
+            `<figure><img src="/art/${name}.svg" alt=""${name === "wordmark" ? ' style="height:70px"' : ""}><figcaption>${caption}</figcaption></figure>` +
             (name === "wordmark"
               ? ""
-              : `<figure class="light"><img src="../art/${name}.svg" alt=""><figcaption>on paper</figcaption></figure>`),
+              : `<figure class="light"><img src="/art/${name}.svg" alt=""><figcaption>on paper</figcaption></figure>`),
         ).join("") +
-        `<figure><div class="tile" style="background:url(../art/splat-tile.svg) 0 0/320px 320px,#11140f"></div><figcaption>splat-tile.svg (page)</figcaption></figure>` +
-        `<figure><div class="tile" style="background:url(../art/panel-tile.svg) 0 0/240px 240px,#1c1f1a"></div><figcaption>panel-tile.svg (cards)</figcaption></figure>`;
+        `<figure><div class="tile" style="background:url(/art/splat-tile.svg) 0 0/320px 320px,#11140f"></div><figcaption>splat-tile.svg (page)</figcaption></figure>` +
+        `<figure><div class="tile" style="background:url(/art/panel-tile.svg) 0 0/240px 240px,#1c1f1a"></div><figcaption>panel-tile.svg (cards)</figcaption></figure>`;
     </script>
   </body>
 </html>
