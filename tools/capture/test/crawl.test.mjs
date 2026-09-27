@@ -1,7 +1,13 @@
 // The visit against a scripted page: which addresses are opened, what is
 // kept, what the state remembers, and what stops a run
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -310,13 +316,21 @@ test("a first visit: following, profiles, the Salmon Run threads", async () => {
   rmSync(dir, { recursive: true });
 });
 
-test("a dry run writes nothing", async () => {
+test("a dry run writes only the day's action count", async () => {
   const dir = join(mkdtempSync(join(tmpdir(), "xcap-crawl-")), "x");
   const page = new FakePage(firstVisit());
   const s = await crawl(page, dir, { dryRun: true }).run();
   assert.equal(s.kept, 2);
-  assert.equal(existsSync(dir), false);
   assert.equal(s.files.size, 0);
+  assert.deepEqual(
+    readdirSync(dir).filter((f) => f !== state.STATE_FILE),
+    [],
+  );
+  const st = state.load(dir);
+  assert.equal(st.day.actions, 16);
+  assert.deepEqual(st.seen, {});
+  assert.deepEqual(st.accounts, {});
+  rmSync(dir, { recursive: true });
 });
 
 test("the per-run thread limit and --accounts", async () => {

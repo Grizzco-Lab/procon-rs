@@ -74,7 +74,7 @@ cd ~/Developing/procon-rs                   # where config.toml is: the knowledg
 # 1. Once: sign in, in the window that opens (nothing is read while you type); the window closes when signed in
 node tools/capture/xcap.mjs login
 
-# 2. A dry run: browse a little, print what would be kept, write nothing
+# 2. A dry run: browse a little, print what would be kept, write nothing (but the day's action count)
 node tools/capture/xcap.mjs run --dry-run --max-actions 20
 
 # 3. A real run: the following list, the profiles, the Salmon Run threads (about an hour with the default caps)
@@ -228,7 +228,7 @@ node tools/capture/rednote.mjs login
 # Outside China the site sends you to rednote.com: give every command where you log in
 #   --site https://www.rednote.com
 
-# 2. A dry run: the following list, a creator's notes, a note or two, printed; nothing written
+# 2. A dry run: the following list, a creator's notes, a note or two, printed; nothing written but the day's action count
 node tools/capture/rednote.mjs run --dry-run --max-actions 20
 
 # 3. A real run: the following list, the creators, the Salmon Run notes with their comments

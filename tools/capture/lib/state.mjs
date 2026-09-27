@@ -51,6 +51,15 @@ export function save(dir, state) {
   renameSync(part, path);
 }
 
+/** Writes only the day's action count (`{day, actions}`) into the state
+ * of `tool` in `dir`, over what the file holds: a dry run's page actions
+ * count against the daily cap, but nothing it looked at is remembered */
+export function saveDay(dir, tool, day) {
+  const kept = load(dir, tool);
+  kept.day = { ...day };
+  save(dir, kept);
+}
+
 /** The account's record, made when first seen */
 export function account(state, handle) {
   state.accounts[handle] ??= {

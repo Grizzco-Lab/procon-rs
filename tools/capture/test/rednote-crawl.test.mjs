@@ -352,7 +352,7 @@ test("a first visit: the list, the Salmon Run notes with their comments", async 
   rmSync(dir, { recursive: true });
 });
 
-test("a dry run browses but writes nothing", async () => {
+test("a dry run browses but writes only the day's action count", async () => {
   const dir = scratch();
   const page = new FakePage(firstVisit());
   const c = crawl(page, dir, { creators: [A], dryRun: true });
@@ -360,8 +360,17 @@ test("a dry run browses but writes nothing", async () => {
   assert.equal(s.kept, 2);
   assert.ok(page.visited.includes(`click a[href*="${SR}"]`));
   assert.ok(c.lines.some((l) => l.includes("would keep")));
-  assert.equal(existsSync(dir), false);
+  assert.equal(existsSync(join(dir, A)), false);
   assert.equal(s.files.size, 0);
+  // Its page actions count against the daily cap; nothing else is kept
+  const st = state.load(dir, rn.TOOL);
+  assert.equal(st.day.actions, 11);
+  assert.deepEqual(st.seen, {});
+  assert.deepEqual(st.accounts, {});
+  // A real run after it carries the count on
+  await crawl(new FakePage(firstVisit()), dir, { creators: [A] }).run();
+  assert.equal(state.load(dir, rn.TOOL).day.actions, 22);
+  rmSync(dir, { recursive: true });
 });
 
 test("detail matching opens every new note and keeps the relevant ones", async () => {

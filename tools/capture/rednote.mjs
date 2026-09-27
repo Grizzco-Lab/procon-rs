@@ -72,7 +72,7 @@ What to read (run):
   --max-comments <n>       comments (with replies) loaded per note (default ${CRAWL.maxComments})
   --max-replies <n>        reply threads unfolded per note (default ${CRAWL.maxReplies})
   --list-scrolls <n>       scrolls down a creator's list, at most (default ${CRAWL.listScrolls})
-  --dry-run                browse and print; write nothing
+  --dry-run                browse and print; write nothing but the day's action count
 
 Pace (run):
   --delay <s-s>            seconds between page actions (default ${PACE.delay.join("-")})
@@ -320,7 +320,7 @@ async function run() {
   });
 
   log(
-    `knowledge folder ${knowledge}; notes go to ${dir}/<user id>/notes.jsonl${options.dryRun ? " (dry run: nothing is written)" : ""}`,
+    `knowledge folder ${knowledge}; notes go to ${dir}/<user id>/notes.jsonl${options.dryRun ? " (dry run: nothing is written but the day's action count)" : ""}`,
   );
   log(
     `pace: ${paceOptions.delay.join("-")} s between actions, a ${paceOptions.pause.join("-")} s pause every ${paceOptions.pauseEvery.join("-")}; at most ${paceOptions.maxActions ?? "any"} actions this run, ${paceOptions.dailyCap ?? "any"} today (${st.day.actions} used${st.day.day ? ` on ${st.day.day}` : ""}); about ${(estimateSeconds(6, paceOptions) / 60).toFixed(1)} min a note, ${(estimateSeconds(600, paceOptions) / 3600).toFixed(1)} h per 100 notes`,

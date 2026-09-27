@@ -112,8 +112,12 @@ export class Crawl {
     return responses.filter((r) => r.json);
   }
 
+  /** Saves the state; a dry run saves only the day's action count, so its
+   * page actions count against the daily cap too */
   save() {
-    if (!this.options.dryRun) state.save(this.dir, this.state);
+    if (this.options.dryRun)
+      state.saveDay(this.dir, state.TOOL, this.state.day);
+    else state.save(this.dir, this.state);
   }
 
   /** Runs the whole visit; the state is saved as it goes. Returns the

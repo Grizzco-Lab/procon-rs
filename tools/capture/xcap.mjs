@@ -59,7 +59,7 @@ What to read (run):
   --max-posts <n>          threads captured this run (default 60)
   --profile-scrolls <n>    scrolls down a profile, at most (default 8)
   --reply-scrolls <n>      scrolls down a post for more replies (default 1)
-  --dry-run                browse and print; write nothing
+  --dry-run                browse and print; write nothing but the day's action count
 
 Pace (run):
   --delay <s-s>            seconds between page actions (default 4-10)
@@ -249,7 +249,7 @@ async function run() {
   });
 
   log(
-    `knowledge folder ${knowledge}; posts go to ${dir}/<handle>/posts.jsonl${options.dryRun ? " (dry run: nothing is written)" : ""}`,
+    `knowledge folder ${knowledge}; posts go to ${dir}/<handle>/posts.jsonl${options.dryRun ? " (dry run: nothing is written but the day's action count)" : ""}`,
   );
   log(
     `pace: ${paceOptions.delay.join("-")} s between actions, a ${paceOptions.pause.join("-")} s pause every ${paceOptions.pauseEvery.join("-")}; at most ${paceOptions.maxActions} actions this run, ${paceOptions.dailyCap} today (${st.day.actions} used${st.day.day ? ` on ${st.day.day}` : ""}); about ${(estimateSeconds(paceOptions.maxActions, paceOptions) / 60).toFixed(0)} min if the run uses them all`,
