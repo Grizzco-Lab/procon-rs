@@ -31,6 +31,15 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
   key boxes (the 3D stage, the chat bar, the one-row top bar) in every theme,
   so layout breakage shows up before the user sees it.
 
+## Server
+
+- **Unknown paths answer 405, not 404**, because the POST-only routes reject
+  every other path first; `/favicon.ico` hits it too. Add a favicon (the app
+  icon) and a proper 404 for unknown paths.
+- **Inkspector frames sometimes fail with 400**: ffmpeg reports "non
+  monotonically increasing dts" for some frame ranges right after a restart
+  (reproduced with curl). Look at how windows are cut (seek, `-copyts`).
+
 ## Process
 
 - Test studios use `[video] input = ""` and scratch on disk
