@@ -1,5 +1,7 @@
 //! Studio dashboard server: live controller view, video preview, recording controls
 //!
+//! - `GET /favicon.ico`: the app icon (`web/icons/app-studio.svg`); unknown
+//!   paths answer 404, known ones asked with another method 405
 //! - `GET /` and every app path (`/studio`, `/inspect/...`, `/cuttlefish/...`,
 //!   `/vision/...`, `/predictor/...`, see [`APPS`]): the page, which shows
 //!   the app its path names; `/style.css`, `/app.js`, `/controller3d.js`,
@@ -108,7 +110,7 @@ pub async fn serve(
     let status = watch::Sender::new(String::new());
     tokio::spawn(publish_status(Arc::clone(&studio), status.clone()));
 
-    let index = warp::path::end().map(page);
+    let index = warp::path::end().and(warp::get()).map(page);
     // The page again under every app path, after the asset and API routes;
     // other paths never get the page
     let app_pages = warp::path::param::<String>()
@@ -119,22 +121,31 @@ pub async fn serve(
             } else {
                 Err(warp::reject::not_found())
             }
-        });
+        })
+        .and(warp::get());
     let style = warp::path!("style.css")
+        .and(warp::get())
         .map(|| asset(include_str!("../web/style.css"), "text/css; charset=utf-8"));
-    let script = warp::path!("app.js").map(|| {
+    let script = warp::path!("app.js").and(warp::get()).map(|| {
         asset(
             include_str!("../web/app.js"),
             "text/javascript; charset=utf-8",
         )
     });
-    let model = warp::path!("controller3d.js").map(|| {
+    // The app icon, for browsers that ask without reading the page's link
+    let favicon = warp::path!("favicon.ico").and(warp::get()).map(|| {
+        let icon = ICONS
+            .get_file("app-studio.svg")
+            .map_or(&[][..], |f| f.contents());
+        warp::reply::with_header(icon, "content-type", "image/svg+xml")
+    });
+    let model = warp::path!("controller3d.js").and(warp::get()).map(|| {
         asset(
             include_str!("../web/controller3d.js"),
             "text/javascript; charset=utf-8",
         )
     });
-    let inspect_script = warp::path!("inspect.js").map(|| {
+    let inspect_script = warp::path!("inspect.js").and(warp::get()).map(|| {
         asset(
             include_str!("../web/inspect.js"),
             "text/javascript; charset=utf-8",
@@ -164,13 +175,14 @@ pub async fn serve(
 
     // The icon set with its gallery (`/icons/`), and the artwork, theme and
     // font of the Salmon Run theme (`/art/`)
-    let icons = embedded_dir("icons", &ICONS);
-    let art = embedded_dir("art", &ART);
+    let icons = embedded_dir("icons", &ICONS).and(warp::get());
+    let art = embedded_dir("art", &ART).and(warp::get());
 
     let delay_inspector = Arc::clone(&inspector);
     let objects_inspector = Arc::clone(&inspector);
     // Inkspector data reads files and runs ffmpeg; keep that off the async workers
     let inspect = warp::path!("api" / "inspect" / String)
+        .and(warp::get())
         .and(warp::query::<HashMap<String, String>>())
         .and(warp::header::optional::<String>("range"))
         .and_then(
@@ -299,27 +311,28 @@ pub async fn serve(
             }
         });
 
-    let routes = warp::get()
-        .and(
-            index
-                .or(style)
-                .or(script)
-                .or(model)
-                .or(inspect_script)
-                .or(scripts)
-                .or(icons)
-                .or(art)
-                .or(inspect)
-                .or(app_pages),
-        )
+    // Each route checks its path before its method, so an unknown path is a
+    // 404 and only a known one asked with the wrong method is a 405; the
+    // apps' routes check the method first and are gated by their prefix
+    let routes = index
+        .or(favicon)
+        .or(style)
+        .or(script)
+        .or(model)
+        .or(inspect_script)
+        .or(scripts.and(warp::get()))
+        .or(icons)
+        .or(art)
+        .or(inspect)
+        .or(app_pages)
         .or(websocket)
         .or(api)
         .or(delay)
         .or(objects)
-        .or(follow::routes(follow))
-        .or(cuttlefish::routes(cuttlefish))
-        .or(vision::routes(vision))
-        .or(predictor::routes(predictor));
+        .or(under("api/inspect/follow").and(follow::routes(follow)))
+        .or(under("api/cuttlefish").and(cuttlefish::routes(cuttlefish)))
+        .or(under("api/vision").and(vision::routes(vision)))
+        .or(under("api/predictor").and(predictor::routes(predictor)));
     let routes = same_origin(web.allowed_hosts.clone())
         .and(routes)
         .recover(forbidden);
@@ -392,6 +405,21 @@ async fn forbidden(rejection: warp::Rejection) -> Result<impl warp::Reply, warp:
         }
         None => Err(rejection),
     }
+}
+
+/// Requests whose path is `prefix` or under it, for routes that check their
+/// method first: those reject every other path with 405, not 404
+fn under(prefix: &'static str) -> impl Filter<Extract = (), Error = warp::Rejection> + Clone {
+    warp::path::full()
+        .and_then(move |path: warp::path::FullPath| async move {
+            let rest = path.as_str().trim_start_matches('/');
+            match rest.strip_prefix(prefix) {
+                Some("") => Ok(()),
+                Some(tail) if tail.starts_with('/') => Ok(()),
+                _ => Err(warp::reject::not_found()),
+            }
+        })
+        .untuple_one()
 }
 
 /// The icon set (`web/icons/`): SVGs and the gallery page
