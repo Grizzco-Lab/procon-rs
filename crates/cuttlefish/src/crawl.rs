@@ -69,6 +69,11 @@ pub fn download(url: &str, dest: &Path) -> Result<()> {
 pub trait Http {
     /// GET a url, redirects followed; fails only when no answer came
     fn get(&mut self, url: &str) -> Result<Fetched>;
+    /// GET a url with `If-None-Match: <etag>`, so a server that still has
+    /// the same file answers 304 without a body; a fake may ignore the tag
+    fn get_if_none_match(&mut self, url: &str, _etag: &str) -> Result<Fetched> {
+        self.get(url)
+    }
     /// Waits `d` (a fake only records it)
     fn sleep(&mut self, d: Duration) {
         std::thread::sleep(d);
@@ -78,13 +83,13 @@ pub trait Http {
 /// Requests over the network, as [`user_agent`]
 pub struct Network(ureq::Agent);
 
-impl Http for Network {
-    fn get(&mut self, url: &str) -> Result<Fetched> {
-        let mut resp = self
-            .0
-            .get(url)
-            .call()
-            .with_context(|| alloc::format!("GET {url}"))?;
+impl Network {
+    fn call(&self, url: &str, etag: Option<&str>) -> Result<Fetched> {
+        let mut req = self.0.get(url);
+        if let Some(etag) = etag {
+            req = req.header("If-None-Match", etag);
+        }
+        let mut resp = req.call().with_context(|| alloc::format!("GET {url}"))?;
         let header = |name: &str| {
             resp.headers()
                 .get(name)
@@ -93,6 +98,7 @@ impl Http for Network {
         };
         let content_type = header("content-type").unwrap_or_default();
         let file_name = header("content-disposition").and_then(|d| disposition_name(&d));
+        let etag = header("etag");
         let final_url = resp.get_uri().to_string();
         let status = resp.status().as_u16();
         let body = resp
@@ -105,9 +111,20 @@ impl Http for Network {
             status,
             content_type,
             file_name,
+            etag,
             final_url,
             body,
         })
+    }
+}
+
+impl Http for Network {
+    fn get(&mut self, url: &str) -> Result<Fetched> {
+        self.call(url, None)
+    }
+
+    fn get_if_none_match(&mut self, url: &str, etag: &str) -> Result<Fetched> {
+        self.call(url, Some(etag))
     }
 }
 
@@ -163,10 +180,19 @@ impl Fetcher {
         self.http.sleep(d);
     }
 
-    /// GET with the politeness delay
-    fn get_raw(&mut self, url: &str, site: &str, crawl_delay: Option<f32>) -> Result<Fetched> {
+    /// GET with the politeness delay, conditional on `etag` when given
+    fn get_raw(
+        &mut self,
+        url: &str,
+        site: &str,
+        crawl_delay: Option<f32>,
+        etag: Option<&str>,
+    ) -> Result<Fetched> {
         self.wait(site, crawl_delay);
-        self.http.get(url)
+        match etag {
+            Some(etag) => self.http.get_if_none_match(url, etag),
+            None => self.http.get(url),
+        }
     }
 
     /// `url`'s site's `robots.txt` url and rules (`None`: it has none)
@@ -174,7 +200,7 @@ impl Fetcher {
         let robots_url =
             get_robots_url(url).map_err(|e| anyhow::anyhow!("bad url {url}: {e:?}"))?;
         if !self.robots.contains_key(&robots_url) {
-            let got = self.get_raw(&robots_url, &robots_url.clone(), None)?;
+            let got = self.get_raw(&robots_url, &robots_url.clone(), None, None)?;
             let robot = match got.status {
                 200..=299 => Some(Robot::new(ROBOTS_TOKEN, &got.body)?),
                 400..=499 => None,
@@ -214,11 +240,17 @@ impl Fetcher {
     /// Fetches a url whatever the server answers; fails only if
     /// `robots.txt` forbids it or the request does not complete
     pub fn fetch(&mut self, url: &str) -> Result<Fetched> {
+        self.fetch_if_changed(url, None)
+    }
+
+    /// [`Fetcher::fetch`] with `If-None-Match: <etag>` when an ETag of the
+    /// last copy is given: an unchanged file answers 304 with no body
+    pub fn fetch_if_changed(&mut self, url: &str, etag: Option<&str>) -> Result<Fetched> {
         let (site, allowed, delay) = self.check_robots(url)?;
         if !allowed {
             bail!("robots.txt disallows {url}");
         }
-        self.get_raw(url, &site, delay)
+        self.get_raw(url, &site, delay, etag)
     }
 
     /// Fetches a page as text; fails if `robots.txt` forbids it or the
@@ -240,6 +272,9 @@ pub struct Fetched {
     pub content_type: String,
     /// The file name `Content-Disposition` gives, if any
     pub file_name: Option<String>,
+    /// The `ETag` header, if any: names this copy for
+    /// [`Fetcher::fetch_if_changed`]
+    pub etag: Option<String>,
     /// The address that answered, after redirects
     pub final_url: String,
     /// The body (at most 50 MB)
@@ -250,6 +285,12 @@ impl Fetched {
     /// Whether the status is 2xx
     pub fn ok(&self) -> bool {
         (200..300).contains(&self.status)
+    }
+
+    /// Whether the server answered 304: the copy named by the ETag sent is
+    /// still current
+    pub fn unchanged(&self) -> bool {
+        self.status == 304
     }
 
     /// The body as text

@@ -99,7 +99,9 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::time::Duration;
 use cuttlefish::assets::{self, Catalogue};
+use cuttlefish::crawl::Fetcher;
 use cuttlefish::discord::Bot;
 use cuttlefish::doc::{Document, SourceKind};
 use cuttlefish::embed::{E5Embedder, Embedder};
@@ -112,7 +114,7 @@ use cuttlefish::notes::{self, Note};
 use cuttlefish::review::{self, ChatReply, ChatRequest};
 use cuttlefish::slang::{self, AliasEdit, SuggestOptions, TermEdit, UserGlossary};
 use cuttlefish::store::{self, Store};
-use cuttlefish::{deep_eval, inbox, lock, questions, tables, wiki};
+use cuttlefish::{deep_eval, inbox, leanny, lock, questions, tables, wiki};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -305,6 +307,16 @@ pub enum Source {
         #[serde(default = "yes")]
         threads: bool,
     },
+    /// Lean's Splatoon 3 datamine as fact cards (`cuttlefish::leanny`)
+    Leanny {
+        /// List the files and what the copies fetched so far would give;
+        /// fetch and store nothing
+        #[serde(default)]
+        dry_run: bool,
+        /// Also the weapon parameter files
+        #[serde(default = "yes")]
+        weapons: bool,
+    },
 }
 
 fn yes() -> bool {
@@ -449,6 +461,10 @@ impl IngestRequest {
                 }
                 Ok(format!("Discord channels {}", channels.join(", ")))
             }
+            Source::Leanny { dry_run, .. } => Ok(format!(
+                "{}Game data (Lean's datamine)",
+                if *dry_run { "Dry run: " } else { "" }
+            )),
         }
     }
 }
@@ -505,6 +521,7 @@ fn format_of(d: &Document) -> String {
         (None, Some(url)) => match (d.source, google::recognise(url)) {
             (SourceKind::Video, _) => "subtitles",
             (SourceKind::Discord | SourceKind::DiscordVodReview, _) => "messages",
+            (SourceKind::GameData, _) => "card",
             (_, Some(GoogleFile::Doc(_))) => "google-doc",
             (_, Some(GoogleFile::Sheet { .. })) => "google-sheet",
             (_, Some(GoogleFile::Slides(_))) => "google-slides",
@@ -513,6 +530,25 @@ fn format_of(d: &Document) -> String {
         .to_string(),
         (None, None) => "other".to_string(),
     }
+}
+
+/// Whom the store's game-data cards credit: Lean's datamine, with the
+/// number of cards from it, its address and its terms (empty without any)
+fn credits(docs: &[Document]) -> Vec<Value> {
+    let cards = docs
+        .iter()
+        .filter(|d| d.source == SourceKind::GameData)
+        .count();
+    if cards == 0 {
+        return Vec::new();
+    }
+    vec![json!({
+        "name": "Lean (@LeanYoshi)",
+        "what": "Splatoon 3 datamine: Salmon Run data and Eggstra Work scenarios",
+        "url": leanny::SITE,
+        "documents": cards,
+        "license": leanny::LICENSE,
+    })]
 }
 
 /// Unix time in ms
@@ -851,6 +887,7 @@ impl Knowledge {
             "inbox": inbox::pending(&self.root),
             "reports": reports,
             "moved_aside": store::moved_aside(&store::legacy_root()),
+            "credits": credits(&docs),
         }))
     }
 
@@ -1130,7 +1167,8 @@ impl Knowledge {
     /// stopped
     fn run_import(&self, id: u64, request: &IngestRequest) -> Result<usize> {
         let dry_run = matches!(&request.source, Source::Wiki(w) if w.dry_run)
-            || matches!(&request.source, Source::Site(s) if s.dry_run);
+            || matches!(&request.source, Source::Site(s) if s.dry_run)
+            || matches!(&request.source, Source::Leanny { dry_run: true, .. });
         let _lock = if dry_run {
             None
         } else {
@@ -1189,6 +1227,21 @@ impl Knowledge {
             }
             Source::DiscordBot { channels, threads } => Bot::from_env()
                 .and_then(|bot| ingest::discord_bot(&mut sink, &bot, channels, *threads, meta)),
+            Source::Leanny { dry_run, weapons } => {
+                let options = leanny::Options {
+                    dry_run: *dry_run,
+                    refresh: meta.refresh,
+                    weapons: *weapons,
+                };
+                let mut fetcher = Fetcher::new(Duration::from_secs_f32(leanny::DEFAULT_DELAY_S));
+                let result = leanny::ingest(&mut sink, &self.root, &mut fetcher, &options, meta);
+                // The name table joins the glossary
+                loaded.store.write().unwrap().reload_glossary()?;
+                result.map(|summary| {
+                    self.update(id, |job| job.summary = Some(summary.to_string()));
+                    summary.cards
+                })
+            }
         };
         if sink.unsaved > 0 {
             loaded.store.read().unwrap().save()?;
@@ -1209,6 +1262,10 @@ struct JobSink<'a> {
 impl ingest::Sink for JobSink<'_> {
     fn has(&self, key: &str) -> bool {
         self.loaded.store.read().unwrap().has(key)
+    }
+
+    fn has_id(&self, id: &str) -> bool {
+        self.loaded.store.read().unwrap().has_id(id)
     }
 
     fn has_table(&self, key: &str) -> bool {
@@ -2003,6 +2060,20 @@ mod tests {
                 .is_err()
         );
         assert!(request(r#"{"kind": "web"}"#).unwrap().check().is_err());
+        let mut lean = request(r#"{"kind": "leanny", "dry_run": true}"#).unwrap();
+        assert_eq!(
+            lean.check().unwrap(),
+            "Dry run: Game data (Lean's datamine)"
+        );
+        assert!(matches!(
+            lean.source,
+            Source::Leanny {
+                dry_run: true,
+                weapons: true
+            }
+        ));
+        let mut lean = request(r#"{"kind": "leanny", "weapons": false}"#).unwrap();
+        assert_eq!(lean.check().unwrap(), "Game data (Lean's datamine)");
         assert!(
             request(r#"{"kind": "web", "urls": ["file:///etc/passwd"]}"#)
                 .unwrap()

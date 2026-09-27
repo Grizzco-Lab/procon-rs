@@ -264,7 +264,12 @@ names, one line per message as \"[date] reviewer: comment\", with times of that 
 video (1:20) or of the wave timer (W2 :50 means 50 s left in wave 2); quote such \
 advice by reviewer and year (\"Centritide, 2023: ...\"). An excerpt labelled \
 [Splatoon 2 era] is about Splatoon 2's Salmon Run: say so when you use it, and \
-prefer Splatoon 3 material where the games differ.
+prefer Splatoon 3 material where the games differ. A game-data excerpt (source \
+game-data) is a fact card of numbers extracted from the game's files by Lean's \
+datamine (leanny.github.io): its numbers are exact for the game version it names, \
+so quote them as facts, with the version, and credit Lean when you rely on one. \
+A number a fact card does not hold (a Salmonid's hit points, say) is still not \
+yours to invent: say the data does not give it.
 The expert_comments block holds single #vod-review comments of high-level \
 players, each labelled like \"Centritide, 2023 (S3), about a W2 :50 moment\", \
 found because their moment resembles the one asked about. They were said about \

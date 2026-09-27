@@ -26,6 +26,7 @@
     discord: "k.source.discord",
     file: "k.source.file",
     "expert-note": "k.source.expertNote",
+    "game-data": "k.source.gameData",
   };
 
   /** Document formats as shown: names, or i18n keys (`k.`); others are
@@ -42,6 +43,7 @@
     subtitles: "k.format.subtitles",
     messages: "k.format.messages",
     note: "k.format.note",
+    card: "k.format.card",
     file: "k.source.file",
     other: "k.format.other",
   };
@@ -214,6 +216,8 @@
   function goLabel() {
     if (k.kind === "inbox") return t("k.inbox.import");
     if (k.kind === "wiki" && $("k-dry-run").checked) return t("k.countPages");
+    if (k.kind === "leanny" && $("k-leanny-dry").checked)
+      return t("k.leanny.check");
     return t("k.import");
   }
 
@@ -259,9 +263,11 @@
     showFields();
   });
 
-  $("k-dry-run").addEventListener("change", () => {
-    $("k-import-go").textContent = goLabel();
-  });
+  for (const id of ["k-dry-run", "k-leanny-dry"]) {
+    $(id).addEventListener("change", () => {
+      $("k-import-go").textContent = goLabel();
+    });
+  }
 
   const lines = (id) =>
     $(id)
@@ -326,6 +332,11 @@
         kind: "discord-bot",
         channels: lines("k-channels"),
         threads: $("k-threads").checked,
+      },
+      leanny: {
+        kind: "leanny",
+        dry_run: $("k-leanny-dry").checked,
+        weapons: $("k-leanny-weapons").checked,
       },
     }[k.kind];
     request.meta = {
@@ -781,6 +792,13 @@
           `<p class="notice is-info">${t("k.ov.movedAside", { path: `<span class="path">${escapeHtml(path)}</span>` })}</p>`,
       )
       .join("");
+    // Whom the game-data cards credit
+    const credits = (o.credits ?? [])
+      .map(
+        (c) =>
+          `<li>${escapeHtml(t("k.ov.credit", { n: c.documents, name: c.name, what: c.what }))} <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.url.replace(/^https?:\/\//, ""))} ↗</a><br /><span class="panel-note">${escapeHtml(c.license)}</span></li>`,
+      )
+      .join("");
     $("k-overview").innerHTML = `${aside}
       <div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.documents"))} <b class="num">${o.documents.total}</b></h3>
         <div class="k-counts">${counts(o.documents.sources, sourceName, t("k.ov.bySource"))}</div>
@@ -793,7 +811,8 @@
       <div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.kind.inbox"))}</h3>
         <p class="panel-note">${escapeHtml(t("k.ov.inboxNote", { files: o.inbox.files, size: size(o.inbox.bytes), n: o.inbox.new }))} · <span class="path">${escapeHtml(o.inbox.folder)}</span></p></div>
       <div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.ov.reports"))}</h3>
-        ${reports ? `<ul class="k-reports">${reports}</ul>` : `<p class="panel-note">${escapeHtml(t("k.ov.noReports"))}</p>`}</div>`;
+        ${reports ? `<ul class="k-reports">${reports}</ul>` : `<p class="panel-note">${escapeHtml(t("k.ov.noReports"))}</p>`}</div>
+      ${credits ? `<div class="k-ov-block"><h3 class="readout-label">${escapeHtml(t("k.ov.credits"))}</h3><ul class="k-tables">${credits}</ul></div>` : ""}`;
   }
 
   $("k-overview").addEventListener("click", (event) => {

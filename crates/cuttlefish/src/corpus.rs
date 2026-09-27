@@ -24,6 +24,7 @@
 use crate::discord::{self, Channel, Message, MessageRow, VideoFrom, attachment_id};
 use crate::discord_media::{MEDIA, Manifest};
 use crate::doc::doc_id;
+use crate::eggstra;
 use crate::game::{self, Game};
 use crate::inbox::INBOX;
 use crate::moments::{Moment, MomentKind};
@@ -271,6 +272,11 @@ pub struct Vod {
     pub posted: DateTime<Utc>,
     pub game: Game,
     pub game_from: GameFrom,
+    /// The Eggstra Work event the VOD was probably played in: posted
+    /// during the shift or the week after it ([`crate::eggstra::event_at`],
+    /// from the events table `cuttlefish ingest leanny` writes)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eggstra_event: Option<u8>,
     pub video: Video,
     /// More videos of the same post
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -625,6 +631,9 @@ pub struct Corpus {
 /// (`media/youtube/`) and the wave tables beside the videos
 pub fn build(knowledge: &Path) -> Result<Corpus> {
     let youtube_dir = knowledge.join(YOUTUBE_DIR);
+    let events = eggstra::read_events(knowledge)?
+        .map(|e| e.events)
+        .unwrap_or_default();
     let mut vods = Vec::new();
     for src in sources(knowledge)? {
         let local = |id: &str| {
@@ -712,6 +721,7 @@ pub fn build(knowledge: &Path) -> Result<Corpus> {
                 posted: poster.timestamp,
                 game,
                 game_from,
+                eggstra_event: eggstra::event_at(&events, poster.timestamp),
                 video,
                 other_videos: videos,
                 messages,
@@ -781,6 +791,9 @@ pub struct Stats {
     pub needs_hud: usize,
     /// VODs whose video has a wave table
     pub with_wave_table: usize,
+    /// VODs probably from an Eggstra Work event, per event number
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub eggstra: BTreeMap<u8, usize>,
 }
 
 impl Stats {
@@ -815,6 +828,9 @@ impl Stats {
                 .is_some_and(|v| table_path(&v).is_file())
             {
                 s.with_wave_table += 1;
+            }
+            if let Some(n) = vod.eggstra_event {
+                *s.eggstra.entry(n).or_default() += 1;
             }
             s.comments += vod.comments();
             s.max_comments = s.max_comments.max(vod.comments());
@@ -871,7 +887,21 @@ impl fmt::Display for Stats {
             f,
             "{} aligned now ({} through wave tables, {} VODs have one); {} wave timers wait for the HUD",
             self.aligned, self.aligned_by_hud, self.with_wave_table, self.needs_hud
-        )
+        )?;
+        if !self.eggstra.is_empty() {
+            let per: Vec<String> = self
+                .eggstra
+                .iter()
+                .map(|(n, count)| alloc::format!("#{n}: {count}"))
+                .collect();
+            write!(
+                f,
+                "\n{} VODs probably from Eggstra Work ({})",
+                self.eggstra.values().sum::<usize>(),
+                per.join(", ")
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -1251,6 +1281,55 @@ pub(crate) mod tests {
         // Told to stop before the first
         let done = align(&corpus, &root, true, &|| true, &mut |_| ()).unwrap();
         assert!(done.stopped);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn tags_vods_posted_during_or_just_after_an_eggstra_work_event() {
+        let root = fixture("eggstra");
+        let at = |s: &str| s.parse::<DateTime<Utc>>().unwrap();
+        // A shift two days before souper's post, and one long before Cy's
+        let event = |number: u8, start: &str| eggstra::Event {
+            number,
+            start: at(start),
+            end: at(start) + chrono::Duration::hours(eggstra::SHIFT_HOURS),
+            stage: String::from("Sockeye Station"),
+            weapons: Vec::new(),
+            specials: Vec::new(),
+            waves: Vec::new(),
+            scenario: Some(number),
+            url: None,
+            prize: None,
+            thresholds: Vec::new(),
+            note: None,
+        };
+        eggstra::write_events(
+            &root,
+            &eggstra::Events {
+                built_at: at("2026-09-26T00:00:00Z"),
+                sources: Vec::new(),
+                events: alloc::vec![
+                    event(1, "2023-04-29T00:00:00Z"),
+                    event(2, "2023-05-20T00:00:00Z"),
+                ],
+            },
+        )
+        .unwrap();
+        let corpus = build(&root).unwrap();
+        assert_eq!(corpus.vods[0].eggstra_event, None);
+        assert_eq!(corpus.vods[1].eggstra_event, Some(1));
+        assert_eq!(corpus.vods[2].eggstra_event, None);
+        let stats = Stats::of(&corpus, &root);
+        assert_eq!(stats.eggstra.get(&1), Some(&1));
+        assert!(
+            stats
+                .to_string()
+                .ends_with("1 VODs probably from Eggstra Work (#1: 1)"),
+            "{stats}"
+        );
+        // Written and read back with the tag
+        write(&root, &corpus).unwrap();
+        assert_eq!(read(&root).unwrap().vods[1].eggstra_event, Some(1));
         std::fs::remove_dir_all(&root).unwrap();
     }
 

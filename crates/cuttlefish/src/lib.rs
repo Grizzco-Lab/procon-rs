@@ -20,6 +20,9 @@
 //! a review of the studio ([`corpus_reviews`]); each reviewer's comment is
 //! a unit of retrieval of its own ([`expert`]), found for a moment through
 //! a text summary of it ([`situation`]: controller input, HUD, objects).
+//! Lean's Splatoon 3 datamine becomes fact cards of exact game numbers
+//! ([`leanny`]) and the Eggstra Work events table ([`eggstra`]), which tags
+//! the VODs played in them.
 //! [`review::Reviewer`] retrieves what is relevant to a moment or question
 //! and asks the model through the Anthropic Messages API or the Claude Code
 //! CLI ([`llm`], [`claude_cli`]). The player's own corrections are expert
@@ -43,6 +46,7 @@ pub mod discord;
 pub mod discord_fetch;
 pub mod discord_media;
 pub mod doc;
+pub mod eggstra;
 pub mod embed;
 pub mod env_file;
 pub mod eval;
@@ -55,6 +59,7 @@ pub mod html;
 pub mod inbox;
 pub mod index;
 pub mod ingest;
+pub mod leanny;
 pub mod llm;
 pub mod lock;
 pub mod messages;

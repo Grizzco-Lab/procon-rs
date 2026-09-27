@@ -39,6 +39,8 @@ cuttlefish corpus align                    # read the HUD of the videos on disk 
 cuttlefish corpus reviews                  # a studio review per VOD on disk, the community's comments at their moments
 cuttlefish corpus index                    # every reviewer comment as an expert comment of its own in the store
 cuttlefish corpus retrieval                # how well a moment's summary alone finds expert comments (no model)
+cuttlefish ingest leanny --dry-run         # Lean's Splatoon 3 datamine: list the files, fetch nothing
+cuttlefish ingest leanny                   # fact cards of exact game numbers and the Eggstra Work events; re-runs fetch only changed files
 
 cuttlefish search "バクダンの処理"          # top-k chunks with sources; any language
 cuttlefish glossary "Steelhead"            # a term's names and definition
@@ -91,7 +93,10 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
                      beside a video: its waves read from the HUD (`corpus align`)
   corpus/vod-review.jsonl
                      the #vod-review corpus, one reviewed VOD per line (`corpus build`)
-  raw/<kind>/        pages, subtitles, exports as received
+  corpus/eggstra_events.json
+                     the Eggstra Work events: dates, stage, weapons, waves (`ingest leanny`)
+  raw/<kind>/        pages, subtitles, exports as received; raw/leanny/ holds
+                     Lean's data files with their ETags (state.json)
   docs/<id>.json     processed documents with source, url or inbox path, title,
                      language, license, attribution, revision (wiki pages),
                      fetch time, weight and text
@@ -243,6 +248,7 @@ skipped and why, failed, gone.
 | YouTube | `ingest youtube <video/playlist/channel>` | `yt-dlp` fetches subtitles and metadata only; uploaded subtitles preferred over auto captions |
 | Discord #vod-review | `ingest discord-export`, `ingest discord-bot`, or `fetch discord` + `ingest inbox` | The export and the bot are the sanctioned ways; `fetch discord` reads with your own account, against Discord's terms. See below |
 | Twitter/X, Twitch | not automated | X's API terms and pricing rule out scraping; save the posts or threads you value as text and `ingest file`. Twitch VODs have no subtitles (a speech-to-text step would be needed) |
+| Lean's Splatoon 3 datamine (leanny.github.io) | `ingest leanny` (the studio: **Game data (Lean)**) | Fact cards of exact game numbers (source kind `game-data`, weight 1.1) and the Eggstra Work events table; no licence, the data is Nintendo's: fetched at run time, private study only. See "Game data" |
 
 **Google Docs, Sheets and Slides.** Their pages are drawn by JavaScript, so
 the page itself holds only a shell ("This browser version is no longer
@@ -716,6 +722,104 @@ cuttlefish corpus index                       # expert comments; again after bui
 cuttlefish corpus retrieval                   # the check above
 ```
 
+#### Game data: Lean's Splatoon 3 datamine
+
+[Lean](https://leanny.github.io/) (@LeanYoshi) publishes the game's data
+files as JSON (the `Leanny/splat3` repository behind
+`leanny.github.io/splat3/`) and, for every Eggstra Work event, a scenario
+page (`eggstra_work/coop_event_NN.html`, data in
+`eggstrawork/EggstraWorkNN.js`): stage, weapons, specials, the five waves'
+tide and occurrence and the boss spawn schedule per hazard level. Thanks
+to Lean for all of it. `cuttlefish ingest leanny` (`leanny.rs`,
+`eggstra.rs`; the studio's **Game data (Lean)** import) fetches what
+matters for Salmon Run and stores **fact cards**, one document per
+entity, with source kind `game-data` (weight 1.1), the version of the
+game the data is from (`versions.json`, `11.3.0` in September 2026) and
+Lean's credit in every card:
+
+- `CoopEnemyInfo`: one card per Salmonid (26): category (`Rare` is a Boss
+  Salmonid, `Boss` a King, `Zako` a lesser), the most on the field at once,
+  power eggs per hit and on a kill, the Kings' HP coefficient per hazard
+  level. Hit points are not in the published data, and the card says so.
+- `CoopSceneInfo`: one card per stage (14, the Big Run stages included),
+  with the Eggstra Work events held there.
+- `WeaponInfoMain` (the `_Coop` rows, 71) and `WeaponInfoSpecial` (11
+  `_Coop` rows): one card per Salmon Run weapon and special, with its
+  battle weapon's key, whether it is a Grizzco weapon and the Eggstra Work
+  events it was in; the weapon's card also holds its parameters
+  (`data/parameter/<version>/weapon/Weapon<Name>_Coop.game__GameParameterTable.json`
+  merged into its parent table, `--no-weapons` skips these files: about
+  160 requests the first time).
+- `spl__CoopLevelsConfig`: one card per hazard level (9): the wave and
+  known-occurrence parameters at that difficulty (Rush speed, the
+  Mothership's HP, tornado eggs per box, quotas).
+- Eggstra Work: one overview card per event (dates, stage, weapons,
+  specials, waves, Inkipedia's participation reward and high score
+  thresholds) and one card per wave with the spawn schedule at every
+  hazard level the data holds (the wave timer's seconds left, the boss,
+  the spawn point of Lean's map; Rush and Griller waves their target
+  order, Goldie Seeking its gushers, the Mothership its boxes, Giant
+  Tornado its drop points). Names come from the game's language files
+  (`EUen`, `JPja`, `CNzh`), so every card names its things in English,
+  Japanese and Simplified Chinese next to the internal key
+  (`SakelienBomber`, `Shooter_Normal_Coop`).
+
+Lean's scenarios carry no dates. Those come from Inkipedia's
+[List of Eggstra Work shifts in Splatoon 3](https://splatoonwiki.org/wiki/List_of_Eggstra_Work_shifts_in_Splatoon_3)
+(one API request, CC BY-SA 4.0): the shifts in order are the events, each
+48 hours from its start day (00:00 UTC), and Lean's scenario of the same
+number is attached when its stage is the shift's (a mismatch is logged).
+An event without a scenario page (a rerun of an earlier one, as #13 and
+#14 were) gets an overview card from Inkipedia's row. The result is
+**`corpus/eggstra_events.json`**: number, start and end, stage, weapons,
+specials, a wave summary, the scenario number and Lean's page. `corpus
+build` reads it and tags every VOD posted during a shift or in the week
+after it with `eggstra_event: N` (probable); the counts show in its
+stats, the review's origin (`source.eggstra_event`) and the library
+("probably Eggstra Work #7").
+
+The same run writes a **name table** (`terms/`, source `leanny:names`):
+Salmonids, stages, Salmon Run weapons (with their battle weapon's key) and
+specials with their names in the three languages and the internal keys as
+origins, so the glossary's Steelhead gains `SakelienBomber` and an icon
+named `Wst_Shooter_Normal_00.png` links to the Splattershot. (stat.ink's
+icons are named by stat.ink's own keys, `bakudan`, `52gal`; Lean's data
+does not map those, so they stay unlinked.)
+
+**Terms.** The repositories state no licence and the data is Nintendo's,
+extracted by Lean. Nothing of it is in this repository: the files are
+fetched at run time into `raw/leanny/` (each with its ETag in
+`state.json`), and every card records "No licence stated: Splatoon 3 game
+data © Nintendo, extracted and published by Lean (leanny.github.io);
+private study only" as its license and Lean as its attribution; the
+Knowledge overview shows a credits line while such cards are stored.
+
+**Politeness and re-runs.** One request at a time through the crawler
+(`--delay-s`, 1.5 s by default; `robots.txt` obeyed, the site has none),
+about 20 requests without the weapon parameters, about 180 with them. A
+re-run asks for each file with `If-None-Match`; GitHub Pages answers 304
+for an unchanged file, so nothing is downloaded and, when nothing changed
+and every card is stored, nothing is embedded again (`--refresh` rebuilds
+the cards anyway). Event pages are probed upward until the first 404, so
+a new event is picked up by the next run. `--dry-run` (the studio's
+checkbox) fetches nothing: it lists the files with their state and what
+the copies fetched so far would give.
+
+**In prompts.** A `game-data` excerpt is labelled as such; the persona
+treats its numbers as exact for the version they name and credits Lean,
+while a number the cards lack (hit points) is still not to be invented.
+`web/demo-questions.js` holds demo questions the cards answer with exact
+numbers, in English and Chinese, plus a few that need the #vod-review
+knowledge too; the chat shows three of them at random among its chips.
+
+```bash
+cuttlefish ingest leanny --dry-run      # the files and their state; nothing fetched
+cuttlefish ingest leanny                # about 180 requests the first time, then only changed files
+cuttlefish ingest leanny --no-weapons   # without the weapon parameter files
+cuttlefish corpus build                 # tags the VODs with their probable Eggstra Work event
+cuttlefish search "Eggstra Work #7 wave 3"
+```
+
 **Whole wikis and sites** (`wiki.rs`). Both are as polite as the rest: one
 request at a time, `--delay-s` (default 2 s, at least 1) or the site's
 `Crawl-delay` when longer, every `robots.txt` rule for `Cuttlefish` (else
@@ -1059,8 +1163,8 @@ never loses them (`term-reset` drops one). CLI: `cuttlefish slang suggest
 [--dry-run]` and `cuttlefish slang move [--dry-run]`.
 
 **4. Source quality.** Each document has a weight: expert notes 1.3,
-#vod-review 1.2, guides 1.15, wikis/Discord/files 1.0, web pages and video
-transcripts 0.9 (`--weight` overrides). Ranking adds 0.1 x (weight - 1) to the cosine, which
+#vod-review 1.2, guides 1.15, game-data fact cards 1.1, wikis/Discord/files
+1.0, web pages and video transcripts 0.9 (`--weight` overrides). Ranking adds 0.1 x (weight - 1) to the cosine, which
 reorders close matches without burying a clearly better one, and takes
 0.02 off a source of the Splatoon 2 era (`game.rs`: Discord conversations
 get their era from their date at import, and every document may carry

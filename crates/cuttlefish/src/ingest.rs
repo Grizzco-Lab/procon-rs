@@ -70,6 +70,11 @@ impl Meta {
 pub trait Sink {
     /// Whether the document of this url or path is stored already
     fn has(&self, key: &str) -> bool;
+    /// Whether the document with this id ([`Document::id`]) is stored; a
+    /// sink that cannot tell says no, and the importer stores again
+    fn has_id(&self, _id: &str) -> bool {
+        false
+    }
     /// Whether the name table of this url (a Google Sheet's tab) is stored
     /// already ([`crate::tables::has`])
     fn has_table(&self, _key: &str) -> bool {

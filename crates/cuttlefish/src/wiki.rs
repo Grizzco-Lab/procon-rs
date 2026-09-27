@@ -793,6 +793,7 @@ mod tests {
                 status,
                 content_type: String::from(content_type),
                 file_name: None,
+                etag: None,
                 final_url: String::from(url),
                 body: body.into_bytes(),
             })

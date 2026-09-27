@@ -31,6 +31,9 @@ pub enum SourceKind {
     /// An expert note the player wrote or corrected by hand
     /// ([`crate::notes`])
     ExpertNote,
+    /// A fact card of numbers extracted from the game's files
+    /// ([`crate::leanny`]): exact, and presented as such
+    GameData,
 }
 
 impl SourceKind {
@@ -42,6 +45,7 @@ impl SourceKind {
             SourceKind::ExpertNote => 1.3,
             SourceKind::DiscordVodReview => 1.2,
             SourceKind::Guide => 1.15,
+            SourceKind::GameData => 1.1,
             SourceKind::Wiki | SourceKind::Discord | SourceKind::File => 1.0,
             SourceKind::Web | SourceKind::Video => 0.9,
         }

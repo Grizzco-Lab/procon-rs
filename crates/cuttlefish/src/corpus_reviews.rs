@@ -47,6 +47,10 @@ pub struct Origin {
     /// The video's link as posted (a review)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<String>,
+    /// The Eggstra Work event the VOD was probably played in (a review;
+    /// [`crate::corpus::Vod::eggstra_event`])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eggstra_event: Option<u8>,
 }
 
 impl Origin {
@@ -56,6 +60,7 @@ impl Origin {
             from: String::from(FROM_DISCORD),
             url: String::from(url),
             video: None,
+            eggstra_event: None,
         }
     }
 }
@@ -293,6 +298,7 @@ pub fn review_value(vod: &Vod, knowledge: &Path) -> Result<Value> {
     }
     let mut source = Origin::discord(&vod.url);
     source.video = Some(vod.video.url.clone());
+    source.eggstra_event = vod.eggstra_event;
     Ok(json!({
         "video": video,
         "title": title(vod),

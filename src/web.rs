@@ -172,6 +172,7 @@ pub async fn serve(
             "predictor.js" => include_str!("../web/predictor.js"),
             "i18n.js" => include_str!("../web/i18n.js"),
             "i18n-zh.js" => include_str!("../web/i18n-zh.js"),
+            "demo-questions.js" => include_str!("../web/demo-questions.js"),
             _ => return Err(warp::reject::not_found()),
         };
         Ok(asset(body, "text/javascript; charset=utf-8"))

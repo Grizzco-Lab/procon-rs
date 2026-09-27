@@ -1971,7 +1971,52 @@
                 >
                   Discord bot
                 </button>
+                <button
+                  type="button"
+                  class="mode-toggle"
+                  data-kind="leanny"
+                  data-i18n="k.kind.leanny"
+                >
+                  Game data (Lean)
+                </button>
               </div>
+              <p class="panel-note" data-for="leanny">
+                <span data-i18n="k.leanny.note"
+                  >Fact cards of exact numbers from Lean's Splatoon 3 datamine:
+                  Salmonids, stages, Salmon Run weapons and specials, hazard
+                  levels, and every Eggstra Work event with its waves and spawns
+                  (dates from Inkipedia). Fetched politely from leanny.github.io
+                  into the knowledge folder, files only when they changed;
+                  private study only, the data is Nintendo's. Thanks to
+                  Lean.</span
+                >
+                <a
+                  href="https://leanny.github.io/"
+                  target="_blank"
+                  rel="noopener"
+                  >leanny.github.io ↗</a
+                >
+              </p>
+              <label
+                class="check"
+                data-for="leanny"
+                title="Lists the files with their state and what the copies fetched so far would give; fetches and stores nothing"
+                data-i18n-title="k.leanny.dryRunTitle"
+                ><input type="checkbox" id="k-leanny-dry" />
+                <span data-i18n="k.leanny.dryRun"
+                  >Dry run: list the files first</span
+                ></label
+              >
+              <label
+                class="check"
+                data-for="leanny"
+                title="The parameter tables of the Salmon Run weapons: about 160 more requests the first time"
+                data-i18n-title="k.leanny.weaponsTitle"
+                ><input type="checkbox" id="k-leanny-weapons" checked />
+                <span data-i18n="k.leanny.weapons"
+                  >With the weapon parameters</span
+                ></label
+              >
               <div class="k-inbox" data-for="inbox">
                 <p class="panel-note">
                   <span data-i18n="k.inbox.intro"
@@ -2306,6 +2351,9 @@
                     Discord
                   </option>
                   <option value="file" data-i18n="k.source.file">File</option>
+                  <option value="game-data" data-i18n="k.source.gameData">
+                    Game data
+                  </option>
                 </select>
                 <input
                   class="select cf-grow"
@@ -3338,6 +3386,7 @@
     <script src="/icons/inline.js"></script>
     <script src="/i18n.js"></script>
     <script src="/i18n-zh.js"></script>
+    <script src="/demo-questions.js"></script>
     <script src="/app.js"></script>
     <script src="/sketch.js"></script>
     <script src="/player.js"></script>

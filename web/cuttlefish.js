@@ -513,6 +513,8 @@
       if (stageById(review.stage))
         details.push(stageName(stageById(review.stage)));
       if (community(review)) details.push(t("cf.reviews.community"));
+      if (review.eggstra_event)
+        details.push(t("cf.reviews.eggstra", { n: review.eggstra_event }));
       if (review.messages)
         details.push(t("cf.reviews.messages", { n: review.messages }));
       details.push(review.id);
@@ -1568,6 +1570,18 @@
 
   /** Deep questions offered as chips at once */
   const DEEP_CHIPS = 3;
+  /** How many demo questions join the chips */
+  const DEMO_CHIPS = 3;
+
+  /** A few of the demo questions (web/demo-questions.js: questions the
+   * imported game data answers with exact numbers, some needing the
+   * #vod-review knowledge too), in the page's language, drawn anew each
+   * time the chips are drawn */
+  function demoChips() {
+    const pool = window.DEMO_QUESTIONS?.[i18nLang()] ?? [];
+    const picked = [...pool].sort(() => Math.random() - 0.5);
+    return picked.slice(0, DEMO_CHIPS).map((text) => ({ text }));
+  }
 
   /** The deep question bank (crates/cuttlefish/questions/deep.toml), once
    * fetched; the chips draw a few at random from it */
@@ -1633,23 +1647,25 @@
   }
 
   /** The library bar's chips: questions about one's play, then a few
-   * deep ones */
+   * deep ones and a few demo questions */
   const entryChips = () => [
     ...examples().map((text) => ({ text })),
     ...deepChips(false),
+    ...demoChips(),
   ];
 
   /** A review's chips: with a video, the moment and the range first, then
-   * the deep questions and the examples */
+   * the deep questions, the examples and the demo questions */
   function chatChips() {
     const withVideo = Boolean(cf.review?.video);
     const chips = examples().map((text) => ({ text }));
-    if (!withVideo) return [...chips, ...deepChips(false)];
+    if (!withVideo) return [...chips, ...deepChips(false), ...demoChips()];
     return [
       { text: t("cf.ask.moment"), ctx: "moment" },
       { text: t("cf.chat.rangeExample"), ctx: "range" },
       ...deepChips(true),
       ...chips,
+      ...demoChips(),
     ];
   }
 

@@ -279,7 +279,12 @@ impl Store {
 
     /// Whether the document of this url or path is stored
     pub fn has(&self, key: &str) -> bool {
-        self.doc_path(&crate::doc::doc_id(key)).exists()
+        self.has_id(&crate::doc::doc_id(key))
+    }
+
+    /// Whether the document with this id is stored
+    pub fn has_id(&self, id: &str) -> bool {
+        is_id(id) && self.doc_path(id).exists()
     }
 
     /// The stored document of this url or path, when there is one that reads

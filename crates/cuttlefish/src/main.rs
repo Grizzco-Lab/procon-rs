@@ -10,6 +10,7 @@
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 use core::sync::atomic::{AtomicBool, Ordering};
+use cuttlefish::crawl::Fetcher;
 use cuttlefish::discord;
 use cuttlefish::discord_fetch::{
     self, Browser, Https, Interruptible, Options, Pace, Range, TOKEN_VAR,
@@ -24,7 +25,7 @@ use cuttlefish::lock::{self, WriteLock};
 use cuttlefish::review::{Reviewer, translate};
 use cuttlefish::slang::{self, UserGlossary};
 use cuttlefish::store::{self, Store};
-use cuttlefish::{assets, env_file, inbox, tables};
+use cuttlefish::{assets, env_file, inbox, leanny, tables};
 use cuttlefish::{corpus, corpus_reviews, corpus_videos, expert};
 use cuttlefish::{deep_eval, notes, questions};
 use std::path::{Path, PathBuf};
@@ -296,6 +297,27 @@ enum Ingest {
         #[command(flatten)]
         meta: Meta,
     },
+    /// Lean's Splatoon 3 datamine (leanny.github.io): Salmonids, stages,
+    /// Salmon Run weapons and specials, hazard levels and the Eggstra Work
+    /// scenarios as fact cards, the Eggstra Work events table
+    /// (corpus/eggstra_events.json, dates from Inkipedia) and a name table
+    /// for the glossary. Incremental: files are fetched again only when
+    /// their ETag changed; --refresh rebuilds the cards anyway
+    Leanny {
+        /// List the files and what the copies fetched so far would give;
+        /// fetch and store nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip the weapon parameter files (about 160 more requests the
+        /// first time; the cards then lack the Parameters section)
+        #[arg(long)]
+        no_weapons: bool,
+        /// Seconds between requests
+        #[arg(long, default_value_t = cuttlefish::leanny::DEFAULT_DELAY_S)]
+        delay_s: f32,
+        #[command(flatten)]
+        meta: Meta,
+    },
 }
 
 #[derive(Subcommand)]
@@ -511,6 +533,10 @@ impl Sink {
 impl ingest::Sink for Sink {
     fn has(&self, key: &str) -> bool {
         self.store.has(key)
+    }
+
+    fn has_id(&self, id: &str) -> bool {
+        self.store.has_id(id)
     }
 
     fn has_table(&self, key: &str) -> bool {
@@ -1463,5 +1489,50 @@ fn ingest(data: &Path, cmd: Ingest) -> Result<()> {
             ingest::files(&mut sink, data, &cache, &paths, url.as_deref(), &meta)?;
             sink.finish()
         }
+        Ingest::Leanny {
+            dry_run,
+            no_weapons,
+            delay_s,
+            meta,
+        } => {
+            let options = leanny::Options {
+                dry_run,
+                refresh: meta.refresh,
+                weapons: !no_weapons,
+            };
+            let mut fetcher = Fetcher::new(core::time::Duration::from_secs_f32(delay_s.max(1.0)));
+            if dry_run {
+                // Nothing is fetched or written: no lock, no embedder
+                let mut sink = Notes;
+                let summary = leanny::ingest(&mut sink, data, &mut fetcher, &options, &meta)?;
+                println!("{summary}");
+                return Ok(());
+            }
+            let mut sink = Sink::open(data)?;
+            let summary = leanny::ingest(&mut sink, data, &mut fetcher, &options, &meta)?;
+            println!("{summary}");
+            sink.finish()
+        }
+    }
+}
+
+/// A sink for a dry run: prints the notes, stores nothing
+struct Notes;
+
+impl ingest::Sink for Notes {
+    fn has(&self, _: &str) -> bool {
+        false
+    }
+
+    fn add(&mut self, doc: &Document) -> Result<usize> {
+        bail!("a dry run stores nothing ({})", doc.title)
+    }
+
+    fn raw_dir(&self, kind: &str) -> PathBuf {
+        PathBuf::from(kind)
+    }
+
+    fn note(&mut self, line: &str) {
+        println!("{line}");
     }
 }

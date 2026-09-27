@@ -634,6 +634,7 @@ impl Cuttlefish {
                         "game": review.game,
                         "stage": review.stage,
                         "from": review.source.as_ref().map(|s| &s.from),
+                        "eggstra_event": review.source.as_ref().and_then(|s| s.eggstra_event),
                         "comments": review.comments.len(),
                         "messages": review.messages.len(),
                         "topic": topic,

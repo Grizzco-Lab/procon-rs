@@ -336,6 +336,7 @@ const I18N = {
     "cf.reviews.noVideo": "no video yet",
     "cf.reviews.noneFiltered": "No reviews of this kind.",
     "cf.reviews.community": "from #vod-review",
+    "cf.reviews.eggstra": "probably Eggstra Work #{n}",
     "cf.filter.label": "Which reviews",
     "cf.filter.all": "All",
     "cf.filter.mine": "Mine",
@@ -672,6 +673,16 @@ const I18N = {
     "k.kind.file": "Files",
     "k.kind.export": "Discord export",
     "k.kind.bot": "Discord bot",
+    "k.kind.leanny": "Game data (Lean)",
+    "k.leanny.note":
+      "Fact cards of exact numbers from Lean's Splatoon 3 datamine: Salmonids, stages, Salmon Run weapons and specials, hazard levels, and every Eggstra Work event with its waves and spawns (dates from Inkipedia). Fetched politely from leanny.github.io into the knowledge folder, files only when they changed; private study only, the data is Nintendo's. Thanks to Lean.",
+    "k.leanny.dryRun": "Dry run: list the files first",
+    "k.leanny.dryRunTitle":
+      "Lists the files with their state and what the copies fetched so far would give; fetches and stores nothing",
+    "k.leanny.weapons": "With the weapon parameters",
+    "k.leanny.weaponsTitle":
+      "The parameter tables of the Salmon Run weapons: about 160 more requests the first time",
+    "k.leanny.check": "List the files",
     "k.f.urls":
       "Page addresses, one per line (Google Docs, Sheets and Slides shared by link too)",
     "k.f.sitemap": "Sitemap address",
@@ -719,6 +730,10 @@ const I18N = {
     "k.source.file": "File",
     "k.source.expertNote": "Expert note",
     "k.format.note": "Note",
+    "k.source.gameData": "Game data",
+    "k.format.card": "Fact card",
+    "k.ov.credits": "Credits",
+    "k.ov.credit": "{n} fact cards from {name}: {what}.",
     "k.job.running": "running",
     "k.job.done": "done",
     "k.job.failed": "failed",
