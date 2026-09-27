@@ -947,7 +947,7 @@ posts.
 
 ```bash
 node tools/capture/xcap.mjs login                          # once, in the window that opens
-node tools/capture/xcap.mjs run --dry-run --max-actions 20 # browse a little, write nothing
+node tools/capture/xcap.mjs run --dry-run --max-actions 20 # browse a little, write nothing but the day's action count
 node tools/capture/xcap.mjs run                            # the capture; run again any time
 node tools/capture/xcap.mjs status
 cuttlefish ingest inbox                                    # or Import inbox on the Knowledge page
@@ -984,8 +984,9 @@ stores credentials.
 What it keeps: a note is about Salmon Run when its title in the list (or,
 with `--match detail`, its title, text and tags) matches the same
 three-language glossary as `xcap` (`lib/filter.mjs`: 打工, 鲑鱼跑, 熊先生,
-金鲑鱼卵, the bosses, the Kings, サーモンラン, バクダン, Salmon Run,
-Grizzco, ...). Each kept note is one JSON line in
+金鲑鱼卵, the bosses, the Kings, the stages and their short names (生筋子,
+破船, 发电所), the players' jargon (熊商会, 搬蛋), サーモンラン, バクダン,
+Salmon Run, Grizzco, ...). Each kept note is one JSON line in
 `<knowledge>/inbox/rednote/<user id>/notes.jsonl`: id, author, date,
 title, text, tags, image and video addresses (nothing downloaded), likes,
 collects, shares, the comment count, and the comments with their replies
@@ -1001,7 +1002,7 @@ hours.
 
 ```bash
 node tools/capture/rednote.mjs login                          # once, in the window that opens (a code to scan with the app)
-node tools/capture/rednote.mjs run --dry-run --max-actions 20 # browse a little, write nothing
+node tools/capture/rednote.mjs run --dry-run --max-actions 20 # browse a little, write nothing but the day's action count
 node tools/capture/rednote.mjs run                            # the capture; run again any time
 node tools/capture/rednote.mjs status
 cuttlefish ingest inbox                                       # or Import inbox on the Knowledge page
