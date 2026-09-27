@@ -54,7 +54,11 @@ const followings = (users) =>
   answer(`${API}/v1/intimacy/intimacy_list`, {
     code: 0,
     data: {
-      items: users.map(([id, n]) => ({ userid: id, nickname: n, rid: "1" })),
+      items: users.map(([id, n]) => ({
+        userid: `${id}_3e369b8256d5996e6507223766aaadd1`,
+        nickname: n,
+        rid: "1",
+      })),
     },
   });
 

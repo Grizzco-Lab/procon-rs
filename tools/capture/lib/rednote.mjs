@@ -293,7 +293,11 @@ export function recognise(url, body) {
   if (/intimacy_list/.test(url ?? "") && Array.isArray(data.items))
     return {
       kind: "followings",
-      users: data.items.map(authorOf).filter((u) => u.user_id),
+      // Its ids carry a hash after the account's (`<24 hex>_<32 hex>`)
+      users: data.items
+        .map(authorOf)
+        .map((u) => ({ ...u, user_id: u.user_id?.split("_")[0] }))
+        .filter((u) => u.user_id),
       has_more: false,
     };
   if (Array.isArray(data.users))
