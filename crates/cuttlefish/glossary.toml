@@ -185,6 +185,11 @@ definition = "Large lesser Salmonid with high health."
 forms = { en = ["Cohock"], ja = ["ドスコイ"] }
 
 [[term]]
+id = "snatcher"
+definition = "Lesser Salmonid in a small aircraft that grabs Golden Eggs left on the ground and carries them back to the sea; splat it to drop them."
+forms = { en = ["Snatcher"], ja = ["タマヒロイ"], zh = ["小偷鱼"] }
+
+[[term]]
 id = "goldie"
 definition = "Golden Salmonid that drops Golden Eggs when hit."
 forms = { en = ["Goldie"], ja = ["キンシャケ"], zh = ["金鲑鱼"] }

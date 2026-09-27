@@ -32,7 +32,7 @@ use std::sync::Mutex;
 
 /// Classes written to a new `classes.json`: (name, label, color). The same
 /// list, in the same order, as `gameplay_vision::labels::STARTER_CLASSES`.
-pub const STARTER_CLASSES: [(&str, &str, &str); 21] = [
+pub const STARTER_CLASSES: [(&str, &str, &str); 22] = [
     ("smallfry", "Smallfry", "#8bd450"),
     ("chum", "Chum", "#4fb3ff"),
     ("cohock", "Cohock", "#2f6fdf"),
@@ -54,6 +54,7 @@ pub const STARTER_CLASSES: [(&str, &str, &str); 21] = [
     ("cohozuna", "Cohozuna", "#ff3b3b"),
     ("horrorboros", "Horrorboros", "#c0392b"),
     ("megalodontia", "Megalodontia", "#8e44ad"),
+    ("snatcher", "Snatcher", "#d35fb7"),
 ];
 
 /// Name of the class list in the annotations folder

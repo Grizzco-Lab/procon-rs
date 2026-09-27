@@ -31,10 +31,10 @@ pub const OBJECTS_EXT: &str = ".objects.jsonl";
 
 /// The class list written when `classes.json` is missing: Salmon Run's
 /// lesser Salmonids, then the bosses, golden eggs, players (alive and
-/// waiting for rescue), the egg basket and the King Salmonids.
+/// waiting for rescue), the egg basket, the King Salmonids and the Snatcher.
 /// `(name, label, color)`, in the order and colors of the labeling tool's
 /// list (`procon::objects::STARTER_CLASSES`).
-pub const STARTER_CLASSES: [(&str, &str, &str); 21] = [
+pub const STARTER_CLASSES: [(&str, &str, &str); 22] = [
     ("smallfry", "Smallfry", "#8bd450"),
     ("chum", "Chum", "#4fb3ff"),
     ("cohock", "Cohock", "#2f6fdf"),
@@ -56,6 +56,7 @@ pub const STARTER_CLASSES: [(&str, &str, &str); 21] = [
     ("cohozuna", "Cohozuna", "#ff3b3b"),
     ("horrorboros", "Horrorboros", "#c0392b"),
     ("megalodontia", "Megalodontia", "#8e44ad"),
+    ("snatcher", "Snatcher", "#d35fb7"),
 ];
 
 /// One class in `classes.json`
