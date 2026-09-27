@@ -2,7 +2,8 @@
 //! knowledge store far larger than a model's context.
 //!
 //! Sources are imported as [`doc::Document`]s (web pages and wikis through
-//! [`crawl`] and [`html`], YouTube transcripts through [`youtube`], Discord
+//! [`crawl`] and [`html`], Google Docs, Sheets and Slides through
+//! [`google`], YouTube transcripts through [`youtube`], Discord
 //! conversations through [`discord`], local files through [`mod@file`]), split
 //! into chunks ([`chunk`]), embedded ([`embed`]) and indexed ([`index`]) in a
 //! data folder ([`store`]); [`ingest`] runs the importers. A [`glossary`] maps jargon across languages.
@@ -27,6 +28,7 @@ pub mod embed;
 pub mod eval;
 pub mod file;
 pub mod glossary;
+pub mod google;
 pub mod html;
 pub mod inbox;
 pub mod index;

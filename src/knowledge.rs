@@ -942,6 +942,12 @@ impl ingest::Sink for JobSink<'_> {
         self.loaded.store.read().unwrap().raw_dir(kind)
     }
 
+    fn add_table(&mut self, table: &tables::Table) -> Result<()> {
+        let mut store = self.loaded.store.write().unwrap();
+        tables::save(store.root(), table)?;
+        store.reload_glossary()
+    }
+
     fn note(&mut self, line: &str) {
         log::info!("Import: {line}");
         let line = line.chars().take(400).collect();

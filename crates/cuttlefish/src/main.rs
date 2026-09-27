@@ -268,6 +268,11 @@ impl ingest::Sink for Sink {
         self.store.raw_dir(kind)
     }
 
+    fn add_table(&mut self, table: &cuttlefish::tables::Table) -> Result<()> {
+        cuttlefish::tables::save(self.store.root(), table)?;
+        self.store.reload_glossary()
+    }
+
     fn note(&mut self, line: &str) {
         if line.starts_with("skipped") {
             log::warn!("{line}");

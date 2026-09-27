@@ -86,6 +86,43 @@ pub fn convert(html: &str) -> Page {
     }
 }
 
+/// Phrases of pages that draw their content with JavaScript, lowercase
+const SHELL_PHRASES: [&str; 6] = [
+    "this browser version is no longer supported",
+    "enable javascript",
+    "javascript is required",
+    "javascript is disabled",
+    "requires javascript",
+    "turn on javascript",
+];
+
+/// Text shorter than this may be a page shell, in characters
+const SHELL_TEXT: usize = 2000;
+
+/// Why a converted page is not worth keeping: no text, or the empty shell
+/// of a page that draws its content with JavaScript (a known phrase in
+/// little text, or almost no text in a large page). `html_bytes` is the
+/// size of the page the text came from.
+pub fn shell_reason(html_bytes: usize, text: &str) -> Option<&'static str> {
+    let chars = text.chars().count();
+    if chars < 40 {
+        return Some("no text on the page");
+    }
+    if chars >= SHELL_TEXT {
+        return None;
+    }
+    let lower = text.to_lowercase();
+    if SHELL_PHRASES.iter().any(|p| lower.contains(p)) {
+        return Some("the page draws its content with JavaScript; only its shell was received");
+    }
+    if html_bytes > 100 * text.len() {
+        return Some(
+            "almost no text in a large page: probably drawn with JavaScript; only its shell was received",
+        );
+    }
+    None
+}
+
 /// Converts an HTML fragment (a MediaWiki `parse` result)
 pub fn fragment_text(html: &str) -> String {
     let doc = Html::parse_fragment(html);
@@ -197,6 +234,29 @@ mod tests {
             page.text,
             "A boss Salmonid.\n\n## Strategy\n\n- Shoot the bomb.\n- Stay near the basket.\n\nHP | 1000"
         );
+    }
+
+    #[test]
+    fn detects_page_shells() {
+        // What a Google Doc gives without JavaScript
+        let shell = "This browser version is no longer supported. Please upgrade to a supported browser.\n\nSalmon Run Next Wave: Overfishing Fundamentals\n\nShare\n\nFile\n\nEdit";
+        assert!(shell_reason(300_000, shell).is_some());
+        assert!(
+            shell_reason(
+                5_000,
+                "Please enable JavaScript to continue using this site."
+            )
+            .is_some()
+        );
+        assert_eq!(shell_reason(100, "tiny"), Some("no text on the page"));
+        // Little text in a huge page
+        let short = "Salmon Run schedule and rotation for this week, updated daily.";
+        assert!(shell_reason(2_000_000, short).is_some());
+        assert_eq!(shell_reason(4_000, short), None);
+        // A real article mentioning JavaScript is kept
+        let long =
+            "Keep the eggs moving toward the basket. ".repeat(60) + "Enable JavaScript for maps.";
+        assert_eq!(shell_reason(900_000, &long), None);
     }
 
     #[test]

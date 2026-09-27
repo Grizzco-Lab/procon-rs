@@ -5,10 +5,15 @@
 //! [`Sink`], which stores them (the CLI prints, the studio keeps a job log).
 //! Sources already stored are skipped unless [`Meta::refresh`] is set; a
 //! page or video that fails is reported and skipped, so one bad url does
-//! not stop an import.
+//! not stop an import. So is a page that is only the shell of a JavaScript
+//! app ([`html::shell_reason`]); Google Docs, Sheets and Slides are read
+//! through their exports instead ([`google`]), a sheet with names in
+//! several languages becoming a name table of the glossary.
 
 use crate::crawl::{Fetcher, MediaWiki, sitemap_locs};
 use crate::doc::{Document, SourceKind, doc_id, guess_language};
+use crate::google::{self, Format, GoogleFile};
+use crate::tables::{self, Member, Table};
 use crate::{discord, file, html, youtube};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -68,6 +73,11 @@ pub trait Sink {
     fn raw_dir(&self, kind: &str) -> PathBuf;
     /// A line of progress: a document added, a page skipped, an error
     fn note(&mut self, line: &str);
+    /// Store a name table (a Google Sheet's names in several languages)
+    /// and merge it into the glossary
+    fn add_table(&mut self, _table: &Table) -> Result<()> {
+        bail!("name tables are not kept by this import")
+    }
     /// `done` of `total` items handled
     fn progress(&mut self, _done: usize, _total: usize) {}
     /// Whether to stop before the next item
@@ -154,7 +164,7 @@ pub fn web(sink: &mut dyn Sink, web: &Web, meta: &Meta) -> Result<usize> {
                     continue;
                 }
             };
-            save_raw(&sink.raw_dir("wiki"), &url, "html", &page.html)?;
+            save_raw(&sink.raw_dir("wiki"), &url, "html", page.html.as_bytes())?;
             let text = html::fragment_text(&page.html);
             let mut doc = Document::new(SourceKind::Wiki, &url, page.title, text);
             doc.url = Some(url);
@@ -187,24 +197,26 @@ pub fn web(sink: &mut dyn Sink, web: &Web, meta: &Meta) -> Result<usize> {
             sink.note(&alloc::format!("already stored: {url}"));
             continue;
         }
-        let body = match fetcher.get(url) {
-            Ok(b) => b,
-            Err(e) => {
-                sink.note(&alloc::format!("skipped: {e:#}"));
-                continue;
-            }
+        let raw = sink.raw_dir("web");
+        let got = match google::recognise(url) {
+            Some(file) => fetch_google(&mut fetcher, &raw, url, &file),
+            None => fetch_page(&mut fetcher, &raw, url).map(Got::Doc),
         };
-        save_raw(&sink.raw_dir("web"), url, "html", &body)?;
-        let page = html::convert(&body);
-        let title = page.title.clone().unwrap_or_else(|| url.clone());
-        let mut doc = Document::new(SourceKind::Web, url, title, page.text);
-        doc.url = Some(url.clone());
-        doc.license = page.license;
-        doc.language = page
-            .language
-            .or_else(|| guess_language(&doc.text).map(String::from));
-        add(sink, doc, meta)?;
-        added += 1;
+        match got {
+            Ok(Got::Doc(doc)) => {
+                add(sink, doc, meta)?;
+                added += 1;
+            }
+            Ok(Got::Table(table)) => {
+                sink.add_table(&table)?;
+                sink.note(&alloc::format!(
+                    "+ {url} ({} terms in {} into the glossary)",
+                    table.terms.len(),
+                    table.languages.join(", ")
+                ));
+            }
+            Err(e) => sink.note(&alloc::format!("skipped {url}: {e:#}")),
+        }
     }
     Ok(added)
 }
@@ -334,10 +346,109 @@ pub fn files(
 }
 
 /// Keeps what was downloaded, named by the document id
-fn save_raw(dir: &Path, key: &str, ext: &str, body: &str) -> Result<()> {
+fn save_raw(dir: &Path, key: &str, ext: &str, body: &[u8]) -> Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
-    std::fs::write(dir.join(alloc::format!("{}.{ext}", doc_id(key))), body)?;
-    Ok(())
+    let path = dir.join(alloc::format!("{}.{ext}", doc_id(key)));
+    std::fs::write(&path, body)?;
+    Ok(path)
+}
+
+/// What a url gave
+enum Got {
+    Doc(Document),
+    /// A sheet's names in several languages
+    Table(Table),
+}
+
+/// A web page as a document; fails with the reason when it is not worth
+/// keeping (an error, or the shell of a page drawn with JavaScript)
+fn fetch_page(fetcher: &mut Fetcher, raw: &Path, url: &str) -> Result<Document> {
+    let body = fetcher.get(url)?;
+    save_raw(raw, url, "html", body.as_bytes())?;
+    let page = html::convert(&body);
+    if let Some(why) = html::shell_reason(body.len(), &page.text) {
+        bail!("{why}");
+    }
+    let title = page.title.clone().unwrap_or_else(|| String::from(url));
+    let mut doc = Document::new(SourceKind::Web, url, title, page.text);
+    doc.url = Some(String::from(url));
+    doc.license = page.license;
+    doc.language = page
+        .language
+        .or_else(|| guess_language(&doc.text).map(String::from));
+    Ok(doc)
+}
+
+/// A Google Doc, Sheet or Slides through its exports ([`google`]), tried
+/// in order; stored under the address the user gave. Fails with the
+/// reason when none gives text (not shared publicly, not found).
+fn fetch_google(fetcher: &mut Fetcher, raw: &Path, url: &str, file: &GoogleFile) -> Result<Got> {
+    let mut last = anyhow::anyhow!("no export of the {} gave text", file.kind());
+    for (export, format) in file.exports() {
+        let got = match fetcher.fetch(&export) {
+            Ok(got) => got,
+            Err(e) => {
+                last = e;
+                continue;
+            }
+        };
+        if let Some(why) = google::access_error(got.status, &got.final_url, got.is_html()) {
+            if got.status == 404 {
+                last = anyhow::anyhow!("{why}");
+                continue;
+            }
+            bail!("{why}");
+        }
+        if !got.ok() {
+            last = anyhow::anyhow!("{export}: HTTP {}", got.status);
+            continue;
+        }
+        let path = save_raw(raw, url, format.ext(), &got.body)?;
+        let text = match format {
+            Format::Markdown => google::clean_markdown(&got.text()),
+            Format::Text => String::from(got.text().trim_start_matches('\u{feff}').trim()),
+            Format::Docx => file::read(&path)?.1,
+            Format::Csv => {
+                let (leaves, _) = tables::read(&path)?;
+                let member = Member {
+                    file: String::from(url),
+                    language: None,
+                    leaves,
+                };
+                let table = tables::build(url, &[member]);
+                if !table.terms.is_empty() {
+                    return Ok(Got::Table(table));
+                }
+                if got.body.len() as u64 > tables::MAX_TEXT {
+                    bail!("a sheet over 1 MB without names in several languages");
+                }
+                tables::as_text(&path)?
+            }
+        };
+        if text.chars().count() < 40 {
+            last = anyhow::anyhow!(
+                "the {} export of the {} is empty",
+                format.ext(),
+                file.kind()
+            );
+            continue;
+        }
+        let title = got
+            .file_name
+            .as_deref()
+            .map(google::title_of)
+            .filter(|t| !t.is_empty())
+            .or_else(|| {
+                text.lines()
+                    .find_map(|l| l.strip_prefix("# "))
+                    .map(|t| String::from(t.trim()))
+            })
+            .unwrap_or_else(|| String::from(file.kind()));
+        let mut doc = Document::new(SourceKind::Web, url, title, text);
+        doc.url = Some(String::from(url));
+        return Ok(Got::Doc(doc));
+    }
+    Err(last)
 }
 
 #[cfg(test)]

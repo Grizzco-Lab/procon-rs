@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 use texting_robots::{Robot, get_robots_url};
+use ureq::ResponseExt;
 
 /// Product token matched against `robots.txt` user-agent lines
 pub const ROBOTS_TOKEN: &str = "Cuttlefish";
@@ -96,27 +97,37 @@ impl Fetcher {
         self.last.insert(String::from(site), Instant::now());
     }
 
-    /// GET with the politeness delay; (status, body)
-    fn get_raw(
-        &mut self,
-        url: &str,
-        site: &str,
-        crawl_delay: Option<f32>,
-    ) -> Result<(u16, String)> {
+    /// GET with the politeness delay
+    fn get_raw(&mut self, url: &str, site: &str, crawl_delay: Option<f32>) -> Result<Fetched> {
         self.wait(site, crawl_delay);
         let mut resp = self
             .agent
             .get(url)
             .call()
             .with_context(|| alloc::format!("GET {url}"))?;
+        let header = |name: &str| {
+            resp.headers()
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+        };
+        let content_type = header("content-type").unwrap_or_default();
+        let file_name = header("content-disposition").and_then(|d| disposition_name(&d));
+        let final_url = resp.get_uri().to_string();
         let status = resp.status().as_u16();
         let body = resp
             .body_mut()
             .with_config()
             .limit(50 * 1024 * 1024)
-            .read_to_string()
+            .read_to_vec()
             .unwrap_or_default();
-        Ok((status, body))
+        Ok(Fetched {
+            status,
+            content_type,
+            file_name,
+            final_url,
+            body,
+        })
     }
 
     /// Whether `robots.txt` lets us fetch `url`, and the site's crawl delay
@@ -124,11 +135,11 @@ impl Fetcher {
         let robots_url =
             get_robots_url(url).map_err(|e| anyhow::anyhow!("bad url {url}: {e:?}"))?;
         if !self.robots.contains_key(&robots_url) {
-            let (status, body) = self.get_raw(&robots_url, &robots_url.clone(), None)?;
-            let robot = match status {
-                200..=299 => Some(Robot::new(ROBOTS_TOKEN, body.as_bytes())?),
+            let got = self.get_raw(&robots_url, &robots_url.clone(), None)?;
+            let robot = match got.status {
+                200..=299 => Some(Robot::new(ROBOTS_TOKEN, &got.body)?),
                 400..=499 => None,
-                _ => bail!("{robots_url}: HTTP {status}; not crawling this site"),
+                status => bail!("{robots_url}: HTTP {status}; not crawling this site"),
             };
             self.robots.insert(robots_url.clone(), robot);
         }
@@ -138,19 +149,96 @@ impl Fetcher {
         Ok((robots_url, allowed, delay))
     }
 
-    /// Fetches a page as text; fails if `robots.txt` forbids it or the
-    /// server does not answer 2xx
-    pub fn get(&mut self, url: &str) -> Result<String> {
+    /// Fetches a url whatever the server answers; fails only if
+    /// `robots.txt` forbids it or the request does not complete
+    pub fn fetch(&mut self, url: &str) -> Result<Fetched> {
         let (site, allowed, delay) = self.check_robots(url)?;
         if !allowed {
             bail!("robots.txt disallows {url}");
         }
-        let (status, body) = self.get_raw(url, &site, delay)?;
-        if !(200..300).contains(&status) {
-            bail!("GET {url}: HTTP {status}");
-        }
-        Ok(body)
+        self.get_raw(url, &site, delay)
     }
+
+    /// Fetches a page as text; fails if `robots.txt` forbids it or the
+    /// server does not answer 2xx
+    pub fn get(&mut self, url: &str) -> Result<String> {
+        let got = self.fetch(url)?;
+        if !got.ok() {
+            bail!("GET {url}: HTTP {}", got.status);
+        }
+        Ok(got.text())
+    }
+}
+
+/// A server's answer, redirects followed
+pub struct Fetched {
+    /// HTTP status
+    pub status: u16,
+    /// `Content-Type`, empty when not given
+    pub content_type: String,
+    /// The file name `Content-Disposition` gives, if any
+    pub file_name: Option<String>,
+    /// The address that answered, after redirects
+    pub final_url: String,
+    /// The body (at most 50 MB)
+    pub body: Vec<u8>,
+}
+
+impl Fetched {
+    /// Whether the status is 2xx
+    pub fn ok(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+
+    /// The body as text
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
+    }
+
+    /// Whether the body is an HTML page
+    pub fn is_html(&self) -> bool {
+        self.content_type.starts_with("text/html")
+    }
+}
+
+/// The file name of a `Content-Disposition` header: `filename*=UTF-8''...`
+/// (percent-decoded) before `filename="..."`
+pub fn disposition_name(header: &str) -> Option<String> {
+    let param = |name: &str| {
+        header.split(';').find_map(|p| {
+            let (k, v) = p.trim().split_once('=')?;
+            k.trim()
+                .eq_ignore_ascii_case(name)
+                .then(|| v.trim().trim_matches('"'))
+        })
+    };
+    if let Some(v) = param("filename*") {
+        let encoded = v.split_once("''").map_or(v, |(_, rest)| rest);
+        if let Some(name) = decode(encoded).filter(|n| !n.is_empty()) {
+            return Some(name);
+        }
+    }
+    param("filename")
+        .filter(|n| !n.is_empty())
+        .map(String::from)
+}
+
+/// Percent-decodes UTF-8 text; `None` when it is not valid
+pub fn decode(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = s.get(i + 1..i + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// Page urls in a sitemap, and nested sitemaps of a sitemap index (both are
@@ -310,6 +398,18 @@ mod tests {
         let (pages, nested) = sitemap_locs(xml);
         assert_eq!(pages, ["https://a.org/x?a=1&b=2", "https://a.org/y"]);
         assert_eq!(nested, ["https://a.org/s2.xml"]);
+    }
+
+    #[test]
+    fn reads_file_names() {
+        let h =
+            "attachment; filename=\"SalmonRun.md\"; filename*=UTF-8''Salmon%20Run%3A%20Tides.md";
+        assert_eq!(disposition_name(h).as_deref(), Some("Salmon Run: Tides.md"));
+        assert_eq!(
+            disposition_name("attachment; filename=\"a b.csv\"").as_deref(),
+            Some("a b.csv")
+        );
+        assert_eq!(disposition_name("inline"), None);
     }
 
     #[test]
