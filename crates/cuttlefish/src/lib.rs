@@ -7,8 +7,10 @@
 //! [`google`], YouTube transcripts through [`youtube`], Discord
 //! conversations through [`discord`], X posts captured from the user's own
 //! account through [`x`], local files through [`mod@file`]), split
-//! into chunks ([`chunk`]), embedded ([`embed`]) and indexed ([`index`]) in a
-//! data folder ([`store`]); [`ingest`] runs the importers. A [`glossary`] maps jargon across
+//! into chunks ([`chunk`]), embedded ([`embed`]) and indexed ([`index`],
+//! with a BM25 keyword index beside it, [`keyword`], for hybrid search) in a
+//! data folder ([`store`]); [`ingest`] runs the importers; [`eval`] measures
+//! retrieval. A [`glossary`] maps jargon across
 //! languages: official names and the slang players use, which the user teaches and approves
 //! ([`slang`], with suggestions the model finds in the store). Every source
 //! carries the game era it is about ([`game`]).
@@ -60,6 +62,7 @@ pub mod html;
 pub mod inbox;
 pub mod index;
 pub mod ingest;
+pub mod keyword;
 pub mod leanny;
 pub mod llm;
 pub mod lock;

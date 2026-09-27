@@ -24,7 +24,7 @@ use cuttlefish::llm::{Backend, Client, Settings};
 use cuttlefish::lock::{self, WriteLock};
 use cuttlefish::review::{Reviewer, translate};
 use cuttlefish::slang::{self, UserGlossary};
-use cuttlefish::store::{self, Store};
+use cuttlefish::store::{self, Retrieval, Store};
 use cuttlefish::{assets, env_file, inbox, leanny, tables};
 use cuttlefish::{corpus, corpus_reviews, corpus_videos, expert};
 use cuttlefish::{deep_eval, notes, questions};
@@ -67,6 +67,9 @@ enum Command {
         /// Number of results
         #[arg(short, default_value_t = 8)]
         k: usize,
+        /// Ranking: hybrid (embeddings and keywords), embedding or keyword
+        #[arg(long, default_value = "hybrid")]
+        mode: String,
     },
     /// Look up a glossary term, or list the terms mentioned in a text
     Glossary {
@@ -93,12 +96,14 @@ enum Command {
         #[command(flatten)]
         model: ModelArgs,
     },
-    /// Run an evaluation file (see `eval.example.toml`), or `deep`: ask the
-    /// model the deep question bank's questions that need no video
+    /// Run an evaluation file (see `eval.example.toml`) or `retrieval`, the
+    /// crate's retrieval set (questions/retrieval.toml), with recall@1/5
+    /// for embeddings, BM25 and hybrid ranking; or `deep`: ask the model
+    /// the deep question bank's questions that need no video
     /// (questions/deep.toml) and keep the answers in
     /// <knowledge>/eval/deep-<date>.jsonl for review in the studio
     Eval {
-        /// Evaluation file, or "deep"
+        /// Evaluation file, "retrieval" or "deep"
         target: String,
         /// Knowledge excerpts to retrieve
         #[arg(short, default_value_t = 8)]
@@ -677,9 +682,15 @@ fn main() -> Result<()> {
         Command::Fetch(_) => unreachable!(),
         Command::Corpus(c) => corpus_command(&data, cli.config.as_deref(), c),
         Command::Ingest(i) => ingest(&data, i),
-        Command::Search { query, k } => {
+        Command::Search { query, k, mode } => {
+            let mode = match mode.as_str() {
+                "hybrid" => Retrieval::Hybrid,
+                "embedding" => Retrieval::Embedding,
+                "keyword" => Retrieval::Keyword,
+                other => bail!("no ranking {other}: hybrid, embedding or keyword"),
+            };
             let (store, embedder) = open(&data, true)?;
-            let hits = store.search(&query, k, &embedder)?;
+            let hits = store.search_with(mode, &query, k, &embedder, &|_| true)?;
             if hits.is_empty() {
                 println!("nothing found (is the store empty? see `cuttlefish stats`)");
             }
@@ -759,11 +770,15 @@ fn main() -> Result<()> {
                 };
                 return eval_deep(&data, model.settings(), &opts);
             }
-            let file = PathBuf::from(target);
-            let set = EvalSet::parse(
-                &std::fs::read_to_string(&file)
-                    .with_context(|| format!("reading {}", file.display()))?,
-            )?;
+            let set = if target == "retrieval" {
+                EvalSet::parse(cuttlefish::eval::RETRIEVAL)?
+            } else {
+                let file = PathBuf::from(target);
+                EvalSet::parse(
+                    &std::fs::read_to_string(&file)
+                        .with_context(|| format!("reading {}", file.display()))?,
+                )?
+            };
             let mut reviewer = if answer {
                 let mut r = Reviewer::open(&data, model.settings())?;
                 r.k = k;
@@ -792,10 +807,37 @@ fn main() -> Result<()> {
                     );
                 }
             }
-            println!("retrieval: {found}/{} cases", set.cases.len());
+            println!(
+                "retrieval: {found}/{} cases in the top {k}",
+                set.cases.len()
+            );
             if answer {
                 println!("answers: {points}/{expected} expected points");
             }
+            let started = std::time::Instant::now();
+            let ranks = cuttlefish::eval::compare(&store, &embedder, &set)?;
+            println!("\nrank of the first right chunk (embedding, BM25, hybrid; - past 5):");
+            let show = |r: Option<usize>| r.map_or_else(|| String::from("-"), |r| r.to_string());
+            for (case, r) in set.cases.iter().zip(&ranks) {
+                println!(
+                    "{:>3} {:>3} {:>3}  {}",
+                    show(r[0]),
+                    show(r[1]),
+                    show(r[2]),
+                    case.question
+                );
+            }
+            let n = set.cases.len();
+            println!("\n{:<10} {:>9} {:>9}", "", "recall@1", "recall@5");
+            for (m, name) in ["embedding", "BM25", "hybrid"].iter().enumerate() {
+                let at = |k| cuttlefish::eval::recall_at(&ranks, m, k);
+                println!("{name:<10} {:>4}/{n:<4} {:>4}/{n:<4}", at(1), at(5));
+            }
+            println!(
+                "({} searches in {:.1} s)",
+                3 * n,
+                started.elapsed().as_secs_f32()
+            );
             Ok(())
         }
         Command::Stats => {

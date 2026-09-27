@@ -1,0 +1,204 @@
+# Retrieval set for `cuttlefish eval retrieval`: questions with the chunks
+# that should come first, over the store's game-data fact cards (Lean's
+# datamine, `cuttlefish ingest leanny`), the Inkipedia pages and the
+# #vod-review expert comments. No model is asked; it prints recall@1 and
+# recall@5 for embeddings, BM25 and both.
+#
+# expect_sources: substrings of the title, heading or url of a right chunk
+# (any one is enough). Expert comments are named by their message id, which
+# ends their url.
+
+# Eggstra Work events and waves: near-identical cards told apart by numbers
+
+[[case]]
+question = "What spawned in wave 3 of Eggstra Work #7?"
+expect_sources = ["Eggstra Work #7 (2024-11-09, Bonerattle Arena), wave 3"]
+
+[[case]]
+question = "Eggstra Work #1 wave 2 spawn schedule"
+expect_sources = ["Eggstra Work #1 (2023-04-15, Sockeye Station), wave 2"]
+
+[[case]]
+question = "Which tide and event was wave 4 of Eggstra Work #10?"
+expect_sources = ["Eggstra Work #10 (2025-08-09, Salmonid Smokeyard), wave 4"]
+
+[[case]]
+question = "When does the Mothership come in wave 3 of Eggstra Work #12?"
+expect_sources = ["Eggstra Work #12 (2026-02-14, Bonerattle Arena), wave 3"]
+
+[[case]]
+question = "What were the Rush wave's spawns in Eggstra Work #11?"
+expect_sources = ["Eggstra Work #11 (2025-11-08, Gone Fission Hydroplant), wave 2"]
+
+[[case]]
+question = "Which stage was Eggstra Work #2 on?"
+expect_sources = ["Eggstra Work #2 (2023-07-01, Gone Fission Hydroplant)"]
+
+[[case]]
+question = "Eggstra Work #4 wave 4 Giant Tornado spawns"
+expect_sources = ["Eggstra Work #4 (2024-02-03, Marooner's Bay), wave 4"]
+
+[[case]]
+question = "Eggstra Work #9 wave 1 on low tide: which bosses come first?"
+expect_sources = ["Eggstra Work #9 (2025-05-10, Jammin' Salmon Junction), wave 1"]
+
+[[case]]
+question = "Eggstra Work #6 wave 5 spawn points"
+expect_sources = ["Eggstra Work #6 (2024-07-20, Salmonid Smokeyard), wave 5"]
+
+[[case]]
+question = "In Eggstra Work 8, what spawns in W4 Cohock Charge?"
+expect_sources = ["Eggstra Work #8 (2025-02-15, Sockeye Station), wave 4"]
+
+[[case]]
+question = "第7次团队打工竞赛的第3波刷了什么？"
+expect_sources = ["Eggstra Work #7 (2024-11-09, Bonerattle Arena), wave 3"]
+
+[[case]]
+question = "团队打工竞赛第5次第2波找金鱼"
+expect_sources = ["Eggstra Work #5 (2024-05-11, Jammin' Salmon Junction), wave 2"]
+
+[[case]]
+question = "第3回バイトチームコンテストのWAVE4は？"
+expect_sources = ["Eggstra Work #3 (2023-11-04, Spawning Grounds), wave 4"]
+
+# Hazard levels
+
+[[case]]
+question = "Wave and occurrence parameters at hazard level 333%"
+expect_sources = ["hazard level 333%"]
+
+[[case]]
+question = "How many Golden Eggs are needed at 200% hazard?"
+expect_sources = ["hazard level 200%"]
+
+[[case]]
+question = "危险度60%的时候一波要交多少金蛋？"
+expect_sources = ["hazard level 60%"]
+
+# Weapons, specials, Salmonids and stages by name
+
+[[case]]
+question = "Splattershot Jr. damage and fire rate in Salmon Run"
+expect_sources = ["Splattershot Jr. (Salmon Run weapon"]
+
+[[case]]
+question = "Grizzco Charger parameters"
+expect_sources = ["Grizzco Charger (Salmon Run weapon", "Grizzco Charger"]
+
+[[case]]
+question = "How much damage does the Tri-Stringer do to Salmonids?"
+expect_sources = ["Tri-Stringer (Salmon Run weapon"]
+
+[[case]]
+question = "How many hits does a Steelhead take?"
+expect_sources = ["Steelhead"]
+
+[[case]]
+question = "Triple Inkstrike in Salmon Run"
+expect_sources = ["Triple Inkstrike"]
+
+[[case]]
+question = "What is a Megalodontia?"
+expect_sources = ["Megalodontia"]
+
+[[case]]
+question = "Who is Mr. Grizz?"
+expect_sources = ["Mr. Grizz"]
+
+[[case]]
+question = "What is Xtrawave?"
+expect_sources = ["Xtrawave"]
+
+# Slang: aliases expand to the official names
+
+[[case]]
+question = "鬼坝满潮的时候在哪里交蛋？"
+expect_sources = ["Spawning Grounds"]
+
+[[case]]
+question = "熊刷怎么用？"
+expect_sources = ["Grizzco Roller"]
+
+[[case]]
+question = "Is the G Roller good against Big Shot?"
+expect_sources = ["Grizzco Roller", "Big Shot"]
+
+# Chinese and Japanese questions over English documents
+
+[[case]]
+question = "炸弹鱼怎么打？"
+expect_sources = ["Steelhead"]
+
+[[case]]
+question = "找金鱼的时候应该怎么做？"
+expect_sources = ["Goldie Seeking"]
+
+[[case]]
+question = "相扑鱼爆发要注意什么？"
+expect_sources = ["Cohock Charge"]
+
+[[case]]
+question = "头目联合是什么？"
+expect_sources = ["Triumvirate"]
+
+[[case]]
+question = "ドロシャケ噴出の対処法"
+expect_sources = ["Mudmouth"]
+
+[[case]]
+question = "横纲有多少血？"
+expect_sources = ["Cohozuna"]
+
+# Expert comments (#vod-review)
+
+[[case]]
+question = "On high tide at Gone Fission Hydroplant, should the Drizzler come before the center Stinger?"
+expect_sources = ["1150153552883359915"]
+
+[[case]]
+question = "Who does the Drizzler target after each jump, and where do I stand to shoot its torpedo back?"
+expect_sources = ["1400179851805327532"]
+
+[[case]]
+question = "Is the delay in my VOD from OBS or from the capture card?"
+expect_sources = ["1414661585611391147", "1414669661605462166"]
+
+[[case]]
+question = "How should I play the Tri-Stringer: close up like a Splatana?"
+expect_sources = ["1110342136173449246"]
+
+[[case]]
+question = "I am not the host and have egg lag; am I spending too long on basket eggs?"
+expect_sources = ["1320204230123847740"]
+
+[[case]]
+question = "Should I turn on chat history in my stream VOD?"
+expect_sources = ["1268435647417548891"]
+
+# Paraphrases without the names: what the embeddings are for, so keyword
+# weights cannot be raised at their cost unnoticed
+
+[[case]]
+question = "How does the water level change during a shift, and where do the eggs go then?"
+expect_sources = ["Water Levels", "Tides"]
+
+[[case]]
+question = "The enemy that grabs eggs and runs off with them"
+expect_sources = ["Snatcher"]
+
+[[case]]
+question = "The boss that hovers overhead and fires rockets at players"
+expect_sources = ["Flyfish"]
+
+[[case]]
+question = "The giant boss that shows up after the last wave when the meter is full"
+expect_sources = ["Xtrawave", "King Salmonid", "Cohozuna", "Horrorboros", "Megalodontia", "Triumvirate"]
+
+[[case]]
+question = "Which armored enemy do you have to hit from behind?"
+expect_sources = ["Scrapper"]
+
+[[case]]
+question = "The special that lets you drive a tank"
+expect_sources = ["Crab Tank"]

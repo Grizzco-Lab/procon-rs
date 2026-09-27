@@ -13,7 +13,8 @@
 //!   digest.md          curated fundamentals, sent with every review
 //!   raw/<kind>/...     fetched pages, subtitles and exports as received
 //!   docs/<id>.json     processed documents
-//!   index/             chunk vectors (see [`crate::index`])
+//!   index/             chunk vectors (see [`crate::index`]) and the keyword
+//!                      index beside them ([`crate::keyword`])
 //! ```
 //!
 //! The studio passes its `[cuttlefish] knowledge` (by default `Knowledge`
@@ -41,6 +42,7 @@ use crate::embed::{Embedder, Role};
 use crate::file::is_binary_text;
 use crate::glossary::Glossary;
 use crate::index::{Entry, FlatIndex, VectorIndex};
+use crate::keyword::{KeywordIndex, KeywordQuery};
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -54,7 +56,8 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Hit {
     /// Score: cosine similarity plus the source weight's bonus
-    /// ([`crate::index::score`])
+    /// ([`crate::index::score`]), plus the keyword match's
+    /// ([`Retrieval::Hybrid`]); BM25 alone for [`Retrieval::Keyword`]
     pub score: f32,
     /// The chunk and its document's metadata
     #[serde(flatten)]
@@ -176,6 +179,7 @@ pub fn read_documents(root: &Path) -> Result<Vec<Document>> {
 pub struct Store {
     root: PathBuf,
     index: FlatIndex,
+    keywords: KeywordIndex,
     glossary: Glossary,
     chunking: ChunkConfig,
 }
@@ -220,6 +224,7 @@ impl Store {
                 FlatIndex::new(embedder.name(), embedder.dim())
             }
         };
+        let mut keywords = KeywordIndex::load(&root.join("index")).unwrap_or_default();
         let ids = doc_ids(root)?;
         let gone: BTreeSet<String> = index
             .entries()
@@ -229,10 +234,24 @@ impl Store {
             .collect();
         for id in &gone {
             index.remove_doc(id);
+            keywords.remove_doc(id);
+        }
+        if !keywords.aligned_with(index.entries()) {
+            // Missing, of another version or synced in out of step: the
+            // entries hold all it needs, and the next save writes it
+            let started = std::time::Instant::now();
+            keywords = KeywordIndex::from_entries(index.entries());
+            log::info!(
+                "built the keyword index of {} chunks in {} in {} ms",
+                index.len(),
+                root.display(),
+                started.elapsed().as_millis()
+            );
         }
         Ok(Store {
             root: root.to_path_buf(),
             index,
+            keywords,
             glossary: Self::load_glossary(root)?,
             chunking: ChunkConfig::default(),
         })
@@ -339,7 +358,7 @@ impl Store {
                 .with_context(|| alloc::format!("removing {}", path.display()))?;
         }
         let chunks = self.index.len();
-        self.index.remove_doc(id);
+        self.remove_chunks(id);
         Ok(existed || self.index.len() != chunks)
     }
 
@@ -360,6 +379,12 @@ impl Store {
             .collect()
     }
 
+    /// Removes a document's chunks from both indexes
+    fn remove_chunks(&mut self, id: &str) {
+        self.index.remove_doc(id);
+        self.keywords.remove_doc(id);
+    }
+
     fn index_doc(&mut self, doc: &Document, embedder: &dyn Embedder) -> Result<usize> {
         let chunks = self.doc_chunks(doc);
         self.index_chunks(doc, &chunks, embedder, &mut |_| true)?;
@@ -377,7 +402,7 @@ impl Store {
         embedder: &dyn Embedder,
         batch: &mut dyn FnMut(usize) -> bool,
     ) -> Result<bool> {
-        self.index.remove_doc(&doc.id);
+        self.remove_chunks(&doc.id);
         for group in chunks.chunks(EMBED_BATCH) {
             let inputs: Vec<String> = group
                 .iter()
@@ -404,10 +429,11 @@ impl Store {
                     expert: comment.map(|c| c.expert.clone()),
                     text: c.text.clone(),
                 };
-                self.index.add(entry, v)?;
+                self.index.add(entry.clone(), v)?;
+                self.keywords.add(&entry);
             }
             if !batch(group.len()) {
-                self.index.remove_doc(&doc.id);
+                self.remove_chunks(&doc.id);
                 return Ok(false);
             }
         }
@@ -489,6 +515,7 @@ impl Store {
     /// (after changing the embedder or the chunk sizes)
     pub fn reindex(&mut self, embedder: &dyn Embedder) -> Result<usize> {
         self.index = FlatIndex::new(embedder.name(), embedder.dim());
+        self.keywords = KeywordIndex::default();
         let mut n = 0;
         for doc in self.documents()? {
             if is_binary_text(&doc.text) {
@@ -504,13 +531,21 @@ impl Store {
         Ok(n)
     }
 
-    /// Writes the index
-    pub fn save(&self) -> Result<()> {
-        self.index.save(&self.root.join("index"))
+    /// The keyword index, in the index's entry order
+    pub fn keywords(&self) -> &KeywordIndex {
+        &self.keywords
     }
 
-    /// The `k` best chunks for a query; the query is expanded with the
-    /// other-language names of glossary terms it mentions
+    /// Writes the index and the keyword index
+    pub fn save(&self) -> Result<()> {
+        let dir = self.root.join("index");
+        self.index.save(&dir)?;
+        self.keywords.save(&dir)
+    }
+
+    /// The `k` best chunks for a query ([`Retrieval::Hybrid`]); the query
+    /// is expanded with the other-language names of glossary terms it
+    /// mentions
     pub fn search(&self, query: &str, k: usize, embedder: &dyn Embedder) -> Result<Vec<Hit>> {
         self.search_where(query, k, embedder, &|_| true)
     }
@@ -524,19 +559,66 @@ impl Store {
         embedder: &dyn Embedder,
         keep: &dyn Fn(&Entry) -> bool,
     ) -> Result<Vec<Hit>> {
+        self.search_with(Retrieval::Hybrid, query, k, embedder, keep)
+    }
+
+    /// The `k` best chunks for a query among those `keep` accepts, ranked
+    /// the way `mode` says. The query is expanded with every official name,
+    /// in every language, of the glossary terms it mentions by a name or
+    /// an approved alias ([`Glossary::expand`]), for the embedding and the
+    /// keywords alike.
+    pub fn search_with(
+        &self,
+        mode: Retrieval,
+        query: &str,
+        k: usize,
+        embedder: &dyn Embedder,
+        keep: &dyn Fn(&Entry) -> bool,
+    ) -> Result<Vec<Hit>> {
         if self.index.is_empty() {
             return Ok(Vec::new());
         }
         let q = self.glossary.expand(query);
-        let v = embedder.embed(&[&q], Role::Query)?.remove(0);
-        Ok(self
-            .index
-            .search_where(&v, k, keep)
+        let hit = |e: &Entry, score| Hit {
+            score,
+            entry: e.clone(),
+        };
+        if mode == Retrieval::Embedding {
+            let v = embedder.embed(&[&q], Role::Query)?.remove(0);
+            let found = self.index.search_where(&v, k, keep);
+            return Ok(found.into_iter().map(|(e, s)| hit(e, s)).collect());
+        }
+        let entries = self.index.entries();
+        let bm25 = self
+            .keywords
+            .scores(&KeywordQuery::new(query, &self.glossary));
+        let kept = (0..entries.len()).filter(|&i| keep(&entries[i]));
+        let mut scored: Vec<(usize, f32)> = if mode == Retrieval::Keyword {
+            kept.filter(|&i| bm25[i] > 0.0)
+                .map(|i| (i, bm25[i]))
+                .collect()
+        } else {
+            let v = embedder.embed(&[&q], Role::Query)?.remove(0);
+            let cos = self.index.cosines(&v);
+            let kept: Vec<usize> = kept.collect();
+            let top = kept.iter().map(|&i| bm25[i]).fold(0.0, f32::max);
+            let exact = ExactMatch::new(query, &self.glossary);
+            kept.into_iter()
+                .map(|i| {
+                    let e = &entries[i];
+                    let keyword = if top > 0.0 { bm25[i] / top } else { 0.0 };
+                    let s = crate::index::score(cos[i], e.weight, e.game)
+                        + KEYWORD_SCALE * keyword
+                        + EXACT_BOOST * exact.share(e);
+                    (i, s)
+                })
+                .collect()
+        };
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        scored.truncate(k);
+        Ok(scored
             .into_iter()
-            .map(|(e, score)| Hit {
-                score,
-                entry: e.clone(),
-            })
+            .map(|(i, s)| hit(&entries[i], s))
             .collect())
     }
 
@@ -550,6 +632,95 @@ impl Store {
             }
         }
         Ok((counts, self.index.len()))
+    }
+}
+
+/// How [`Store::search_with`] ranks chunks
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Retrieval {
+    /// Cosine similarity of the E5 embeddings, with the source weight and
+    /// the Splatoon 2 penalty ([`crate::index::score`])
+    Embedding,
+    /// BM25 alone ([`crate::keyword`]); chunks sharing no token are left
+    /// out
+    Keyword,
+    /// The embedding's score, plus [`KEYWORD_SCALE`] times BM25 relative
+    /// to the best match, plus [`EXACT_BOOST`] for game-data cards whose
+    /// title names what the query does
+    Hybrid,
+}
+
+/// What the best keyword match adds in [`Retrieval::Hybrid`]. E5 cosines of
+/// related texts sit within a few hundredths of each other (0.8-0.9), so
+/// this is worth several of those: on the retrieval set
+/// (`cuttlefish eval retrieval`) 0.2 found the most, and 0.05 left the
+/// embeddings' mistakes in place
+pub const KEYWORD_SCALE: f32 = 0.2;
+
+/// What a game-data card whose title and heading name everything the query
+/// identifies adds in [`Retrieval::Hybrid`] (a share of it for a part):
+/// enough to put the card of the right event and wave above its siblings,
+/// which share every other word
+pub const EXACT_BOOST: f32 = 0.1;
+
+/// What a query identifies, for [`EXACT_BOOST`]: its event numbers, waves
+/// and percentages ([`crate::keyword::is_identifier`]) and the English names
+/// of the glossary terms it mentions (stages, weapons, Salmonids)
+struct ExactMatch {
+    identifiers: Vec<String>,
+    names: Vec<String>,
+}
+
+impl ExactMatch {
+    fn new(query: &str, glossary: &Glossary) -> Self {
+        let mut identifiers: Vec<String> = crate::keyword::tokens(query)
+            .into_iter()
+            .filter(|t| crate::keyword::is_identifier(t))
+            .collect();
+        identifiers.sort();
+        identifiers.dedup();
+        let mut names: Vec<String> = glossary
+            .find_in(query)
+            .into_iter()
+            .filter_map(|t| t.name("en"))
+            .map(str::to_lowercase)
+            .collect();
+        names.sort();
+        names.dedup();
+        ExactMatch { identifiers, names }
+    }
+
+    /// How well a game-data card's title and heading match what the query
+    /// identifies, 0 to 1; 0 for other sources. With numbers in the query,
+    /// the share of its numbers and names the card's title and heading
+    /// hold (the event's stage is in its title). Without, a name counts
+    /// only as the card's subject (`Steelhead` of "Steelhead (Salmonid,
+    /// game data)"), so a question about the Steelhead at high tide lifts
+    /// the Steelhead's card and not every high-tide wave's.
+    fn share(&self, e: &Entry) -> f32 {
+        let total = self.identifiers.len() + self.names.len();
+        if total == 0 || e.source != SourceKind::GameData {
+            return 0.0;
+        }
+        if self.identifiers.is_empty() {
+            let subject = e
+                .title
+                .split(" (")
+                .next()
+                .unwrap_or_default()
+                .to_lowercase();
+            return if self.names.contains(&subject) {
+                1.0
+            } else {
+                0.0
+            };
+        }
+        let place = alloc::format!("{}\n{}", e.title, e.heading);
+        let tokens = crate::keyword::tokens(&place);
+        let place = place.to_lowercase();
+        let ids = self.identifiers.iter().filter(|t| tokens.contains(t));
+        let names = self.names.iter().filter(|n| place.contains(n.as_str()));
+        (ids.count() + names.count()) as f32 / total as f32
     }
 }
 
@@ -826,6 +997,88 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(counts.len(), 2);
         assert_eq!(chunks, 2);
+    }
+
+    #[test]
+    fn hybrid_search_tells_near_identical_cards_apart() {
+        let root = temp("hybrid");
+        let e = HashEmbedder { dim: 256 };
+        let mut store = Store::open(&root, &e).unwrap();
+        let body = "Spawn schedule: Stinger from B0, Scrapper from A2";
+        for (event, wave) in [(1, 3), (7, 1), (7, 3), (7, 4)] {
+            let mut d = doc(
+                &alloc::format!("event-{event}-{wave}"),
+                &alloc::format!("Eggstra Work #{event}, wave {wave}"),
+                body,
+            );
+            d.source = SourceKind::GameData;
+            store.add(&d, &e).unwrap();
+        }
+        store
+            .add(&doc("tides", "Tides", "Low tide moves the basket."), &e)
+            .unwrap();
+        let q = "What spawned in wave 3 of Eggstra Work #7?";
+        let top = |mode| store.search_with(mode, q, 5, &e, &|_| true).unwrap();
+        assert_eq!(
+            top(Retrieval::Hybrid)[0].entry.title,
+            "Eggstra Work #7, wave 3"
+        );
+        assert_eq!(
+            top(Retrieval::Keyword)[0].entry.title,
+            "Eggstra Work #7, wave 3"
+        );
+        // BM25 leaves out what shares no token; embeddings rank everything
+        assert_eq!(top(Retrieval::Keyword).len(), 4);
+        assert_eq!(top(Retrieval::Embedding).len(), 5);
+        // The keyword index is saved beside the vectors, follows deletes
+        // and is rebuilt when missing
+        store.save().unwrap();
+        assert!(root.join("index/keywords.json").is_file());
+        let id = crate::doc::doc_id("event-7-3");
+        store.delete(&id).unwrap();
+        assert!(store.keywords().aligned_with(store.index().entries()));
+        store.save().unwrap();
+        std::fs::remove_file(root.join("index/keywords.json")).unwrap();
+        let reopened = Store::open(&root, &e).unwrap();
+        assert_eq!(reopened.keywords().len(), 4);
+        assert!(reopened.keywords().aligned_with(reopened.index().entries()));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn exact_matches_need_numbers_or_the_subject() {
+        let g = Glossary::seed();
+        let card = |title: &str| {
+            let mut e = crate::index::Entry {
+                doc_id: String::new(),
+                ordinal: 0,
+                title: String::from(title),
+                heading: String::new(),
+                url: None,
+                source: SourceKind::GameData,
+                license: None,
+                language: None,
+                weight: 1.1,
+                game: None,
+                video: None,
+                expert: None,
+                text: String::new(),
+            };
+            e.heading = e.title.clone();
+            e
+        };
+        let steelhead = card("Steelhead (Salmonid, game data)");
+        let wave = card("Eggstra Work #1 (2023-04-15, Sockeye Station), wave 3: High Tide");
+        let q = ExactMatch::new("How do I deal with Steelhead on high tide?", &g);
+        assert_eq!(q.share(&steelhead), 1.0);
+        assert_eq!(q.share(&wave), 0.0);
+        let q = ExactMatch::new("Eggstra Work #1 wave 3 at Sockeye Station", &g);
+        assert_eq!(q.share(&wave), 1.0);
+        let q = ExactMatch::new("Eggstra Work #7 wave 3", &g);
+        assert!(q.share(&wave) > 0.0 && q.share(&wave) < 1.0);
+        let mut wiki = steelhead.clone();
+        wiki.source = SourceKind::Wiki;
+        assert_eq!(ExactMatch::new("Steelhead", &g).share(&wiki), 0.0);
     }
 
     #[test]

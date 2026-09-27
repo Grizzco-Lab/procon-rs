@@ -43,11 +43,13 @@ cuttlefish ingest leanny --dry-run         # Lean's Splatoon 3 datamine: list th
 cuttlefish ingest leanny                   # fact cards of exact game numbers and the Eggstra Work events; re-runs fetch only changed files
 
 cuttlefish search "バクダンの処理"          # top-k chunks with sources; any language
+cuttlefish search "Eggstra Work #7 wave 3" --mode keyword   # or embedding; hybrid by default
 cuttlefish glossary "Steelhead"            # a term's names and definition
 cuttlefish stats                           # documents, terms per language, tables, assets
 cuttlefish docs                            # every document with its id
 cuttlefish delete 4d7e4072ed28b64e         # a document and its chunks
 cuttlefish eval eval.example.toml          # retrieval check, no key needed
+cuttlefish eval retrieval                  # the crate's retrieval set: recall@1/5 of embeddings, BM25, hybrid
 
 export ANTHROPIC_API_KEY=...               # only ever from the environment, or the env file
                                            # scripts/run.sh loads (~/.config/procon/env)
@@ -103,7 +105,9 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   docs/<id>.json     processed documents with source, url or inbox path, title,
                      language, license, attribution, revision (wiki pages),
                      fetch time, weight and text
-  index/             meta.json, entries.jsonl, vectors.f32
+  index/             meta.json, entries.jsonl, vectors.f32, keywords.json
+                     (the BM25 index, in the entries' order; rebuilt from
+                     entries.jsonl when missing or out of step)
 ~/.cache/procon-cuttlefish/ models/, thumbs/, unpack/: on this machine only
 ```
 
@@ -1123,6 +1127,33 @@ tokens of overlap when a section is cut) and embedded with
 nearest to the player's question plus the comments already on the moment and
 its situation (without a question, a "fundamentals" query). Asking: nearest
 to the question.
+
+"Nearest" is **hybrid**: the embedding's cosine plus a keyword score
+(`keyword.rs`, BM25 over each chunk's title, heading and text, kept in
+`index/keywords.json` beside the vectors). E5-small places near-identical
+cards (the five waves of one Eggstra Work event, wave 3 of two events)
+within a few thousandths of each other, so "What spawned in wave 3 of
+Eggstra Work #7?" used to land on another event's wave; exact terms decide
+there. Tokens: Latin words (plural `s` dropped, a few stop words out),
+numbers, and identifiers (`#7`, also from "work 7" and the CJK counters;
+`wave 3`, also from `W3`, `wave3` and the CJK wave counter; `333%`); CJK text
+as character pairs. The query's glossary terms (by any name or approved
+alias, `find_in`) are matched by every official name in every language,
+each term counting once as its best-matching name, so slang like 鬼坝 finds
+the English Spawning Grounds pages and a page that lists a name in ten
+languages does not outrank one that uses it. The score is
+`cosine + 0.1 x (weight - 1) - S2 penalty + 0.2 x BM25 / best BM25 + 0.1 x
+exact`, where `exact` (game-data cards only) is the share of the query's
+event numbers, waves, percentages and names that the card's title holds,
+or, without numbers in the query, 1 when the card is about the named thing
+("Steelhead (Salmonid, game data)" for a question about the Steelhead).
+`cuttlefish eval retrieval` measures it (below, point 5).
+The keyword index follows the vectors (add, delete, reindex) and is written
+with them; when it is missing, from an older tokenizer, or out of step (the
+vectors synced in from another machine), opening the store rebuilds it from
+`entries.jsonl` in about 0.1 s for 4,300 chunks, no embedding needed, and
+the next write saves it.
+
 Retrieval runs *before* the call, not as a tool the model calls: one
 request, predictable cost and latency. A search tool for the model is the
 next step if single-shot retrieval misses too often (the model could then
@@ -1242,6 +1273,26 @@ prompts, and `--answer` before changing models or prompts. Retrieval misses
 are the cheapest to find and fix; for answers, read them next to the expected
 points (a model-graded rubric is the next step).
 
+`cuttlefish eval retrieval` runs the crate's own set,
+`questions/retrieval.toml` (45 questions with their target chunks: Eggstra
+Work events and waves, hazard levels, weapons and Salmonids by name, slang,
+Chinese and Japanese questions over English pages, #vod-review expert
+comments by message id, and paraphrases without the names), and any eval
+file prints the same table: each question's rank under embeddings, BM25 and
+hybrid, then recall@1 and recall@5. On the store of 2026-09-27 (4,259
+chunks: wiki, game-data cards, #vod-review, stat.ink files):
+
+| Ranking   | recall@1 | recall@5 |
+|-----------|----------|----------|
+| embedding | 15/45    | 20/45    |
+| BM25      | 30/45    | 40/45    |
+| hybrid    | 38/45    | 43/45    |
+
+The weights (`store::KEYWORD_SCALE` 0.2, `store::EXACT_BOOST` 0.1) were the
+best of a grid on this set. Name tables (wiki "Names in other languages",
+the stat.ink API's response samples) still come up for broad questions,
+under either ranking.
+
 **6. When fine-tuning would make sense.** Not for knowledge: facts change
 with patches and rotations, and retrieval updates by re-ingesting. It could
 pay off later for *style and judgment* (reviews that sound like the best
@@ -1267,9 +1318,13 @@ every source listed here. Beyond that, implement `index::VectorIndex` with an
 approximate index (HNSW) or a vector database; documents, chunks and
 metadata stay as they are. Other upgrades behind the same interfaces: a
 larger embedder (BGE-M3, 568M parameters, 8k-token inputs, also XLM-RoBERTa
-based) with `reindex`; hybrid keyword + vector search for exact names and
-numbers; re-ranking the top 30 with a cross-encoder; CUDA embeddings with
-`--features cuda`.
+based) with `reindex`; re-ranking the top 30 with a cross-encoder; CUDA
+embeddings with `--features cuda`. Hybrid keyword + vector search is in
+(point 1): its BM25 scan checks each chunk's sorted terms per query token
+(the eval's 135 searches, embedding each query, take under 9 s on a CPU);
+the keyword file is about half the size of
+the vectors (3.3 MB for 4,259 chunks). Far beyond, an inverted index
+(postings per term) would replace the scan.
 
 ### Embedding model
 

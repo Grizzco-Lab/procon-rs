@@ -7,7 +7,8 @@
 //!
 //! On disk, in the index folder: `meta.json` (embedder name, dimension),
 //! `entries.jsonl` (one [`Entry`] per line) and `vectors.f32` (the vectors,
-//! little-endian `f32`, in entry order).
+//! little-endian `f32`, in entry order). The keyword index
+//! ([`crate::keyword`], `keywords.json`) sits beside them in the same order.
 
 use crate::doc::SourceKind;
 use crate::expert::Expert;
@@ -140,6 +141,15 @@ impl FlatIndex {
     /// All entries, in insertion order
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    /// Cosine similarity of every entry, in entry order, with a unit query
+    /// vector (for fusing with keyword scores, [`crate::store::Retrieval`])
+    pub fn cosines(&self, query: &[f32]) -> Vec<f32> {
+        self.vectors
+            .chunks_exact(self.dim)
+            .map(|v| v.iter().zip(query).map(|(a, b)| a * b).sum())
+            .collect()
     }
 
     /// Reads an index folder; `None` if it has none yet

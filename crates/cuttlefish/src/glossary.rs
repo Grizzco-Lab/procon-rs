@@ -298,7 +298,7 @@ fn alias_line(t: &Term, a: &Alias) -> String {
 
 /// True for scripts written without spaces, where a form may sit inside a
 /// longer word
-fn is_cjk(c: char) -> bool {
+pub(crate) fn is_cjk(c: char) -> bool {
     matches!(c as u32, 0x3040..=0x30ff | 0x3400..=0x9fff | 0xac00..=0xd7af)
 }
 
