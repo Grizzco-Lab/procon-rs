@@ -1,7 +1,9 @@
 //! Documents: one page, video transcript, conversation or file, with where
 //! it came from and under which terms it may be used.
 
+use crate::moments::Moment;
 use alloc::string::String;
+use alloc::vec::Vec;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -71,6 +73,10 @@ pub struct Document {
     pub weight: f32,
     /// Plain text; markdown headings (`#`) mark sections
     pub text: String,
+    /// Moments in a video the text points at (Discord VOD reviews: links
+    /// with a time, times and waves written in the messages)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub moments: Vec<Moment>,
 }
 
 impl Document {
@@ -89,6 +95,7 @@ impl Document {
             fetched_at: Utc::now(),
             weight: source.default_weight(),
             text,
+            moments: Vec::new(),
         }
     }
 }

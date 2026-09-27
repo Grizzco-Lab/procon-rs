@@ -1,13 +1,17 @@
 //! `cuttlefish`: fill the knowledge store, search it and ask the model.
 //!
 //! Run `cuttlefish --help` for the commands. Keys come from the
-//! environment only: `ANTHROPIC_API_KEY` (ask, translate; or the logged-in
-//! Claude Code CLI with `--backend claude-cli`) and `DISCORD_BOT_TOKEN`
-//! (ingest discord-bot).
+//! environment only, or the env file `scripts/run.sh` loads
+//! ([`cuttlefish::env_file`]): `ANTHROPIC_API_KEY` (ask, translate; or the
+//! logged-in Claude Code CLI with `--backend claude-cli`),
+//! `DISCORD_BOT_TOKEN` (ingest discord-bot) and `DISCORD_USER_TOKEN` (fetch
+//! discord).
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
+use core::sync::atomic::{AtomicBool, Ordering};
 use cuttlefish::discord;
+use cuttlefish::discord_fetch::{self, Https, Interruptible, Options, Pace, Range, TOKEN_VAR};
 use cuttlefish::doc::Document;
 use cuttlefish::embed::E5Embedder;
 use cuttlefish::eval::EvalSet;
@@ -15,8 +19,10 @@ use cuttlefish::ingest::{self, Meta};
 use cuttlefish::llm::{Backend, Client, Settings};
 use cuttlefish::review::{Reviewer, translate};
 use cuttlefish::store::{self, Store};
-use cuttlefish::{assets, inbox, tables};
+use cuttlefish::{assets, env_file, inbox, tables};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Parser)]
 #[command(about = "Cuttlefish: Salmon Run knowledge store and AI reviewer")]
@@ -39,6 +45,9 @@ enum Command {
     /// Import sources into the store
     #[command(subcommand)]
     Ingest(Ingest),
+    /// Fetch raw material into a folder (the inbox reads it)
+    #[command(subcommand)]
+    Fetch(Fetch),
     /// Show the chunks closest to a query
     Search {
         /// What to look for, in any language
@@ -210,6 +219,51 @@ enum Ingest {
     },
 }
 
+#[derive(Subcommand)]
+enum Fetch {
+    /// Slowly archive Discord channels you are a member of, with your own
+    /// account's token (DISCORD_USER_TOKEN in the env file). Against
+    /// Discord's terms: the account can be banned. Read-only, only the
+    /// given channels and their threads; resumes where it stopped
+    Discord {
+        /// Channel ids (repeatable; Discord: developer mode, right-click the
+        /// channel, Copy ID)
+        #[arg(long, required = true)]
+        channel: Vec<String>,
+        /// Server id, for the active-threads listing (default: the channel's)
+        #[arg(long)]
+        guild: Option<String>,
+        /// Folder for the channels' files themselves. By default each channel
+        /// goes to <knowledge>/inbox/discord/<guild>/<channel>/, the
+        /// knowledge folder being the studio's (see --config), where the
+        /// inbox import picks it up
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Skip the channels' threads and forum posts
+        #[arg(long)]
+        no_threads: bool,
+        /// Seconds between requests, drawn anew for each from this range
+        #[arg(long, default_value_t = Pace::default().delay)]
+        delay: Range,
+        /// Requests between longer pauses, drawn anew after each pause
+        #[arg(long, default_value_t = Pace::default().pause_every)]
+        pause_every: Range,
+        /// Seconds of a longer pause, drawn from this range
+        #[arg(long, default_value_t = Pace::default().pause)]
+        pause: Range,
+        /// At most this many requests per day (UTC); the run stops there
+        #[arg(long)]
+        daily_cap: Option<u32>,
+        /// At most this many requests this run (2 checks access with one
+        /// page of messages); the next run continues
+        #[arg(long)]
+        max_requests: Option<u32>,
+        /// At most this many minutes a run; the next run continues
+        #[arg(long)]
+        max_minutes: Option<f64>,
+    },
+}
+
 /// Adds documents to the store, saving the index every few documents
 struct Sink {
     store: Store,
@@ -365,9 +419,17 @@ fn knowledge_folder(data: Option<PathBuf>, config: Option<PathBuf>) -> Result<Pa
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Before any thread: secrets from the env file, as scripts/run.sh
+    if let Some(p) = env_file::load() {
+        log::info!("environment loaded from {}", p.display());
+    }
     let cli = Cli::parse();
+    if let Command::Fetch(f) = cli.command {
+        return fetch(f, cli.data, cli.config);
+    }
     let data = knowledge_folder(cli.data.clone(), cli.config.clone())?;
     match cli.command {
+        Command::Fetch(_) => unreachable!(),
         Command::Ingest(i) => ingest(&data, i),
         Command::Search { query, k } => {
             let (store, embedder) = open(&data, true)?;
@@ -537,6 +599,96 @@ fn main() -> Result<()> {
             let n = store.reindex(&embedder)?;
             store.save()?;
             println!("{n} chunks indexed");
+            Ok(())
+        }
+    }
+}
+
+/// `fetch`: `data` and `config` find the knowledge folder for the default
+/// output
+fn fetch(cmd: Fetch, data: Option<PathBuf>, config: Option<PathBuf>) -> Result<()> {
+    match cmd {
+        Fetch::Discord {
+            channel,
+            guild,
+            out,
+            no_threads,
+            delay,
+            pause_every,
+            pause,
+            daily_cap,
+            max_requests,
+            max_minutes,
+        } => {
+            // The channels' own folder, or <knowledge>/inbox/discord with a
+            // folder per channel below it
+            let (root, flat) = match out {
+                Some(out) => (out, true),
+                None => (
+                    knowledge_folder(data, config)?
+                        .join(inbox::INBOX)
+                        .join("discord"),
+                    false,
+                ),
+            };
+            let token = std::env::var(TOKEN_VAR)
+                .ok()
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .with_context(|| {
+                    format!(
+                        "{TOKEN_VAR} is not set: put it in the env file (~/.config/procon/env, chmod 600), see the README"
+                    )
+                })?;
+            let stop = Arc::new(AtomicBool::new(false));
+            let flag = stop.clone();
+            ctrlc::set_handler(move || flag.store(true, Ordering::Relaxed))
+                .context("setting the Ctrl+C handler")?;
+            println!(
+                "Reading {} channel(s) with your own account, against Discord's terms: at your own risk. Ctrl+C stops after the request under way.",
+                channel.len()
+            );
+            println!(
+                "Pace: {delay} s between requests, a pause of {pause} s every {pause_every} requests{}{}{}",
+                daily_cap.map_or_else(String::new, |n| format!(", at most {n} requests a day")),
+                max_requests
+                    .map_or_else(String::new, |n| format!(", at most {n} requests this run")),
+                max_minutes.map_or_else(String::new, |n| format!(", at most {n} minutes this run")),
+            );
+            let options = Options {
+                channels: channel,
+                guild,
+                threads: !no_threads,
+                flat,
+                pace: Pace {
+                    delay,
+                    pause_every,
+                    pause,
+                    daily_cap,
+                    max_requests,
+                    max_minutes,
+                },
+            };
+            let mut http = Https::default();
+            let mut clock = Interruptible {
+                stop,
+                started: Instant::now(),
+            };
+            let summary =
+                discord_fetch::run(&mut http, &mut clock, token, &root, options, &mut |line| {
+                    println!("{line}")
+                })?;
+            println!(
+                "{} requests, {} messages added, {} channels and threads under {}{}",
+                summary.requests,
+                summary.messages,
+                summary.conversations,
+                root.display(),
+                summary
+                    .stopped
+                    .map(|s| format!("; stopped: {s}"))
+                    .unwrap_or_default()
+            );
             Ok(())
         }
     }

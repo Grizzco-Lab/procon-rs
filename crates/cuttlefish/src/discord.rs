@@ -1,25 +1,33 @@
-//! Discord conversations, from an export file or the official bot API.
+//! Discord conversations, from an export file, the official bot API or an
+//! archive made by `cuttlefish fetch discord`.
 //!
-//! Reading Discord with a user account's token ("self-bots") is against
-//! Discord's terms, so this module never does. The two supported ways:
+//! Three ways in:
 //!
 //! 1. An export file: DiscordChatExporter's JSON format, made by someone with
 //!    access to the channel (and the server's permission) and handed over.
 //! 2. The bot API: a server admin adds a bot (with the Message Content
 //!    intent, and View Channel + Read Message History on the channel) and
 //!    gives its token through the `DISCORD_BOT_TOKEN` environment variable.
+//! 3. An archive of raw API messages fetched slowly with the user's own
+//!    account ([`crate::discord_fetch`]; against Discord's terms, at the
+//!    user's own risk), read with [`read_archive`].
 //!
 //! Messages become one document per conversation: a forum post or thread,
 //! or a run of channel messages without a gap longer than
-//! [`CONVERSATION_GAP_S`]. Attachments (VOD clips) are kept as links.
+//! [`CONVERSATION_GAP_S`]. Attachments (VOD clips) are kept as links, and
+//! the moments the messages point at (video links with a time, times and
+//! waves in the text, [`crate::moments`]) as the document's `moments`.
 
 use crate::doc::{Document, SourceKind};
+use crate::moments;
 use alloc::string::String;
 use alloc::vec::Vec;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use core::time::Duration;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::path::Path;
 
 /// A pause longer than this starts a new conversation
 pub const CONVERSATION_GAP_S: i64 = 2 * 3600;
@@ -54,13 +62,38 @@ pub struct Channel {
     pub name: String,
     /// Parent channel name of a thread
     pub parent: Option<String>,
+    /// A thread or forum post: one conversation
+    #[serde(default)]
+    pub thread: bool,
 }
+
+/// Channel types of threads (announcement, public, private)
+const THREAD_TYPES: [u64; 3] = [10, 11, 12];
+/// Channel types without messages of their own: forum and media channels,
+/// whose posts are threads
+pub const FORUM_TYPES: [u64; 2] = [15, 16];
 
 impl Channel {
     /// True for the #vod-review channel and its threads
     pub fn is_vod_review(&self) -> bool {
         let is = |n: &str| n.to_lowercase().contains("vod-review");
         is(&self.name) || self.parent.as_deref().is_some_and(is)
+    }
+
+    /// From a channel object of the API, with the parent channel's name
+    /// for a thread; the server's name is not in it
+    pub fn from_api(c: &Value, parent: Option<String>) -> Channel {
+        let text = |key: &str| String::from(c[key].as_str().unwrap_or_default());
+        Channel {
+            guild_id: text("guild_id"),
+            guild: String::new(),
+            id: text("id"),
+            name: text("name"),
+            parent,
+            thread: c["type"]
+                .as_u64()
+                .is_some_and(|t| THREAD_TYPES.contains(&t)),
+        }
     }
 }
 
@@ -81,6 +114,8 @@ struct ExportGuild {
 struct ExportChannel {
     id: String,
     name: String,
+    #[serde(default)]
+    r#type: String,
     #[serde(default)]
     category: Option<String>,
 }
@@ -141,6 +176,7 @@ pub fn parse_export(json: &str) -> Result<(Channel, Vec<Message>)> {
         id: f.channel.id,
         name: f.channel.name,
         parent: f.channel.category,
+        thread: f.channel.r#type.contains("Thread"),
     };
     let messages = f
         .messages
@@ -201,20 +237,43 @@ pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec
             let title = alloc::format!("{place}, {}", first.timestamp.format("%Y-%m-%d"));
             let mut text = String::new();
             let mut authors: Vec<&str> = Vec::new();
+            let mut found = Vec::new();
             for m in g {
                 if !authors.contains(&m.author.as_str()) {
                     authors.push(&m.author);
                 }
-                text.push_str(&alloc::format!("{}: {}\n", m.author, m.content.trim()));
+                text.push_str(&alloc::format!(
+                    "[{}] {}: {}\n",
+                    m.timestamp.format("%Y-%m-%d %H:%M UTC"),
+                    m.author,
+                    m.content.trim()
+                ));
                 for l in &m.links {
                     text.push_str(&alloc::format!("  [{l}]\n"));
                 }
                 text.push('\n');
+                // Moments in the text and in the links (embeds of a video)
+                let mut with_links = m.content.clone();
+                for l in &m.links {
+                    with_links.push('\n');
+                    with_links.push_str(l);
+                }
+                for mut moment in moments::extract(&with_links) {
+                    moment.message_id = Some(m.id.clone());
+                    moment.author = Some(m.author.clone());
+                    moment.at = Some(m.timestamp);
+                    found.push(moment);
+                }
             }
             let mut doc = Document::new(source, &url, title, String::from(text.trim_end()));
             doc.url = Some(url);
-            doc.attribution = Some(alloc::format!("{} ({})", authors.join(", "), channel.guild));
+            doc.attribution = Some(if channel.guild.is_empty() {
+                authors.join(", ")
+            } else {
+                alloc::format!("{} ({})", authors.join(", "), channel.guild)
+            });
             doc.license = Some(String::from(LICENSE));
+            doc.moments = found;
             doc
         })
         .collect()
@@ -226,8 +285,10 @@ pub struct Bot {
     token: String,
 }
 
-const API: &str = "https://discord.com/api/v10";
+/// The REST API
+pub const API: &str = "https://discord.com/api/v10";
 
+/// A message object of the API
 #[derive(Deserialize)]
 struct ApiMessage {
     id: String,
@@ -252,6 +313,77 @@ struct ApiUser {
 struct ApiAttachment {
     url: String,
     filename: String,
+}
+
+impl From<ApiMessage> for Message {
+    fn from(m: ApiMessage) -> Self {
+        let mut links: Vec<String> = m
+            .attachments
+            .iter()
+            .map(|a| alloc::format!("{}: {}", a.filename, a.url))
+            .collect();
+        links.extend(embed_links(&m.embeds));
+        Message {
+            id: m.id,
+            timestamp: m.timestamp,
+            author: m.author.global_name.unwrap_or(m.author.username),
+            content: m.content,
+            links,
+        }
+    }
+}
+
+/// Numeric value of a snowflake id, for ordering
+pub fn snowflake(id: &str) -> u64 {
+    id.parse().unwrap_or_default()
+}
+
+/// Messages from JSON lines of API message objects (a `.messages.jsonl`
+/// of `cuttlefish fetch discord`), oldest first, each id once; lines that
+/// are not messages are skipped
+pub fn parse_api_messages(jsonl: &str) -> Vec<Message> {
+    let mut messages: Vec<Message> = jsonl
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<ApiMessage>(l).ok())
+        .map(Message::from)
+        .collect();
+    messages.sort_by_key(|m| snowflake(&m.id));
+    messages.dedup_by(|a, b| a.id == b.id);
+    messages
+}
+
+/// Reads a channel or thread of a `cuttlefish fetch discord` archive: the
+/// messages file (`<id>.messages.jsonl`) with the channel object beside it
+/// (`<id>.channel.json`) and, for a thread, the parent's channel object
+/// beside it or one folder up (threads are kept in `threads/`)
+pub fn read_archive(messages_path: &Path) -> Result<(Channel, Vec<Message>)> {
+    let name = messages_path
+        .file_name()
+        .context("not a file")?
+        .to_string_lossy()
+        .into_owned();
+    let id = name
+        .strip_suffix(".messages.jsonl")
+        .with_context(|| alloc::format!("{name}: not a <id>.messages.jsonl file"))?;
+    let dir = messages_path.parent().context("no folder")?;
+    let read_channel = |dir: &Path, id: &str| -> Option<Value> {
+        let bytes = std::fs::read(dir.join(alloc::format!("{id}.channel.json"))).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    };
+    let info = read_channel(dir, id).unwrap_or_else(|| serde_json::json!({ "id": id }));
+    let parent = info["parent_id"].as_str().and_then(|p| {
+        read_channel(dir, p)
+            .or_else(|| read_channel(dir.parent()?, p))
+            .and_then(|c| c["name"].as_str().map(String::from))
+    });
+    let mut channel = Channel::from_api(&info, parent);
+    if channel.name.is_empty() {
+        channel.name = String::from(id);
+    }
+    let text = std::fs::read_to_string(messages_path)
+        .with_context(|| alloc::format!("reading {}", messages_path.display()))?;
+    Ok((channel, parse_api_messages(&text)))
 }
 
 impl Bot {
@@ -321,13 +453,11 @@ impl Bot {
                 .map(String::from),
             None => None,
         };
-        Ok(Channel {
-            guild_id,
-            guild: String::from(guild["name"].as_str().unwrap_or_default()),
-            id: String::from(id),
-            name: String::from(c["name"].as_str().unwrap_or_default()),
-            parent,
-        })
+        let mut channel = Channel::from_api(&c, parent);
+        channel.guild_id = guild_id;
+        channel.guild = String::from(guild["name"].as_str().unwrap_or_default());
+        channel.id = String::from(id);
+        Ok(channel)
     }
 
     /// Every message of a channel or thread, oldest first
@@ -345,21 +475,7 @@ impl Bot {
             // Newest first within a page
             batch.reverse();
             after = batch.last().map(|m| m.id.clone()).unwrap_or_default();
-            out.extend(batch.into_iter().map(|m| {
-                let mut links: Vec<String> = m
-                    .attachments
-                    .iter()
-                    .map(|a| alloc::format!("{}: {}", a.filename, a.url))
-                    .collect();
-                links.extend(embed_links(&m.embeds));
-                Message {
-                    id: m.id,
-                    timestamp: m.timestamp,
-                    author: m.author.global_name.unwrap_or(m.author.username),
-                    content: m.content,
-                    links,
-                }
-            }));
+            out.extend(batch.into_iter().map(Message::from));
         }
     }
 
@@ -447,7 +563,11 @@ mod tests {
             docs[0].url.as_deref(),
             Some("https://discord.com/channels/1/2/10")
         );
-        assert!(docs[0].text.contains("bob: Two players chased"));
+        assert!(
+            docs[0]
+                .text
+                .contains("[2024-05-01 10:05 UTC] bob: Two players chased")
+        );
         assert!(
             docs[0]
                 .text
@@ -458,5 +578,54 @@ mod tests {
             Some("Alice, bob (Overfishing)")
         );
         assert_eq!(to_documents(&ch, &msgs, true).len(), 1);
+    }
+
+    const LINES: &str = r#"{"id": "12", "channel_id": "3", "timestamp": "2024-05-02T09:00:00+00:00", "content": "W1 :50 see https://youtu.be/x?t=83", "author": {"id": "5", "username": "alice", "global_name": "Alice"}, "attachments": [{"id": "7", "url": "https://cdn.example/clip.mp4", "filename": "clip.mp4"}]}
+{"id": "10", "channel_id": "3", "timestamp": "2024-05-01T10:00:00+00:00", "content": "first", "author": {"id": "6", "username": "bob"}}
+{"id": "12", "channel_id": "3", "timestamp": "2024-05-02T09:00:00+00:00", "content": "W1 :50 see https://youtu.be/x?t=83", "author": {"id": "5", "username": "alice", "global_name": "Alice"}}
+not json
+"#;
+
+    #[test]
+    fn reads_archives_with_moments() {
+        let dir = std::env::temp_dir().join(alloc::format!(
+            "cuttlefish-discord-archive-{}",
+            std::process::id()
+        ));
+        let threads = dir.join("threads");
+        std::fs::create_dir_all(&threads).unwrap();
+        std::fs::write(
+            dir.join("2.channel.json"),
+            r#"{"id": "2", "type": 15, "guild_id": "1", "name": "vod-review"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            threads.join("3.channel.json"),
+            r#"{"id": "3", "type": 11, "guild_id": "1", "parent_id": "2", "name": "Run 3 wipe"}"#,
+        )
+        .unwrap();
+        std::fs::write(threads.join("3.messages.jsonl"), LINES).unwrap();
+        let (ch, msgs) = read_archive(&threads.join("3.messages.jsonl")).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(ch.thread);
+        assert_eq!(ch.parent.as_deref(), Some("vod-review"));
+        assert!(ch.is_vod_review());
+        // Sorted, once each, the bad line dropped
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].author, "bob");
+        assert_eq!(msgs[1].author, "Alice");
+        assert_eq!(msgs[1].links, ["clip.mp4: https://cdn.example/clip.mp4"]);
+        let docs = to_documents(&ch, &msgs, ch.thread);
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].source, SourceKind::DiscordVodReview);
+        assert_eq!(docs[0].title, "#vod-review > Run 3 wipe, 2024-05-01");
+        assert_eq!(docs[0].attribution.as_deref(), Some("bob, Alice"));
+        let m = &docs[0].moments;
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0].raw, "W1 :50");
+        assert_eq!(m[0].message_id.as_deref(), Some("12"));
+        assert_eq!(m[0].author.as_deref(), Some("Alice"));
+        assert_eq!(m[1].url.as_deref(), Some("https://youtu.be/x?t=83"));
+        assert_eq!(m[1].seconds, Some(83.0));
     }
 }

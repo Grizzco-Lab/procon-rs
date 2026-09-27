@@ -29,6 +29,7 @@ cuttlefish ingest url --mediawiki https://wiki.example.org/w/api.php --category 
 cuttlefish ingest youtube https://www.youtube.com/playlist?list=...
 cuttlefish ingest discord-export vod-review.json
 DISCORD_BOT_TOKEN=... cuttlefish ingest discord-bot --channel 123456789012345678
+cuttlefish fetch discord --channel 123456789012345678   # your own account: against Discord's terms, see below
 
 cuttlefish search "バクダンの処理"          # top-k chunks with sources; any language
 cuttlefish glossary "Steelhead"            # a term's names and definition
@@ -37,7 +38,8 @@ cuttlefish docs                            # every document with its id
 cuttlefish delete 4d7e4072ed28b64e         # a document and its chunks
 cuttlefish eval eval.example.toml          # retrieval check, no key needed
 
-export ANTHROPIC_API_KEY=...               # only ever from the environment
+export ANTHROPIC_API_KEY=...               # only ever from the environment, or the env file
+                                           # scripts/run.sh loads (~/.config/procon/env)
 # ...or none: with the Claude Code CLI installed and logged in, `auto` (the
 # default) runs `claude -p` on your own subscription; --backend claude-cli forces it
 cuttlefish ask "When should I leave the basket to kill a Stinger?"
@@ -108,7 +110,7 @@ which can also upload into it) looks at each file by name and first bytes:
 | File | Taken as |
 |---|---|
 | md, txt, rst, org, adoc, html, pdf, docx, srt, vtt | a document (chunked, embedded), keyed by its inbox path |
-| DiscordChatExporter JSON | its conversations |
+| DiscordChatExporter JSON, or `<id>.messages.jsonl` of `fetch discord` (with its `<id>.channel.json` beside it) | its conversations; the fetcher's channel objects and `state.json` are skipped |
 | json, yaml, toml, csv, tsv, po, properties | a name table if it holds the same keys in several languages; never embedded. Otherwise a data table: a small text document of `key / path: value` lines under 1 MB, skipped above. Project configuration (`package.json`, `Cargo.toml`, ...) is skipped |
 | php in a message folder (`messages/<lang>/<category>.php`, as Yii apps such as stat.ink keep them) | a name table: the keys are the English names, the values the translations. Interface categories (`app`, `email`, `privacy`, time zones, ...) and machine-translated folders (`_deepl`) are skipped; other `.php` is code |
 | png, jpg, gif, webp, svg, bmp, ico, avif | an asset; site images (folders named after logos, screenshots, clip art, "about") are skipped |
@@ -194,7 +196,7 @@ skipped and why, failed, gone.
 | Other sites, stat.ink docs | `ingest url` (urls, `--list`, `--sitemap`) | robots.txt obeyed, one request per site every 3 s or the site's `Crawl-delay` |
 | Google Docs, Sheets, Slides | `ingest url <the address you share>` | Read through their exports (see below); only files shared as "Anyone with the link can view" |
 | YouTube | `ingest youtube <video/playlist/channel>` | `yt-dlp` fetches subtitles and metadata only; uploaded subtitles preferred over auto captions |
-| Discord #vod-review | `ingest discord-export` or `ingest discord-bot` | Never with a user token (against Discord's terms). See below |
+| Discord #vod-review | `ingest discord-export`, `ingest discord-bot`, or `fetch discord` + `ingest inbox` | The export and the bot are the sanctioned ways; `fetch discord` reads with your own account, against Discord's terms. See below |
 | Twitter/X, Twitch | not automated | X's API terms and pricing rule out scraping; save the posts or threads you value as text and `ingest file`. Twitch VODs have no subtitles (a speech-to-text step would be needed) |
 
 **Google Docs, Sheets and Slides.** Their pages are drawn by JavaScript, so
@@ -241,8 +243,97 @@ reason, and the store never takes a document whose text is binary data
    too unless `--no-threads`.
 
 Channel messages are grouped into conversations (split at 2-hour gaps);
-threads stay whole. Clips stay as links; they are not downloaded. A channel
+threads stay whole. Each message line carries its time and author
+(`[2024-05-01 10:05 UTC] Alice: ...`), the authors are the document's
+attribution. Clips stay as links; they are not downloaded. A channel
 named `vod-review` (or its threads) gets the highest weight (1.2).
+
+Every Discord document also keeps the **moments** its messages point at, as
+`moments` in the document's JSON, for aligning comments with a video later:
+YouTube links (with the `t=` start when there is one), waves and times
+written in the text ("W1 :50", "wave 2 at 1:20", "86s", "1:02:03", "wave
+3"). Each moment has the text as written (`raw`), the message id, author
+and time it came from, and a guess of what it means (`kind`): the wave
+timer counts down from 100 s, so a bare number of seconds up to 100 and any
+time named with a wave is `wave_timer`; `m:ss` and `1m20s` forms and
+anything over 100 s are `video_time`; a wave with no time is `unknown`.
+
+### Fetching #vod-review with your own account
+
+`cuttlefish fetch discord` archives channels you are a member of, with your
+own account's token. **Automating a user account breaks Discord's terms of
+service and can get the account banned**, even for reading. It is here for
+one private archive (a knowledge base and, later, training data) after that
+was weighed and accepted; it does as little as a person reading the channel
+would, and nothing else. The bot and the export stay the sanctioned ways.
+
+What it does, and does not do:
+
+- **Read-only**, and **only what you name**: the channel object, its
+  messages 100 at a time (`before`/`after`), and its threads and forum
+  posts (the archived-threads listing of the channel; the server's
+  active-threads listing when the account has it, filtered to the channel;
+  threads started by its messages). Every request is checked against that
+  scope before it is made. No gateway or websocket, no typing, no writes.
+- **Slow.** A random delay between requests, 3 to 8 s by default (`--delay
+  3-8`); every 40 to 120 requests (`--pause-every`) a longer pause of 1 to
+  5 minutes (`--pause 60-300`); each drawn anew. A 429 is waited out as its
+  `retry_after` asks and the `X-RateLimit-*` headers are obeyed; server
+  errors back off exponentially; a 401 or 403 stops the run with a clear
+  message and nothing else is tried. `--daily-cap N` stops after N requests
+  in a day (UTC); `--max-requests N` and `--max-minutes M` end a run early,
+  the next run continues. The User-Agent is a desktop browser's.
+- **Resumable and incremental.** The API's JSON is kept as received:
+  `<id>.channel.json` (the channel object), `<id>.messages.jsonl` (one
+  message per line, appended), the threads in `threads/` the same way, and
+  `state.json` with the cursors and the day's count. A run first fetches
+  what is newer than the last one (skipped when the channel's last message
+  is known), then keeps backfilling older history until the first message.
+  Ctrl+C finishes the request under way, saves and stops. Attachments and
+  embeds stay as links in the JSON; nothing is downloaded.
+- Progress after each page: `#vod-review: 1300 messages, oldest 2024-03-02;
+  14 requests this run, 14 today; delay 5.3 s`, and a line for each pause
+  or wait.
+
+By default each channel goes to `<knowledge>/inbox/discord/<guild
+id>/<channel id>/` (the knowledge folder found as for every other command:
+`--config`, else `./config.toml`, else `--data`, else `$CUTTLEFISH_DATA`),
+where **`cuttlefish ingest inbox`** (or the studio's Import inbox) reads it:
+each channel and thread becomes conversations as above, `#vod-review` and
+its threads with source kind `discord-vod-review`; the channel objects and
+`state.json` are skipped as the fetcher's own. A re-run appends to the
+messages files, so the next inbox import sees them changed and replaces
+their documents. `--out <folder>` puts the channels' files in that folder
+itself instead.
+
+**The token** comes from `DISCORD_USER_TOKEN` in the environment, which the
+CLI loads from the same env file as `scripts/run.sh` (`$PROCON_ENV`, else
+`~/.config/procon/env`, else `.env`; `set -a; . ~/.config/procon/env` does
+the same in a shell). Put it there yourself, with the file readable by you
+only; the tool never prints or writes it. **The channel id**: in Discord,
+User Settings > Advanced > Developer Mode, then right-click the channel (or
+the server for `--guild`) > Copy Channel ID.
+
+```bash
+# The token in the env file, readable by you only
+chmod 600 ~/.config/procon/env      # after adding: DISCORD_USER_TOKEN=...
+
+# A check run: the channel object and one page of messages, then stop
+cuttlefish fetch discord --channel 123456789012345678 --max-requests 2
+
+# The archive: newer messages first, then older history; run it again any time
+cuttlefish fetch discord --channel 123456789012345678
+
+# Gentler still: two hours a run, at most 600 requests a day
+cuttlefish fetch discord --channel 123456789012345678 --max-minutes 120 --daily-cap 600
+
+cuttlefish ingest inbox             # the archive into the store
+```
+
+At the default pace a page of 100 messages takes about 5.5 s plus the
+pauses, so 20,000 messages (200 pages) take roughly 20 to 30 minutes, and
+each thread or forum post at least one more request; a forum with 300 posts
+adds about half an hour.
 
 **Inkipedia.** Its `robots.txt` allows general crawlers (`*`) on articles and
 `api.php`, but disallows AI crawlers such as ClaudeBot and GPTBot entirely.

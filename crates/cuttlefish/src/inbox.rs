@@ -7,7 +7,9 @@
 //!
 //! - **prose** (markdown, text, HTML, PDF, Word `.docx`, subtitles): a
 //!   document, chunked and embedded like any other ([`crate::file`]);
-//! - **a Discord export** (DiscordChatExporter JSON): its conversations;
+//! - **a Discord export** (DiscordChatExporter JSON) or **a channel of a
+//!   Discord archive** (`<id>.messages.jsonl` of `cuttlefish fetch
+//!   discord`, with its `<id>.channel.json` beside it): its conversations;
 //! - **a structured file** (JSON, YAML, TOML, CSV, TSV, `.po`,
 //!   `.properties`, and PHP files of a message folder such as stat.ink's
 //!   `messages/<lang>/<category>.php`, see [`crate::messages`]): read for
@@ -36,12 +38,12 @@
 //! deleted. Each import writes a [`Report`] to `<data>/reports/`.
 
 use crate::assets::{self, Asset, Catalogue};
-use crate::discord;
 use crate::doc::{Document, SourceKind, doc_id};
 use crate::ingest::{Meta, Sink};
 use crate::messages::{self, Category};
 use crate::store::{Store, write_atomic};
 use crate::tables::{self, Member};
+use crate::{discord, discord_fetch};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -106,6 +108,8 @@ pub enum Route {
     Prose,
     /// A DiscordChatExporter JSON export
     Discord,
+    /// A channel or thread of a `cuttlefish fetch discord` archive
+    DiscordArchive,
     /// A structured file, read for name tables
     Table,
     /// An image or icon
@@ -124,7 +128,7 @@ pub enum Route {
 /// known once it is unpacked.
 pub fn version(route: Route) -> u32 {
     match route {
-        Route::Prose | Route::Discord | Route::Image | Route::Skip(_) => 0,
+        Route::Prose | Route::Discord | Route::DiscordArchive | Route::Image | Route::Skip(_) => 0,
         // Tables: PHP message folders, regional variants, kinds and games
         Route::Table => 1,
         // Archives: PHP message files taken, site images skipped
@@ -199,6 +203,14 @@ pub fn classify(rel: &str, head: impl FnOnce() -> Vec<u8>) -> Route {
     if boilerplate.contains(&stem) {
         return Route::Skip("project boilerplate (license, changelog, ...)");
     }
+    // A Discord archive: messages files are read, the channel objects
+    // beside them and the fetcher's state are theirs
+    if name.ends_with(".messages.jsonl") {
+        return Route::DiscordArchive;
+    }
+    if name.ends_with(".channel.json") {
+        return Route::Skip("Discord channel object (read with its messages)");
+    }
     match ext {
         "md" | "markdown" | "mdx" | "txt" | "text" | "rst" | "org" | "adoc" | "asciidoc"
         | "html" | "htm" | "xhtml" | "pdf" | "docx" | "srt" | "vtt" => Route::Prose,
@@ -207,8 +219,19 @@ pub fn classify(rel: &str, head: impl FnOnce() -> Vec<u8>) -> Route {
             let text = String::from_utf8_lossy(&head);
             if text.contains("\"guild\"") && text.contains("\"channel\"") {
                 Route::Discord
+            } else if text.contains(discord_fetch::TOOL) {
+                Route::Skip("state of cuttlefish fetch discord")
             } else {
                 Route::Table
+            }
+        }
+        "jsonl" => {
+            let head = head();
+            let text = String::from_utf8_lossy(&head);
+            if text.contains("\"channel_id\"") && text.contains("\"author\"") {
+                Route::DiscordArchive
+            } else {
+                Route::Skip("JSON lines: not Discord messages")
             }
         }
         "yaml" | "yml" | "toml" | "csv" | "tsv" | "po" | "properties" => Route::Table,
@@ -430,7 +453,7 @@ impl Report {
     pub fn summary(&self) -> String {
         let skipped: usize = self.skipped.iter().map(|s| s.count).sum();
         alloc::format!(
-            "{} documents, {} Discord exports, {} name tables, {} images; {} unchanged, {skipped} skipped, {} failed{}",
+            "{} documents, {} Discord channels, {} name tables, {} images; {} unchanged, {skipped} skipped, {} failed{}",
             self.count("document"),
             self.count("discord"),
             self.count("glossary"),
@@ -706,7 +729,7 @@ impl Import<'_> {
         self.hashes.insert(hash, found.rel.clone());
         match route {
             Route::Prose => self.prose(&found, &mut seen, bytes)?,
-            Route::Discord => self.discord(&found, &mut seen)?,
+            Route::Discord | Route::DiscordArchive => self.discord(&found, &mut seen, route)?,
             Route::Image => self.image(&found, &mut seen, bytes)?,
             Route::Archive => {
                 self.archive(&found, &mut seen)?;
@@ -754,10 +777,21 @@ impl Import<'_> {
         Ok(())
     }
 
-    fn discord(&mut self, found: &Found, seen: &mut Seen) -> Result<()> {
-        let json = String::from_utf8_lossy(&std::fs::read(&found.path)?).into_owned();
-        let (channel, messages) = discord::parse_export(&json)?;
-        let docs = discord::to_documents(&channel, &messages, false);
+    /// An export file or a channel of an archive: one document per
+    /// conversation (a thread is one)
+    fn discord(&mut self, found: &Found, seen: &mut Seen, route: Route) -> Result<()> {
+        let (channel, messages) = if route == Route::DiscordArchive {
+            discord::read_archive(&found.path)?
+        } else {
+            let json = String::from_utf8_lossy(&std::fs::read(&found.path)?).into_owned();
+            discord::parse_export(&json)?
+        };
+        if messages.is_empty() {
+            self.report.skip("no messages", &found.rel);
+            seen.kind = String::from("empty");
+            return Ok(());
+        }
+        let docs = discord::to_documents(&channel, &messages, channel.thread);
         for mut doc in docs.iter().cloned() {
             self.meta.apply(&mut doc);
             self.sink.add(&doc)?;
@@ -1408,6 +1442,31 @@ mod tests {
                 .to_vec()),
             Route::Discord
         );
+        // A fetched archive: messages files read, the rest theirs
+        assert_eq!(
+            classify("discord/1/2/threads/3.messages.jsonl", none),
+            Route::DiscordArchive
+        );
+        assert_eq!(
+            classify("discord/x.jsonl", || {
+                br#"{"id": "1", "channel_id": "2", "author": {}}"#.to_vec()
+            }),
+            Route::DiscordArchive
+        );
+        assert_eq!(
+            classify("logs.jsonl", || b"{\"a\": 1}".to_vec()),
+            Route::Skip("JSON lines: not Discord messages")
+        );
+        assert_eq!(
+            classify("discord/1/2/2.channel.json", none),
+            Route::Skip("Discord channel object (read with its messages)")
+        );
+        assert_eq!(
+            classify("discord/1/2/state.json", || {
+                br#"{"tool": "cuttlefish fetch discord"}"#.to_vec()
+            }),
+            Route::Skip("state of cuttlefish fetch discord")
+        );
         assert_eq!(classify("names.csv", none), Route::Table);
         assert_eq!(classify("icons/steelhead.SVG", none), Route::Image);
         assert_eq!(classify("pack.tar.gz", none), Route::Archive);
@@ -1801,6 +1860,105 @@ mod tests {
         assert_eq!(reports(&root, 10).len(), 3);
         let first = &reports(&root, 10)[2];
         assert_eq!(super::report(&root, &first.id).unwrap().taken.len(), 4);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn reads_fetched_discord_archives() {
+        let root = std::env::temp_dir().join(alloc::format!(
+            "cuttlefish-inbox-discord-{}",
+            std::process::id()
+        ));
+        let cache = root.join("cache");
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = "discord/1/2";
+        write(
+            &root,
+            &alloc::format!("{dir}/2.channel.json"),
+            br#"{"id": "2", "type": 15, "guild_id": "1", "name": "vod-review"}"#,
+        );
+        write(
+            &root,
+            &alloc::format!("{dir}/state.json"),
+            br#"{"tool": "cuttlefish fetch discord", "day": "2026-09-26", "requests_today": 3, "conversations": {}}"#,
+        );
+        write(
+            &root,
+            &alloc::format!("{dir}/threads/3.channel.json"),
+            br#"{"id": "3", "type": 11, "guild_id": "1", "parent_id": "2", "name": "Run 3 wipe"}"#,
+        );
+        let msg = |id: &str, t: &str, text: &str| {
+            alloc::format!(
+                r#"{{"id": "{id}", "channel_id": "3", "timestamp": "{t}", "content": "{text}", "author": {{"id": "5", "username": "alice", "global_name": "Alice"}}}}"#
+            )
+        };
+        let mut lines = msg("11", "2024-05-01T10:05:00+00:00", "W1 :50 basket starved");
+        lines.push('\n');
+        lines.push_str(&msg(
+            "10",
+            "2024-05-01T10:00:00+00:00",
+            "https://youtu.be/x?t=83",
+        ));
+        lines.push('\n');
+        write(
+            &root,
+            &alloc::format!("{dir}/threads/3.messages.jsonl"),
+            lines.as_bytes(),
+        );
+        write(
+            &root,
+            &alloc::format!("{dir}/threads/4.messages.jsonl"),
+            b"",
+        );
+        let mut sink = Memory {
+            root: root.clone(),
+            ..Default::default()
+        };
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert_eq!(report.count("discord"), 1, "{report:#?}");
+        assert_eq!(sink.docs.len(), 1);
+        let doc = &sink.docs[0];
+        assert_eq!(doc.source, SourceKind::DiscordVodReview);
+        assert_eq!(doc.title, "#vod-review > Run 3 wipe, 2024-05-01");
+        assert!(
+            doc.text
+                .contains("[2024-05-01 10:00 UTC] Alice: https://youtu.be/x?t=83")
+        );
+        assert_eq!(doc.moments.len(), 2);
+        assert_eq!(doc.moments[0].seconds, Some(83.0));
+        assert_eq!(doc.moments[1].raw, "W1 :50");
+        let reasons: Vec<&str> = report.skipped.iter().map(|s| s.reason.as_str()).collect();
+        assert!(
+            reasons.contains(&"Discord channel object (read with its messages)"),
+            "{reasons:?}"
+        );
+        assert!(
+            reasons.contains(&"state of cuttlefish fetch discord"),
+            "{reasons:?}"
+        );
+        assert!(reasons.contains(&"no messages"), "{reasons:?}");
+        assert!(report.summary().contains("1 Discord channels"));
+
+        // More messages appended: the file changed, its documents replaced
+        let mut more =
+            std::fs::read_to_string(root.join(INBOX).join(dir).join("threads/3.messages.jsonl"))
+                .unwrap();
+        more.push_str(&msg(
+            "12",
+            "2024-05-01T10:10:00+00:00",
+            "86s two Steelheads",
+        ));
+        more.push('\n');
+        write(
+            &root,
+            &alloc::format!("{dir}/threads/3.messages.jsonl"),
+            more.as_bytes(),
+        );
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert_eq!(report.count("discord"), 1);
+        assert_eq!(sink.docs.len(), 1);
+        assert_eq!(sink.docs[0].moments.len(), 3);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
