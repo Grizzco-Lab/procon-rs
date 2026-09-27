@@ -85,6 +85,13 @@
 //!   into the review and adds the comments as Cuttlefish's. `501` while the
 //!   reviewer cannot start (no `ANTHROPIC_API_KEY`, the only place the key is
 //!   read from)
+//! - `POST translate` with `{"text", "target"}` translates for the Translate
+//!   view ([`Knowledge::translate`]: the glossary terms the text uses, a bare
+//!   term's entry, the model's translation and explanation when the key is
+//!   set, `needs_key` otherwise) and appends the result, with an `id` and
+//!   `created_ms`, to the history `<reviews>/translations.jsonl` (one JSON
+//!   object per line, the last [`TRANSLATIONS_KEPT`] kept); `GET
+//!   translations` lists it newest first, `DELETE translations` removes it
 //! - `knowledge/...`: the knowledge view (overview, search, imports,
 //!   glossary, assets), see [`crate::knowledge`]; its store and embedder
 //!   also serve `chat`
@@ -92,7 +99,7 @@
 //! Errors are `{"error": "..."}` with status 400 (404 for a missing review).
 
 use crate::inspect::{Inspector, ffprobe};
-use crate::knowledge::{Knowledge, Status};
+use crate::knowledge::{Knowledge, Status, Translation, now_ms};
 use crate::objects::write_atomic;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
@@ -125,6 +132,12 @@ const REVIEW_FILE: &str = "review.json";
 
 /// A downloaded YouTube range in its review folder
 const VIDEO_FILE: &str = "video.mp4";
+
+/// The Translate view's history, next to the review folders
+const TRANSLATIONS_FILE: &str = "translations.jsonl";
+
+/// Translations kept in the history
+pub const TRANSLATIONS_KEPT: usize = 500;
 
 /// Marks the line with the video's title, channel and upload date in
 /// yt-dlp's output
@@ -1108,6 +1121,83 @@ impl Cuttlefish {
         }))
     }
 
+    // ------------------------------------------------------- translations
+
+    /// The history file, `<reviews>/translations.jsonl`
+    fn translations_path(&self) -> PathBuf {
+        self.reviews.join(TRANSLATIONS_FILE)
+    }
+
+    /// The history's lines, oldest first; lines that do not parse are left
+    /// out
+    fn translation_lines(&self) -> Result<Vec<String>> {
+        let text = match std::fs::read_to_string(self.translations_path()) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("cannot read {}", self.translations_path().display())
+                });
+            }
+        };
+        Ok(text
+            .lines()
+            .filter(|line| serde_json::from_str::<Value>(line).is_ok())
+            .map(String::from)
+            .collect())
+    }
+
+    /// The translation history, newest first
+    pub fn translations(&self) -> Result<Value> {
+        let entries: Vec<Value> = self
+            .translation_lines()?
+            .iter()
+            .rev()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        Ok(json!({ "file": self.translations_path(), "entries": entries }))
+    }
+
+    /// Translate (`POST translate`, see the module doc) and remember the
+    /// result: the entry as written into the history
+    fn translate(&self, body: &Value) -> Result<Value, Status> {
+        let translation = self.knowledge.translate(
+            body["text"].as_str().unwrap_or_default(),
+            body["target"].as_str().unwrap_or("en"),
+        )?;
+        Ok(self.record_translation(&translation)?)
+    }
+
+    /// Append a translation to the history, keeping the last
+    /// [`TRANSLATIONS_KEPT`]; the file is rewritten whole
+    pub fn record_translation(&self, translation: &Translation) -> Result<Value> {
+        let created_ms = now_ms();
+        let mut entry = json!(translation);
+        entry["id"] = json!(format!("t{created_ms:x}"));
+        entry["created_ms"] = json!(created_ms);
+        let _writing = self.writing.lock().unwrap();
+        let mut lines = self.translation_lines()?;
+        lines.push(entry.to_string());
+        let skip = lines.len().saturating_sub(TRANSLATIONS_KEPT);
+        let mut text = lines[skip..].join("\n");
+        text.push('\n');
+        std::fs::create_dir_all(&self.reviews)
+            .with_context(|| format!("cannot create {}", self.reviews.display()))?;
+        write_atomic(&self.translations_path(), text.as_bytes())?;
+        Ok(entry)
+    }
+
+    /// Forget the translation history
+    pub fn clear_translations(&self) -> Result<()> {
+        let _writing = self.writing.lock().unwrap();
+        match std::fs::remove_file(self.translations_path()) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e)
+                .with_context(|| format!("cannot remove {}", self.translations_path().display())),
+        }
+    }
+
     // --------------------------------------------------------------- HTTP
 
     /// Answer a `GET` under `/api/cuttlefish/`
@@ -1122,6 +1212,7 @@ impl Cuttlefish {
         match path.split_once('/') {
             None if path == "reviews" => Ok(Reply::json(self.reviews().map_err(bad)?)),
             None if path == "downloads" => Ok(Reply::json(self.downloads())),
+            None if path == "translations" => Ok(Reply::json(self.translations().map_err(bad)?)),
             None if path == "video" => self
                 .video(&video()?, query.get("r").map(String::as_str), range)
                 .map_err(bad),
@@ -1194,6 +1285,13 @@ impl Cuttlefish {
                 Ok(Reply::json(json!(download)))
             }
             (&Method::POST, None) if path == "chat" => Ok(Reply::json(self.chat(&json_body()?)?)),
+            (&Method::POST, None) if path == "translate" => {
+                Ok(Reply::json(self.translate(&json_body()?)?))
+            }
+            (&Method::DELETE, None) if path == "translations" => {
+                self.clear_translations().map_err(bad)?;
+                Ok(Reply::json(json!({ "cleared": true })))
+            }
             (&Method::POST, Some(("knowledge", rest))) => {
                 Ok(Reply::json(self.knowledge.post(rest, body)?))
             }
@@ -1797,6 +1895,52 @@ mod tests {
         // A YouTube range without its file does not play
         assert!(cuttlefish.video_path(video_of(&review), None).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn translations_are_kept_next_to_the_reviews() {
+        let (dir, cuttlefish) = scratch("translations");
+        assert_eq!(cuttlefish.translations().unwrap()["entries"], json!([]));
+        let glossary = cuttlefish::glossary::Glossary::seed();
+        let one = Translation {
+            text: "熊刷".into(),
+            target: "en".into(),
+            term: true,
+            terms: vec![glossary.lookup("熊刷").unwrap().clone()],
+            translation: Some("Grizzco Roller".into()),
+            explanation: None,
+            needs_key: true,
+        };
+        let written = cuttlefish.record_translation(&one).unwrap();
+        assert!(written["id"].as_str().unwrap().starts_with('t'));
+        assert!(written["created_ms"].as_u64().unwrap() > 0);
+        assert_eq!(written["terms"][0]["id"], "grizzco-roller");
+        let file = dir.join("reviews/translations.jsonl");
+        assert_eq!(std::fs::read_to_string(&file).unwrap().lines().count(), 1);
+        // A broken line is skipped; the history comes newest first and is
+        // bounded
+        let two = Translation {
+            text: "gg".into(),
+            ..one.clone()
+        };
+        std::fs::write(
+            &file,
+            format!("{}\nnot json\n", std::fs::read_to_string(&file).unwrap()),
+        )
+        .unwrap();
+        for _ in 0..TRANSLATIONS_KEPT {
+            cuttlefish.record_translation(&two).unwrap();
+        }
+        let list = cuttlefish.translations().unwrap();
+        let entries = list["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), TRANSLATIONS_KEPT);
+        assert!(entries.iter().all(|e| e["text"] == "gg"));
+        assert_eq!(list["file"], json!(file));
+        cuttlefish.clear_translations().unwrap();
+        assert!(!file.exists());
+        cuttlefish.clear_translations().unwrap();
+        assert_eq!(cuttlefish.translations().unwrap()["entries"], json!([]));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

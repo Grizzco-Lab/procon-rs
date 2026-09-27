@@ -14,7 +14,11 @@
 //! the moment or range the player is at, and the comments near it). The
 //! answer is text, citing sources as `[S1]`, plus timed comments when the
 //! player asks about the video. Translation requests are ordinary chat
-//! messages; the persona knows to translate with the glossary's names.
+//! messages too; the persona knows to translate with the glossary's names.
+//!
+//! [`translate`] and [`explain`] are the translator's own calls, without a
+//! knowledge store: a text into a language in the names its community uses,
+//! and what a bare term or callout means and when a player says it.
 
 use crate::doc::SourceKind;
 use crate::embed::Embedder;
@@ -529,6 +533,35 @@ pub fn translate_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
     }
 }
 
+/// The prompt explaining a term or callout in `target` (a language code):
+/// what it means and when a player says it
+pub fn explain_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
+    let lang = language_name(target);
+    let system = alloc::format!(
+        "You are Cuttlefish, an experienced Splatoon 3 Salmon Run player and a kind \
+         mentor. A player gives you a term or a callout from the community's jargon. \
+         Explain in {lang}, in two or three plain sentences, what it means and when a \
+         player would say it, using the names the {lang}-speaking community uses (the \
+         glossary lists them). If the glossary does not cover it and you are not sure, \
+         say so instead of guessing. Output only the explanation."
+    );
+    let lang_key = target.split('-').next().unwrap_or(target);
+    let mut user = Vec::new();
+    if !terms.is_empty() {
+        user.push(Block::Text(alloc::format!(
+            "<glossary>\n{}</glossary>",
+            Glossary::prompt_lines(terms, Some(lang_key))
+        )));
+    }
+    user.push(Block::Text(alloc::format!("<term>\n{text}\n</term>")));
+    Prompt {
+        system,
+        history: Vec::new(),
+        user,
+        schema: None,
+    }
+}
+
 /// Cuttlefish: the store, the embedder and the model together
 pub struct Reviewer {
     store: Store,
@@ -589,6 +622,12 @@ impl Reviewer {
     /// ...) with the glossary's names
     pub fn translate(&self, text: &str, target: &str) -> Result<String> {
         translate(&self.client, self.store.glossary(), text, target)
+    }
+
+    /// Explains a term or callout in `target`: what it means and when a
+    /// player says it
+    pub fn explain(&self, text: &str, target: &str) -> Result<String> {
+        explain(&self.client, self.store.glossary(), text, target)
     }
 
     /// Answers a chat message given the conversation so far and, when a
@@ -657,6 +696,14 @@ pub fn ask(
 pub fn translate(client: &Client, glossary: &Glossary, text: &str, target: &str) -> Result<String> {
     let terms = glossary.find_in(text);
     let reply = client.send(&translate_prompt(text, target, &terms))?;
+    Ok(String::from(reply.text.trim()))
+}
+
+/// Explains a term or callout in `target` with the glossary's names, without
+/// a knowledge store
+pub fn explain(client: &Client, glossary: &Glossary, text: &str, target: &str) -> Result<String> {
+    let terms = glossary.find_in(text);
+    let reply = client.send(&explain_prompt(text, target, &terms))?;
     Ok(String::from(reply.text.trim()))
 }
 
@@ -943,6 +990,25 @@ mod tests {
     }
 
     #[test]
+    fn explain_prompts_name_the_term() {
+        let g = Glossary::seed();
+        let p = explain_prompt("熊刷", "en", &g.find_in("熊刷"));
+        assert!(p.system.contains("Explain in English"));
+        let Block::Text(gl) = &p.user[0] else {
+            panic!()
+        };
+        assert!(gl.starts_with("<glossary>\n- grizzco-roller (en: Grizzco Roller"));
+        assert_eq!(
+            p.user[1],
+            Block::Text(String::from("<term>\n熊刷\n</term>"))
+        );
+        assert!(p.schema.is_none());
+        // Nothing known: no glossary block, the term alone
+        let p = explain_prompt("gg", "zh", &[]);
+        assert_eq!(p.user.len(), 1);
+    }
+
+    #[test]
     fn reviews_end_to_end_with_a_fake_model() {
         let root =
             std::env::temp_dir().join(alloc::format!("cuttlefish-review-{}", std::process::id()));
@@ -964,6 +1030,7 @@ mod tests {
                 ok(answer),
                 ok("Yes [S1]."),
                 ok("バクダンを倒す"),
+                ok(" The Grizzco Roller. "),
                 ok(chat_answer)
             ]),
             sent: sent.clone(),
@@ -981,6 +1048,10 @@ mod tests {
         assert_eq!(
             reviewer.translate("Kill the Steelhead", "ja").unwrap(),
             "バクダンを倒す"
+        );
+        assert_eq!(
+            reviewer.explain("熊刷", "en").unwrap(),
+            "The Grizzco Roller."
         );
         let req = request();
         let reply = reviewer
@@ -1011,12 +1082,19 @@ mod tests {
         assert_eq!(reply.comments[0].sources[0].id, "S1");
         std::fs::remove_dir_all(&root).unwrap();
         let sent = sent.lock().unwrap();
-        assert_eq!(sent.len(), 4);
+        assert_eq!(sent.len(), 5);
         // Review, question and chat share the cached system prompt
         assert_eq!(sent[0]["system"], sent[1]["system"]);
-        assert_eq!(sent[0]["system"], sent[3]["system"]);
+        assert_eq!(sent[0]["system"], sent[4]["system"]);
+        // The explanation took the glossary along, with the target's name first
+        assert!(
+            sent[3]["messages"][0]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("grizzco-roller (en: Grizzco Roller")
+        );
         // The conversation went along, then the new turn with its frames
-        let messages = sent[3]["messages"].as_array().unwrap();
+        let messages = sent[4]["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0]["content"][0]["text"], "Hi");
         assert_eq!(messages[1]["role"], "assistant");
@@ -1029,7 +1107,7 @@ mod tests {
                 .count(),
             MAX_FRAMES
         );
-        assert_eq!(sent[3]["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(sent[4]["output_config"]["format"]["type"], "json_schema");
     }
 
     fn chat_request(video: bool) -> ChatRequest {

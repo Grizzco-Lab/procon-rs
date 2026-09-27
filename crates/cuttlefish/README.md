@@ -195,6 +195,7 @@ let comments = reviewer.review(&ReviewRequest {
 })?;
 let answer = reviewer.ask("...")?;
 let ja = reviewer.translate("...", "ja")?;
+let what = reviewer.explain("熊刷", "en")?;   // a term or callout: what it means, when it is said
 
 // A conversation: the earlier turns go along as they were, retrieval runs on
 // the new message and the last user turns, and a video may be attached
@@ -214,14 +215,19 @@ let reply = reviewer.chat(&ChatRequest {
 ```
 
 `review` and `chat` block (seconds to a minute); call them from a blocking
-task. Translation requests are ordinary chat messages: the persona translates
-with the glossary's names for the target language, and explains a bare
-callout before translating it.
+task. In a chat, a translation request is an ordinary message: the persona
+translates with the glossary's names for the target language, and explains a
+bare callout before translating it. `translate` and `explain` are the
+translator's own calls (the studio's Translate view), without a knowledge
+store: only the glossary terms the text mentions go along, the target
+language's names first.
 
 The studio keeps one `Store` and `E5Embedder` for everything (search, imports
 and the chat) instead of a `Reviewer`: `review::chat(&store, &embedder,
 &client, k, &request)`, `review::review(...)` and `review::ask(...)` take the
-parts separately, with a `Client::from_env` made per request. Imports go
+parts separately, with a `Client::from_env` made per request;
+`review::translate(&client, &glossary, text, target)` and
+`review::explain(...)` take only the glossary. Imports go
 through `ingest` (`web`, `youtube`, `files`, `discord_export`, `discord_bot`),
 which hand documents to an `ingest::Sink` (the CLI prints; the studio logs
 into its import job) and stop when `Sink::cancelled` says so. Its Knowledge

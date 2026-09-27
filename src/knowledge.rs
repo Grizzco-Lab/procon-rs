@@ -32,6 +32,7 @@
 //! - `POST delete` with `{"ids": [...]}`: deletes documents and their
 //!   chunks
 //! - `GET glossary?q=`: the term named `q`, or the terms mentioned in it
+//!   (the Translate view shows a bare term's entry from it at once)
 //! - `GET assets?q=&folder=`: images and icons of the catalogue, with the
 //!   names of their glossary terms; `GET thumb?id=` one's thumbnail
 //! - `GET inbox`: files waiting in the inbox; `POST upload?path=` with the
@@ -40,6 +41,11 @@
 //! - `POST ingest` with an [`IngestRequest`] starts an import (`409` while
 //!   one runs); `GET jobs` lists this run's imports; `POST cancel` stops the
 //!   current one after its document
+//!
+//! [`Knowledge::translate`] serves the Cuttlefish app's Translate view (`POST
+//! /api/cuttlefish/translate`, see [`crate::cuttlefish`], which keeps the
+//! history): the glossary terms a text uses, and the model's translation
+//! when the key is set.
 
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -49,6 +55,7 @@ use cuttlefish::assets::{self, Catalogue};
 use cuttlefish::discord::Bot;
 use cuttlefish::doc::Document;
 use cuttlefish::embed::{E5Embedder, Embedder};
+use cuttlefish::glossary::{Glossary, Term};
 use cuttlefish::ingest::{self, Meta, Web};
 use cuttlefish::llm::{Client, Settings};
 use cuttlefish::review::{self, ChatReply, ChatRequest};
@@ -88,6 +95,93 @@ const MAX_ASSETS: usize = 300;
 
 /// Import reports listed in the overview
 const REPORTS_SHOWN: usize = 5;
+
+/// Longest text translated at once
+const MAX_TRANSLATED: usize = 4000;
+
+/// A translation: what the glossary knows of the text, and the model's part
+/// when the key is set
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Translation {
+    /// The text as given
+    pub text: String,
+    /// Language code translated into (`en`, `zh`, `ja`, ...)
+    pub target: String,
+    /// The text is one glossary term (or one of its names)
+    pub term: bool,
+    /// That term, or the terms the text mentions, in order of mention
+    pub terms: Vec<Term>,
+    /// The translation: a bare term's name in `target` from the glossary,
+    /// else the model's; none without a key
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation: Option<String>,
+    /// For a bare term, the model's explanation: what it means and when a
+    /// player says it
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+    /// The model was needed and `ANTHROPIC_API_KEY` is not set
+    pub needs_key: bool,
+}
+
+/// Translates `text` into `target` over `glossary`, with the model when a
+/// `client` is given. A bare term is answered from the glossary alone (its
+/// name in `target`), the model adding an explanation; a sentence gets the
+/// terms it mentions and the model's translation.
+fn translate_with(
+    glossary: &Glossary,
+    client: Option<&Client>,
+    text: &str,
+    target: &str,
+) -> Result<Translation> {
+    let text = text.trim();
+    ensure!(!text.is_empty(), "type something to translate");
+    ensure!(
+        text.chars().count() <= MAX_TRANSLATED,
+        "the text is too long: at most {MAX_TRANSLATED} characters at once"
+    );
+    let target = target.trim();
+    ensure!(
+        !target.is_empty()
+            && target.len() <= 8
+            && target
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-'),
+        "bad target language {target:?}"
+    );
+    let lang_key = target.split('-').next().unwrap_or(target);
+    let mut out = Translation {
+        text: text.to_string(),
+        target: target.to_string(),
+        term: false,
+        terms: Vec::new(),
+        translation: None,
+        explanation: None,
+        needs_key: false,
+    };
+    if let Some(term) = glossary.lookup(text) {
+        out.term = true;
+        out.terms.push(term.clone());
+        out.translation = term.name(lang_key).map(String::from);
+        match client {
+            Some(client) => {
+                out.explanation = Some(review::explain(client, glossary, text, target)?);
+                if out.translation.is_none() {
+                    out.translation = Some(review::translate(client, glossary, text, target)?);
+                }
+            }
+            None => out.needs_key = true,
+        }
+        return Ok(out);
+    }
+    out.terms = glossary.find_in(text).into_iter().cloned().collect();
+    match client {
+        Some(client) => {
+            out.translation = Some(review::translate(client, glossary, text, target)?);
+        }
+        None => out.needs_key = true,
+    }
+    Ok(out)
+}
 
 /// An error with the status it answers with
 pub struct Status(pub StatusCode, pub anyhow::Error);
@@ -294,7 +388,7 @@ fn format_of(d: &Document) -> String {
 }
 
 /// Unix time in ms
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64)
@@ -659,6 +753,22 @@ impl Knowledge {
             None => glossary.find_in(query),
         };
         Ok(json!({ "terms": terms, "size": glossary.terms.len() }))
+    }
+
+    /// Translates `text` into `target` (see [`Translation`]): the glossary
+    /// answers without the store or the model; the model's part needs the
+    /// key, and its failure is a `502`
+    pub fn translate(&self, text: &str, target: &str) -> Result<Translation, Status> {
+        let glossary = Store::load_glossary(&self.root)?;
+        let client = self.client().ok();
+        translate_with(&glossary, client.as_ref(), text, target).map_err(|e| {
+            let status = if client.is_some() {
+                StatusCode::BAD_GATEWAY
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            Status(status, e)
+        })
     }
 
     /// This run's imports, newest first
@@ -1095,6 +1205,32 @@ mod tests {
         assert_eq!(knowledge.glossary("").unwrap()["terms"], json!([]));
         // Nothing was written
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn translates_from_the_glossary_without_a_key() {
+        let g = Glossary::seed();
+        // A bare term: its entry and its name in the target language
+        let t = translate_with(&g, None, " 熊刷 ", "en").unwrap();
+        assert!(t.term);
+        assert_eq!(t.terms[0].id, "grizzco-roller");
+        assert_eq!(t.translation.as_deref(), Some("Grizzco Roller"));
+        assert_eq!(t.explanation, None);
+        assert!(t.needs_key);
+        // The glossary has no Japanese name for it: nothing without the model
+        let t = translate_with(&g, None, "Grizzco Roller", "ja").unwrap();
+        assert_eq!(t.translation, None);
+        // A sentence: the terms it mentions, the translation left to the model
+        let t = translate_with(&g, None, "我刚拿的熊刷，不应该上柱子拍的", "en").unwrap();
+        assert!(!t.term);
+        let ids: Vec<_> = t.terms.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["grizzco-roller", "fish-stick"]);
+        assert_eq!(t.translation, None);
+        assert!(t.needs_key);
+        let written = serde_json::to_value(&t).unwrap();
+        assert!(written.get("translation").is_none());
+        assert!(translate_with(&g, None, "  ", "en").is_err());
+        assert!(translate_with(&g, None, "x", "en/../").is_err());
     }
 
     #[test]
