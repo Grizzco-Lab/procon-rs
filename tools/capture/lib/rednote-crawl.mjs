@@ -59,6 +59,8 @@ export class Crawl {
    */
   constructor(page, deps) {
     this.page = page;
+    /** The site's origin the home page landed on */
+    this.origin = rn.SITE;
     this.pace = deps.pace;
     this.state = deps.state;
     this.dir = deps.dir;
@@ -144,6 +146,7 @@ export class Crawl {
     const payloads = await this.action(async () => {
       await this.page.goto(rn.SITE);
       await this.page.waitFor((r) => /user\/me/.test(r.url), 8000);
+      this.origin = rn.originOf(await this.page.location()) ?? rn.SITE;
       return this.drain();
     });
     // undefined: nothing told; null: a guest; a string: the account's id
@@ -210,7 +213,9 @@ export class Crawl {
       }
       return added;
     };
-    await this.action(() => this.page.goto(`${rn.SITE}/user/profile/${me}`));
+    await this.action(() =>
+      this.page.goto(`${this.origin}/user/profile/${me}`),
+    );
     take();
     // The following count opens the list
     const clicked = await this.action(() =>
@@ -289,7 +294,7 @@ export class Crawl {
   /** One creator: the list, then the new notes about Salmon Run */
   async creator(id) {
     const record = state.account(this.state, id);
-    const profile = `${rn.SITE}/user/profile/${id}`;
+    const profile = `${this.origin}/user/profile/${id}`;
     const seen = this.state.seen;
     const listed = new Map();
     const hasMore = { value: null };

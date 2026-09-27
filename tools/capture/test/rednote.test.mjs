@@ -501,3 +501,19 @@ test("notes are appended as JSON lines per creator", () => {
   );
   rmSync(dir, { recursive: true });
 });
+
+test("the site's hosts: xiaohongshu.com and rednote.com", () => {
+  assert.equal(
+    rn.originOf("https://www.rednote.com/user/profile/x"),
+    "https://www.rednote.com",
+  );
+  assert.equal(
+    rn.originOf("https://www.xiaohongshu.com"),
+    "https://www.xiaohongshu.com",
+  );
+  assert.equal(rn.originOf("https://notrednote.com/"), null);
+  assert.equal(rn.originOf("https://www.rednote.com.example.org/"), null);
+  assert.ok(rn.isSiteApi("https://webapi.rednote.com/api/sns/web/v2/user/me"));
+  assert.ok(rn.isSiteApi("https://edith.xiaohongshu.com/api/sns/web/v1/feed"));
+  assert.ok(!rn.isSiteApi("https://www.rednote.com/explore"));
+});

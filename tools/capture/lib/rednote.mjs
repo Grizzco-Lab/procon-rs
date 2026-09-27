@@ -11,6 +11,17 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export const SITE = "https://www.xiaohongshu.com";
+/** The site's hosts: xiaohongshu.com, and rednote.com, where it sends
+ * visitors from outside China */
+const HOST = String.raw`(?:xiaohongshu|rednote)\.com`;
+
+/** The site's origin a page is on (`https://www.rednote.com`), else null */
+export function originOf(url) {
+  const m = new RegExp(
+    String.raw`^https://(?:[\w-]+\.)*${HOST}(?=[/?#]|$)`,
+  ).exec(url ?? "");
+  return m ? m[0] : null;
+}
 /** The `tool` of the state file, so the inbox knows whose it is */
 export const TOOL = "rncap";
 /** The `source` of every record */
@@ -19,8 +30,8 @@ export const NOTES_FILE = "notes.jsonl";
 
 /** Whether an address is one of the site's JSON answers worth keeping */
 export const isSiteApi = (url) =>
-  /xiaohongshu\.com\/api\//.test(url) ||
-  /xiaohongshu\.com\/.*\/user\/me/.test(url);
+  new RegExp(String.raw`${HOST}/api/`).test(url) ||
+  new RegExp(String.raw`${HOST}/.*/user/me`).test(url);
 
 /** What the site's pages say when they want a person. Parts of the
  * address (a captcha, a verification, a login, a risk-control page), words
@@ -367,7 +378,7 @@ export function listedFromLinks(links) {
 }
 
 /** A creator as given: a 24-character id, or a profile link
- * (`https://www.xiaohongshu.com/user/profile/<id>...`) */
+ * (`https://www.xiaohongshu.com/user/profile/<id>...`, or rednote.com) */
 export function creatorId(given) {
   const t = String(given ?? "").trim();
   const m = /\/user\/profile\/([^/?#]+)/.exec(t);
