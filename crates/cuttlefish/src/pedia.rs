@@ -575,8 +575,10 @@ pub fn fact_cards(root: &Path, g: &Glossary) -> Vec<FactCard> {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        // Most documents are not cards: look before parsing
-        if !bytes.windows(21).any(|w| w == b"\"source\":\"game-data\"") {
+        // Most documents are not cards: look for the kind's name before
+        // parsing (the store writes documents pretty-printed, so not for
+        // the compact `"source":"game-data"`)
+        if !bytes.windows(9).any(|w| w == b"game-data") {
             continue;
         }
         let Ok(doc) = serde_json::from_slice::<CardDoc>(&bytes) else {
@@ -787,6 +789,48 @@ mod tests {
             .unwrap()
             .kind = Some("stage".into());
         assert!(!candidate(&grounds, &with_stage, &seed, &user, &s3));
+    }
+
+    #[test]
+    fn fact_cards_read_the_stored_documents() {
+        let root = std::env::temp_dir().join(alloc::format!(
+            "cuttlefish-pedia-cards-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let docs = root.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        // The store writes documents pretty-printed
+        let card = serde_json::json!({
+            "id": "0123456789abcdef",
+            "source": "game-data",
+            "title": "Steelhead (Salmonid, game data)",
+            "text": "# Steelhead\n\nHP 100",
+            "url": "https://leanny.github.io/splat3/coop.html",
+            "attribution": "Lean",
+        });
+        std::fs::write(
+            docs.join("0123456789abcdef.json"),
+            serde_json::to_vec_pretty(&card).unwrap(),
+        )
+        .unwrap();
+        let other = serde_json::json!({
+            "id": "fedcba9876543210",
+            "source": "web",
+            "title": "Steelhead tips",
+            "text": "Aim at the bomb.",
+        });
+        std::fs::write(
+            docs.join("fedcba9876543210.json"),
+            serde_json::to_vec(&other).unwrap(),
+        )
+        .unwrap();
+        let cards = fact_cards(&root, &Glossary::seed());
+        assert_eq!(cards.len(), 1, "{cards:?}");
+        assert_eq!(cards[0].term, "steelhead");
+        assert_eq!(cards[0].title, "Steelhead (Salmonid, game data)");
+        assert_eq!(cards[0].attribution.as_deref(), Some("Lean"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
