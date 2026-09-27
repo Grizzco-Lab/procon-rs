@@ -3077,6 +3077,43 @@
                 ><input type="checkbox" id="v-cpu" /> CPU</label
               >
             </div>
+            <!-- The Salmon Run detector (AgentZero's service): whether it
+                 answers, how it was trained, how weak it still is -->
+            <div class="v-detector" id="v-detector" hidden>
+              <div class="v-detector-head">
+                <span class="chip" id="v-det-chip" data-level="off"
+                  ><span class="chip-dot"></span><span class="chip-text"></span
+                ></span>
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  id="v-det-start"
+                  data-i18n="v.det.start"
+                  hidden
+                >
+                  Start detector
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  id="v-det-check"
+                  data-i18n="v.det.check"
+                >
+                  Check again
+                </button>
+              </div>
+              <p class="panel-note" id="v-det-note"></p>
+              <dl class="v-det-facts" id="v-det-facts" hidden></dl>
+              <div class="notice v-det-weak" id="v-det-weak" hidden>
+                <span id="v-det-weak-text"></span>
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  id="v-det-progress"
+                  data-i18n-title="v.det.progressTitle"
+                ></button>
+              </div>
+            </div>
             <div class="cf-row">
               <button type="submit" class="btn btn-small" id="v-run">
                 Run
@@ -3203,10 +3240,10 @@
               </div>
               <div class="meter-track"><div class="meter-fill"></div></div>
               <div class="meter-note">
-                A Salmon Run detector comes once about
-                <span id="v-target-frames">200</span> frames are labeled; until
-                then the detector is the stock COCO one, shown through our
-                classes.
+                The Salmon Run detector (AgentZero) learns from these frames and
+                stays weak until about
+                <span id="v-target-frames">200</span> are labeled; the stock
+                COCO models, shown through our classes, prelabel meanwhile.
               </div>
             </div>
             <div class="table-wrap v-classes-wrap">

@@ -115,7 +115,7 @@ impl Settings {
 }
 
 /// The port of an `http://host:port` URL
-fn port_of(url: &str) -> Option<u16> {
+pub(crate) fn port_of(url: &str) -> Option<u16> {
     let host = url.strip_prefix("http://")?.split('/').next()?;
     host.rsplit_once(':')?.1.parse().ok()
 }
@@ -347,7 +347,7 @@ fn now_ms() -> u64 {
 
 /// A client for the tracker; `timeout` bounds the wait for an answer's
 /// head, not the answer, which streams while frames are done
-fn agent(timeout: Duration) -> ureq::Agent {
+pub(crate) fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(2)))
         .timeout_recv_response(Some(timeout))

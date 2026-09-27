@@ -17,6 +17,10 @@
 //! - `<results>/<session>/<segment stem>.run.json`: the run ([`Job`]): model,
 //!   device, range, state and timing summary.
 //!
+//! The Salmon Run detector (`salmon`) is not run here but by AgentZero's
+//! service ([`crate::detector`]): the run streams its boxes and timings from
+//! there, and tracks and stores them like the others.
+//!
 //! "Send to labels" merges a segment's results into the annotations folder
 //! as model boxes, by the crate's prelabel rule: frames a person has
 //! labeled are never touched.
@@ -24,6 +28,9 @@
 //! Endpoints under `/api/vision/`:
 //!
 //! - `GET info`: models on offer, whether this build has CUDA, folders
+//! - `GET detector`: whether the Salmon Run detector answers, its checkpoint
+//!   and training (`/health` plus the checkpoint's `saved_ms`), how to
+//!   start it
 //! - `GET job`: the current or last run (`null` before the first)
 //! - `GET results?s=&seg=&map=&all=`: a segment's last results: `{"run",
 //!   "frames", "classes", "tracks", "hidden"}`; only the boxes of our
@@ -35,11 +42,13 @@
 //!   frames labeled so far against [`TARGET_FRAMES`]
 //! - `POST run` with a [`RunRequest`] starts a run (409 while one runs)
 //! - `POST cancel` stops the current run after its frame
+//! - `POST detector/start` starts the detector with the configured command
 //! - `POST send` with `{"s", "seg", "map"}` writes the results into the
 //!   labels; `map` renames classes, such as `person=player`
 //!
 //! Errors are `{"error": "..."}` with status 400.
 
+use crate::detector::{self, Message};
 use crate::inspect::Inspector;
 use crate::objects::write_atomic;
 use alloc::collections::BTreeMap;
@@ -97,6 +106,8 @@ pub struct Settings {
     pub custom: Option<CustomModel>,
     /// Lowest score kept
     pub confidence: f32,
+    /// The Salmon Run detector service
+    pub detector: detector::Settings,
 }
 
 impl Settings {
@@ -107,6 +118,7 @@ impl Settings {
         config_dir: &Path,
         default_results: PathBuf,
     ) -> Result<Self> {
+        let detector = detector::Settings::from_config(&config, config_dir)?;
         let size = |text: Option<&str>, allowed: &[char]| -> Result<char> {
             let text = text.unwrap_or("n");
             let mut chars = text.chars();
@@ -136,6 +148,7 @@ impl Settings {
             size: size(config.size.as_deref(), &SIZES)?,
             custom,
             confidence,
+            detector,
         })
     }
 }
@@ -168,7 +181,8 @@ pub struct RunRequest {
     /// Frames to process
     #[serde(default = "default_count")]
     pub count: u64,
-    /// `n`, `s`, `m` or `custom`; by default the configured size
+    /// `n`, `s`, `m`, `custom` or `salmon` (the Salmon Run detector); by
+    /// default the configured size
     #[serde(default)]
     pub model: Option<String>,
     /// Run on the CPU even when a GPU is there
@@ -182,7 +196,7 @@ pub struct RunRequest {
 /// A model on a device: runs with the same key reuse the loaded network
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ModelKey {
-    /// `n`, `s`, `m` or `custom`
+    /// `n`, `s`, `m`, `custom` or `salmon`
     model: String,
     cpu: bool,
 }
@@ -206,6 +220,7 @@ impl RunRequest {
                 settings.custom.is_some(),
                 "no custom model: set [vision] weights and classes"
             ),
+            detector::MODEL => {}
             m if SIZES.iter().any(|s| s.to_string() == m) => {}
             m => bail!("unknown model {m:?}"),
         }
@@ -306,12 +321,15 @@ pub struct Job {
     pub start: u64,
     pub step: u64,
     pub count: u64,
-    /// `n`, `s`, `m` or `custom`
+    /// `n`, `s`, `m`, `custom` or `salmon`
     pub model: String,
     /// What the model is called, such as `YOLOv8n · COCO`
     pub model_name: String,
     /// `cpu` or `cuda`, once loaded
     pub device: Option<String>,
+    /// Why the detector service chose that device
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_reason: Option<String>,
     pub track: bool,
     pub state: JobState,
     /// Frames processed
@@ -347,6 +365,8 @@ pub struct Vision {
     cancel: AtomicBool,
     model: Mutex<Option<Loaded>>,
     next_id: Mutex<u64>,
+    /// The Salmon Run detector service
+    detector: detector::Service,
 }
 
 /// Unix time in ms
@@ -364,6 +384,7 @@ impl Vision {
     pub fn new(inspector: Arc<Inspector>, settings: Settings) -> Self {
         Self {
             inspector,
+            detector: detector::Service::new(settings.detector.clone()),
             settings,
             job: Mutex::default(),
             cancel: AtomicBool::new(false),
@@ -386,6 +407,7 @@ impl Vision {
             "custom": self.settings.custom,
             "confidence": self.settings.confidence,
             "cuda": cfg!(feature = "cuda"),
+            "detector": { "model": detector::MODEL, "name": detector::MODEL_NAME },
             "loaded": loaded.map(|key| json!({ "model": key.model, "cpu": key.cpu })),
             "results": self.settings.results,
             "annotations": self.inspector.annotations().dir(),
@@ -421,6 +443,7 @@ impl Vision {
             model: key.model.clone(),
             model_name: self.model_name(&key.model),
             device: None,
+            device_reason: None,
             track: request.track,
             state: JobState::Loading,
             done: 0,
@@ -460,6 +483,11 @@ impl Vision {
         Ok(job)
     }
 
+    /// Stop the detector service the studio started, if it did
+    pub fn stop_detector(&self) {
+        self.detector.stop();
+    }
+
     /// Stop the current run after its frame
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
@@ -473,6 +501,7 @@ impl Vision {
 
     fn model_name(&self, model: &str) -> String {
         match (model, &self.settings.custom) {
+            (detector::MODEL, _) => detector::MODEL_NAME.to_string(),
             ("custom", Some(custom)) => custom
                 .weights
                 .file_name()
@@ -524,6 +553,34 @@ impl Vision {
     /// Load the model, then detect (and track) frame by frame
     fn work(&self, request: &RunRequest, key: &ModelKey) -> Result<()> {
         let segment = self.segment(&request.s, &request.seg)?;
+        let mut run = Collected::new(request.track);
+        let result = if key.model == detector::MODEL {
+            self.work_remote(request, &segment, &mut run)
+        } else {
+            self.work_local(request, key, &segment, &mut run)
+        };
+        if result.is_ok() && run.frames.is_empty() && !self.cancel.load(Ordering::Relaxed) {
+            bail!(
+                "no frames from frame {}: the segment is shorter",
+                request.start
+            );
+        }
+        // What was done is kept, even when stopped or failed on the way
+        if !run.frames.is_empty() {
+            let path = self.results_path(&segment.session, segment.stem(), labels::OBJECTS_EXT);
+            labels::write_objects(&path, &run.frames)?;
+        }
+        result
+    }
+
+    /// Run the candle network here, frame by frame
+    fn work_local(
+        &self,
+        request: &RunRequest,
+        key: &ModelKey,
+        segment: &Segment,
+        run: &mut Collected,
+    ) -> Result<()> {
         let (detector, load_ms) = self.detector(key)?;
         let device = if detector.device().is_cpu() {
             "cpu"
@@ -540,61 +597,109 @@ impl Vision {
             step: request.step,
             count: Some(request.count),
         };
-        let mut reader = FrameReader::start(&segment, range)?;
-        let mut tracker = request
-            .track
-            .then(|| Tracker::new(TrackerConfig::default()));
-        let mut frames = Vec::new();
-        let mut timings = Vec::new();
-        let result = loop {
+        let mut reader = FrameReader::start(segment, range)?;
+        loop {
             if self.cancel.load(Ordering::Relaxed) {
                 self.update(|job| job.state = JobState::Cancelled);
-                break Ok(());
+                return Ok(());
             }
             let wait = Instant::now();
             let frame = match reader.next() {
-                None => break Ok(()),
-                Some(Err(e)) => break Err(e),
-                Some(Ok(frame)) => frame,
+                None => return Ok(()),
+                Some(result) => result?,
             };
             let decode = wait.elapsed();
-            let (mut boxes, timing) = match detector.detect(&frame.rgb) {
-                Ok(found) => found,
-                Err(e) => break Err(e),
-            };
-            if let Some(tracker) = &mut tracker {
-                let tracked = tracker.update(frame.number, &boxes);
-                assign_ids(&mut boxes, &tracked);
-            }
+            let (boxes, timing) = detector.detect(&frame.rgb)?;
             let time = FrameTiming {
                 decode: ms(decode),
                 network: ms(timing.forward),
                 total: ms(decode + timing.total()),
             };
-            timings.push(time);
-            let found = boxes.len();
-            let mut line = FrameObjects::new(frame.number, boxes);
-            line.extra.insert("ms".to_string(), json!(time));
-            frames.push(line);
-            let summary = Timings::of(&timings);
-            self.update(|job| {
-                job.done += 1;
-                job.boxes += found;
-                job.timings = summary;
-            });
-        };
-        if result.is_ok() && frames.is_empty() && !self.cancel.load(Ordering::Relaxed) {
+            self.add_frame(run, frame.number, boxes, time);
+        }
+    }
+
+    /// Ask the Salmon Run detector service, which decodes the video itself
+    fn work_remote(
+        &self,
+        request: &RunRequest,
+        segment: &Segment,
+        run: &mut Collected,
+    ) -> Result<()> {
+        if !request.cpu
+            && let Some(session) = detector::recording_in_progress(&self.inspector.root())
+        {
             bail!(
-                "no frames from frame {}: the segment is shorter",
-                request.start
+                "session {session} is being recorded and the GPU is the recording's: \
+                 wait for it to stop, or run on the CPU"
             );
         }
-        // What was done is kept, even when stopped or failed on the way
-        if !frames.is_empty() {
-            let path = self.results_path(&segment.session, segment.stem(), labels::OBJECTS_EXT);
-            labels::write_objects(&path, &frames)?;
+        let ask = detector::Request {
+            video: &segment.video,
+            start: request.start,
+            count: request.count,
+            step: request.step,
+            min_score: self.settings.confidence,
+            device: if request.cpu { "cpu" } else { "auto" },
+        };
+        self.detector.detect(&ask, |message| {
+            if self.cancel.load(Ordering::Relaxed) {
+                self.update(|job| job.state = JobState::Cancelled);
+                return Ok(false);
+            }
+            match message {
+                Message::Start {
+                    device,
+                    reason,
+                    load_ms,
+                } => self.update(|job| {
+                    job.state = JobState::Running;
+                    job.device = Some(device);
+                    job.device_reason = Some(reason);
+                    job.load_ms = load_ms;
+                }),
+                Message::Frame { frame, boxes, ms } => {
+                    let time = FrameTiming {
+                        decode: ms.decode,
+                        network: ms.network,
+                        total: ms.total,
+                    };
+                    self.add_frame(run, frame, boxes, time);
+                }
+                Message::End { .. } | Message::Error { .. } => {}
+            }
+            Ok(true)
+        })?;
+        // Cancelled after the last frame came
+        if self.cancel.load(Ordering::Relaxed) {
+            self.update(|job| job.state = JobState::Cancelled);
         }
-        result
+        Ok(())
+    }
+
+    /// A processed frame: tracked, kept, and counted in the job
+    fn add_frame(
+        &self,
+        run: &mut Collected,
+        number: u64,
+        mut boxes: Vec<ObjectBox>,
+        time: FrameTiming,
+    ) {
+        if let Some(tracker) = &mut run.tracker {
+            let tracked = tracker.update(number, &boxes);
+            assign_ids(&mut boxes, &tracked);
+        }
+        run.timings.push(time);
+        let found = boxes.len();
+        let mut line = FrameObjects::new(number, boxes);
+        line.extra.insert("ms".to_string(), json!(time));
+        run.frames.push(line);
+        let summary = Timings::of(&run.timings);
+        self.update(|job| {
+            job.done += 1;
+            job.boxes += found;
+            job.timings = summary;
+        });
     }
 
     /// `<results>/<session>/<stem><suffix>`
@@ -760,6 +865,23 @@ impl Vision {
     }
 }
 
+/// A run's frames so far, their timings and its tracker
+struct Collected {
+    tracker: Option<Tracker>,
+    frames: Vec<FrameObjects>,
+    timings: Vec<FrameTiming>,
+}
+
+impl Collected {
+    fn new(track: bool) -> Self {
+        Self {
+            tracker: track.then(|| Tracker::new(TrackerConfig::default())),
+            frames: Vec::new(),
+            timings: Vec::new(),
+        }
+    }
+}
+
 /// Give detections the ids of the tracks that matched them: each tracked
 /// box takes the free detection of its class it overlaps most
 pub fn assign_ids(detections: &mut [ObjectBox], tracked: &[ObjectBox]) {
@@ -880,6 +1002,7 @@ impl Vision {
                 (text("all") != "1").then(|| text("map")),
             )?),
             "overview" => Ok(self.overview()?),
+            "detector" => Ok(self.detector.status()),
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
                 anyhow::anyhow!("no endpoint {path}"),
@@ -908,6 +1031,10 @@ impl Vision {
                 self.cancel();
                 Ok(json!(self.job()))
             }
+            "detector/start" => self
+                .detector
+                .start()
+                .map_err(|e| Status(StatusCode::SERVICE_UNAVAILABLE, e)),
             "send" => {
                 let body = json_body()?;
                 let text = |key: &str| body[key].as_str().unwrap_or_default();
@@ -980,6 +1107,8 @@ mod tests {
             size: 'n',
             custom: None,
             confidence: 0.25,
+            detector: detector::Settings::from_config(&VisionConfig::default(), Path::new("/"))
+                .unwrap(),
         }
     }
 
@@ -992,6 +1121,8 @@ mod tests {
         assert_eq!(s.size, 'n');
         assert_eq!(s.custom, None);
         assert_eq!(s.confidence, 0.25);
+        assert_eq!(s.detector.url, detector::DEFAULT_DETECTOR);
+        assert_eq!(s.detector.dir, Path::new("/cfg/../AgentZero"));
 
         let config = VisionConfig {
             results: Some("out".into()),
@@ -1047,6 +1178,8 @@ mod tests {
         assert_eq!(with(r#"{"model": "m"}"#).unwrap().model, "m");
         assert!(with(r#"{"model": "x"}"#).is_err());
         assert!(with(r#"{"model": "custom"}"#).is_err());
+        // The Salmon Run detector is always on offer; the service may start later
+        assert_eq!(with(r#"{"model": "salmon"}"#).unwrap().model, "salmon");
         assert!(with(r#"{"step": 0}"#).is_err());
         assert!(with(r#"{"count": 0}"#).is_err());
         assert!(with(r#"{"s": "../etc"}"#).is_err());

@@ -6423,6 +6423,80 @@ body {
   max-width: none;
 }
 
+/* The Salmon Run detector's state under the model choice */
+.v-detector {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  font-size: 13px;
+}
+
+.v-detector[hidden] {
+  display: none;
+}
+
+.v-detector-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.v-detector-head .chip {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.v-detector-head .chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.v-detector .panel-note:empty,
+.v-det-facts[hidden],
+.v-det-weak[hidden] {
+  display: none;
+}
+
+.v-detector code {
+  overflow-wrap: anywhere;
+}
+
+.v-det-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 0;
+}
+
+.v-det-facts dt {
+  color: var(--text-3);
+}
+
+.v-det-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* Weak, not broken: the warning's colours, not the error's */
+.notice.v-det-weak {
+  display: grid;
+  gap: 6px;
+  border-color: color-mix(in oklab, var(--warning) 60%, transparent);
+  background: color-mix(in oklab, var(--warning) 12%, var(--panel));
+}
+
+.v-det-weak .btn {
+  justify-self: start;
+  height: auto;
+  min-height: 32px;
+  white-space: normal;
+}
+
 .v-timings td,
 .v-timings th {
   text-align: right;

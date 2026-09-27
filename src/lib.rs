@@ -20,6 +20,8 @@ pub mod audio;
 #[cfg(feature = "studio")]
 pub mod cuttlefish;
 #[cfg(feature = "studio")]
+pub mod detector;
+#[cfg(feature = "studio")]
 pub mod follow;
 #[cfg(feature = "studio")]
 pub mod inspect;

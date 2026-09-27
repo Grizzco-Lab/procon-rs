@@ -202,6 +202,15 @@ pub struct VisionConfig {
     pub classes: Option<String>,
     /// Lowest score kept; by default 0.25
     pub confidence: Option<f32>,
+    /// The Salmon Run detector (AgentZero's `agentzero-detect-serve`),
+    /// offered next to the COCO models; by default `http://127.0.0.1:7341`
+    pub detector: Option<String>,
+    /// Command the page's "Start detector" runs; by default `uv run
+    /// agentzero-detect-serve --port <the detector's port>`
+    pub detector_command: Option<Vec<String>>,
+    /// Folder that command runs in, relative to this config file; by
+    /// default `../AgentZero`
+    pub detector_dir: Option<String>,
 }
 
 /// The Predictor app: the inverse dynamics model's predictions on any video

@@ -144,6 +144,38 @@ I18N.zh = {
   "v.tracks.cropTitle": "第 {n} 帧：跳转到这里",
   "v.tracks.limit":
     "轨迹是画面上的位置，而镜头一直在转动，所以它们不是场地上的位置。场地上的位置需要镜头定位，这已在计划中。",
+
+  // Vision: the Salmon Run detector (AgentZero's service)
+  "v.det.model": "鲑鱼跑检测器（AgentZero）",
+  "v.det.checking": "正在检查检测器…",
+  "v.det.ready": "检测器已就绪",
+  "v.det.busy": "检测器正在处理另一个请求",
+  "v.det.down": "检测器未运行",
+  "v.det.downNote": "{url} 没有响应。用 <code>{command}</code> 启动它{how}。",
+  "v.det.downHow": "，或点击“启动检测器”",
+  "v.det.start": "启动检测器",
+  "v.det.check": "重新检查",
+  "v.det.starting": "正在启动检测器，正在加载模型…",
+  "v.det.exited":
+    "检测器{state}；请查看工作室的日志。它需要一个训练好的检查点：<code>agentzero-detect train</code> 会写出 <code>runs/detect/best</code>。",
+  "v.det.timeout": "检测器在两分钟内没有响应。",
+  "v.det.checkpoint": "检查点",
+  "v.det.map50": "mAP50",
+  "v.det.map50Value": "留出帧上 {map50}（第 {epoch} 轮）",
+  "v.det.trained": "训练数据",
+  "v.det.trainedValue": "{train} 个已标注帧，另留出 {val} 帧",
+  "v.det.saved": "保存于",
+  "v.det.device": "设备",
+  "v.det.notLoaded": "尚未加载",
+  "v.det.gpuFree": "GPU 空闲 {gib} GiB",
+  "v.det.classes": "类别",
+  "v.det.weak":
+    "这个模型还很弱：约 {target} 帧中只标注了 {labeled} 帧。会漏检和错检，每个框都要在标注模式里确认后才算数。",
+  "v.det.progress": "标注进度：{labeled} / {target} 帧",
+  "v.det.progressTitle":
+    "由人标注的帧，按类别和片段统计（与 agentzero-detect status 的计数相同）",
+  "v.det.needsService": "请先启动检测器。",
+  "v.det.reason": "{device}，因为 {reason}",
   // Cuttlefish: the views
   "cf.name": "鱼干司令",
   "cf.tab.reviews": "复盘",

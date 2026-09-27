@@ -394,6 +394,20 @@ lock. The results shown go through the same renaming and keep only our classes
 counts the labeled boxes per class (by people and by models) and the frames
 people labeled, against the 200 the Salmon Run detector waits for.
 
+The Salmon Run detector (model `salmon`) runs outside the studio, in
+AgentZero's `agentzero-detect-serve`; `src/detector.rs` is its client, like
+Follow's for the tracker: `GET /health` (checkpoint, training summary, device,
+free GPU memory, busy) for `GET /api/vision/detector`, with the checkpoint's
+modification time as `saved_ms`; `POST /api/vision/detector/start` runs
+`[vision] detector_command` in its own process group, stopped with the studio.
+A run posts `/detect` and reads its JSON lines (`start`, one `frame` per frame
+with boxes in the label format and decode/network/total ms, `end` or `error`)
+into the same job, tracker and results file as a candle run; Cancel drops the
+connection, which stops the service; its 409 (one request at a time) becomes a
+"busy" error. Before a run that may use the GPU, the sessions' root is scanned
+for a `session.json` without `stopped_at_unix_ms` (a recording under way), as
+AgentZero's own commands do.
+
 ### Predictor
 
 `src/predictor.rs` runs AgentZero's `agentzero-predict` (`uv run`, in

@@ -53,6 +53,13 @@ preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerol
 # tracker_command = ["uv", "run", "agentzero-track-serve", "--port", "7340"]
 # tracker_dir = "../AgentZero"
 
+[vision]
+# The Salmon Run detector in the Vision app (AgentZero's agentzero-detect-serve)
+# detector = "http://127.0.0.1:7341"
+# What the page's "Start detector" runs, and where (relative to this file)
+# detector_command = ["uv", "run", "agentzero-detect-serve", "--port", "7341"]
+# detector_dir = "../AgentZero"
+
 [cuttlefish]
 # Reviews, one folder each (review.json and its video); by default "Reviews"
 # next to the Inkspector's root

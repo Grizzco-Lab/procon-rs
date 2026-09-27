@@ -532,11 +532,30 @@ YOLOv8 in candle):
 - **Classes**, **Dataset** (the default): every class of `classes.json` with
   its boxes drawn by people and by models across the annotations, each
   labeled segment (a link opens it in the Label mode), and the frames labeled
-  so far against about 200, when a Salmon Run detector gets trained. **This
+  so far against about 200, which the Salmon Run detector needs. **This
   run**: the classes of the results on screen, and **Send to labels**, which
   writes them into the labels as model boxes (renamed; classes `classes.json`
   does not have are left out). Frames a person has labeled are never changed.
   A link opens the frame in the Inkspector's Label mode.
+
+**Salmon Run detector (AgentZero)** in the model list is our own detector
+(D-FINE-S trained on the frames labeled in the Inkspector, see AgentZero's
+README), served by AgentZero's `agentzero-detect-serve` (port 7341,
+`[vision] detector`). Choosing it shows a card with its state: when it does
+not answer, the command to start it and **Start detector**, which runs
+`[vision] detector_command` (default `uv run agentzero-detect-serve --port
+<port>`) in `detector_dir` (default `../AgentZero`) and stops it with the
+studio; the service needs a trained checkpoint (`runs/detect/best`, from
+`agentzero-detect train`). Once it answers: the checkpoint, its mAP50 on
+held-out frames, the frames it was trained on, when it was saved, the device
+and GPU memory free. Until about 200 frames are labeled a warning says the
+model is weak, with a link to the labeling progress (the **Dataset** view,
+the count `agentzero-detect status` gives). A run goes through the service,
+which decodes the video itself and picks the GPU when it has room (**CPU**
+forces the CPU); its boxes and times stream into the same progress, timings,
+results, tracks and **Send to labels** as a YOLO run. One request at a time:
+a second one (say, `agentzero-detect predict` from a shell) is refused as
+busy. A run on the GPU is refused while a session is being recorded.
 
 COCO models know nothing of Salmon Run (Salmonids come out as `bowl`, `boat`
 or nothing), hence our classes only; the app is the workflow for our own
@@ -661,7 +680,7 @@ Both programs take `--config <path>`.
 | `[video]` | First `input` (`"screen"`, `/dev/video0` or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
 | `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) `annotations` (object labels, default `Annotations` next to the root), `tracker` (Follow's tracker, default `http://127.0.0.1:7340`), `tracker_command` and `tracker_dir` (what Start tracker runs, default `uv run agentzero-track-serve --port <port>` in `../AgentZero`); relative paths start at the config's folder |
 | `[cuttlefish]` | Optional: `reviews` (one folder per review with its video, and the translator's `translations.jsonl`; default `Reviews` next to the root), `knowledge` (the knowledge store with its `inbox/`, default `Knowledge` next to the root), `backend` (`auto`, `api` or `claude-cli`), `model` and `translate_model` |
-| `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model) and `confidence` (0.25) |
+| `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model), `confidence` (0.25), `detector` (the Salmon Run detector, default `http://127.0.0.1:7341`), `detector_command` and `detector_dir` (what Start detector runs, default `uv run agentzero-detect-serve --port <port>` in `../AgentZero`) |
 | `[predictor]` | Optional: `agentzero` (the AgentZero folder, default `../AgentZero`) and `results` (stored predictions, default `Predictions` next to the root) |
 | `[logging]` | `level`: error, warn, info, debug or trace |
 

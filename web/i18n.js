@@ -165,6 +165,39 @@ const I18N = {
     "v.tracks.limit":
       "Trails are positions on the screen, and the camera keeps turning, so they are not places on the stage. Map positions need camera localisation, which is planned.",
 
+    // Vision: the Salmon Run detector (AgentZero's service)
+    "v.det.model": "Salmon Run detector (AgentZero)",
+    "v.det.checking": "Checking the detector…",
+    "v.det.ready": "Detector ready",
+    "v.det.busy": "Detector busy with another request",
+    "v.det.down": "Detector not running",
+    "v.det.downNote":
+      "Nothing answers at {url}. Start it with <code>{command}</code>{how}.",
+    "v.det.downHow": ", or press Start detector",
+    "v.det.start": "Start detector",
+    "v.det.check": "Check again",
+    "v.det.starting": "Starting the detector; it loads its model…",
+    "v.det.exited":
+      "The detector {state}; see the studio's log. It needs a trained checkpoint: <code>agentzero-detect train</code> writes <code>runs/detect/best</code>.",
+    "v.det.timeout": "The detector did not answer within two minutes.",
+    "v.det.checkpoint": "Checkpoint",
+    "v.det.map50": "mAP50",
+    "v.det.map50Value": "{map50} on held-out frames (epoch {epoch})",
+    "v.det.trained": "Trained on",
+    "v.det.trainedValue": "{train} labeled frames, {val} held out",
+    "v.det.saved": "Saved",
+    "v.det.device": "Device",
+    "v.det.notLoaded": "not loaded yet",
+    "v.det.gpuFree": "GPU {gib} GiB free",
+    "v.det.classes": "Classes",
+    "v.det.weak":
+      "This model is weak: {labeled} of about {target} frames are labeled. Expect missed and wrong boxes, and check every one in the Label mode before it counts.",
+    "v.det.progress": "Labeling progress: {labeled} / {target} frames",
+    "v.det.progressTitle":
+      "Frames labeled by people, per class and segment (what agentzero-detect status counts)",
+    "v.det.needsService": "Start the detector first.",
+    "v.det.reason": "{device} because {reason}",
+
     // Cuttlefish: the views
     "cf.name": "Cuttlefish",
     "cf.tab.reviews": "Reviews",

@@ -7,7 +7,9 @@
 // it; the Tracks panel draws the tracks over the frames too. Runs after
 // app.js, player.js and stages.js and uses their helpers ($, escapeHtml,
 // appUrl, t, StageMap, stageOfVideo). Runs go through /api/vision (see
-// src/vision.rs).
+// src/vision.rs); the Salmon Run detector is AgentZero's service, which the
+// studio calls and can start (src/detector.rs), with its state, training
+// and how weak it still is in a card under the model choice.
 // State lives in the address: /vision/<session>?seg=<file>&n=<frame>.
 "use strict";
 
@@ -69,7 +71,14 @@
     /** The trails' latest drawing: an older one's picture is dropped */
     trailToken: null,
     pollTimer: null,
+    /** The Salmon Run detector's last status (GET detector), or null */
+    detector: null,
+    /** Frames labeled by people so far and the target, from the overview */
+    labeled: null,
   };
+
+  /** Longest wait for a detector started from the page, in ms */
+  const DETECTOR_START_MS = 120000;
 
   /** The shared player: the segment's frames, the boxes drawn over them */
   const player = new Player({
@@ -134,6 +143,8 @@
     ourClasses.clear();
     for (const c of overview.classes) if (!c.unknown) ourClasses.set(c.name, c);
     const { labeled_frames: labeled, target_frames: target } = overview;
+    vis.labeled = { labeled, target };
+    renderDetector();
     $("v-target-text").textContent = `${labeled} / ${target}`;
     $("v-target-frames").textContent = target;
     const meter = $("v-target");
@@ -221,13 +232,176 @@
       const name = info.custom.weights.split("/").pop();
       select.add(new Option(`${name} · own weights`, "custom"));
     }
+    select.add(new Option(t("v.det.model"), info.detector.model));
     select.value = remembered("model", info.size);
     if (!select.value) select.value = info.size;
-    $("v-cpu-wrap").hidden = !info.cuda;
     $("v-cpu").checked = remembered("cpu", "false") === "true";
     $("v-track").checked = remembered("track", "true") === "true";
     $("v-map").value = remembered("map", "person=player");
+    modelChanged();
   }
+
+  // --------------------------------------------- the Salmon Run detector
+
+  /** Whether the model chosen is the Salmon Run detector */
+  const salmon = () => $("v-model").value === vis.info?.detector.model;
+
+  /** The CPU choice (the service picks its device; candle only with
+   * CUDA) and the detector's card follow the model */
+  function modelChanged() {
+    $("v-cpu-wrap").hidden = !vis.info?.cuda && !salmon();
+    $("v-detector").hidden = !salmon();
+    if (salmon()) checkDetector();
+    else renderDetector();
+  }
+
+  $("v-model").onchange = () => {
+    remember("model", $("v-model").value);
+    modelChanged();
+  };
+
+  /** Ask the studio whether the detector answers, and show it */
+  async function checkDetector() {
+    if (!vis.detector) setDetector(t("v.det.checking"), "off");
+    try {
+      vis.detector = await api("detector");
+    } catch (error) {
+      vis.detector = { ok: false, error: error.message };
+    }
+    renderDetector();
+    return vis.detector.ok;
+  }
+
+  function setDetector(text, level) {
+    const chip = $("v-det-chip");
+    chip.dataset.level = level;
+    chip.querySelector(".chip-text").textContent = text;
+    chip.title = text;
+  }
+
+  /** The detector's card: state, how to start it, its training, and how
+   * weak it is until enough frames are labeled */
+  function renderDetector(note) {
+    if (!salmon()) return;
+    const status = vis.detector;
+    const health = status?.health;
+    const down = status && !status.ok;
+    if (status) {
+      setDetector(
+        t(down ? "v.det.down" : health?.busy ? "v.det.busy" : "v.det.ready"),
+        down ? "critical" : health?.busy ? "warning" : "good",
+      );
+    }
+    $("v-det-start").hidden = !(down && status.can_start);
+    $("v-det-note").innerHTML =
+      note ??
+      (down && status.url
+        ? t("v.det.downNote", {
+            url: escapeHtml(status.url),
+            command: escapeHtml(status.command),
+            how: status.can_start ? t("v.det.downHow") : "",
+          })
+        : "");
+    renderFacts(health, status?.saved_ms);
+    const weak = $("v-det-weak");
+    const counts = vis.labeled;
+    weak.hidden = !counts || counts.labeled >= counts.target;
+    if (counts) {
+      $("v-det-weak-text").textContent = t("v.det.weak", counts);
+      $("v-det-progress").textContent = t("v.det.progress", counts);
+    }
+  }
+
+  /** What /health says about the checkpoint: where, how good, on what */
+  function renderFacts(health, savedMs) {
+    const facts = $("v-det-facts");
+    facts.hidden = !health;
+    if (!health) return;
+    const trained = health.trained ?? {};
+    const best = trained.best;
+    const split = trained.split ?? {};
+    const gib =
+      health.free_gpu_bytes != null
+        ? t("v.det.gpuFree", {
+            gib: (health.free_gpu_bytes / 2 ** 30).toFixed(1),
+          })
+        : null;
+    const rows = [
+      ["v.det.checkpoint", health.model],
+      [
+        "v.det.map50",
+        best?.map50 != null
+          ? t("v.det.map50Value", {
+              map50: best.map50.toFixed(3),
+              epoch: best.epoch ?? "–",
+            })
+          : "–",
+      ],
+      [
+        "v.det.trained",
+        split.train != null
+          ? t("v.det.trainedValue", { train: split.train, val: split.val ?? 0 })
+          : "–",
+      ],
+      ["v.det.saved", savedMs ? new Date(savedMs).toLocaleString(lang()) : "–"],
+      [
+        "v.det.device",
+        [
+          health.loaded ? health.device?.toUpperCase() : t("v.det.notLoaded"),
+          gib,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      ],
+      ["v.det.classes", health.classes?.length || "–"],
+    ];
+    facts.innerHTML = rows
+      .map(
+        ([key, value]) =>
+          `<dt>${escapeHtml(t(key))}</dt><dd>${escapeHtml(String(value))}</dd>`,
+      )
+      .join("");
+  }
+
+  /** The page's language, for dates */
+  const lang = () => document.documentElement.lang || undefined;
+
+  /** Start the detector with the configured command and wait for it */
+  async function startDetector() {
+    const button = $("v-det-start");
+    button.disabled = true;
+    try {
+      await api("detector/start", {});
+      renderDetector(escapeHtml(t("v.det.starting")));
+      const until = performance.now() + DETECTOR_START_MS;
+      while (performance.now() < until) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (!salmon() || !vis.shown) return;
+        const ok = await checkDetector();
+        if (ok) return;
+        const started = vis.detector.started;
+        if (started?.startsWith("exited")) {
+          return renderDetector(
+            t("v.det.exited", { state: escapeHtml(started) }),
+          );
+        }
+        renderDetector(escapeHtml(t("v.det.starting")));
+      }
+      renderDetector(escapeHtml(t("v.det.timeout")));
+    } catch (error) {
+      renderDetector(escapeHtml(error.message));
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  $("v-det-start").onclick = startDetector;
+  $("v-det-check").onclick = () => checkDetector();
+  // The labeling progress: the Classes panel's dataset view
+  $("v-det-progress").onclick = () => {
+    showTab("dataset");
+    $("v-dataset").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
 
   async function loadSessions() {
     if (vis.sessions) return;
@@ -322,6 +496,9 @@
     const { s, seg } = selected();
     if (!s || !seg) return;
     showError(null);
+    // The detector's card says why and has the button to start it
+    if (salmon() && !(await checkDetector()))
+      return showError(t("v.det.needsService"));
     remember("model", $("v-model").value);
     remember("cpu", String($("v-cpu").checked));
     remember("track", String($("v-track").checked));
@@ -376,6 +553,8 @@
     if (running(before) && !running(job) && job.s === s && job.seg === seg) {
       loadResults(s, seg);
     }
+    // The detector's state after a run of it (busy, or gone)
+    if (running(before) && !running(job) && salmon()) checkDetector();
   }
 
   /** The run the panel shows: the current one while it runs or when it is
@@ -437,11 +616,11 @@
   }
 
   function renderTimings(job) {
-    const t = job?.timings;
+    const timings = job?.timings;
     const rows = [
-      ["Decode", t?.decode],
-      ["Network", t?.network],
-      ["Total", t?.total],
+      ["Decode", timings?.decode],
+      ["Network", timings?.network],
+      ["Total", timings?.total],
     ];
     $("v-timings").innerHTML = rows
       .map(
@@ -450,12 +629,19 @@
       )
       .join("");
     const parts = [];
-    if (job?.device) parts.push(`device ${job.device.toUpperCase()}`);
+    if (job?.device_reason)
+      parts.push(
+        t("v.det.reason", {
+          device: job.device.toUpperCase(),
+          reason: job.device_reason,
+        }),
+      );
+    else if (job?.device) parts.push(`device ${job.device.toUpperCase()}`);
     if (job?.load_ms != null)
       parts.push(`model loaded in ${fmt(job.load_ms)} ms`);
     else if (job?.device) parts.push("model already loaded");
-    if (t?.frames_per_s)
-      parts.push(`${t.frames_per_s.toFixed(1)} frames/s after the first`);
+    if (timings?.frames_per_s)
+      parts.push(`${timings.frames_per_s.toFixed(1)} frames/s after the first`);
     $("v-timing-note").textContent = parts.join(" · ");
   }
 
@@ -995,6 +1181,11 @@
   }
 
   window.addEventListener("lang-change", () => {
+    const option = [...$("v-model").options].find(
+      (o) => o.value === vis.info?.detector.model,
+    );
+    if (option) option.textContent = t("v.det.model");
+    renderDetector();
     if (!vis.results) return;
     renderTracks();
     drawFrame(player.frame);
@@ -1015,6 +1206,7 @@
     } catch (error) {
       return showError(error.message);
     }
+    if (salmon()) checkDetector();
     const s = state.get("s") ?? remembered("session", "");
     const select = $("v-session");
     if (s && summaryOf(s)) select.value = s;
