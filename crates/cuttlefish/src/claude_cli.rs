@@ -36,7 +36,7 @@ pub const PROGRAM: &str = "claude";
 /// Longest run, as the API client's timeout
 pub const TIMEOUT: Duration = Duration::from_secs(600);
 /// Runs at once at most; further requests wait their turn
-pub const MAX_RUNNING: usize = 2;
+pub const MAX_RUNNING: usize = 8;
 /// Taken out of the CLI's environment: with a key or token the CLI bills
 /// them instead of the subscription; `CLAUDECODE` marks a session started
 /// inside Claude Code

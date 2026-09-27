@@ -367,7 +367,7 @@ parsed leniently. `--model` is passed only when one is configured, `--effort`
 always. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the
 CLI's environment, so it uses the account it is logged in with: this backend
 runs on your Claude subscription and counts against its usage limits, and is
-meant for personal testing. At most two runs at once; a run is stopped after
+meant for personal testing. At most eight runs at once; a run is stopped after
 ten minutes. A missing `claude` or a missing login are reported as such. The
 CLI's own usage figures are logged like the API's; there is no prompt cache
 to manage. Tests run a fake instead of the process.
