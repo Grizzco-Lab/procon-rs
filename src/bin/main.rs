@@ -184,15 +184,22 @@ fn main() -> anyhow::Result<()> {
     if let Err(e) = cuttlefish::store::migrate(&cuttlefish::store::legacy_root(), &knowledge) {
         log::warn!("Could not bring the older knowledge store over: {:#}", e);
     }
-    let mut settings = cuttlefish::llm::Settings::default();
-    if let Some(model) = config.cuttlefish.model {
-        settings.model = model;
-    }
+    let settings = cuttlefish::llm::Settings {
+        model: config.cuttlefish.model,
+        backend: match config.cuttlefish.backend {
+            Some(name) => name
+                .parse()
+                .map_err(|e| anyhow::anyhow!("[cuttlefish] backend: {e}"))?,
+            None => cuttlefish::llm::Backend::Auto,
+        },
+        ..Default::default()
+    };
     let cuttlefish = Arc::new(Cuttlefish::new(
         Arc::clone(&inspector),
         reviews,
         knowledge,
         settings,
+        config.cuttlefish.translate_model,
     ));
     // Reviews of the older layout move into folders, with their YouTube
     // videos from the download cache of before; on a thread, since the

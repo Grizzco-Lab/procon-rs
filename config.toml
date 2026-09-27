@@ -60,10 +60,16 @@ preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerol
 # Knowledge store of the cuttlefish crate (documents, index, glossary, and the
 # inbox/ folder to drop material into); by default "Knowledge" next to the
 # Inkspector's root. It may be a synced folder; the embedding model stays in
-# ~/.cache/procon-cuttlefish. "Ask Cuttlefish" needs ANTHROPIC_API_KEY in the
-# studio's environment (never put it in a file here)
+# ~/.cache/procon-cuttlefish. The chat needs a model backend: ANTHROPIC_API_KEY
+# in the studio's environment (never put it in a file here), or the logged-in
+# Claude Code CLI on your own subscription
 # knowledge = "/data/Knowledge"
+# What answers: "auto" (the API when the key is set, else `claude` on PATH),
+# "api" or "claude-cli"
+# backend = "auto"
+# Models for the chat and the translator; by default the backend's own
 # model = "claude-opus-5-5"
+# translate_model = "claude-sonnet-4-5"
 
 [logging]
 # Log level: error, warn, info, debug, trace

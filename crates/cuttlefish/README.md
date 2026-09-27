@@ -37,6 +37,8 @@ cuttlefish delete 4d7e4072ed28b64e         # a document and its chunks
 cuttlefish eval eval.example.toml          # retrieval check, no key needed
 
 export ANTHROPIC_API_KEY=...               # only ever from the environment
+# ...or none: with the Claude Code CLI installed and logged in, `auto` (the
+# default) runs `claude -p` on your own subscription; --backend claude-cli forces it
 cuttlefish ask "When should I leave the basket to kill a Stinger?"
 cuttlefish translate "Kill the Steelhead before the Flyfish" --to ja
 cuttlefish eval eval.example.toml --answer
@@ -184,7 +186,7 @@ same license.
 use cuttlefish::review::{Reviewer, ReviewRequest, Frame, ExistingComment};
 use cuttlefish::llm::Settings;
 
-let reviewer = Reviewer::open(&data_dir, Settings::default())?; // fails clearly without ANTHROPIC_API_KEY
+let reviewer = Reviewer::open(&data_dir, Settings::default())?; // fails clearly without a model backend
 let comments = reviewer.review(&ReviewRequest {
     video: "2026-09-25_20-15-00".into(),
     start_s: 120.0,
@@ -349,3 +351,23 @@ Excerpts are marked as reference material, not instructions, since they
 come from the web and chat. Unit tests never touch the network: requests
 are built and answers parsed by pure functions, and a fake transport stands
 in for HTTPS.
+
+**The Claude Code CLI as backend.** `llm::Backend` (`--backend`,
+`$CUTTLEFISH_BACKEND`, the studio's `[cuttlefish] backend`) is `auto`, `api`
+or `claude-cli`; `auto` takes the API when `ANTHROPIC_API_KEY` is set and
+otherwise the `claude` on PATH. `claude_cli.rs` runs `claude -p` headless
+with the same prompt: the system prompt (persona, rules, digest) replaces
+Claude Code's own through `--system-prompt`, and the user turn (knowledge
+excerpts, glossary, comments, frames as base64 JPEG image blocks, the task)
+is one `stream-json` message on stdin, so the CLI needs no tools and runs
+with none (`--tools ""`, `--restricted`, `--strict-mcp-config`, no settings
+files, no session saved) in an empty temporary folder. Earlier turns are
+rendered into the message; a JSON schema is asked for in words and the answer
+parsed leniently. `--model` is passed only when one is configured, `--effort`
+always. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the
+CLI's environment, so it uses the account it is logged in with: this backend
+runs on your Claude subscription and counts against its usage limits, and is
+meant for personal testing. At most two runs at once; a run is stopped after
+ten minutes. A missing `claude` or a missing login are reported as such. The
+CLI's own usage figures are logged like the API's; there is no prompt cache
+to manage. Tests run a fake instead of the process.

@@ -168,7 +168,7 @@ I18N.zh = {
   "cf.chat.keys": "Enter 发送 · Shift+Enter 换行",
   "cf.chat.thinking": "鱼干司令正在思考…（最多一分钟）",
   "cf.chat.noKey":
-    "运行工作室的机器上没有设置 ANTHROPIC_API_KEY，鱼干司令暂时无法回答。请在启动工作室前导出它；你的消息、评论和标注照常保存。",
+    "运行工作室的机器上没有可用的模型后端，鱼干司令暂时无法回答：请在启动工作室前导出 ANTHROPIC_API_KEY，或安装并登录 Claude Code 命令行。你的消息、评论和标注照常保存。",
   "cf.chat.failed": "联系不上鱼干司令：{error}",
   "cf.chat.error": "鱼干司令无法回答：{error}",
   "cf.chat.empty":
@@ -211,9 +211,9 @@ I18N.zh = {
   "tr.working": "翻译中…",
   "tr.failed": "未能翻译：{error}",
   "tr.noKey":
-    "运行工作室的机器上没有设置 ANTHROPIC_API_KEY，只有术语表能回答：术语的词条和各语言名称、一句话里用到的术语。要翻译整句，请在启动工作室前导出它。",
+    "运行工作室的机器上没有可用的模型后端，只有术语表能回答：术语的词条和各语言名称、一句话里用到的术语。要翻译整句，请在启动工作室前导出 ANTHROPIC_API_KEY，或安装并登录 Claude Code 命令行。",
   "tr.noKeyTranslation":
-    "翻译这一条需要在运行工作室的机器上设置 ANTHROPIC_API_KEY。",
+    "翻译这一条需要运行工作室的机器上有模型后端（ANTHROPIC_API_KEY 或 Claude Code 命令行）。",
   "tr.copy": "复制",
   "tr.copied": "已复制",
   "tr.entry": "术语表词条",
@@ -237,7 +237,11 @@ I18N.zh = {
   "k.no": "无",
   "k.key.set": "已设置",
   "k.key.notSet": "未设置",
-  "k.key.anthropic": "对话需要它",
+  "k.backend.api": "模型：Anthropic API（ANTHROPIC_API_KEY）",
+  "k.backend.claude-cli": "模型：Claude 订阅（claude 命令行）",
+  "k.backend.none": "模型：无",
+  "k.backend.note":
+    "回答对话和翻译的是谁：按 ANTHROPIC_API_KEY 计费的 API，或已登录的 Claude Code 命令行、用你的订阅（[cuttlefish] backend）",
   "k.key.discord": "通过 Discord 机器人导入需要它",
   "k.key.discordNote": "（需要在运行工作室的机器上设置 DISCORD_BOT_TOKEN）",
   "k.search": "搜索",

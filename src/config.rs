@@ -163,8 +163,16 @@ pub struct CuttlefishConfig {
     /// embedding model stays in `~/.cache/procon-cuttlefish`. The API key is never
     /// read from the config, only from `ANTHROPIC_API_KEY`.
     pub knowledge: Option<String>,
-    /// Model answering "Ask Cuttlefish"; by default the crate's
+    /// What answers the chat and the translator: `api` (the Anthropic API
+    /// with `ANTHROPIC_API_KEY`), `claude-cli` (the logged-in Claude Code
+    /// CLI, on the user's own subscription) or `auto` (the API when the key
+    /// is set, else the CLI when `claude` is on PATH); by default `auto`
+    pub backend: Option<String>,
+    /// Model answering the chat; by default the backend's
     pub model: Option<String>,
+    /// Model translating and explaining in the Translate view; by default
+    /// `model`
+    pub translate_model: Option<String>,
 }
 
 /// The Vision app: object detection and tracking on recorded sessions

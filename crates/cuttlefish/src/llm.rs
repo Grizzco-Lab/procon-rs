@@ -1,15 +1,22 @@
-//! Anthropic Messages API over HTTPS.
+//! The model: the Anthropic Messages API over HTTPS, or the Claude Code CLI.
 //!
-//! The API key is read from `ANTHROPIC_API_KEY` only, and never written or
-//! logged. Requests are built by [`build_body`] and answers read by
-//! [`parse_reply`], both pure so they are tested without the network; the
-//! [`Transport`] trait is the only part that talks to the server.
+//! A [`Client`] answers a [`Prompt`] through one of two backends. The API
+//! is billed to the key read from `ANTHROPIC_API_KEY` only, never written or
+//! logged; requests are built by [`build_body`] and answers read by
+//! [`parse_reply`], both pure so they are tested without the network, and
+//! the [`Transport`] trait is the only part that talks to the server. The
+//! CLI ([`crate::claude_cli`]) runs the locally installed `claude -p` on the
+//! user's own Claude subscription instead. [`Backend`] picks; `auto` takes
+//! the API when the key is set and the CLI when `claude` is on PATH.
 
+use crate::claude_cli::Cli;
 use alloc::string::String;
 use alloc::vec::Vec;
 use anyhow::{Context, Result, bail};
 use base64::Engine;
+use core::str::FromStr;
 use core::time::Duration;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// Messages endpoint
@@ -62,25 +69,95 @@ pub struct Prompt {
     pub schema: Option<Value>,
 }
 
+/// What answers: the Messages API billed to `ANTHROPIC_API_KEY`, or the
+/// Claude Code CLI (`claude -p`) on the user's Claude subscription
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Backend {
+    /// The API when the key is set, else the CLI when `claude` is on PATH
+    #[default]
+    Auto,
+    /// The Messages API
+    Api,
+    /// The Claude Code CLI
+    ClaudeCli,
+}
+
+impl Backend {
+    /// The name in configs and on the command line
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Backend::Auto => "auto",
+            Backend::Api => "api",
+            Backend::ClaudeCli => "claude-cli",
+        }
+    }
+}
+
+impl core::fmt::Display for Backend {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for Backend {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.trim() {
+            "auto" => Ok(Backend::Auto),
+            "api" => Ok(Backend::Api),
+            "claude-cli" | "cli" => Ok(Backend::ClaudeCli),
+            other => bail!("unknown model backend {other:?}: use auto, api or claude-cli"),
+        }
+    }
+}
+
 /// Model settings
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
-    /// Model name
-    pub model: String,
+    /// Model name; `None` for the backend's default ([`DEFAULT_MODEL`] on
+    /// the API, the CLI's own choice on the CLI)
+    pub model: Option<String>,
     /// Effort level
     pub effort: String,
-    /// Output limit, thinking included
+    /// Output limit, thinking included (the API only)
     pub max_tokens: u32,
+    /// Which backend answers
+    pub backend: Backend,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            model: String::from(DEFAULT_MODEL),
+            model: None,
             effort: String::from(DEFAULT_EFFORT),
             max_tokens: 16000,
+            backend: Backend::Auto,
         }
     }
+}
+
+impl Settings {
+    /// The backend [`Client::from_env`] would use with the environment as
+    /// it is: the API with the key set, the CLI with `claude` on PATH;
+    /// `None` when the one asked for (or, with `auto`, either) is missing
+    pub fn detect(&self) -> Option<Backend> {
+        let key = api_key().is_some();
+        match self.backend {
+            Backend::Api => key.then_some(Backend::Api),
+            Backend::ClaudeCli => Cli::find().is_some().then_some(Backend::ClaudeCli),
+            Backend::Auto if key => Some(Backend::Api),
+            Backend::Auto => Cli::find().is_some().then_some(Backend::ClaudeCli),
+        }
+    }
+}
+
+/// `ANTHROPIC_API_KEY`, when set to something
+fn api_key() -> Option<String> {
+    std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
 }
 
 /// The request body for a prompt
@@ -111,7 +188,7 @@ pub fn build_body(settings: &Settings, prompt: &Prompt) -> Value {
         .collect();
     messages.push(json!({"role": "user", "content": content}));
     json!({
-        "model": settings.model,
+        "model": settings.model.as_deref().unwrap_or(DEFAULT_MODEL),
         "max_tokens": settings.max_tokens,
         "system": [{
             "type": "text",
@@ -230,10 +307,20 @@ impl Transport for Https {
     }
 }
 
-/// A Messages API client
+/// The backend a client runs on
+enum Inner {
+    /// The Messages API over a transport, with the key
+    Api {
+        transport: Box<dyn Transport>,
+        api_key: String,
+    },
+    /// The Claude Code CLI
+    Cli(Cli),
+}
+
+/// A model client
 pub struct Client {
-    transport: Box<dyn Transport>,
-    api_key: String,
+    inner: Inner,
     /// Model settings
     pub settings: Settings,
 }
@@ -242,45 +329,97 @@ impl core::fmt::Debug for Client {
     /// Leaves the key out
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Client")
+            .field("backend", &self.backend())
             .field("settings", &self.settings)
             .finish_non_exhaustive()
     }
 }
 
 impl Client {
-    /// A client over HTTPS with the key from `ANTHROPIC_API_KEY`
+    /// A client on the backend the settings ask for, from the environment:
+    /// the API with the key from `ANTHROPIC_API_KEY`, or the CLI found on
+    /// PATH. A clear error names what is missing.
     pub fn from_env(settings: Settings) -> Result<Self> {
-        let key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
-        if key.trim().is_empty() {
-            bail!("ANTHROPIC_API_KEY is not set; export it to use the model");
-        }
-        Ok(Self::with_transport(
-            Box::new(Https::default()),
-            key,
-            settings,
-        ))
+        let key = api_key();
+        let inner = match (settings.backend, key) {
+            (Backend::Api | Backend::Auto, Some(key)) => Inner::Api {
+                transport: Box::new(Https::default()),
+                api_key: key,
+            },
+            (Backend::Api, None) => {
+                bail!("ANTHROPIC_API_KEY is not set; export it to use the model")
+            }
+            (Backend::ClaudeCli, _) => Inner::Cli(Cli::find().with_context(|| {
+                alloc::format!(
+                    "`{}` (the Claude Code CLI) is not on PATH; install it and log in",
+                    crate::claude_cli::PROGRAM
+                )
+            })?),
+            (Backend::Auto, None) => Inner::Cli(Cli::find().with_context(|| {
+                alloc::format!(
+                    "no model backend: export ANTHROPIC_API_KEY, or install `{}` (the Claude \
+                     Code CLI) and log in",
+                    crate::claude_cli::PROGRAM
+                )
+            })?),
+        };
+        Ok(Client { inner, settings })
     }
 
-    /// A client over any transport (tests use a fake one)
+    /// An API client over any transport (tests use a fake one)
     pub fn with_transport(
         transport: Box<dyn Transport>,
         api_key: String,
         settings: Settings,
     ) -> Self {
         Client {
-            transport,
-            api_key,
+            inner: Inner::Api { transport, api_key },
             settings,
         }
     }
 
-    /// Sends a prompt, retrying twice on rate limits, overload and server
-    /// errors
+    /// A client on a CLI (tests give it a fake runner)
+    pub fn with_cli(cli: Cli, settings: Settings) -> Self {
+        Client {
+            inner: Inner::Cli(cli),
+            settings,
+        }
+    }
+
+    /// Which backend answers
+    pub fn backend(&self) -> Backend {
+        match self.inner {
+            Inner::Api { .. } => Backend::Api,
+            Inner::Cli(_) => Backend::ClaudeCli,
+        }
+    }
+
+    /// Sends a prompt. On the API, rate limits, overload and server errors
+    /// are retried twice; the CLI retries on its own.
     pub fn send(&self, prompt: &Prompt) -> Result<Reply> {
+        let reply = match &self.inner {
+            Inner::Api { transport, api_key } => self.post(transport.as_ref(), api_key, prompt)?,
+            Inner::Cli(cli) => cli.send(&self.settings, prompt)?,
+        };
+        let u = reply.usage;
+        log::info!(
+            "{} ({}): {} input + {} cached + {} cache write, {} output tokens",
+            self.settings.model.as_deref().unwrap_or("default model"),
+            self.backend(),
+            u.input,
+            u.cache_read,
+            u.cache_write,
+            u.output
+        );
+        Ok(reply)
+    }
+
+    /// One prompt through the API, with the retries
+    fn post(&self, transport: &dyn Transport, api_key: &str, prompt: &Prompt) -> Result<Reply> {
         let body = build_body(&self.settings, prompt);
         let mut attempt = 0;
         loop {
-            let (status, text) = self.transport.post(&self.api_key, &body)?;
+            let (status, text) = transport.post(api_key, &body)?;
             let retry = status == 429 || status >= 500;
             if retry && attempt < 2 {
                 attempt += 1;
@@ -288,17 +427,7 @@ impl Client {
                 std::thread::sleep(Duration::from_secs(2u64.pow(attempt)));
                 continue;
             }
-            let reply = parse_reply(status, &text)?;
-            let u = reply.usage;
-            log::info!(
-                "{}: {} input + {} cached + {} cache write, {} output tokens",
-                self.settings.model,
-                u.input,
-                u.cache_read,
-                u.cache_write,
-                u.output
-            );
-            return Ok(reply);
+            return parse_reply(status, &text);
         }
     }
 }
@@ -409,6 +538,21 @@ pub(crate) mod tests {
             "fine"
         );
         assert_eq!(sent.lock().unwrap().len(), 2);
+        assert_eq!(client.backend(), Backend::Api);
         assert!(!alloc::format!("{client:?}").contains("test-key"));
+    }
+
+    #[test]
+    fn backends_have_names() {
+        assert_eq!("claude-cli".parse::<Backend>().unwrap(), Backend::ClaudeCli);
+        assert_eq!(" api ".parse::<Backend>().unwrap(), Backend::Api);
+        assert_eq!(Backend::default(), Backend::Auto);
+        assert_eq!(Backend::ClaudeCli.to_string(), "claude-cli");
+        assert_eq!(
+            serde_json::to_value(Backend::ClaudeCli).unwrap(),
+            json!("claude-cli")
+        );
+        assert!("openai".parse::<Backend>().is_err());
+        assert_eq!(Settings::default().model, None);
     }
 }

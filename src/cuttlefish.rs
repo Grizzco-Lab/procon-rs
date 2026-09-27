@@ -83,12 +83,13 @@
 //!   `[cuttlefish] knowledge`. Answers `{"text", "sources", "comments":
 //!   [{"t_s", "t_end_s"?, "text", "shapes"}]}`; the page saves the message
 //!   into the review and adds the comments as Cuttlefish's. `501` while the
-//!   reviewer cannot start (no `ANTHROPIC_API_KEY`, the only place the key is
-//!   read from)
+//!   reviewer cannot start: no model backend (`ANTHROPIC_API_KEY`, the only
+//!   place the key is read from, or the logged-in Claude Code CLI; see
+//!   `[cuttlefish] backend`)
 //! - `POST translate` with `{"text", "target"}` translates for the Translate
 //!   view ([`Knowledge::translate`]: the glossary terms the text uses, a bare
-//!   term's entry, the model's translation and explanation when the key is
-//!   set, `needs_key` otherwise) and appends the result, with an `id` and
+//!   term's entry, the model's translation and explanation when a backend
+//!   is there, `needs_key` otherwise) and appends the result, with an `id` and
 //!   `created_ms`, to the history `<reviews>/translations.jsonl` (one JSON
 //!   object per line, the last [`TRANSLATIONS_KEPT`] kept); `GET
 //!   translations` lists it newest first, `DELETE translations` removes it
@@ -478,6 +479,7 @@ impl Cuttlefish {
         reviews: PathBuf,
         knowledge: PathBuf,
         settings: Settings,
+        translate_model: Option<String>,
     ) -> Self {
         Self {
             inspector,
@@ -486,7 +488,7 @@ impl Cuttlefish {
             writing: Arc::default(),
             lookups: Arc::default(),
             thumbs: Mutex::default(),
-            knowledge: Arc::new(Knowledge::new(knowledge, settings)),
+            knowledge: Arc::new(Knowledge::new(knowledge, settings, translate_model)),
         }
     }
 
@@ -1817,6 +1819,7 @@ mod tests {
             dir.join("reviews"),
             dir.join("knowledge"),
             Settings::default(),
+            None,
         );
         (dir, cuttlefish)
     }

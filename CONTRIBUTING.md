@@ -302,8 +302,9 @@ term's entry from `GET knowledge/glossary` before the model answers. Imports use
 (the same code as the CLI) with a `Sink` that writes the job's log; one runs
 at a time, and the index is written every fifty documents and at the end (it
 may live in a synced folder, where each write uploads it whole). The
-API key is read only from `ANTHROPIC_API_KEY`; the page learns only whether it
-is set.
+API key is read only from `ANTHROPIC_API_KEY`; with none, `auto` falls back
+to the Claude Code CLI (`cuttlefish::claude_cli`, on the user's subscription);
+the page learns only which backend answers.
 
 The knowledge folder defaults to `Knowledge` next to the Inkspector's root and
 may be synced: `cuttlefish::store` writes every file through a temporary file

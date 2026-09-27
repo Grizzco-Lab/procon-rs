@@ -131,10 +131,12 @@
     $("k-digest").textContent = stats.digest ? t("k.yes") : t("k.no");
     const keyChip = (name, set, what) =>
       `<span class="chip" data-level="${set ? "good" : "off"}" title="${escapeHtml(what)}"><span class="chip-dot"></span><span class="chip-text">${name} ${set ? t("k.key.set") : t("k.key.notSet")}</span></span>`;
+    // The model backend: the API, the Claude Code CLI or none; never a secret
+    const backend = t(`k.backend.${stats.backend || "none"}`);
+    const model = stats.model ? ` · ${escapeHtml(stats.model)}` : "";
     $("k-keys").innerHTML =
-      keyChip("ANTHROPIC_API_KEY", stats.anthropic_key, t("k.key.anthropic")) +
-      keyChip("DISCORD_BOT_TOKEN", stats.discord_token, t("k.key.discord")) +
-      `<span class="chip" data-level="off"><span class="chip-text">${escapeHtml(stats.model)}</span></span>`;
+      `<span class="chip" data-level="${stats.backend ? "good" : "off"}" title="${escapeHtml(t("k.backend.note"))}"><span class="chip-dot"></span><span class="chip-text">${escapeHtml(backend)}${model}</span></span>` +
+      keyChip("DISCORD_BOT_TOKEN", stats.discord_token, t("k.key.discord"));
     $("k-token-note").textContent = stats.discord_token
       ? ""
       : t("k.key.discordNote");

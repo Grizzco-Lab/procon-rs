@@ -151,12 +151,13 @@
     note.classList.toggle("is-warning", kind === "warning");
   }
 
-  /** Whether the studio has the model's key; asked once. Without it the box
-   * says the glossary answers alone. */
+  /** Whether the studio has a model backend (the API key, or the Claude
+   * Code CLI); asked once. Without one the box says the glossary answers
+   * alone. */
   async function checkKey() {
     if (tr.key == null) {
       try {
-        tr.key = Boolean((await api("knowledge/model")).anthropic_key);
+        tr.key = Boolean((await api("knowledge/model")).backend);
       } catch {
         return;
       }

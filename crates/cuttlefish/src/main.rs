@@ -1,8 +1,9 @@
 //! `cuttlefish`: fill the knowledge store, search it and ask the model.
 //!
 //! Run `cuttlefish --help` for the commands. Keys come from the
-//! environment only: `ANTHROPIC_API_KEY` (ask, translate) and
-//! `DISCORD_BOT_TOKEN` (ingest discord-bot).
+//! environment only: `ANTHROPIC_API_KEY` (ask, translate; or the logged-in
+//! Claude Code CLI with `--backend claude-cli`) and `DISCORD_BOT_TOKEN`
+//! (ingest discord-bot).
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
@@ -11,7 +12,7 @@ use cuttlefish::doc::Document;
 use cuttlefish::embed::E5Embedder;
 use cuttlefish::eval::EvalSet;
 use cuttlefish::ingest::{self, Meta};
-use cuttlefish::llm::{Client, Settings};
+use cuttlefish::llm::{Backend, Client, Settings};
 use cuttlefish::review::{Reviewer, translate};
 use cuttlefish::store::{self, Store};
 use cuttlefish::{assets, inbox, tables};
@@ -51,7 +52,7 @@ enum Command {
         /// A term in any language, or a sentence
         text: String,
     },
-    /// Ask Cuttlefish a question (needs ANTHROPIC_API_KEY)
+    /// Ask Cuttlefish a question (needs a model backend, see --backend)
     Ask {
         /// The question
         question: String,
@@ -61,7 +62,7 @@ enum Command {
         #[arg(short, default_value_t = 8)]
         k: usize,
     },
-    /// Translate text with the community's names (needs ANTHROPIC_API_KEY)
+    /// Translate text with the community's names (needs a model backend)
     Translate {
         /// The text
         text: String,
@@ -78,7 +79,7 @@ enum Command {
         /// Knowledge excerpts to retrieve
         #[arg(short, default_value_t = 8)]
         k: usize,
-        /// Also ask the model and check the answers (needs ANTHROPIC_API_KEY)
+        /// Also ask the model and check the answers (needs a model backend)
         #[arg(long)]
         answer: bool,
         #[command(flatten)]
@@ -101,12 +102,18 @@ enum Command {
 
 #[derive(Args)]
 struct ModelArgs {
-    /// Model name
-    #[arg(long, env = "CUTTLEFISH_MODEL", default_value = cuttlefish::llm::DEFAULT_MODEL)]
-    model: String,
+    /// Model name; by default the backend's (claude-opus-5-5 on the API,
+    /// the CLI's own on the CLI)
+    #[arg(long, env = "CUTTLEFISH_MODEL")]
+    model: Option<String>,
     /// Effort: low, medium, high, xhigh, max
     #[arg(long, default_value = cuttlefish::llm::DEFAULT_EFFORT)]
     effort: String,
+    /// What answers: api (ANTHROPIC_API_KEY), claude-cli (the logged-in
+    /// Claude Code CLI on your subscription) or auto (the API when the key
+    /// is set, else the CLI when it is on PATH)
+    #[arg(long, env = "CUTTLEFISH_BACKEND", default_value_t = Backend::Auto)]
+    backend: Backend,
 }
 
 impl ModelArgs {
@@ -114,6 +121,7 @@ impl ModelArgs {
         Settings {
             model: self.model.clone(),
             effort: self.effort.clone(),
+            backend: self.backend,
             ..Settings::default()
         }
     }

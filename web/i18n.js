@@ -192,7 +192,7 @@ const I18N = {
     "cf.chat.keys": "Enter sends · Shift+Enter for a new line",
     "cf.chat.thinking": "Cuttlefish is thinking… (up to a minute)",
     "cf.chat.noKey":
-      "ANTHROPIC_API_KEY is not set where the studio runs, so Cuttlefish cannot answer yet. Export it before starting the studio; your messages, comments and drawings are saved as usual.",
+      "No model backend where the studio runs, so Cuttlefish cannot answer yet: export ANTHROPIC_API_KEY, or install the Claude Code CLI and log in, before starting the studio. Your messages, comments and drawings are saved as usual.",
     "cf.chat.failed": "Could not reach Cuttlefish: {error}",
     "cf.chat.error": "Cuttlefish could not answer: {error}",
     "cf.chat.empty":
@@ -240,9 +240,9 @@ const I18N = {
     "tr.working": "Translating…",
     "tr.failed": "Not translated: {error}",
     "tr.noKey":
-      "ANTHROPIC_API_KEY is not set where the studio runs, so only the glossary answers: a term's entry and names, the terms a sentence uses. Export it before starting the studio to translate sentences.",
+      "No model backend where the studio runs, so only the glossary answers: a term's entry and names, the terms a sentence uses. Export ANTHROPIC_API_KEY, or install the Claude Code CLI and log in, before starting the studio to translate sentences.",
     "tr.noKeyTranslation":
-      "Translating this needs ANTHROPIC_API_KEY where the studio runs.",
+      "Translating this needs a model backend where the studio runs (ANTHROPIC_API_KEY or the Claude Code CLI).",
     "tr.copy": "Copy",
     "tr.copied": "Copied",
     "tr.entry": "Glossary entry",
@@ -267,7 +267,11 @@ const I18N = {
     "k.no": "No",
     "k.key.set": "set",
     "k.key.notSet": "not set",
-    "k.key.anthropic": "Needed by the chat",
+    "k.backend.api": "Model: Anthropic API (ANTHROPIC_API_KEY)",
+    "k.backend.claude-cli": "Model: Claude subscription (claude CLI)",
+    "k.backend.none": "Model: none",
+    "k.backend.note":
+      "What answers the chat and the translator: the API billed to ANTHROPIC_API_KEY, or the logged-in Claude Code CLI on your subscription ([cuttlefish] backend)",
     "k.key.discord": "Needed to import through a Discord bot",
     "k.key.discordNote": "(needs DISCORD_BOT_TOKEN where the studio runs)",
     "k.search": "Search",

@@ -4,10 +4,12 @@
 //! once, on the first request that needs them, and serve everything that
 //! follows: searches, imports and the chat's retrieval (the chat lives in
 //! the reviews, see [`crate::cuttlefish`]; this view manages the store).
-//! The model client is made per request with the key from
-//! `ANTHROPIC_API_KEY`, the only place the key is read from; it is never
-//! shown or logged, and the page only learns whether it is set. Searching,
-//! the glossary and imports work without it.
+//! The model client is made per request on the backend `[cuttlefish]
+//! backend` names (`cuttlefish::llm::Backend`): the API with the key from
+//! `ANTHROPIC_API_KEY`, the only place the key is read from, or the
+//! logged-in Claude Code CLI on the user's subscription. The key is never
+//! shown or logged; the page only learns which backend answers, if any.
+//! Searching, the glossary and imports work without one.
 //!
 //! Imports run one at a time on a thread of their own, with a log the page
 //! polls; web pages go through the crate's polite crawler (robots.txt, one
@@ -19,10 +21,10 @@
 //! Endpoints under `/api/cuttlefish/knowledge/`:
 //!
 //! - `GET stats`: documents per source kind, chunks, glossary, digest,
-//!   embedder, and whether `ANTHROPIC_API_KEY` and `DISCORD_BOT_TOKEN` are
-//!   set
-//! - `GET model`: the model's name and whether `ANTHROPIC_API_KEY` is set,
-//!   without loading the store (the chat asks before its first message)
+//!   embedder, the model backend (`api`, `claude-cli` or null) and whether
+//!   `DISCORD_BOT_TOKEN` is set
+//! - `GET model`: the model's name and backend, without loading the store
+//!   (the chat asks before its first message)
 //! - `GET overview`: what the store holds (documents by source and format,
 //!   glossary terms by language, name tables, assets by folder), the inbox,
 //!   the last import reports, and the old data folder once moved aside
@@ -45,7 +47,7 @@
 //! [`Knowledge::translate`] serves the Cuttlefish app's Translate view (`POST
 //! /api/cuttlefish/translate`, see [`crate::cuttlefish`], which keeps the
 //! history): the glossary terms a text uses, and the model's translation
-//! when the key is set.
+//! when a backend is there.
 
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -100,7 +102,7 @@ const REPORTS_SHOWN: usize = 5;
 const MAX_TRANSLATED: usize = 4000;
 
 /// A translation: what the glossary knows of the text, and the model's part
-/// when the key is set
+/// when a backend is there
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Translation {
     /// The text as given
@@ -112,14 +114,15 @@ pub struct Translation {
     /// That term, or the terms the text mentions, in order of mention
     pub terms: Vec<Term>,
     /// The translation: a bare term's name in `target` from the glossary,
-    /// else the model's; none without a key
+    /// else the model's; none without a model backend
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub translation: Option<String>,
     /// For a bare term, the model's explanation: what it means and when a
     /// player says it
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explanation: Option<String>,
-    /// The model was needed and `ANTHROPIC_API_KEY` is not set
+    /// The model was needed and no backend is there (no
+    /// `ANTHROPIC_API_KEY`, no logged-in Claude Code CLI)
     pub needs_key: bool,
 }
 
@@ -401,8 +404,11 @@ pub struct Knowledge {
     /// This machine's cache (embedding model, thumbnails, unpacked
     /// archives)
     cache: PathBuf,
-    /// Model settings for questions, reviews and translations
+    /// Model settings for the chat
     settings: Settings,
+    /// Model settings for the translator: the same, with its own model
+    /// when one is configured
+    translate: Settings,
     loaded: Mutex<Option<Arc<Loaded>>>,
     jobs: Mutex<Vec<IngestJob>>,
     cancel: AtomicBool,
@@ -411,11 +417,16 @@ pub struct Knowledge {
 }
 
 impl Knowledge {
-    pub fn new(root: PathBuf, settings: Settings) -> Self {
+    pub fn new(root: PathBuf, settings: Settings, translate_model: Option<String>) -> Self {
+        let translate = Settings {
+            model: translate_model.or_else(|| settings.model.clone()),
+            ..settings.clone()
+        };
         Self {
             root,
             cache: store::cache_dir(),
             settings,
+            translate,
             loaded: Mutex::default(),
             jobs: Mutex::default(),
             cancel: AtomicBool::new(false),
@@ -449,10 +460,16 @@ impl Knowledge {
         Ok(opened)
     }
 
-    /// A model client with the key from `ANTHROPIC_API_KEY`; `501` without
-    /// it
+    /// A model client for the chat on the configured backend (the API with
+    /// the key from `ANTHROPIC_API_KEY`, or the Claude Code CLI); `501`
+    /// without one
     pub fn client(&self) -> Result<Client, Status> {
         Client::from_env(self.settings.clone()).map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))
+    }
+
+    /// The translator's client, with its own model when one is configured
+    fn translate_client(&self) -> Result<Client, Status> {
+        Client::from_env(self.translate.clone()).map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))
     }
 
     /// Answer a chat message with knowledge from the store
@@ -466,15 +483,18 @@ impl Knowledge {
             .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))
     }
 
-    /// The model's name and whether its key is set, without the store
+    /// The model's name (null for the backend's default) and the backend
+    /// that would answer now (`api`, `claude-cli` or null), without the
+    /// store and without any secret
     pub fn model(&self) -> Value {
         json!({
             "model": self.settings.model,
-            "anthropic_key": is_set("ANTHROPIC_API_KEY"),
+            "backend": self.settings.detect(),
         })
     }
 
-    /// Documents, chunks, glossary, digest, embedder and which keys are set
+    /// Documents, chunks, glossary, digest, embedder, the model backend and
+    /// whether the Discord token is set
     pub fn stats(&self) -> Result<Value> {
         let loaded = self.loaded()?;
         let store = loaded.store.read().unwrap();
@@ -493,7 +513,7 @@ impl Knowledge {
             "digest": store.digest().is_some(),
             "embedder": loaded.embedder.name(),
             "model": self.settings.model,
-            "anthropic_key": is_set("ANTHROPIC_API_KEY"),
+            "backend": self.settings.detect(),
             "discord_token": is_set("DISCORD_BOT_TOKEN"),
         }))
     }
@@ -756,11 +776,11 @@ impl Knowledge {
     }
 
     /// Translates `text` into `target` (see [`Translation`]): the glossary
-    /// answers without the store or the model; the model's part needs the
-    /// key, and its failure is a `502`
+    /// answers without the store or the model; the model's part needs a
+    /// backend, and its failure is a `502`
     pub fn translate(&self, text: &str, target: &str) -> Result<Translation, Status> {
         let glossary = Store::load_glossary(&self.root)?;
-        let client = self.client().ok();
+        let client = self.translate_client().ok();
         translate_with(&glossary, client.as_ref(), text, target).map_err(|e| {
             let status = if client.is_some() {
                 StatusCode::BAD_GATEWAY
@@ -1196,7 +1216,7 @@ mod tests {
     #[test]
     fn glossary_without_the_model() {
         let dir = std::env::temp_dir().join(format!("procon-knowledge-{}", std::process::id()));
-        let knowledge = Knowledge::new(dir.clone(), Settings::default());
+        let knowledge = Knowledge::new(dir.clone(), Settings::default(), None);
         let found = knowledge.glossary("Steelhead").unwrap();
         assert_eq!(found["terms"][0]["id"], "steelhead");
         assert!(found["size"].as_u64().unwrap() > 10);
@@ -1235,7 +1255,7 @@ mod tests {
 
     #[test]
     fn jobs_run_one_at_a_time() {
-        let knowledge = Knowledge::new(PathBuf::from("/nonexistent"), Settings::default());
+        let knowledge = Knowledge::new(PathBuf::from("/nonexistent"), Settings::default(), None);
         knowledge.jobs.lock().unwrap().push(IngestJob {
             id: 1,
             what: "x".into(),

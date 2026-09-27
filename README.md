@@ -228,9 +228,9 @@ moment**), a **range**, or **no frames**; **Comment on this moment** sends a
 review request for the playhead. Every message is saved in the review's
 `review.json` (`messages`, with role, text, the moment or range it was asked
 with, sources and time), so reopening the review shows the conversation. The
-chat needs `ANTHROPIC_API_KEY` in the studio's environment (the only place it
-is read from); without it the chat says so and messages, comments and
-drawings are still saved.
+chat needs a model backend: `ANTHROPIC_API_KEY` in the studio's environment
+(the only place it is read from), or the Claude Code CLI (below); without one
+the chat says so and messages, comments and drawings are still saved.
 
 **Translate** is the translator, a chat-like page for jargon and callouts: a
 box at the bottom with a target language (English, 中文, 日本語, Español,
@@ -243,8 +243,8 @@ names in the other languages). A bare term (Steelhead, コジャケ, 熊刷) sho
 its glossary entry at once, its name in the target language as the
 translation, and then Cuttlefish's short explanation of what it means and
 when a player says it. The glossary answers without a key; the model's
-translation and explanation need `ANTHROPIC_API_KEY`, and the page says so
-when it is missing. Every answer is kept in
+translation and explanation need the model backend, and the page says so
+when there is none. Every answer is kept in
 `<reviews>/translations.jsonl` (one JSON object per line, the last 500),
 shown again on the next visit; **Clear history** removes the file.
 
@@ -258,6 +258,17 @@ mkdir -p ~/.config/procon
 printf 'ANTHROPIC_API_KEY=%s\n' 'sk-ant-...' > ~/.config/procon/env
 chmod 600 ~/.config/procon/env
 ```
+
+Without a key, the studio can run the locally installed **Claude Code CLI**
+instead (`[cuttlefish] backend`: `auto` by default takes the API when the key
+is set, else `claude` on PATH; `api` or `claude-cli` force one). It runs
+`claude -p` headless with the same prompt, no tools and an empty working
+folder, on the account the CLI is logged in with: the answers use your Claude
+subscription and count against its usage limits. It is meant for personal
+testing on your own machine. The Knowledge view shows which backend answers
+(API, Claude subscription (CLI) or none), never a key. `model` names the
+chat's model, `translate_model` the translator's; unset, each backend uses its
+own default.
 
 Each review is a folder in `[cuttlefish] reviews`, `<id>/review.json`, with
 its video when the video belongs to it: a YouTube range is downloaded straight
@@ -301,8 +312,8 @@ left, what is there on the right:
 - **Search**, the nearest chunks with their source, link, license and score,
   in any language, without a key (what the chat retrieves);
 - **What the store holds**: documents, chunks, glossary and digest counts,
-  whether `ANTHROPIC_API_KEY` and `DISCORD_BOT_TOKEN` are set (never their
-  values), then documents by source and format, glossary terms by language
+  which model backend answers (the API or the Claude CLI; never a key's
+  value) and whether `DISCORD_BOT_TOKEN` is set, then documents by source and format, glossary terms by language
   and the name tables they came from, assets by folder, the inbox and the
   last imports with their reports; **Documents** (each can be deleted) and
   **Assets**, a browser of the imported images and icons with the names of
@@ -493,7 +504,7 @@ Both programs take `--config <path>`.
 | `[recording]` | Default path `prefix` until one is set on the dashboard |
 | `[video]` | First `input` (`"screen"`, `/dev/video0` or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
 | `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) `annotations` (object labels, default `Annotations` next to the root), `tracker` (Follow's tracker, default `http://127.0.0.1:7340`), `tracker_command` and `tracker_dir` (what Start tracker runs, default `uv run agentzero-track-serve --port <port>` in `../AgentZero`); relative paths start at the config's folder |
-| `[cuttlefish]` | Optional: `reviews` (one folder per review with its video, and the translator's `translations.jsonl`; default `Reviews` next to the root), `knowledge` (the knowledge store with its `inbox/`, default `Knowledge` next to the root) and `model` |
+| `[cuttlefish]` | Optional: `reviews` (one folder per review with its video, and the translator's `translations.jsonl`; default `Reviews` next to the root), `knowledge` (the knowledge store with its `inbox/`, default `Knowledge` next to the root), `backend` (`auto`, `api` or `claude-cli`), `model` and `translate_model` |
 | `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model) and `confidence` (0.25) |
 | `[predictor]` | Optional: `agentzero` (the AgentZero folder, default `../AgentZero`) and `results` (stored predictions, default `Predictions` next to the root) |
 | `[logging]` | `level`: error, warn, info, debug or trace |

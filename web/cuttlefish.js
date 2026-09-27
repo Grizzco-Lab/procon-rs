@@ -1407,15 +1407,15 @@
   /** The chat's example messages: the placeholders and the chips */
   const examples = () => t("cf.chat.examples");
 
-  /** Whether the studio has the model's key; asked once, shown in the
-   * composers' notes when it does not */
+  /** Whether the studio has a model backend (the API key, or the Claude
+   * Code CLI); asked once, shown in the composers' notes when it does not */
   async function checkKey() {
     if (chat.key == null) {
       try {
         const data = await (
           await fetch("/api/cuttlefish/knowledge/model")
         ).json();
-        chat.key = Boolean(data.anthropic_key);
+        chat.key = Boolean(data.backend);
       } catch {
         return;
       }
