@@ -298,7 +298,17 @@ and `review::explain` for a term; `Cuttlefish::record_translation` appends
 the answer, with an id and time, to `<reviews>/translations.jsonl` (the
 last 500 kept, rewritten whole through `write_atomic`), which `GET
 translations` lists and `DELETE translations` removes. The page shows a bare
-term's entry from `GET knowledge/glossary` before the model answers. Imports use `cuttlefish::ingest`
+term's entry from `GET knowledge/glossary` before the model answers. Slang
+(`cuttlefish::slang`): a term has official names (`Term::forms`) and aliases
+(`Alias`: text, language, note, source, status); the user's are in
+`<knowledge>/glossary-user.toml` (`UserGlossary`, applied last by
+`Store::load_glossary`), written by `POST knowledge/slang/add|edit|delete`
+under `Knowledge::slang`'s lock; `GET knowledge/terms?q=` serves the page's
+term picker. `POST knowledge/slang/suggest` plans batches of unread
+community text (`slang::plan`; `dry_run` answers the counts) and runs them
+as a job (`Knowledge::start_job`, shared with imports) through the
+translator's client, each batch's candidates (`slang::parse_candidates`)
+saved as pending before the next. Imports use `cuttlefish::ingest`
 (the same code as the CLI) with a `Sink` that writes the job's log; one runs
 at a time, and the index is written every fifty documents and at the end (it
 may live in a synced folder, where each write uploads it whole). The
@@ -335,7 +345,8 @@ unpacks archives with `bsdtar` into the cache, and routes prose to documents
 (`tables::build`), images to `assets.json` (`assets::link` to glossary terms by
 file name). `inbox.json` remembers size, time and FNV hash per path for
 dedup; `reports/` keeps the last thirty reports. `Store::load_glossary` merges
-the tables into `glossary.toml` (or the seed) with `Glossary::merge`.
+the tables into `glossary.toml` (or the seed) with `Glossary::merge`, then
+adds the user's approved aliases (`glossary-user.toml`).
 
 ### Vision
 

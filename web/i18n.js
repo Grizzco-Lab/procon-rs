@@ -250,6 +250,60 @@ const I18N = {
       n === 1 ? "1 glossary term used" : `${n} glossary terms used`,
     "tr.noTerms": "No glossary term in it.",
     "tr.noName": "no {lang} name in the glossary",
+    "tr.teach": "Teach a word",
+    "tr.teachHint":
+      "Select a slang word in the text above (or type it) and pick the term it means.",
+
+    // Slang: aliases taught, suggestions to review
+    "slang.title": "Slang",
+    "slang.toggleTitle":
+      "Slang players use: taught by you or suggested from the knowledge base",
+    "slang.label": "{lang} slang",
+    "slang.note": ({ n, file }) =>
+      `${n === 1 ? "1 alias" : `${n} aliases`} of yours in ${file}; imports never change it.`,
+    "slang.suggest": "Suggest slang from the knowledge base",
+    "slang.planning": "Counting what there is to read…",
+    "slang.plan": ({ documents, chars, total, batches, charsRun }) =>
+      `${documents} community ${documents === 1 ? "document has" : "documents have"} ${chars} characters not read yet: ${total} ${total === 1 ? "batch" : "batches"}. This run reads ${batches} (${charsRun} characters), one model request each.`,
+    "slang.nothing":
+      "Every community document has been read; new imports bring more.",
+    "slang.batches": "Batches this run",
+    "slang.run": "Run",
+    "slang.running": "Reading batch {done} of {total}…",
+    "slang.done": "Done: {line}",
+    "slang.failed": "The run stopped: {error}",
+    "slang.noBackend":
+      "Suggestions need a model backend where the studio runs (ANTHROPIC_API_KEY or the Claude Code CLI).",
+    "slang.pending": "Waiting for review",
+    "slang.noPending": "No suggestions waiting.",
+    "slang.taught": "Taught and approved",
+    "slang.noTaught":
+      "Nothing taught yet: add an alias on a term, or teach a word of a sentence.",
+    "slang.approve": "Approve",
+    "slang.reject": "Reject",
+    "slang.edit": "Edit",
+    "slang.delete": "Delete",
+    "slang.deleteAsk": "Delete the alias {text}?",
+    "slang.confidence": "{p}% sure",
+    "slang.from": "in {doc}",
+    "slang.termGone": "its term is gone from the glossary",
+    "slang.source.user": "taught",
+    "slang.source.seed": "seed",
+    "slang.source.suggested": "suggested",
+    "slang.source.imported": "imported",
+    "alias.add": "Add alias",
+    "alias.text": "Alias",
+    "alias.lang": "Language",
+    "alias.note": "Note: its origin or use",
+    "alias.term": "Term",
+    "alias.termSearch": "Search a term in any language…",
+    "alias.pickTerm": "Pick a term from the list.",
+    "alias.noMatch": "No term matches.",
+    "alias.save": "Save",
+    "alias.saveApprove": "Save and approve",
+    "alias.cancel": "Cancel",
+    "alias.saved": "Saved: {text} → {term}",
+    "alias.failed": "Not saved: {error}",
 
     // Knowledge
     "k.loading":

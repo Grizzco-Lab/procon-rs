@@ -34,15 +34,30 @@
 //! - `POST delete` with `{"ids": [...]}`: deletes documents and their
 //!   chunks
 //! - `GET glossary?q=`: the term named `q`, or the terms mentioned in it
-//!   (the Translate view shows a bare term's entry from it at once)
+//!   (the Translate view shows a bare term's entry from it at once);
+//!   `GET terms?q=`: terms whose names contain `q`, for picking one as you
+//!   type
+//! - `GET slang`: the user glossary (`<knowledge>/glossary-user.toml`, see
+//!   `cuttlefish::slang`): the aliases taught and suggested, newest first,
+//!   with their terms' names, and how many suggestions wait; `POST
+//!   slang/add` with `{"term", "text", "lang", "note"}` teaches an alias,
+//!   `slang/edit` with `{"id", "term"?, "text"?, "lang"?, "note"?,
+//!   "status"?}` changes one (approving or rejecting a suggestion sets its
+//!   status), `slang/delete` with `{"id"}` removes one. `POST
+//!   slang/suggest` with `{"dry_run", "max_batches"?, "batch_chars"?,
+//!   "sources"?, "language"?}` tells what a run would read (documents,
+//!   characters, batches) or starts one as a job: the model (the
+//!   translator's client) reads community documents batch by batch and
+//!   proposes aliases, which wait as pending
 //! - `GET assets?q=&folder=`: images and icons of the catalogue, with the
 //!   names of their glossary terms; `GET thumb?id=` one's thumbnail
 //! - `GET inbox`: files waiting in the inbox; `POST upload?path=` with the
 //!   file as the body writes one there (at most [`MAX_UPLOAD`] bytes)
 //! - `GET reports`, `GET report?id=`: inbox import reports
 //! - `POST ingest` with an [`IngestRequest`] starts an import (`409` while
-//!   one runs); `GET jobs` lists this run's imports; `POST cancel` stops the
-//!   current one after its document
+//!   a job runs); `GET jobs` lists this run's jobs (imports and slang
+//!   suggestion runs); `POST cancel` stops the current one after its
+//!   document or batch
 //!
 //! [`Knowledge::translate`] serves the Cuttlefish app's Translate view (`POST
 //! /api/cuttlefish/translate`, see [`crate::cuttlefish`], which keeps the
@@ -51,7 +66,7 @@
 
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
 use cuttlefish::assets::{self, Catalogue};
 use cuttlefish::discord::Bot;
@@ -62,6 +77,7 @@ use cuttlefish::google::{self, GoogleFile};
 use cuttlefish::ingest::{self, Meta, Web};
 use cuttlefish::llm::{Client, Settings};
 use cuttlefish::review::{self, ChatReply, ChatRequest};
+use cuttlefish::slang::{self, AliasEdit, SuggestOptions, UserGlossary};
 use cuttlefish::store::{self, Store};
 use cuttlefish::{inbox, tables};
 use futures_util::StreamExt;
@@ -101,6 +117,9 @@ const REPORTS_SHOWN: usize = 5;
 
 /// Longest text translated at once
 const MAX_TRANSLATED: usize = 4000;
+
+/// Most terms a search as you type answers with
+const MAX_TERMS_FOUND: usize = 12;
 
 /// A translation: what the glossary knows of the text, and the model's part
 /// when a backend is there
@@ -377,7 +396,7 @@ pub struct IngestJob {
     /// What is imported, for the list
     pub what: String,
     pub state: JobState,
-    /// Documents added
+    /// Documents added (a slang run: suggestions)
     pub added: usize,
     /// Items handled and to handle, once known
     pub done: usize,
@@ -439,6 +458,9 @@ pub struct Knowledge {
     cancel: AtomicBool,
     /// The asset catalogue as last read, with its file's time
     catalogue: Mutex<Option<(SystemTime, Arc<Catalogue>)>>,
+    /// Held while the user glossary (`glossary-user.toml`) is read and
+    /// written back
+    slang: Mutex<()>,
 }
 
 impl Knowledge {
@@ -456,6 +478,7 @@ impl Knowledge {
             jobs: Mutex::default(),
             cancel: AtomicBool::new(false),
             catalogue: Mutex::default(),
+            slang: Mutex::default(),
         }
     }
 
@@ -857,11 +880,24 @@ impl Knowledge {
     /// Start an import on a thread of its own
     pub fn ingest(self: &Arc<Self>, mut request: IngestRequest) -> Result<IngestJob, Status> {
         let what = request.check()?;
+        self.start_job(what, move |knowledge, id| {
+            let added = knowledge.run_import(id, &request)?;
+            Ok(format!("done: {added} documents added"))
+        })
+    }
+
+    /// Start a job (an import, a slang suggestion run) on a thread of its
+    /// own, one at a time; `run` answers the job's last line
+    fn start_job(
+        self: &Arc<Self>,
+        what: String,
+        run: impl FnOnce(&Knowledge, u64) -> Result<String> + Send + 'static,
+    ) -> Result<IngestJob, Status> {
         let mut jobs = self.jobs.lock().unwrap();
         if jobs.iter().any(|j| j.state == JobState::Running) {
             return Err(Status(
                 StatusCode::CONFLICT,
-                anyhow::anyhow!("an import is running; wait for it or cancel it"),
+                anyhow::anyhow!("a job is running; wait for it or cancel it"),
             ));
         }
         let job = IngestJob {
@@ -871,7 +907,7 @@ impl Knowledge {
             added: 0,
             done: 0,
             total: None,
-            lines: vec!["loading the knowledge store".to_string()],
+            lines: Vec::new(),
             error: None,
             started_ms: now_ms(),
             finished_ms: None,
@@ -884,19 +920,19 @@ impl Knowledge {
         let knowledge = Arc::clone(self);
         let id = job.id;
         std::thread::Builder::new()
-            .name("ingest".to_string())
+            .name("knowledge-job".to_string())
             .spawn(move || {
-                let result = knowledge.run_import(id, &request);
+                let result = run(&knowledge, id);
                 if let Err(e) = &result {
-                    log::warn!("Import failed: {:#}", e);
+                    log::warn!("Job failed: {:#}", e);
                 }
                 knowledge.update(id, |job| {
                     job.finished_ms = Some(now_ms());
                     match result {
-                        Ok(added) => {
+                        Ok(last) => {
                             job.state = JobState::Done;
                             job.done = job.total.unwrap_or(job.done);
-                            job.lines.push(format!("done: {added} documents added"));
+                            job.lines.push(last);
                         }
                         Err(e) if knowledge.cancel.load(Ordering::Relaxed) => {
                             job.state = JobState::Cancelled;
@@ -909,7 +945,7 @@ impl Knowledge {
                     }
                 });
             })
-            .context("cannot start the import")?;
+            .context("cannot start the job")?;
         Ok(job)
     }
 
@@ -929,6 +965,9 @@ impl Knowledge {
 
     /// Load the store, import, and write the index even when stopped
     fn run_import(&self, id: u64, request: &IngestRequest) -> Result<usize> {
+        self.update(id, |job| {
+            job.lines.push("loading the knowledge store".to_string())
+        });
         let loaded = self.loaded()?;
         let mut sink = JobSink {
             knowledge: self,
@@ -1039,6 +1078,186 @@ impl ingest::Sink for JobSink<'_> {
     }
 }
 
+// ----------------------------------------------------------------- slang
+
+/// A slang suggestion run as the page asks for it: a dry run tells what it
+/// would read
+#[derive(Deserialize)]
+struct SuggestRequest {
+    #[serde(default)]
+    dry_run: bool,
+    #[serde(flatten)]
+    options: SuggestOptions,
+}
+
+impl Knowledge {
+    /// The loaded store reads its glossary again, after the user glossary
+    /// changed
+    fn glossary_changed(&self) -> Result<()> {
+        let loaded = self.loaded.lock().unwrap().clone();
+        if let Some(loaded) = loaded {
+            loaded.store.write().unwrap().reload_glossary()?;
+        }
+        Ok(())
+    }
+
+    /// Terms whose names contain `query` (see `Glossary::search`), for
+    /// picking one as you type
+    pub fn terms(&self, query: &str) -> Result<Value> {
+        let glossary = Store::load_glossary(&self.root)?;
+        Ok(json!({ "terms": glossary.search(query, MAX_TERMS_FOUND) }))
+    }
+
+    /// The user glossary: every alias taught or suggested, newest first,
+    /// each with its term's official names (`term_forms`, null when the
+    /// term is gone), and how many suggestions wait
+    pub fn slang(&self) -> Result<Value> {
+        let glossary = Store::load_glossary(&self.root)?;
+        let user = UserGlossary::load(&self.root)?;
+        let aliases: Vec<Value> = user
+            .aliases
+            .iter()
+            .rev()
+            .map(|a| {
+                let term = a.find(&glossary).map(|i| &glossary.terms[i]);
+                let mut value = json!(a);
+                value["term_forms"] = json!(term.map(|t| &t.forms));
+                value
+            })
+            .collect();
+        Ok(json!({
+            "file": self.root.join(slang::FILE),
+            "aliases": aliases,
+            "pending": user.pending().count(),
+            "backend": self.translate.detect(),
+        }))
+    }
+
+    /// Reads the user glossary, lets `change` edit it against the glossary
+    /// and writes it back
+    fn change_slang(
+        &self,
+        change: impl FnOnce(&Glossary, &mut UserGlossary) -> Result<Value>,
+    ) -> Result<Value> {
+        let answer = {
+            let _held = self.slang.lock().unwrap();
+            let glossary = Store::load_glossary(&self.root)?;
+            let mut user = UserGlossary::load(&self.root)?;
+            let answer = change(&glossary, &mut user)?;
+            user.save(&self.root)?;
+            answer
+        };
+        self.glossary_changed()?;
+        Ok(answer)
+    }
+
+    /// `POST slang/add`, `slang/edit`, `slang/delete`
+    fn post_slang(&self, action: &str, body: &Value) -> Result<Value> {
+        let text = |key: &str| body[key].as_str().unwrap_or_default();
+        match action {
+            "add" => self.change_slang(|g, user| {
+                let alias = user.add(
+                    g,
+                    text("term"),
+                    text("text"),
+                    text("lang"),
+                    text("note"),
+                    now_ms(),
+                )?;
+                log::info!("Slang: {} ({}) → {}", alias.text, alias.lang, alias.term);
+                Ok(json!(alias))
+            }),
+            "edit" => {
+                let edit: AliasEdit = serde_json::from_value(body.clone())
+                    .map_err(|e| anyhow::anyhow!("bad edit: {e}"))?;
+                self.change_slang(|g, user| Ok(json!(user.edit(g, text("id"), &edit)?)))
+            }
+            "delete" => self.change_slang(|_, user| {
+                ensure!(user.remove(text("id")), "no alias {}", text("id"));
+                Ok(json!({ "deleted": text("id") }))
+            }),
+            _ => bail!("no endpoint POST knowledge/slang/{action}"),
+        }
+    }
+
+    /// `POST slang/suggest`: what a run would read (`dry_run`), or the run
+    /// started as a job
+    pub fn suggest(self: &Arc<Self>, body: &[u8]) -> Result<Value, Status> {
+        let request: SuggestRequest =
+            serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("bad request: {e}"))?;
+        let docs = store::read_documents(&self.root)?;
+        let plan = {
+            let _held = self.slang.lock().unwrap();
+            slang::plan(&docs, &UserGlossary::load(&self.root)?, &request.options)
+        };
+        let summary = json!({
+            "documents": plan.documents,
+            "chars": plan.chars,
+            "batches_total": plan.batches_total,
+            "batches": plan.batches.len(),
+            "chars_run": plan.chars_run,
+            "backend": self.translate.detect(),
+        });
+        if request.dry_run {
+            return Ok(summary);
+        }
+        if plan.batches.is_empty() {
+            return Err(anyhow::anyhow!("no community text left to read").into());
+        }
+        let client = self.translate_client()?;
+        let what = format!(
+            "Slang suggestions: {} of {} batches",
+            plan.batches.len(),
+            plan.batches_total
+        );
+        let job = self.start_job(what, move |knowledge, id| {
+            knowledge.run_suggest(id, &client, &plan.batches)
+        })?;
+        Ok(json!({ "plan": summary, "job": job }))
+    }
+
+    /// Sends the batches to the model one by one; after each, its new
+    /// suggestions and what it read go into the user glossary
+    fn run_suggest(&self, id: u64, client: &Client, batches: &[slang::Batch]) -> Result<String> {
+        let total = batches.len();
+        self.update(id, |job| job.total = Some(total));
+        let mut added = 0;
+        for (i, batch) in batches.iter().enumerate() {
+            if self.cancel.load(Ordering::Relaxed) {
+                bail!("cancelled after {i} of {total} batches: {added} suggestions");
+            }
+            let glossary = Store::load_glossary(&self.root)?;
+            let reply = client.send(&slang::suggest_prompt(&glossary, batch))?;
+            let n = {
+                let _held = self.slang.lock().unwrap();
+                let mut user = UserGlossary::load(&self.root)?;
+                let found =
+                    slang::parse_candidates(&reply.text, &glossary, &user, batch, now_ms())?;
+                let n = user.take(found, batch);
+                user.save(&self.root)?;
+                n
+            };
+            added += n;
+            let titles: String = batch
+                .pieces
+                .iter()
+                .map(|p| p.title.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+                .chars()
+                .take(160)
+                .collect();
+            self.update(id, |job| {
+                job.done = i + 1;
+                job.added = added;
+                job.lines
+                    .push(format!("batch {}/{total}: {n} new ({titles})", i + 1));
+            });
+        }
+        Ok(format!("done: {added} suggestions to review"))
+    }
+}
+
 // ------------------------------------------------------------------ HTTP
 
 impl Knowledge {
@@ -1053,6 +1272,8 @@ impl Knowledge {
             "documents" => Ok(self.documents()?),
             "overview" => Ok(self.overview()?),
             "glossary" => Ok(self.glossary(text("q"))?),
+            "terms" => Ok(self.terms(text("q"))?),
+            "slang" => Ok(self.slang()?),
             "assets" => Ok(self.assets(text("q"), text("folder"))?),
             "inbox" => Ok(json!(inbox::pending(&self.root))),
             "reports" => Ok(json!({ "reports": inbox::reports(&self.root, REPORTS_SHOWN) })),
@@ -1085,6 +1306,10 @@ impl Knowledge {
                 let ids: Vec<String> = serde_json::from_value(body["ids"].clone())
                     .map_err(|e| anyhow::anyhow!("bad ids: {e}"))?;
                 Ok(self.delete(&ids)?)
+            }
+            "slang/suggest" => self.suggest(body),
+            _ if path.starts_with("slang/") => {
+                Ok(self.post_slang(&path["slang/".len()..], &json_body()?)?)
             }
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
@@ -1307,6 +1532,58 @@ mod tests {
     }
 
     #[test]
+    fn slang_is_taught_edited_and_planned() {
+        let dir = std::env::temp_dir().join(format!("procon-slang-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let knowledge = Arc::new(Knowledge::new(dir.clone(), Settings::default(), None));
+        let post = |path: &str, body: Value| knowledge.post(path, body.to_string().as_bytes());
+        let added = post(
+            "slang/add",
+            json!({"term": "Maws", "text": "shark", "lang": "en", "note": "its fin"}),
+        )
+        .ok()
+        .unwrap();
+        let id = added["id"].as_str().unwrap().to_string();
+        assert_eq!(added["source"], "user");
+        // Looked up, found in sentences and searched from now on
+        assert_eq!(
+            knowledge.glossary("shark").unwrap()["terms"][0]["id"],
+            "maws"
+        );
+        assert_eq!(
+            knowledge.glossary("the shark again").unwrap()["terms"][0]["id"],
+            "maws"
+        );
+        assert_eq!(knowledge.terms("shar").unwrap()["terms"][0]["id"], "maws");
+        let listed = knowledge.slang().unwrap();
+        assert_eq!(listed["aliases"][0]["term_forms"]["en"][0], "Maws");
+        assert_eq!(listed["pending"], 0);
+        // Errors answer 400
+        let bad = post(
+            "slang/add",
+            json!({"term": "Maws", "text": "Maws", "lang": "en"}),
+        );
+        assert_eq!(bad.err().map(|s| s.0), Some(StatusCode::BAD_REQUEST));
+        let edited = post("slang/edit", json!({"id": id, "note": "fin"}))
+            .ok()
+            .unwrap();
+        assert_eq!(edited["note"], "fin");
+        assert!(dir.join(slang::FILE).is_file());
+        post("slang/delete", json!({"id": id})).ok().unwrap();
+        assert!(knowledge.glossary("shark").unwrap()["terms"][0].is_null());
+        // A dry run over a store without documents reads nothing
+        let dry = post("slang/suggest", json!({"dry_run": true}))
+            .ok()
+            .unwrap();
+        assert_eq!(
+            (dry["documents"].as_u64(), dry["batches"].as_u64()),
+            (Some(0), Some(0))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn translates_from_the_glossary_without_a_key() {
         let g = Glossary::seed();
         // A bare term: its entry and its name in the target language
@@ -1316,8 +1593,9 @@ mod tests {
         assert_eq!(t.translation.as_deref(), Some("Grizzco Roller"));
         assert_eq!(t.explanation, None);
         assert!(t.needs_key);
-        // The glossary has no Japanese name for it: nothing without the model
-        let t = translate_with(&g, None, "Grizzco Roller", "ja").unwrap();
+        // The glossary has no Chinese name for it: nothing without the model
+        let t = translate_with(&g, None, "shore run", "zh").unwrap();
+        assert!(t.term);
         assert_eq!(t.translation, None);
         // A sentence: the terms it mentions, the translation left to the model
         let t = translate_with(&g, None, "我刚拿的熊刷，不应该上柱子拍的", "en").unwrap();

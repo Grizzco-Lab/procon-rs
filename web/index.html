@@ -1261,12 +1261,45 @@
             <button
               type="button"
               class="mode-toggle"
+              id="cf-slang-toggle"
+              aria-expanded="false"
+              aria-controls="cf-slang"
+              title="Slang players use: taught by you or suggested from the knowledge base"
+              data-i18n-title="slang.toggleTitle"
+            >
+              <span data-i18n="slang.title">Slang</span>
+              <b class="cf-badge num" id="cf-slang-badge" hidden></b>
+            </button>
+            <button
+              type="button"
+              class="mode-toggle"
               id="cf-tr-clear"
               data-i18n="tr.clear"
             >
               Clear history
             </button>
           </header>
+          <!-- Slang (translate.js): suggestions waiting for review, what was
+               taught, and the suggestion run over the knowledge base -->
+          <div class="cf-slang" id="cf-slang" hidden>
+            <div class="cf-slang-head">
+              <p class="panel-note" id="cf-slang-note"></p>
+              <button type="button" class="btn" id="cf-slang-suggest">
+                <span data-i18n="slang.suggest"
+                  >Suggest slang from the knowledge base</span
+                >
+              </button>
+            </div>
+            <div class="cf-slang-run" id="cf-slang-run" hidden></div>
+            <h3 class="readout-label" data-i18n="slang.pending">
+              Waiting for review
+            </h3>
+            <ul class="cf-aliases" id="cf-slang-pending"></ul>
+            <h3 class="readout-label" data-i18n="slang.taught">
+              Taught and approved
+            </h3>
+            <ul class="cf-aliases" id="cf-slang-taught"></ul>
+          </div>
           <p
             class="panel-note cf-tr-empty"
             id="cf-tr-empty"

@@ -4127,6 +4127,213 @@ body {
   color: var(--accent);
 }
 
+/* Slang: the panel under the history's head (pending suggestions, what
+ * was taught, the suggestion run), the alias forms and the term picker */
+.cf-badge {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  text-align: center;
+}
+
+.cf-slang {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.cf-slang-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cf-slang-head .panel-note,
+.cf-slang-run p {
+  margin: 0;
+}
+
+.cf-slang-run {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--s3);
+  font-size: 13px;
+}
+
+.cf-slang h3 {
+  margin: 4px 0 0;
+}
+
+.cf-aliases {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cf-alias {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.cf-alias .k-hit-text {
+  margin: 0;
+}
+
+.cf-alias-evidence {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--panel-border);
+  color: var(--text-2);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.cf-alias-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.cf-approve {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cf-mini {
+  padding: 1px 8px;
+  font-size: 11.5px;
+}
+
+.k-hit-head .cf-mini {
+  margin-left: auto;
+}
+
+.cf-alias-names span[title] {
+  text-decoration: underline dotted var(--text-3);
+  text-underline-offset: 3px;
+}
+
+.cf-tr-teach {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+
+.cf-tr-teach .panel-note {
+  margin: 0;
+}
+
+/* An alias form: term (searched), alias, language, note, then Save */
+.cf-alias-form {
+  display: grid;
+  width: 100%;
+  max-width: 760px;
+  gap: 8px 10px;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1fr);
+  align-items: end;
+  padding: 8px 0 0;
+}
+
+.cf-alias-form:not(:has(.cf-term-pick)) {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
+.cf-alias-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.cf-alias-field .select {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+.cf-alias-note,
+.cf-alias-form .cf-alias-actions {
+  grid-column: 1 / -1;
+}
+
+.cf-term-pick {
+  position: relative;
+}
+
+.cf-term-results {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  z-index: 20;
+  max-height: 260px;
+  margin: 2px 0 0;
+  padding: 4px;
+  overflow: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: var(--panel-shadow);
+  list-style: none;
+}
+
+.cf-term-results button {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cf-term-results button:hover,
+.cf-term-results button:focus-visible {
+  background: var(--inset);
+}
+
+.cf-batches {
+  width: 64px;
+}
+
+@media (max-width: 640px) {
+  .cf-alias-form {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .cf-term-pick {
+    grid-column: 1 / -1;
+  }
+}
+
 /* A review without a video: the chat fills the window, its input at the
  * bottom of it */
 #cf-player.is-chat {

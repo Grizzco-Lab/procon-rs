@@ -248,6 +248,36 @@ when there is none. Every answer is kept in
 `<reviews>/translations.jsonl` (one JSON object per line, the last 500),
 shown again on the next visit; **Clear history** removes the file.
 
+The glossary keeps each term's **official names** per language (stat.ink's
+translations once imported; for Chinese, the official Simplified Chinese
+names: 金鲑鱼, 鲑坝, 喇叭镭射5.1ch, 熊先生印章滚筒) apart from its
+**slang**: aliases players use (熊刷, 鬼坝, 破船, 喇叭, 小绿, 蛋筐's 筐 and
+家里, …), each with its language and a note on its origin. Slang is found in
+sentences and looked up like a name, the term card lists it ("zh slang"), and
+the model is told "熊刷 → 熊先生印章滚筒 (en: Grizzco Roller)" and to say
+when it is unsure what a slang word means. You teach it on the page:
+
+- **Add alias** on a term card: the alias, its language and a note.
+- **Teach a word** under a sentence: select the slang word in the text (or
+  type it), search the term it means in any language, and save; the
+  sentence's terms are looked up again.
+- **Slang** (the button in the panel's head, with the number of suggestions
+  waiting) opens the list of what you taught, to edit or delete, and the
+  suggestions to **Approve**, **Reject** or **Edit**.
+- **Suggest slang from the knowledge base** first tells what a run would
+  read (community documents not read yet, in batches of about 12,000
+  characters: how many batches in all, and how many this run reads, 5 by
+  default, at most 50), then, on **Run**, has the model read them batch by
+  batch (one request each) and propose aliases with a quote as evidence and
+  a confidence. Proposals the text does not contain, names the glossary
+  knows and terms it lacks are dropped; the rest wait for your review, and a
+  rejected one is not proposed again. The run shows in the Knowledge view's
+  jobs too and can be cancelled there or here.
+
+What you teach and approve is kept in `<knowledge>/glossary-user.toml`,
+apart from the generated glossary, so re-importing name tables never
+overwrites it.
+
 `./scripts/run.sh` loads secrets from an env file, so the key never goes on
 the command line or into a config file: `$PROCON_ENV` if set, else
 `~/.config/procon/env`, else a git-ignored `.env` in the repository. One
