@@ -376,6 +376,36 @@ appNav.addEventListener("drop", (event) => event.preventDefault());
 // Every app's script has run by then
 document.addEventListener("DOMContentLoaded", routeApp);
 
+// ------------------------------------------------------------------ guide
+
+// "How it fits together": the apps as one pipeline (a popover, so Escape or
+// a click outside closes it). It opens by itself on a first visit
+// (procon-guide-seen), then from the ? tool or the View menu. A step's link
+// opens its app and closes the guide; the open app's step is marked.
+const guide = $("guide");
+
+for (const link of guide.querySelectorAll(".flow-step a")) {
+  link.addEventListener("click", () => guide.hidePopover());
+}
+
+window.addEventListener("app-route", ({ detail }) => {
+  for (const step of guide.querySelectorAll(".flow-step")) {
+    const link = step.querySelector("a");
+    if (step.dataset.step === detail.app)
+      link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+});
+
+try {
+  if (!localStorage.getItem("procon-guide-seen")) {
+    localStorage.setItem("procon-guide-seen", "1");
+    document.addEventListener("DOMContentLoaded", () => guide.showPopover());
+  }
+} catch {
+  // Storage refused: no first-visit guide, since it would open every time
+}
+
 // ----------------------------------------------------------- controller view
 
 const procon = $("procon");

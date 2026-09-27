@@ -233,12 +233,59 @@
   .app-nav
   a:not([aria-current]):is(:hover, :focus-visible)
   .app-name,
-[data-theme="salmon"] [data-toggle-lang]:is(:hover, :focus-visible) .tool-name {
+[data-theme="salmon"]
+  :is([data-toggle-lang], [data-open-guide]):is(:hover, :focus-visible)
+  .tool-name {
   border: 2px solid var(--sr-ink);
   box-shadow: 2px 3px 0 var(--sr-ink);
   font-family: var(--font-display);
   font-weight: 400;
   letter-spacing: 0.02em;
+}
+
+/* The guide: an inked card with the orange band, the steps as stickers */
+[data-theme="salmon"] .guide:popover-open {
+  border: 3px solid var(--sr-ink);
+  border-top: 9px solid var(--sr-orange);
+  background:
+    url("/art/panel-tile.svg") 0 0 / 240px 240px,
+    var(--panel);
+  box-shadow:
+    0 0 0 2px var(--sr-ink),
+    0 24px 64px rgb(0 0 0 / 0.5);
+}
+
+[data-theme="salmon"] .guide-head h2,
+[data-theme="salmon"] .flow-step b {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+[data-theme="salmon"] .guide-head h2 {
+  font-size: 24px;
+}
+
+[data-theme="salmon"] .flow-step b {
+  font-size: 17px;
+}
+
+[data-theme="salmon"] .flow-step a {
+  border: 2px solid var(--sr-ink);
+  box-shadow: 0 3px 0 var(--sr-ink);
+}
+
+[data-theme="salmon"] .flow-step a[aria-current="page"] {
+  box-shadow:
+    inset 0 0 0 2px var(--sr-orange),
+    0 3px 0 var(--sr-ink);
+}
+
+/* What an app is for, where it is a tag of its own (low specificity: in
+   the name's tag it is a plain second line) */
+[data-theme="salmon"] :where(.app-nav a:is(:hover, :focus-visible)) .app-sub {
+  border: 2px solid var(--sr-ink);
+  box-shadow: 2px 3px 0 var(--sr-ink);
 }
 
 @media (min-width: 721px) {

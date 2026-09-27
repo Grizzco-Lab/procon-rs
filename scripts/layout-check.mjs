@@ -8,10 +8,13 @@
 // - the top bar is one row at 1440 px
 // - the Cuttlefish chat bar sits at the bottom of the window
 // - no app scrolls the page sideways
+// - the guide (How it fits together) fits the window without sideways
+//   scrolling, its steps in one row where it is wide
 //
 // Usage: node scripts/layout-check.mjs <studio url> [--only theme,...]
 // e.g. node scripts/layout-check.mjs http://127.0.0.1:8073
-// It only reads: the page is loaded, never clicked beyond the app links.
+// It only reads: the page is loaded, never clicked beyond the app links
+// and the guide it opens.
 // Exits 1 and lists every failure when a check fails.
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -165,6 +168,21 @@ const MEASURE = `(() => {
   };
 })()`;
 
+/** Runs in the page: opens the guide and measures it, then closes it */
+const GUIDE = `(() => {
+  const guide = document.getElementById("guide");
+  guide.showPopover();
+  const r = guide.getBoundingClientRect();
+  const tops = new Set([...guide.querySelectorAll(".flow-step")]
+    .map((step) => Math.round(step.getBoundingClientRect().top)));
+  const shown = r.width > 0 && r.height > 0;
+  const m = { x: r.left, y: r.top, w: r.width, h: r.height, r: r.right, b: r.bottom,
+    vw: innerWidth, vh: innerHeight, scrollWidth: guide.scrollWidth,
+    clientWidth: guide.clientWidth, rows: tops.size };
+  guide.hidePopover();
+  return shown ? m : null;
+})()`;
+
 /** Failures of one measured app, as messages */
 function check(app, m, viewport) {
   const failures = [];
@@ -235,7 +253,10 @@ for (const lang of LANGS) {
       // The language is a stored choice; set it before the page reads it
       await send("Page.navigate", { url: `${base}/icons/` });
       await sleep(300);
-      await evaluate(`localStorage.setItem("procon-lang", "${lang}")`);
+      await evaluate(
+        `localStorage.setItem("procon-lang", "${lang}");
+         localStorage.setItem("procon-guide-seen", "1")`,
+      );
       await send("Page.navigate", { url });
       await evaluate(
         `new Promise((resolve) => { const done = () => document.fonts.ready.then(resolve);
@@ -272,6 +293,32 @@ for (const lang of LANGS) {
             `ok   ${label} ${note}${viewport.width === 1440 ? `, bar ${m.bar.h.toFixed(0)} px` : ""}`,
           );
         }
+      }
+      // The guide over the last app
+      const g = await evaluate(GUIDE);
+      const label = `${theme.padEnd(9)} ${viewport.name.padEnd(12)} ${lang} guide     `;
+      const found = [];
+      if (!g) found.push("guide not shown");
+      else {
+        if (g.x < 0 || g.y < 0 || g.r > g.vw + 1 || g.b > g.vh + 1)
+          found.push(
+            `guide ${g.w.toFixed(0)}x${g.h.toFixed(0)} at ${g.x.toFixed(0)},${g.y.toFixed(0)} outside ${g.vw}x${g.vh}`,
+          );
+        if (g.scrollWidth > g.clientWidth + 1)
+          found.push(
+            `guide scrolls sideways: ${g.scrollWidth}/${g.clientWidth}`,
+          );
+        if (!viewport.mobile && g.rows !== 1)
+          found.push(`guide steps in ${g.rows} rows at ${viewport.width} px`);
+      }
+      checked++;
+      if (found.length) {
+        for (const text of found) failures.push(`${label} ${text}`);
+        console.log(`FAIL ${label} ${found.join("; ")}`);
+      } else {
+        console.log(
+          `ok   ${label} ${g.w.toFixed(0)}x${g.h.toFixed(0)}, ${g.rows} row(s)`,
+        );
       }
     }
   }

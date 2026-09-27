@@ -33,6 +33,28 @@ const I18N = {
     "app.cuttlefish": "Cuttlefish",
     "app.vision": "Vision",
     "app.predictor": "Predictor",
+    // What each app is for: tooltips, the expanded rail and the guide
+    "app.studio.sub": "data capture",
+    "app.inspect.sub": "frame-by-frame inspection and labeling",
+    "app.cuttlefish.sub":
+      "VOD review / cross-language slang translation / Overfishing Pedia",
+    "app.vision.sub": "vision and 3D reconstruction",
+    "app.predictor.sub": "controller action prediction",
+    // The guide: how the apps fit together
+    "guide.open": "How it fits together",
+    "guide.title": "How it fits together",
+    "guide.lede":
+      "Five apps, one pipeline: record your play with the controller's input, check it frame by frame, learn from it, then teach models to see the game and to play it.",
+    "guide.close": "Close",
+    "guide.out.studio": "recordings",
+    "guide.out.inspect": "labels",
+    "guide.out.cuttlefish": "reviews and knowledge",
+    "guide.out.vision": "detections",
+    "guide.out.predictor": "IDM predictions",
+    "guide.loop":
+      "IDM predictions go back to the Inkspector, next to the labels, to check them frame by frame",
+    "guide.again": "Open this again with ? or from the View menu.",
+    "guide.done": "Got it",
     "chip.connecting": "Connecting…",
     "chip.offline": "Dashboard offline, reconnecting…",
     "chip.proxy": "Proxy",
@@ -78,9 +100,11 @@ const I18N = {
       "Apps in the top bar; drag them, or Alt+arrows on one, to reorder",
     "view.rail": "Rail",
     "view.rail.compact": "Compact",
-    "view.rail.compactTitle": "Icons only; the names show as tooltips",
+    "view.rail.compactTitle":
+      "Icons only; names and what each app is for show as tooltips",
     "view.rail.expanded": "Expanded",
-    "view.rail.expandedTitle": "Icons with their names",
+    "view.rail.expandedTitle": "Icons with their names and what each is for",
+    "view.guide": "Guide",
     "view.rail.expand": "Expand the rail: icons with names",
     "view.rail.collapse": "Collapse the rail: icons only",
 

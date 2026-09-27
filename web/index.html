@@ -55,37 +55,66 @@
         <span class="brand-name">ProCon <b>Studio</b></span>
       </div>
       <!-- Apps: a rail on the left or a segmented switch in this bar (see
-           data-nav); each name shows as a tooltip where only icons fit -->
+           data-nav). Each link names its app and what it is for (.app-sub):
+           a tooltip where only icons fit, a second line in the expanded rail -->
       <nav class="app-nav" aria-label="Apps" data-i18n-aria-label="shell.apps">
         <a href="/studio" data-app="studio">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/app-studio.svg#i" />
           </svg>
-          <span class="app-name" data-i18n="app.studio">Studio</span>
+          <span class="app-name"
+            ><span class="app-title" data-i18n="app.studio">Studio</span>
+            <span class="app-sub" data-i18n="app.studio.sub"
+              >data capture</span
+            ></span
+          >
         </a>
         <a href="/inspect" data-app="inspect">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/app-inkspector.svg#i" />
           </svg>
-          <span class="app-name" data-i18n="app.inspect">Inkspector</span>
+          <span class="app-name"
+            ><span class="app-title" data-i18n="app.inspect">Inkspector</span>
+            <span class="app-sub" data-i18n="app.inspect.sub"
+              >frame-by-frame inspection and labeling</span
+            ></span
+          >
         </a>
         <a href="/cuttlefish" data-app="cuttlefish">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/app-cuttlefish.svg#i" />
           </svg>
-          <span class="app-name" data-i18n="app.cuttlefish">Cuttlefish</span>
+          <span class="app-name"
+            ><span class="app-title" data-i18n="app.cuttlefish"
+              >Cuttlefish</span
+            >
+            <span class="app-sub" data-i18n="app.cuttlefish.sub"
+              >VOD review / cross-language slang translation / Overfishing
+              Pedia</span
+            ></span
+          >
         </a>
         <a href="/vision" data-app="vision">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/app-vision.svg#i" />
           </svg>
-          <span class="app-name" data-i18n="app.vision">Vision</span>
+          <span class="app-name"
+            ><span class="app-title" data-i18n="app.vision">Vision</span>
+            <span class="app-sub" data-i18n="app.vision.sub"
+              >vision and 3D reconstruction</span
+            ></span
+          >
         </a>
         <a href="/predictor" data-app="predictor">
           <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
             <use href="/icons/app-predictor.svg#i" />
           </svg>
-          <span class="app-name" data-i18n="app.predictor">Predictor</span>
+          <span class="app-name"
+            ><span class="app-title" data-i18n="app.predictor">Predictor</span>
+            <span class="app-sub" data-i18n="app.predictor.sub"
+              >controller action prediction</span
+            ></span
+          >
         </a>
       </nav>
       <!-- Status: passive indicators (a dot and a word, details on hover),
@@ -146,6 +175,20 @@
       </div>
       <!-- Tools: in the bar, or at the foot of the rail -->
       <div class="bar-tools">
+        <!-- The guide: how the apps fit together -->
+        <button
+          type="button"
+          class="tool-button"
+          popovertarget="guide"
+          data-open-guide
+        >
+          <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <use href="/icons/ui-help.svg#i" />
+          </svg>
+          <span class="tool-name" data-i18n="guide.open"
+            >How it fits together</span
+          >
+        </button>
         <button
           type="button"
           class="tool-button"
@@ -280,6 +323,142 @@
             Expanded
           </button>
         </div>
+        <span class="view-label" data-i18n="view.guide">Guide</span>
+        <div class="view-choices">
+          <button type="button" popovertarget="guide" data-i18n="guide.open">
+            How it fits together
+          </button>
+        </div>
+      </div>
+      <!-- The guide: the apps as one pipeline, each step a link to its app
+           and what it hands the next. Opens by itself on a first visit
+           (procon-guide-seen), then from the ? tool or the View menu -->
+      <div
+        class="guide"
+        id="guide"
+        popover
+        role="dialog"
+        aria-labelledby="guide-title"
+      >
+        <header class="guide-head">
+          <div>
+            <h2 id="guide-title" data-i18n="guide.title">
+              How it fits together
+            </h2>
+            <p class="guide-lede" data-i18n="guide.lede">
+              Five apps, one pipeline: record your play with the controller's
+              input, check it frame by frame, learn from it, then teach models
+              to see the game and to play it.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="guide-x"
+            popovertarget="guide"
+            popovertargetaction="hide"
+            aria-label="Close"
+            data-i18n-aria-label="guide.close"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </header>
+        <ol class="flow">
+          <li class="flow-step" data-step="studio">
+            <a href="/studio">
+              <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <use href="/icons/app-studio.svg#i" />
+              </svg>
+              <b data-i18n="app.studio">Studio</b>
+              <span class="flow-role" data-i18n="app.studio.sub"
+                >data capture</span
+              >
+            </a>
+            <span class="flow-out" data-i18n="guide.out.studio"
+              >recordings</span
+            >
+          </li>
+          <li class="flow-step" data-step="inspect">
+            <a href="/inspect">
+              <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <use href="/icons/app-inkspector.svg#i" />
+              </svg>
+              <b data-i18n="app.inspect">Inkspector</b>
+              <span class="flow-role" data-i18n="app.inspect.sub"
+                >frame-by-frame inspection and labeling</span
+              >
+            </a>
+            <span class="flow-out" data-i18n="guide.out.inspect">labels</span>
+          </li>
+          <li class="flow-step" data-step="cuttlefish">
+            <a href="/cuttlefish">
+              <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <use href="/icons/app-cuttlefish.svg#i" />
+              </svg>
+              <b data-i18n="app.cuttlefish">Cuttlefish</b>
+              <span class="flow-role" data-i18n="app.cuttlefish.sub"
+                >VOD review / cross-language slang translation / Overfishing
+                Pedia</span
+              >
+            </a>
+            <span class="flow-out" data-i18n="guide.out.cuttlefish"
+              >reviews and knowledge</span
+            >
+          </li>
+          <li class="flow-step" data-step="vision">
+            <a href="/vision">
+              <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <use href="/icons/app-vision.svg#i" />
+              </svg>
+              <b data-i18n="app.vision">Vision</b>
+              <span class="flow-role" data-i18n="app.vision.sub"
+                >vision and 3D reconstruction</span
+              >
+            </a>
+            <span class="flow-out" data-i18n="guide.out.vision"
+              >detections</span
+            >
+          </li>
+          <li class="flow-step" data-step="predictor">
+            <a href="/predictor">
+              <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <use href="/icons/app-predictor.svg#i" />
+              </svg>
+              <b data-i18n="app.predictor">Predictor</b>
+              <span class="flow-role" data-i18n="app.predictor.sub"
+                >controller action prediction</span
+              >
+            </a>
+            <span class="flow-out" data-i18n="guide.out.predictor"
+              >IDM predictions</span
+            >
+          </li>
+        </ol>
+        <!-- The predictions go back to the Inkspector, next to the labels -->
+        <p class="flow-loop">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4.5h-4.5" />
+          </svg>
+          <span data-i18n="guide.loop"
+            >IDM predictions go back to the Inkspector, next to the labels, to
+            check them frame by frame</span
+          >
+        </p>
+        <footer class="guide-foot">
+          <span data-i18n="guide.again"
+            >Open this again with ? or from the View menu.</span
+          >
+          <button
+            type="button"
+            class="btn guide-done"
+            popovertarget="guide"
+            popovertargetaction="hide"
+            data-i18n="guide.done"
+          >
+            Got it
+          </button>
+        </footer>
       </div>
     </header>
 

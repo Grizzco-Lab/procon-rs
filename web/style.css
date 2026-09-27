@@ -1983,7 +1983,7 @@ input:focus-visible {
     flex-direction: column;
     gap: 6px;
     width: var(--rail);
-    padding: 14px 11px 168px;
+    padding: 14px 11px 216px;
     border: 0;
     border-right: 1px solid var(--rail-border);
     border-radius: 0;
@@ -2148,6 +2148,43 @@ input:focus-visible {
     display: none;
   }
 
+  /* An app's tooltip: its name, and under it what the app is for, wrapped
+     where it runs long */
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav .app-name {
+    width: max-content;
+    max-width: 17rem;
+    white-space: normal;
+    text-align: left;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav .app-title {
+    display: block;
+  }
+
+  :root[data-nav="side"]:not([data-layout="phone"]) .app-nav .app-sub {
+    position: static;
+    display: block;
+    width: auto;
+    height: auto;
+    margin-top: 1px;
+    padding: 0;
+    overflow: visible;
+    clip-path: none;
+    border: 0;
+    background: none;
+    box-shadow: none;
+    color: inherit;
+    font-family: var(--font-ui);
+    font-size: 11.5px;
+    font-weight: 500;
+    line-height: 1.35;
+    letter-spacing: 0;
+    text-align: inherit;
+    text-transform: none;
+    opacity: 0.72;
+    transform: none;
+  }
+
   /* View and language at the rail's foot, over its padding, and the
      chevron that widens the rail under them */
   :root[data-nav="side"]:not([data-layout="phone"]) .bar-tools {
@@ -2251,7 +2288,7 @@ input:focus-visible {
   :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
     .app-nav {
     gap: 4px;
-    padding: 14px 10px 160px;
+    padding: 14px 10px 204px;
   }
 
   :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
@@ -2260,8 +2297,9 @@ input:focus-visible {
     justify-content: flex-start;
     gap: 12px;
     width: 100%;
-    height: 46px;
-    padding: 0 11px;
+    height: auto;
+    min-height: 46px;
+    padding: 7px 11px;
   }
 
   :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
@@ -2312,6 +2350,34 @@ input:focus-visible {
     a[aria-current="page"]
     .app-name {
     font-weight: 600;
+  }
+
+  /* The name, and under it what the app is for, wrapped in the rail */
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav
+    .app-name {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav
+    .app-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
+    .app-nav
+    .app-sub {
+    margin-top: 2px;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.3;
+    opacity: 0.66;
   }
 
   :root[data-nav="side"][data-rail="expanded"]:not([data-layout="phone"])
@@ -3107,8 +3173,8 @@ input:focus-visible {
   padding-right: 11px;
 }
 
-/* In the bar, the language switch is an icon; its name is a bubble */
-[data-toggle-lang] .tool-name {
+/* In the bar, the language switch and the guide are icons; their names are bubbles */
+:is([data-toggle-lang], [data-open-guide]) .tool-name {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -3116,7 +3182,8 @@ input:focus-visible {
   clip-path: inset(50%);
 }
 
-[data-toggle-lang]:is(:hover, :focus-visible) .tool-name {
+:is([data-toggle-lang], [data-open-guide]):is(:hover, :focus-visible)
+  .tool-name {
   top: calc(100% + 8px);
   right: 0;
   z-index: 60;
@@ -3219,6 +3286,386 @@ input:focus-visible {
   }
 }
 
+/* ------------------------------------------------------------ guide
+ * "How it fits together": a card over the page with the apps as a
+ * pipeline, left to right; under each app what it hands on, along a dashed
+ * line into the next; the predictions loop back to the Inkspector. Where
+ * the card is narrow (phones), the steps run top to bottom.
+ */
+
+.guide:not(:popover-open) {
+  display: none;
+}
+
+.guide:popover-open {
+  --flow-gap: 34px;
+  --flow-line: color-mix(in oklab, var(--accent) 60%, transparent);
+  position: fixed;
+  inset: 0;
+  container: guide / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: min(1080px, calc(100vw - 32px));
+  height: fit-content;
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 22px 24px 18px;
+  overflow: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.45);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+:root[data-layout="phone"] .guide:popover-open {
+  gap: 14px;
+  width: min(460px, calc(100vw - 24px));
+  padding: 16px 16px 14px;
+}
+
+@media (max-width: 720px) {
+  .guide:popover-open {
+    gap: 14px;
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    padding: 16px 16px 14px;
+  }
+}
+
+.guide::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+.guide-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.guide-head h2 {
+  margin: 0 0 4px;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.guide-lede {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--text-2);
+}
+
+.guide-x {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.guide-x:hover {
+  background: var(--btn-hover);
+  color: var(--text);
+}
+
+.guide-x svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* The steps, and the loop under them on the same five columns */
+.flow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  column-gap: var(--flow-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.flow-step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  counter-increment: step;
+}
+
+.flow-step a {
+  position: relative;
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: 4px;
+  padding: 14px 14px 13px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  color: var(--text);
+  text-decoration: none;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.flow-step a:hover {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 7%, var(--inset));
+}
+
+.flow-step a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The open app */
+.flow-step a[aria-current="page"] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* The step's number, in the card's corner */
+.flow-step a::after {
+  content: counter(step);
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  color: var(--text-3);
+  font-family: var(--font-num);
+  font-size: 12px;
+}
+
+.flow-step .app-icon {
+  width: 32px;
+  height: 32px;
+  margin-bottom: 4px;
+}
+
+.flow-step b {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.flow-role {
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+/* What the step hands on: its name, then a dashed line into the next */
+.flow-out {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  margin-top: 10px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.flow-out::after {
+  content: "";
+  flex: 1;
+  min-width: 8px;
+  border-top: 2px dashed var(--flow-line);
+}
+
+.flow-step:last-child .flow-out::after {
+  display: none;
+}
+
+/* The arrowhead across the gap, at the height of that line */
+.flow-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  bottom: 3px;
+  left: 100%;
+  width: var(--flow-gap);
+  height: 16px;
+  background: var(--flow-line);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 16'%3E%3Cpath d='M1 8h30M25 3l6 5-6 5' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / 100% 100% no-repeat;
+}
+
+/* The loop: from under the last step back to under the second, centre to
+   centre (half a column in from each end) */
+.flow-loop {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: -2px calc((100% - 4 * var(--flow-gap)) / 10) 0
+    calc((100% - 4 * var(--flow-gap)) * 3 / 10 + var(--flow-gap));
+  padding-top: 24px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.flow-loop::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 16px;
+  border: 2px dashed var(--flow-line);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+}
+
+/* Its head, pointing up into the Inkspector */
+.flow-loop::after {
+  content: "";
+  position: absolute;
+  top: -9px;
+  left: -6px;
+  width: 14px;
+  height: 12px;
+  background: var(--flow-line);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 12'%3E%3Cpath d='M2 10l5-7 5 7' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / 100% 100% no-repeat;
+}
+
+.flow-loop svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.guide-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider);
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.guide-done {
+  height: 34px;
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.guide-done:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent) 88%, #ffffff);
+}
+
+/* Narrow: top to bottom, each card a row, the hand-over under it */
+@container guide (max-width: 760px) {
+  .guide-head h2 {
+    font-size: 17px;
+  }
+
+  .guide-lede,
+  .flow-role {
+    font-size: 12px;
+  }
+
+  .flow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .flow-step a {
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 1px 12px;
+    padding: 9px 36px 9px 12px;
+  }
+
+  .flow-step .app-icon {
+    grid-row: span 2;
+    align-self: center;
+    margin: 0;
+  }
+
+  .flow-step b {
+    font-size: 14px;
+  }
+
+  .flow-step a::after {
+    top: 50%;
+    transform: translateY(-50%);
+  }
+
+  /* The hand-over as an arrow down, then the data's name */
+  .flow-out {
+    position: relative;
+    height: auto;
+    margin: 0;
+    padding: 5px 0 5px 46px;
+  }
+
+  .flow-out::after {
+    display: none;
+  }
+
+  .flow-out::before {
+    content: "";
+    position: absolute;
+    left: 20px;
+    width: 16px;
+    height: 22px;
+    background: var(--flow-line);
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 26'%3E%3Cpath d='M8 1v22M3 17l5 6 5-6' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / 100% 100% no-repeat;
+  }
+
+  .flow-step:not(:last-child)::after {
+    display: none;
+  }
+
+  .flow-loop {
+    justify-content: flex-start;
+    margin: 2px 0 0;
+    padding: 8px 12px;
+    font-size: 12px;
+    border: 2px dashed var(--flow-line);
+    border-radius: var(--radius-sm);
+    text-align: left;
+  }
+
+  .flow-loop::before,
+  .flow-loop::after {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-step a {
+    transition: none;
+  }
+}
+
 /* ------------------------------------------------------ narrow bars
  * The page is a size container, so the bar knows how much room it has
  * (the rail's width already taken off). Joy keeps its bar at the layout's
@@ -3267,6 +3714,68 @@ body {
   pointer-events: none;
 }
 
+/*
+ * What each app is for (.app-sub): out of sight in the bar, a bubble under
+ * a link whose name is in line, and the second line of the name's bubble
+ * where the name is one
+ */
+.app-nav .app-sub {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: normal;
+}
+
+.app-nav a:is(:hover, :focus-visible) .app-sub {
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 60;
+  width: max-content;
+  max-width: 16rem;
+  height: auto;
+  padding: 5px 10px;
+  overflow: visible;
+  clip-path: none;
+  border-radius: 7px;
+  background: var(--tip-bg);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.28);
+  color: var(--tip-ink);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: center;
+  text-transform: none;
+  letter-spacing: 0;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.app-nav a:not([aria-current]):is(:hover, :focus-visible) .app-name {
+  width: max-content;
+  max-width: 16rem;
+  white-space: normal;
+  text-align: center;
+}
+
+.app-nav a:not([aria-current]):is(:hover, :focus-visible) .app-sub {
+  position: static;
+  display: block;
+  width: auto;
+  max-width: none;
+  margin-top: 1px;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  opacity: 0.72;
+  transform: none;
+}
+
 /* Room for every name: back in line (`:is(..., *)` outranks the bubble) */
 @container page (min-width: 1441px) {
   :root[data-nav="top"]:not(
@@ -3300,6 +3809,28 @@ body {
     a:not([aria-current]) {
     padding: 0 12px 0 9px;
   }
+
+  /* The names in line: what each app is for is a bubble of its own */
+  :root[data-nav="top"]:not(
+      [data-layout="phone"],
+      [data-app="inspect"],
+      [data-theme="joy"]
+    )
+    .app-nav
+    a:not([aria-current]):is(:hover, :focus-visible)
+    .app-sub {
+    position: absolute;
+    width: max-content;
+    max-width: 16rem;
+    padding: 5px 10px;
+    border-radius: 7px;
+    background: var(--tip-bg);
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.28);
+    color: var(--tip-ink);
+    font-size: 12px;
+    opacity: 1;
+    transform: translateX(-50%);
+  }
 }
 
 /* The Inkspector's status and Joy's narrower bar need more room */
@@ -3326,6 +3857,23 @@ body {
     .app-nav
     a:not([aria-current]) {
     padding: 0 12px 0 9px;
+  }
+
+  :root[data-nav="top"]:not([data-layout="phone"])
+    .app-nav
+    a:not([aria-current]):is(:hover, :focus-visible)
+    .app-sub {
+    position: absolute;
+    width: max-content;
+    max-width: 16rem;
+    padding: 5px 10px;
+    border-radius: 7px;
+    background: var(--tip-bg);
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.28);
+    color: var(--tip-ink);
+    font-size: 12px;
+    opacity: 1;
+    transform: translateX(-50%);
   }
 }
 

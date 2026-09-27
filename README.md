@@ -100,10 +100,21 @@ another is shown. Links from before (`#inspect/...`) still open. The URLs:
 | Vision | `/vision`, `/vision/<session>?seg=<file>&n=<frame>` |
 | Predictor | `/predictor`, `/predictor/<video>/<checkpoint>?t=<s>` |
 
+The apps form one pipeline: the Studio captures data (recordings), the
+Inkspector inspects and labels them frame by frame (labels), Cuttlefish
+reviews videos, translates slang across languages and keeps the Overfishing
+Pedia (reviews and knowledge), Vision detects objects toward 3D
+reconstruction (detections), and the Predictor predicts controller actions
+(IDM predictions, which go back to the Inkspector next to the labels). The
+guide **How it fits together** draws this pipeline with a link to each app;
+it opens by itself on a first visit and again from the **?** button or the
+View menu.
+
 The app links sit in a left rail
-(with the language switch and View at its foot; compact by default, the names
-as tooltips, or expanded to icons with names through the View menu or the
-chevron at its foot) or in the top bar; drag them, or press Alt+arrows on
+(with the guide, the language switch and View at its foot; compact by default,
+each app's name and what it is for as tooltips, or expanded to icons with both
+through the View menu or the chevron at its foot) or in the top bar (what each
+app is for as a tooltip); drag them, or press Alt+arrows on
 one, to reorder them. The proxy, controller, proxy
 latency and recording indicators stay in the top bar in every app (hover one
 for details). The **View** menu picks the theme (Studio, Joy, Telemetry or
