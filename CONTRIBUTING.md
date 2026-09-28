@@ -156,10 +156,22 @@ the smallest `host_now - proxy_timestamp` over 10 s as the clock offset.
   kernel capture time (`-ts mono2abs -copyts` + `showinfo`); a recording starts
   at its first frame's capture time, and frames reach it at a constant rate. A
   queue of late frames (over 120 ms for 3 s while idle) restarts the grabber.
-  The grabber's second output (fd 3) is the live policy's frames (see the
-  Predictor below). Every raw output runs `-threads 1`, since ffmpeg's
-  rawvideo encoder is frame threaded and held a frame or two back, and every
-  pipe of frames is grown to 1 MiB.
+  A capture card in YUYV is read by the studio itself instead
+  (`src/v4l2.rs`, `[video] v4l2_direct`): memory-mapped, four buffers, each
+  frame taken as the kernel has it, with the kernel's timestamp; `pump` in
+  `src/video.rs` hands the newest frame to the live policy, then puts every
+  frame on the constant rate itself (`ConstantRate`, the fps filter's rule
+  without its wait for the next frame) and writes it into a converter
+  ffmpeg whose 1080p frames go on as the grabber's. ffmpeg's v4l2 input asks
+  for 256 buffers, so frames it falls behind on wait in the kernel, and each
+  frame passes four of its threads before a pipe; on the Elgato 4K X at
+  1080p60 the policy's hand-off fell from 26.9 ms to 17.8 (median), most of
+  what is left being the card's own transfer of a frame over one frame
+  period. When the device cannot be opened this way, ffmpeg reads it.
+  Otherwise the grabber's second output (fd 3) is the live policy's frames
+  (see the Predictor below). Every raw output runs `-threads 1`, since
+  ffmpeg's rawvideo encoder is frame threaded and held a frame or two back,
+  and every pipe of frames is grown to 1 MiB.
 - `Audio` reads the `[video] audio_input` PulseAudio source all the time in
   10 ms chunks and keeps the last 2 s; a recording's sound starts at the sample
   that arrived with its first frame and goes to the encoder on fd 3, as an Opus
@@ -444,30 +456,33 @@ The online mode (`src/predictor/online.rs`) runs AgentZero's policy
 (`runs/policy/*/best.pt`) with `uv run agentzero-play --dry-run --json`, in
 its own process group like a run: on a video with `--realtime` (paced at
 30 fps, frames skipped while the model is busy, as live), or on the live
-capture with `--shared-frames`. For the latter the grabber makes the
-policy's frames itself, on a second output (`src/video.rs`, `pipe:3`): split
-off after the 16:9 fit and before the `fps` filter (which holds every frame
-until the next one arrives), thinned by time to 30 fps, scaled to 640 x 360
-RGB with swscale's bilinear filter as AgentZero's training decoder
-(torchcodec) scales, each with its capture time from a second `showinfo`.
-The studio writes each into shared memory (`SharedFrames`: a memfd
+capture with `--shared-frames`. For the latter the studio hands over the
+frames the capture card delivers, as it delivers them (YUYV): the newest,
+30 a second, split off before the constant rate (which holds every frame
+until the next one arrives), from its own V4L2 reader or from ffmpeg's
+second output (`src/video.rs`, `pipe:3`), each with its capture time. The
+studio writes each into shared memory (`SharedFrames`: a memfd
 `agentzero-play` inherits as fd 3, a ring of four slots) and announces it
-with a 32-byte notice on its stdin; AgentZero takes the newest notice's
-frame whenever the model is free, with no ffmpeg and no reader thread of
-its own. Every JSON line comes back with the studio's number of the frame
-seen and the moments the policy took it, had it on the model's device and
-had the action, on `CLOCK_MONOTONIC` like the studio's, so each stage is
-timed on one clock: the grabber (capture to ffmpeg writing the frame), the
-pipe into the studio, shared memory, the wait for the model, the upload,
-the model and the send. Where the time went before: ffmpeg's rawvideo
-encoder is frame threaded, which held one or two frames back at every raw
-output (all now `-threads 1`); pipes stayed at 64 KiB, since asking for
-more than `/proc/sys/fs/pipe-max-size` (1 MiB) fails (all now grown to
-1 MiB); the `fps` filter held each frame for the next; and the policy's own
-ffmpeg dropped the first piped frame (`-fflags nobuffer`), so every frame
-it reported was one later than the one timed. Each action goes to the
-dashboard's WebSocket as an `agent` message
-(the page draws it over the Studio's live preview, lent to the Predictor by
+with a 40-byte notice on its stdin (number, slot, times, size); AgentZero
+takes the newest notice's frame whenever the model is free, with no ffmpeg
+and no reader thread of its own, copies it into pinned memory and scales it
+on its GPU to 640 x 360 RGB as training's frames were (4:2:0 chroma,
+anti-aliased bilinear, BT.601 limited range; within 1.6 levels on average
+of torchcodec's own frame of a recording). Every JSON line comes back with
+the studio's number of the frame seen and the moments the policy took it,
+had it on the model's device and had the action, on `CLOCK_MONOTONIC` like
+the studio's, so each stage is timed on one clock: the grabber (capture to
+the frame in hand), the pipe into the studio (ffmpeg's only), shared
+memory, the wait for the model, the upload and scaling, the model and the
+send. Where the time went before: ffmpeg's rawvideo encoder is frame
+threaded, which held one or two frames back at every raw output (all now
+`-threads 1`); pipes stayed at 64 KiB, since asking for more than
+`/proc/sys/fs/pipe-max-size` (1 MiB) fails (all now grown to 1 MiB); the
+`fps` filter held each frame for the next; and the policy's own ffmpeg
+dropped the first piped frame (`-fflags nobuffer`), so every frame it
+reported was one later than the one timed. Each action goes to the
+dashboard's WebSocket as an `agent` message (the page draws it over the
+Studio's live preview, lent to the Predictor by
 `lendScreen` in `app.js`); a video's actions are kept as labels (for frame
 seen + lead, the frame whose input they predict) and stored as a run
 `policy-<checkpoint>` when it ends. `agentzero-play` never sends anything:

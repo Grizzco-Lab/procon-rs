@@ -1118,8 +1118,9 @@ I18N.zh = {
   "po.loop.wait": "等待模型",
   "po.loop.waitNote":
     "直到 AgentZero 取走这一帧：模型还在处理上一帧（它只取最新的一帧），或正在唤醒",
-  "po.loop.upload": "送上设备",
-  "po.loop.uploadNote": "这一帧送到模型所在的设备（GPU；在 CPU 上则无需传送）",
+  "po.loop.upload": "转为模型输入",
+  "po.loop.uploadNote":
+    "采集卡的 YUYV 画面送到模型所在的设备（GPU，经锁页内存），并在那里缩放为 640 x 360 RGB",
   "po.loop.model": "模型",
   "po.loop.modelNote": "策略模型处理一帧的时间",
   "po.loop.send": "发送",
@@ -1133,6 +1134,7 @@ I18N.zh = {
   "po.loop.ageNote": "从按节奏播放的视频中一帧的时间到它的操作算好",
   "po.loop.rate": "每秒 {rate} 个操作",
   "po.loop.skipped": "跳过 {n} 帧",
+  "po.loop.direct": "直接读取采集卡",
   "po.loop.footLive": "最近 10 秒，按本机单调时钟计。",
   "po.loop.footVideo": "最近 10 秒；视频按 30 fps 播放，如同直播。",
   "po.confirm.title": "让 AgentZero 操作 Switch？",

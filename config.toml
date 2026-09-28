@@ -25,6 +25,10 @@ input = "/dev/video0"
 fps = 60
 # Elgato 4K X mode, the same one OBS uses: YUYV 1920x1080
 v4l2_args = ["-input_format", "yuyv422", "-video_size", "1920x1080"]
+# The studio reads a YUYV capture card itself (memory-mapped, the kernel's
+# timestamps; the lowest latency for AgentZero); false leaves it to ffmpeg,
+# which also takes over when reading it this way fails
+# v4l2_direct = true
 # Recorded size (1080, 720, 540 or 360; 16:9) and frame rate; the dashboard can change both
 record_height = 720
 record_fps = 30

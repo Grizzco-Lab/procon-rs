@@ -947,6 +947,7 @@
         ? t("po.loop.rate", { rate: timings.rate.toFixed(1) })
         : null,
       run.skipped ? t("po.loop.skipped", { n: run.skipped }) : null,
+      run.direct ? t("po.loop.direct") : null,
       run.device,
     ]
       .filter(Boolean)

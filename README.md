@@ -691,16 +691,19 @@ AgentZero whose `agentzero-play` has `--json`). Its view is
   ends or is stopped, the predictions are kept as a run named
   `policy-<checkpoint>` in **Predictions**.
 - **On the live capture**: the frames the studio grabs, 30 a second, go
-  straight into the policy (the capture card opens only once): the grabber
-  scales them to 640 x 360 itself, before the recording's constant rate,
-  and they reach AgentZero through shared memory. The video panel shows the
-  Studio's live preview with AgentZero's action drawn over it in orange,
-  and **Loop** the latency from the capture card's timestamp of a frame to
-  its action written to the proxy's replay port: the frame's hand-off (the
-  capture card and the grabber, the pipe into the studio, shared memory,
-  waiting for the model), the upload onto its device, the model and the
-  send, median and 99th percentile over the last 10 s. It needs an
-  AgentZero with `agentzero-play --shared-frames`.
+  straight into the policy (the capture card opens only once): the newest
+  frame the card delivered, as it delivered it (YUYV), through shared
+  memory, and AgentZero scales it on its GPU. The studio reads the capture
+  card itself for this (`[video] v4l2_direct`, on unless the card is in
+  another format than YUYV; ffmpeg reads it otherwise). The video panel
+  shows the Studio's live preview with AgentZero's action drawn over it in
+  orange, and **Loop** the latency from the capture card's timestamp of a
+  frame to its action written to the proxy's replay port: the frame's
+  hand-off (the capture card and the grabber, the pipe into the studio when
+  ffmpeg reads the card, shared memory, waiting for the model), the upload
+  and scaling onto the model's device, the model and the send, median and
+  99th percentile over the last 10 s. It needs an AgentZero with
+  `agentzero-play --shared-frames`.
 - **Let AgentZero play…** (the live capture only, off by default) sends its
   actions to the Switch through the proxy's replay port, as the Replay panel
   does, after a confirmation every time and for the time chosen there (up to

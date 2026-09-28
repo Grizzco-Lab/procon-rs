@@ -109,7 +109,8 @@ use crate::objects::write_atomic;
 use crate::recorder::RecorderState;
 use crate::replay::Action;
 use crate::studio::Studio;
-use crate::video::{self, POLICY_BYTES, POLICY_SIZE, PolicySink, PolicyTimes, mono_ns};
+use crate::v4l2::YUYV;
+use crate::video::{self, POLICY_MAX_BYTES, PolicySink, PolicyTimes, mono_ns};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
@@ -158,13 +159,14 @@ pub const SLOTS: usize = 4;
 
 /// The first bytes of the shared frames; the layout (AgentZero's
 /// `SharedFrames` reads it): magic, then little-endian `u32` version,
-/// slots, width, height, `u64` bytes of a frame, bytes from one slot to the
-/// next, where slot 0 starts ([`SHARED_DATA`]); at [`SLOT_NUMBERS`], a `u64`
-/// per slot: the number of the frame in it, all ones while it is written
+/// slots, the frames' fourcc (`YUYV`), 0, then `u64` bytes from one slot to
+/// the next and where slot 0 starts ([`SHARED_DATA`]); at [`SLOT_NUMBERS`],
+/// a `u64` per slot: the number of the frame in it, all ones while it is
+/// written. Each frame's size comes with its notice.
 const SHARED_MAGIC: &[u8; 8] = b"PCFRAME1";
 
 /// The layout's version
-const SHARED_VERSION: u32 = 1;
+const SHARED_VERSION: u32 = 2;
 
 /// Where the slots' numbers start
 const SLOT_NUMBERS: u64 = 64;
@@ -267,6 +269,8 @@ pub struct Status {
     pub skipped: u64,
     /// The last frame the policy saw
     pub seen: Option<u64>,
+    /// The live capture is read by the studio itself (V4L2), not ffmpeg
+    pub direct: bool,
     /// Latency over the last actions (see the module docs): `handoff` with
     /// its parts `grabber`, `pipe`, `shared` and `wait`, then `upload`,
     /// `model`, `send` and `total` (live), `age` (a video's frame from its
@@ -373,11 +377,13 @@ struct Published {
 
 /// The live capture's frames for the policy in shared memory (see the
 /// module docs and [`SHARED_MAGIC`] for the layout): a memfd the policy
-/// gets as its fd 3, and a notice per frame on its stdin, 32 bytes of
-/// little-endian `u64`s: the frame's number, its slot, when it was
-/// captured and when it was published ([`mono_ns`]). Nothing waits: a
-/// frame goes into the next slot, and a notice the pipe has no room for is
-/// dropped (the policy is not reading; it takes the newest anyway).
+/// gets as its fd 3, and a notice per frame on its stdin, 40 bytes: the
+/// frame's number, its slot, when it was captured and when it was
+/// published ([`mono_ns`]) as little-endian `u64`s, then its width and
+/// height as `u32`s. Frames are YUYV, the capture card's own (AgentZero
+/// scales them). Nothing waits: a frame goes into the next slot, and a
+/// notice the pipe has no room for is dropped (the policy is not reading;
+/// it takes the newest anyway).
 pub struct SharedFrames {
     memory: File,
     /// The policy's stdin, once it is ready for frames
@@ -387,8 +393,11 @@ pub struct SharedFrames {
     published: Mutex<VecDeque<Published>>,
 }
 
-/// Bytes from one slot to the next: a frame, whole pages
-const SLOT_BYTES: u64 = (POLICY_BYTES as u64).div_ceil(4096) * 4096;
+/// Bytes from one slot to the next: the largest frame, whole pages
+const SLOT_BYTES: u64 = (POLICY_MAX_BYTES as u64).div_ceil(4096) * 4096;
+
+/// Bytes of a notice
+const NOTICE_BYTES: usize = 40;
 
 impl SharedFrames {
     /// Room for [`SLOTS`] frames, with the header written
@@ -402,13 +411,12 @@ impl SharedFrames {
         // SAFETY: a fresh descriptor from memfd_create
         let memory = unsafe { File::from_raw_fd(fd) };
         memory.set_len(SHARED_DATA + SLOTS as u64 * SLOT_BYTES)?;
-        let (width, height) = POLICY_SIZE;
-        let mut header = Vec::with_capacity(48);
+        let mut header = Vec::with_capacity(40);
         header.extend_from_slice(SHARED_MAGIC);
-        for value in [SHARED_VERSION, SLOTS as u32, width, height] {
+        for value in [SHARED_VERSION, SLOTS as u32, YUYV, 0] {
             header.extend_from_slice(&value.to_le_bytes());
         }
-        for value in [POLICY_BYTES as u64, SLOT_BYTES, SHARED_DATA] {
+        for value in [SLOT_BYTES, SHARED_DATA] {
             header.extend_from_slice(&value.to_le_bytes());
         }
         memory.write_all_at(&header, 0)?;
@@ -444,7 +452,10 @@ impl SharedFrames {
 }
 
 impl PolicySink for SharedFrames {
-    fn frame(&self, frame: &[u8], times: PolicyTimes) {
+    fn frame(&self, frame: &[u8], (width, height): (u32, u32), times: PolicyTimes) {
+        if frame.len() as u64 > SLOT_BYTES || frame.len() != (width * height * 2) as usize {
+            return;
+        }
         let number = self.next.fetch_add(1, Ordering::Relaxed);
         let slot = number % SLOTS as u64;
         let slot_number = SLOT_NUMBERS + 8 * slot;
@@ -474,15 +485,17 @@ impl PolicySink for SharedFrames {
                 published,
             });
         }
-        let mut notice = [0u8; 32];
+        let mut notice = [0u8; NOTICE_BYTES];
         for (i, value) in [number, slot, times.captured, published]
             .into_iter()
             .enumerate()
         {
             notice[8 * i..8 * i + 8].copy_from_slice(&value.to_le_bytes());
         }
+        notice[32..36].copy_from_slice(&width.to_le_bytes());
+        notice[36..40].copy_from_slice(&height.to_le_bytes());
         if let Some(stdin) = self.notices.lock().unwrap().as_mut() {
-            // All 32 bytes or none (a pipe write under 4 KiB is atomic)
+            // All of it or none (a pipe write under 4 KiB is atomic)
             let _ = stdin.write(&notice);
         }
     }
@@ -559,6 +572,7 @@ impl Online {
         let run = run.as_ref()?;
         let mut status = run.status.clone();
         status.timings = timings(&run.samples);
+        status.direct = status.live && self.studio.video.direct();
         Some(status)
     }
 
@@ -778,6 +792,7 @@ impl Online {
             frames: 0,
             skipped: 0,
             seen: None,
+            direct: false,
             timings: Value::Null,
             stored: None,
             started_ms: now_ms(),
@@ -1670,12 +1685,9 @@ mod tests {
         let mut magic = [0u8; 8];
         memory.read_exact_at(&mut magic, 0).unwrap();
         assert_eq!(&magic, SHARED_MAGIC);
-        assert_eq!(word(memory, 8), 1 | (SLOTS as u64) << 32);
-        assert_eq!(word(memory, 16), 640 | 360 << 32);
-        assert_eq!(
-            [word(memory, 24), word(memory, 32), word(memory, 40)],
-            [691_200, 692_224, 4096]
-        );
+        assert_eq!(word(memory, 8), 2 | (SLOTS as u64) << 32);
+        assert_eq!(word(memory, 16), u64::from(u32::from_le_bytes(*b"YUYV")));
+        assert_eq!([word(memory, 24), word(memory, 32)], [4_149_248, 4096]);
         assert_eq!(word(memory, SLOT_NUMBERS), u64::MAX);
         // Frames before the policy is ready go in, unannounced
         let times = |n: u64| PolicyTimes {
@@ -1683,25 +1695,30 @@ mod tests {
             emitted: 2000 + n,
             read: 3000 + n,
         };
-        shared.frame(&vec![9u8; POLICY_BYTES], times(0));
+        let size = (1280, 720);
+        let bytes = 1280 * 720 * 2;
+        shared.frame(&vec![9u8; bytes], size, times(0));
         let (mut notices, writer) = std::io::pipe().unwrap();
         shared.start(writer);
         for n in 1..6u64 {
-            shared.frame(&vec![n as u8; POLICY_BYTES], times(n));
+            shared.frame(&vec![n as u8; bytes], size, times(n));
         }
-        let mut notice = [0u8; 32 * 5];
+        // A frame of another size than it says, or too large, is not handed on
+        shared.frame(&vec![0u8; bytes - 2], size, times(6));
+        shared.frame(&vec![0u8; 2560 * 1440 * 2], (2560, 1440), times(7));
+        let mut notice = [0u8; NOTICE_BYTES * 5];
         notices.read_exact(&mut notice).unwrap();
-        let fields: Vec<u64> = notice
-            .chunks(8)
-            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
-            .collect();
         for (i, n) in (1..6u64).enumerate() {
-            let [number, slot, captured, published] = fields[4 * i..4 * i + 4] else {
-                unreachable!()
-            };
-            assert_eq!((number, slot, captured), (n, n % SLOTS as u64, 1000 + n));
-            assert_eq!(shared.find(n).unwrap().published, published);
+            let notice = &notice[NOTICE_BYTES * i..NOTICE_BYTES * (i + 1)];
+            let field = |k: usize| u64::from_le_bytes(notice[8 * k..8 * k + 8].try_into().unwrap());
+            assert_eq!(
+                (field(0), field(1), field(2)),
+                (n, n % SLOTS as u64, 1000 + n)
+            );
+            assert_eq!(shared.find(n).unwrap().published, field(3));
+            assert_eq!(field(4), 1280 | 720 << 32);
         }
+        assert_eq!(shared.next.load(Ordering::Relaxed), 6);
         // Each slot holds the newest frame of its turn, numbered
         for (slot, n) in [(0, 4u64), (1, 5), (2, 2), (3, 3)] {
             assert_eq!(word(memory, SLOT_NUMBERS + 8 * slot), n);
@@ -1720,13 +1737,13 @@ mod tests {
     fn a_policy_not_reading_never_holds_the_frames_up() {
         let shared = SharedFrames::new().unwrap();
         let (_notices, writer) = std::io::pipe().unwrap();
-        // The smallest pipe: room for 128 notices
+        // The smallest pipe: room for 102 notices
         // SAFETY: fcntl on a descriptor we own
         unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_SETPIPE_SZ, 4096) };
         shared.start(writer);
-        let frame = vec![0u8; POLICY_BYTES];
+        let frame = vec![0u8; 640 * 360 * 2];
         for _ in 0..200 {
-            shared.frame(&frame, PolicyTimes::default());
+            shared.frame(&frame, (640, 360), PolicyTimes::default());
         }
         assert_eq!(shared.next.load(Ordering::Relaxed), 200);
     }

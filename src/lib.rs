@@ -40,6 +40,8 @@ pub mod predictor;
 #[cfg(feature = "studio")]
 pub mod studio;
 #[cfg(feature = "studio")]
+pub mod v4l2;
+#[cfg(feature = "studio")]
 pub mod video;
 #[cfg(feature = "studio")]
 pub mod vision;

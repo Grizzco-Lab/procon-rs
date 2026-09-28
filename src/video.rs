@@ -15,12 +15,24 @@
 //! - A recording encoder per video file, fed the same frames from Record on,
 //!   so a file begins with the next frame and pausing never touches the input.
 //!
-//! The grabber also makes the Predictor's live policy its frames, on a
-//! second output of its own ([`PolicySink`]): split off before the constant
-//! rate (which holds each frame until the next one arrives), thinned to
-//! [`POLICY_FPS`] and scaled to [`POLICY_SIZE`] RGB as AgentZero's training
-//! frames are (bilinear), each with its capture time. The capture card
-//! opens only once, so the policy never grabs it itself.
+//! A V4L2 capture card in YUYV (the Elgato 4K X's uncompressed mode) is read
+//! by the studio itself instead ([`crate::v4l2`]): memory-mapped, a few
+//! buffers, each frame taken as soon as the kernel has it, with the kernel's
+//! timestamp. The reader puts the frames on the constant rate ([`ConstantRate`],
+//! the fps filter's job otherwise) and writes them into a converter ffmpeg,
+//! whose raw 1080p frames go on as the grabber's would. ffmpeg's own v4l2
+//! input asks for 256 buffers, so frames it falls behind on queue in the
+//! kernel for good, and it passes each through four threads before a pipe.
+//! When reading the device ourselves fails ([`DIRECT_TRIES`] starts without
+//! a frame), or its format is another, ffmpeg reads it (`v4l2_direct`).
+//!
+//! Either way the Predictor's live policy gets its own frames ([`PolicySink`]):
+//! YUYV, the newest ready, [`POLICY_FPS`] of them a second, before the
+//! constant rate (which holds each frame until the next one arrives), each
+//! with its capture time; AgentZero scales them. Our reader hands on the
+//! device's own frames before anything else; ffmpeg's grabber makes them on
+//! a second output. The capture card opens only once, so the policy never
+//! grabs it itself.
 //!
 //! Every raw output is written with `-threads 1`: ffmpeg's rawvideo encoder
 //! is frame threaded, which holds a frame or two back. And every pipe of
@@ -34,7 +46,8 @@
 //! Frames reach recordings at a constant rate: frame `n` of a file was captured
 //! `n / fps` seconds after its first frame, whose Unix time is kept. That time
 //! is when the capture card delivered the frame to the kernel, which ffmpeg
-//! reports for every frame, not when it reached the studio: if the grabber
+//! reports for every frame (and our reader reads), not when it reached the
+//! studio: if the grabber
 //! ever falls behind, frames queue in the driver and arrive late for good, so
 //! arrival times would shift a whole recording by however long that queue is.
 //! A queue that builds up while nothing records is cleared by restarting the
@@ -47,10 +60,12 @@
 use crate::audio::{self, Audio};
 use crate::config::VideoConfig;
 use crate::dump::unix_ms;
+use crate::v4l2::{Capture, Dequeued};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, ensure};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::ops::Range;
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use core::time::Duration;
 use serde::Serialize;
 use std::fs::File;
@@ -58,7 +73,7 @@ use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
@@ -89,15 +104,28 @@ const WORK_SIZE: (u32, u32) = (1920, 1080);
 /// Bytes of one raw 4:2:0 frame at [`WORK_SIZE`]
 const FRAME_BYTES: usize = (WORK_SIZE.0 * WORK_SIZE.1 * 3 / 2) as usize;
 
-/// Size of the frames the grabber makes for the live policy: AgentZero's
-/// input, RGB
-pub const POLICY_SIZE: (u32, u32) = (640, 360);
-
-/// Bytes of one policy frame
-pub const POLICY_BYTES: usize = (POLICY_SIZE.0 * POLICY_SIZE.1 * 3) as usize;
+/// The largest policy frame: YUYV at [`WORK_SIZE`], as ffmpeg's grabber
+/// makes them (our reader's are the device's size; larger ones are not
+/// handed on)
+pub const POLICY_MAX_BYTES: usize = (WORK_SIZE.0 * WORK_SIZE.1 * 2) as usize;
 
 /// Frames per second the policy gets: AgentZero's rate
 pub const POLICY_FPS: u32 = 30;
+
+/// A frame goes to the policy once its frame time, less half a frame of a
+/// source at `fps`, passed since the last one: every other frame at 60 fps,
+/// every fourth at 120, every one at 30 even when they jitter
+fn policy_gap_ns(fps: u32) -> u64 {
+    (1_000_000_000 / u64::from(POLICY_FPS)).saturating_sub(500_000_000 / u64::from(fps.max(1)))
+}
+
+/// How long our V4L2 reader waits for frames before looking whether it
+/// should stop
+const DEVICE_POLL: Duration = Duration::from_millis(100);
+
+/// Starts of our own V4L2 reader without a frame before ffmpeg reads the
+/// device instead (the Elgato 4K X streams only on every other start)
+pub const DIRECT_TRIES: u32 = 3;
 
 /// Capture times queued for frames not read yet; more means the log and the
 /// frames are out of step, and the queue starts afresh
@@ -204,6 +232,8 @@ pub struct VideoStatus {
     /// Time from the capture card delivering a frame to the studio reading
     /// it, smoothed; `None` while no frames arrive
     pub capture_ms: Option<f64>,
+    /// The capture card is read by the studio itself, not ffmpeg
+    pub direct: bool,
     /// The preview follows the recording size and rate
     pub preview_matches_recording: bool,
     /// Recordings get the sound track, when there is a sound source
@@ -235,17 +265,61 @@ pub struct PolicyTimes {
     /// The capture card's timestamp of the frame (a file's frames: when
     /// ffmpeg decoded them)
     pub captured: u64,
-    /// Its first bytes arrived from the grabber: ffmpeg wrote it
+    /// Its first bytes arrived from the grabber: ffmpeg wrote it (our own
+    /// V4L2 reader: the kernel handed it over)
     pub emitted: u64,
     /// The whole frame was read
     pub read: u64,
 }
 
-/// Where the grabber's policy frames go: [`POLICY_SIZE`] RGB at
-/// [`POLICY_FPS`], called on the grabber's thread for each, which must not
-/// wait (ffmpeg waits for every output)
+/// Where the policy's frames go: YUYV (4:2:2, Y0 U Y1 V) of `size`, at
+/// [`POLICY_FPS`]; called on the grabber's thread for each, which must not
+/// wait (a device's buffer, or ffmpeg, waits for it)
 pub trait PolicySink: Send + Sync {
-    fn frame(&self, frame: &[u8], times: PolicyTimes);
+    fn frame(&self, frame: &[u8], size: (u32, u32), times: PolicyTimes);
+}
+
+/// Places frames on the recordings' constant rate by their capture times,
+/// as ffmpeg's fps filter does, without holding a frame until the next one:
+/// slot `n` is `n / fps` after the first frame's time; a frame takes the
+/// slot nearest its time, a slot the source skipped repeats the frame
+/// before, and a frame for a slot already filled is left out.
+#[derive(Debug)]
+pub struct ConstantRate {
+    fps: u32,
+    first: Option<u64>,
+    /// The next slot to fill
+    next: u64,
+}
+
+impl ConstantRate {
+    pub fn new(fps: u32) -> Self {
+        Self {
+            fps,
+            first: None,
+            next: 0,
+        }
+    }
+
+    /// The slots a frame captured at `captured` (ns) fills: none when it is
+    /// left out, else its own last, the frame before repeating in the ones
+    /// before it
+    pub fn place(&mut self, captured: u64) -> Range<u64> {
+        let first = *self.first.get_or_insert(captured);
+        let slot =
+            ((captured.saturating_sub(first)) as f64 * f64::from(self.fps) / 1e9).round() as u64;
+        if slot < self.next {
+            return self.next..self.next;
+        }
+        let filled = self.next..slot + 1;
+        self.next = slot + 1;
+        filled
+    }
+
+    /// The time (ns) of slot `slot`
+    pub fn slot_time(&self, slot: u64) -> u64 {
+        self.first.unwrap_or(0) + slot * 1_000_000_000 / u64::from(self.fps)
+    }
 }
 
 /// Now on `CLOCK_MONOTONIC`, in ns: the clock the live policy's loop is
@@ -260,13 +334,22 @@ pub fn mono_ns() -> u64 {
     now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
 }
 
+/// Now as Unix time, in ns
+fn unix_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64)
+}
+
 /// A Unix time in seconds (ffmpeg's capture times) on `CLOCK_MONOTONIC`, ns
 fn unix_to_mono(seconds: f64) -> u64 {
-    let unix_now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos() as u64);
-    let age = unix_now.saturating_sub((seconds * 1e9) as u64);
+    let age = unix_ns().saturating_sub((seconds * 1e9) as u64);
     mono_ns().saturating_sub(age)
+}
+
+/// A `CLOCK_MONOTONIC` time (ns) as Unix time in µs, the recordings' clock
+fn mono_to_unix_us(ns: u64) -> u64 {
+    unix_ns().saturating_sub(mono_ns().saturating_sub(ns)) / 1000
 }
 
 /// An ffmpeg fed raw frames on stdin through a queue
@@ -299,9 +382,30 @@ struct Inner {
     /// The preview uses the recording size and rate instead of its own
     preview_matches_recording: bool,
     record_audio: bool,
-    grabber: Option<Child>,
+    grabber: Option<Grabber>,
     preview: Option<Worker>,
     error: Option<String>,
+}
+
+/// What turns the input into the grabber's raw 1080p frames
+struct Grabber {
+    /// The grabber's ffmpeg, or the converter behind our own V4L2 reader
+    child: Child,
+    /// Our own V4L2 reader, which holds the device until it ends
+    reader: Option<JoinHandle<()>>,
+}
+
+impl Grabber {
+    /// Stop it (it writes no files, so there is nothing to finish); the
+    /// device is free again once this returns. The grabber generation must
+    /// have moved on, which ends our reader.
+    fn stop(mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
+    }
 }
 
 /// Handle to the capture, preview and recording processes; clones share them
@@ -329,12 +433,18 @@ pub struct Video {
     /// Unix ms of the latest grabbed frame and preview fragment
     last_frame_ms: Arc<AtomicU64>,
     last_preview_ms: Arc<AtomicU64>,
-    /// Capture times (Unix µs) the grabber logged for frames not read yet
+    /// Capture times (Unix µs) the grabber logged (or our V4L2 reader
+    /// wrote) for frames not read yet
     capture_times: Arc<Mutex<VecDeque<u64>>>,
     /// The same for the policy's frames, on `CLOCK_MONOTONIC` (ns)
     policy_times: Arc<Mutex<VecDeque<u64>>>,
     /// Smoothed time from capture to reading a frame, in µs
     capture_us: Arc<AtomicU64>,
+    /// Starts of our own V4L2 reader in a row without a frame (see
+    /// [`DIRECT_TRIES`])
+    direct_failures: Arc<AtomicU32>,
+    /// The current grabber is our own V4L2 reader
+    direct: Arc<AtomicBool>,
     /// The sound source, when one is configured
     audio: Option<Audio>,
 }
@@ -388,6 +498,8 @@ impl Video {
             capture_times: Arc::default(),
             policy_times: Arc::default(),
             capture_us: Arc::default(),
+            direct_failures: Arc::default(),
+            direct: Arc::default(),
             audio,
         };
         let mut inner = video.lock();
@@ -446,12 +558,19 @@ impl Video {
         );
         let mut inner = self.lock();
         inner.input = input;
+        // Another input gets our own reader again
+        self.direct_failures.store(0, Ordering::Relaxed);
         self.restart_grabber(&mut inner);
         // The preview only runs while there is an input
         if inner.input.is_none() || inner.preview.is_none() {
             self.restart_preview(&mut inner);
         }
         Ok(())
+    }
+
+    /// Whether the studio reads the capture card itself (see the module docs)
+    pub fn direct(&self) -> bool {
+        self.direct.load(Ordering::Relaxed)
     }
 
     /// Selected input id
@@ -612,6 +731,7 @@ impl Video {
                 let us = self.capture_us.load(Ordering::Relaxed);
                 (fresh && us > 0).then(|| us as f64 / 1000.0)
             },
+            direct: self.direct(),
             preview_matches_recording: inner.preview_matches_recording,
             record_audio: inner.record_audio,
             audio_input: Some(inner.config.audio_input.clone()).filter(|s| !s.is_empty()),
@@ -623,11 +743,10 @@ impl Video {
     /// Stop the grabber and start one for the current input
     fn restart_grabber(&self, inner: &mut Inner) {
         self.grabber_generation.fetch_add(1, Ordering::SeqCst);
-        if let Some(mut child) = inner.grabber.take() {
-            // The grabber writes no files, so there is nothing to finish
-            let _ = child.kill();
-            let _ = child.wait();
+        if let Some(grabber) = inner.grabber.take() {
+            grabber.stop();
         }
+        self.direct.store(false, Ordering::Relaxed);
         inner.error = None;
         self.last_frame_ms.store(0, Ordering::Relaxed);
         lock(&self.capture_times).clear();
@@ -638,8 +757,8 @@ impl Video {
             return;
         };
         match self.spawn_grabber(inner, &input) {
-            Ok(child) => {
-                inner.grabber = Some(child);
+            Ok(grabber) => {
+                inner.grabber = Some(grabber);
                 let video = self.clone();
                 let generation = self.grabber_generation.load(Ordering::SeqCst);
                 thread::spawn(move || video.watch_first_frame(generation, input));
@@ -651,7 +770,72 @@ impl Video {
         }
     }
 
-    fn spawn_grabber(&self, inner: &Inner, input: &str) -> Result<Child> {
+    /// Our own V4L2 reader when the input allows it (see the module docs),
+    /// else ffmpeg's grabber
+    fn spawn_grabber(&self, inner: &Inner, input: &str) -> Result<Grabber> {
+        if let Some(size) = direct_size(&inner.config, input)
+            && self.direct_failures.load(Ordering::Relaxed) < DIRECT_TRIES
+        {
+            match self.spawn_direct(inner, input, size) {
+                Ok(grabber) => {
+                    self.direct_failures.store(0, Ordering::Relaxed);
+                    return Ok(grabber);
+                }
+                Err(e) => {
+                    log::warn!("Cannot read {input} ourselves ({e:#}); ffmpeg reads it");
+                    self.direct_failures.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+        self.direct.store(false, Ordering::Relaxed);
+        self.spawn_ffmpeg(inner, input)
+    }
+
+    /// Read the device `input` ourselves, `size` YUYV at the capture rate,
+    /// into the policy and a converter ffmpeg for the rest
+    fn spawn_direct(&self, inner: &Inner, input: &str, size: (u32, u32)) -> Result<Grabber> {
+        let fps = inner.config.fps;
+        let capture = Capture::open(Path::new(input), size.0, size.1, fps)?;
+        let args = converter_args(size, fps);
+        log::info!(
+            "Reading {input} ourselves ({}x{} YUYV at {fps} fps); starting ffmpeg {}",
+            size.0,
+            size.1,
+            args.join(" ")
+        );
+        let mut child = Command::new("ffmpeg")
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .context("cannot run ffmpeg; is it installed?")?;
+        let stdin = child.stdin.take().context("no ffmpeg stdin")?;
+        let stdout = child.stdout.take().context("no ffmpeg stdout")?;
+        let stderr = child.stderr.take().context("no ffmpeg stderr")?;
+        grow_pipe(&stdin);
+        grow_pipe(&stdout);
+        let generation = self.grabber_generation.load(Ordering::SeqCst);
+        let video = self.clone();
+        thread::spawn(move || video.read_frames(stdout, generation));
+        let video = self.clone();
+        thread::spawn(move || video.read_log(stderr, generation));
+        let video = self.clone();
+        let reader = thread::Builder::new()
+            .name("capture".to_string())
+            .spawn(move || video.read_device(capture, stdin, generation, fps))
+            .context("cannot start a thread")?;
+        self.direct.store(true, Ordering::Relaxed);
+        Ok(Grabber {
+            child,
+            reader: Some(reader),
+        })
+    }
+
+    /// ffmpeg's grabber: the input as raw 1080p frames on stdout, the
+    /// policy's on fd 3
+    fn spawn_ffmpeg(&self, inner: &Inner, input: &str) -> Result<Grabber> {
         let args = grabber_args(&inner.config, input);
         log::info!("Starting ffmpeg {}", args.join(" "));
         // The policy's frames come on the grabber's fd 3
@@ -681,7 +865,10 @@ impl Video {
         thread::spawn(move || video.read_policy_frames(policy_frames, generation));
         let video = self.clone();
         thread::spawn(move || video.read_log(stderr, generation));
-        Ok(child)
+        Ok(Grabber {
+            child,
+            reader: None,
+        })
     }
 
     /// Stop the preview encoder and start one with the current settings
@@ -762,7 +949,13 @@ impl Video {
                 continue;
             }
             let now = unix_ms();
-            self.last_frame_ms.store(now, Ordering::Relaxed);
+            // Frames flow again: why the grabber was retried is past
+            if self.last_frame_ms.swap(now, Ordering::Relaxed) == 0 {
+                let mut inner = self.lock();
+                if self.grabber_is_current(generation) {
+                    inner.error = None;
+                }
+            }
             let captured_ms = self.capture_time(now);
             let behind_ms = now.saturating_sub(captured_ms);
             let smoothed = match self.capture_us.load(Ordering::Relaxed) {
@@ -846,10 +1039,10 @@ impl Video {
         }
     }
 
-    /// Hand the grabber's policy frames to the live policy while one wants
-    /// them; read them all the same, as ffmpeg waits for every output
+    /// Hand ffmpeg's policy frames to the live policy while one wants them;
+    /// read them all the same, as ffmpeg waits for every output
     fn read_policy_frames(&self, mut pipe: File, generation: u64) {
-        let mut frame = vec![0u8; POLICY_BYTES];
+        let mut frame = vec![0u8; POLICY_MAX_BYTES];
         // Read to the end even when stale, so ffmpeg can exit
         while let Some(emitted) = read_frame(&mut pipe, &mut frame) {
             let read = mono_ns();
@@ -857,13 +1050,36 @@ impl Video {
                 continue;
             }
             let captured = self.policy_capture_time().unwrap_or(read);
-            if let Some(sink) = lock(&self.policy_sink).clone() {
+            let sink = lock(&self.policy_sink).clone();
+            if let Some(sink) = sink {
                 let times = PolicyTimes {
                     captured,
                     emitted,
                     read,
                 };
-                sink.frame(&frame, times);
+                sink.frame(&frame, WORK_SIZE, times);
+            }
+        }
+    }
+
+    /// Our own V4L2 reader's thread (see [`pump`]) until the grabber moves
+    /// on or the device fails; then the capture closes, and the converter
+    /// ends with its input, which restarts the grabber
+    fn read_device(&self, mut capture: Capture, converter: ChildStdin, generation: u64, fps: u32) {
+        let running = || self.grabber_is_current(generation);
+        if let Err(e) = pump(
+            &mut capture,
+            converter,
+            fps,
+            &self.capture_times,
+            &self.policy_sink,
+            running,
+        ) && running()
+        {
+            log::warn!("Reading the capture card: {e:#}");
+            // Never waits: a restart holds the lock while it waits for us
+            if let Ok(mut inner) = self.inner.try_lock() {
+                inner.error = Some(format!("{e:#}"));
             }
         }
     }
@@ -942,17 +1158,11 @@ impl Video {
                     && self.grabber_is_current(generation)
                 {
                     // The policy's output, or the main one
-                    let (times, time) = if line.starts_with(POLICY_LOG) {
-                        (&self.policy_times, unix_to_mono(seconds))
+                    if line.starts_with(POLICY_LOG) {
+                        push_time(&self.policy_times, unix_to_mono(seconds));
                     } else {
-                        (&self.capture_times, (seconds * 1e6) as u64)
-                    };
-                    let mut times = lock(times);
-                    // Out of step with the frames somehow: start afresh
-                    if times.len() > TIMES_QUEUED {
-                        times.clear();
+                        push_time(&self.capture_times, (seconds * 1e6) as u64);
                     }
-                    times.push_back(time);
                 }
                 continue;
             }
@@ -1077,6 +1287,150 @@ fn read_frame(reader: &mut impl Read, frame: &mut [u8]) -> Option<u64> {
     Some(came)
 }
 
+/// Queue a capture time for the frame to come; a queue out of step with
+/// the frames starts afresh
+fn push_time(times: &Mutex<VecDeque<u64>>, time: u64) {
+    let mut times = lock(times);
+    if times.len() > TIMES_QUEUED {
+        times.clear();
+    }
+    times.push_back(time);
+}
+
+/// What our V4L2 reader reads: a [`Capture`], or a stand-in in tests
+trait FrameSource {
+    /// Width and height of its YUYV frames
+    fn size(&self) -> (u32, u32);
+    /// Every frame ready, oldest first, after waiting up to `timeout`
+    fn ready(&mut self, timeout: Duration) -> Result<Vec<Dequeued>>;
+    /// A dequeued frame's bytes
+    fn frame(&self, index: u32) -> &[u8];
+    /// Give a dequeued frame's buffer back
+    fn requeue(&mut self, index: u32) -> Result<()>;
+}
+
+impl FrameSource for Capture {
+    fn size(&self) -> (u32, u32) {
+        Capture::size(self)
+    }
+    fn ready(&mut self, timeout: Duration) -> Result<Vec<Dequeued>> {
+        Capture::ready(self, timeout)
+    }
+    fn frame(&self, index: u32) -> &[u8] {
+        Capture::frame(self, index)
+    }
+    fn requeue(&mut self, index: u32) -> Result<()> {
+        Capture::requeue(self, index)
+    }
+}
+
+/// Our V4L2 reader, until `running` says stop: of the frames ready, the
+/// newest goes to the policy first (once [`policy_gap_ns`] passed since the
+/// last), then each into `converter` on the constant rate (the frame before
+/// repeated for the slots the source skipped), its capture time into
+/// `capture_times` just before; corrupted or short frames are left out.
+/// The frame last written keeps its buffer until the next one, for repeats.
+fn pump(
+    source: &mut impl FrameSource,
+    mut converter: impl Write,
+    fps: u32,
+    capture_times: &Mutex<VecDeque<u64>>,
+    policy_sink: &Mutex<Option<Arc<dyn PolicySink>>>,
+    running: impl Fn() -> bool,
+) -> Result<()> {
+    let size = source.size();
+    let frame_bytes = (size.0 * size.1 * 2) as usize;
+    let mut rate = ConstantRate::new(fps);
+    // The buffer of the frame last written
+    let mut held: Option<u32> = None;
+    let mut policy_last: Option<u64> = None;
+    let policy_gap = policy_gap_ns(fps);
+    let mut dropped = 0u64;
+    // Frames the driver dropped, for want of a free buffer (the reader fell
+    // behind) or on the bus: gaps in its count
+    let mut sequence: Option<u32> = None;
+    let mut missed = 0u64;
+    while running() {
+        let ready = source.ready(DEVICE_POLL)?;
+        let dequeued = mono_ns();
+        let whole = |frame: &Dequeued| !frame.error && frame.bytes as usize == frame_bytes;
+        let newest = ready.iter().rev().find(|f| whole(f)).map(|f| f.index);
+        for frame in &ready {
+            if let Some(last) = sequence.replace(frame.sequence) {
+                let gap = u64::from(frame.sequence.wrapping_sub(last).saturating_sub(1));
+                if gap > 0 && gap < 1 << 16 {
+                    let before = missed;
+                    missed += gap;
+                    if missed.ilog2() > before.checked_ilog2().unwrap_or(0) || before == 0 {
+                        log::warn!("The capture card's driver dropped {missed} frames so far");
+                    }
+                }
+            }
+            if !whole(frame) {
+                source.requeue(frame.index)?;
+                dropped += 1;
+                if dropped.is_power_of_two() {
+                    log::warn!("{dropped} corrupted or short frames from the capture card");
+                }
+                continue;
+            }
+            let captured = frame.captured.unwrap_or(dequeued);
+            if Some(frame.index) == newest
+                && policy_last.is_none_or(|last| captured >= last + policy_gap)
+            {
+                let sink = lock(policy_sink).clone();
+                if let Some(sink) = sink {
+                    let times = PolicyTimes {
+                        captured,
+                        emitted: dequeued,
+                        read: dequeued,
+                    };
+                    sink.frame(source.frame(frame.index), size, times);
+                    policy_last = Some(captured);
+                }
+            }
+            let slots = rate.place(captured);
+            if slots.is_empty() {
+                source.requeue(frame.index)?;
+                continue;
+            }
+            // The frame before, again in the slots the source skipped
+            if let Some(before) = held.take() {
+                for slot in slots.start..slots.end - 1 {
+                    push_time(capture_times, mono_to_unix_us(rate.slot_time(slot)));
+                    converter.write_all(source.frame(before))?;
+                }
+                source.requeue(before)?;
+            }
+            push_time(capture_times, mono_to_unix_us(captured));
+            converter.write_all(source.frame(frame.index))?;
+            held = Some(frame.index);
+        }
+    }
+    Ok(())
+}
+
+/// The size to read a V4L2 device `input` at ourselves: when the config
+/// allows it and its `v4l2_args` ask for no more than YUYV (`-input_format
+/// yuyv422`) at a size (`-video_size WxH`, else [`WORK_SIZE`])
+fn direct_size(config: &VideoConfig, input: &str) -> Option<(u32, u32)> {
+    if !config.v4l2_direct || input == SCREEN || Path::new(input).is_file() {
+        return None;
+    }
+    let mut size = WORK_SIZE;
+    for pair in config.v4l2_args.chunks(2) {
+        match pair {
+            [key, value] if key == "-input_format" && value == "yuyv422" => {}
+            [key, value] if key == "-video_size" => {
+                let (width, height) = value.split_once('x')?;
+                size = (width.parse().ok()?, height.parse().ok()?);
+            }
+            _ => return None,
+        }
+    }
+    (size.0 * size.1 * 2 <= POLICY_MAX_BYTES as u32 && size.0.is_multiple_of(2)).then_some(size)
+}
+
 /// The next queued capture time; the grabber logs a frame's time just
 /// before writing the frame, so it is normally there: give the log reader a
 /// moment if not
@@ -1178,23 +1532,21 @@ fn grabber_args(config: &VideoConfig, input: &str) -> Vec<String> {
     // at a constant rate on stdout, and for the policy on fd 3 before that
     // (the constant rate holds each frame until the next one comes), a
     // frame once 3/4 of the policy's frame time passed since the last (every
-    // other one at 60 fps, every one at 30 even when they jitter), scaled as
-    // AgentZero's training frames are. showinfo logs each frame's capture
-    // time (kept absolute by -copyts); the policy's timestamps in µs never
-    // collide, since the muxer drops a frame whose time repeats.
-    let (width, height) = WORK_SIZE;
-    let (small_width, small_height) = POLICY_SIZE;
+    // other one at 60 fps, every one at 30 even when they jitter), as YUYV
+    // like a capture card's. showinfo logs each frame's capture time (kept
+    // absolute by -copyts); the policy's timestamps in µs never collide,
+    // since the muxer drops a frame whose time repeats.
     args.push("-copyts".to_string());
     args.push("-filter_complex".to_string());
     args.push(format!(
-        "[0:v]{stamp}scale={width}:{height}:force_original_aspect_ratio=decrease,\
-         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,split[main][policy];\
+        "[0:v]{stamp}{fit},format=yuv420p,split[main][policy];\
          [main]fps={fps},showinfo=checksum=0[out];\
          [policy]select='isnan(prev_selected_t)+gte(t-prev_selected_t,{gap})',\
-         scale={small_width}:{small_height}:flags=bilinear,format=rgb24,settb=AVTB,\
-         showinfo@policy=checksum=0[small]",
+         format=yuyv422,settb=AVTB,showinfo@policy=checksum=0[small]",
+        fit = fit(),
         fps = config.fps,
-        gap = 0.75 / POLICY_FPS as f64,
+        // A file's or the screen's own rate is not known here: as at 60 fps
+        gap = policy_gap_ns(60) as f64 / 1e9,
     ));
     args.extend(["-map", "[out]", "-threads", "1", "-f", "rawvideo", "pipe:1"].map(String::from));
     args.extend(
@@ -1216,6 +1568,43 @@ fn grabber_args(config: &VideoConfig, input: &str) -> Vec<String> {
 
 /// How the grabber's log lines about the policy's frames begin
 const POLICY_LOG: &str = "[showinfo@policy ";
+
+/// The filter fitting a source into [`WORK_SIZE`], padded if it has
+/// another shape than 16:9
+fn fit() -> String {
+    let (width, height) = WORK_SIZE;
+    format!(
+        "scale={width}:{height}:force_original_aspect_ratio=decrease,\
+         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
+    )
+}
+
+/// Command line for the converter behind our own V4L2 reader: its YUYV
+/// frames of `size`, on the constant rate already, as the grabber's raw
+/// 1080p frames on stdout
+fn converter_args(size: (u32, u32), fps: u32) -> Vec<String> {
+    let mut args: Vec<String> = ["-hide_banner", "-nostats", "-loglevel", "warning"]
+        .map(String::from)
+        .to_vec();
+    args.extend(["-f", "rawvideo", "-pix_fmt", "yuyv422", "-video_size"].map(String::from));
+    args.push(format!("{}x{}", size.0, size.1));
+    args.extend(["-framerate".to_string(), fps.to_string()]);
+    args.extend(["-i", "pipe:0", "-vf"].map(String::from));
+    args.push(format!("{},format=yuv420p", fit()));
+    args.extend(
+        [
+            "-fps_mode",
+            "passthrough",
+            "-threads",
+            "1",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ]
+        .map(String::from),
+    );
+    args
+}
 
 /// Command line for the preview: low-latency H.264 as fragmented MP4 on stdout
 fn preview_args(inner: &Inner) -> Vec<String> {
@@ -1321,7 +1710,10 @@ mod tests {
         VideoConfig {
             input: String::new(),
             fps: 60,
-            v4l2_args: ["-input_format", "yuyv422"].map(String::from).to_vec(),
+            v4l2_args: ["-input_format", "yuyv422", "-video_size", "1920x1080"]
+                .map(String::from)
+                .to_vec(),
+            v4l2_direct: true,
             record_height: 720,
             record_fps: 30,
             encoder: Vec::new(),
@@ -1349,7 +1741,7 @@ mod tests {
         // One fit for both, then the constant rate on the main output only
         assert!(main.ends_with("format=yuv420p,split[main][policy];"));
         assert!(!policy.contains("fps="));
-        assert!(policy.contains("scale=640:360:flags=bilinear,format=rgb24"));
+        assert!(policy.contains("format=yuyv422,settb=AVTB"));
         assert!(policy.contains("gte(t-prev_selected_t,0.025)"));
         assert!(policy.contains(&POLICY_LOG[1..POLICY_LOG.len() - 1]));
         // Both raw outputs without the frame-threaded encoder's delay
@@ -1389,6 +1781,159 @@ mod tests {
         assert_eq!(frame[0], 20);
         // Ten bytes left: not a frame
         assert_eq!(read_frame(&mut pipe, &mut frame), None);
+    }
+
+    #[test]
+    fn frames_keep_a_constant_rate_without_waiting_for_the_next() {
+        let ms = 1_000_000;
+        let mut rate = ConstantRate::new(60);
+        // Steady with jitter: a slot each
+        for (t, slot) in [(1000, 0), (1017, 1), (1032, 2), (1051, 3)] {
+            assert_eq!(rate.place(t * ms), slot..slot + 1);
+        }
+        // Two frames the source skipped: the frame before fills slots 4 and 5
+        assert_eq!(rate.place(1100 * ms), 4..7);
+        // A second frame for a slot already filled is left out
+        assert!(rate.place(1104 * ms).is_empty());
+        assert_eq!(rate.place(1117 * ms), 7..8);
+        assert_eq!(rate.slot_time(6), 1100 * ms);
+    }
+
+    #[test]
+    fn only_yuyv_at_a_size_is_read_ourselves() {
+        let mut config = config();
+        assert_eq!(direct_size(&config, "/dev/video9"), Some((1920, 1080)));
+        let exe = std::env::current_exe().unwrap().display().to_string();
+        assert_eq!(direct_size(&config, SCREEN), None);
+        assert_eq!(direct_size(&config, &exe), None);
+        config.v4l2_args = ["-video_size", "1280x720"].map(String::from).to_vec();
+        assert_eq!(direct_size(&config, "/dev/video9"), Some((1280, 720)));
+        for args in [
+            &["-input_format", "mjpeg"][..],
+            &["-video_size", "2560x1440"],
+            &["-standard", "PAL"],
+            &["-video_size"],
+        ] {
+            config.v4l2_args = args.iter().map(|a| a.to_string()).collect();
+            assert_eq!(direct_size(&config, "/dev/video9"), None, "{args:?}");
+        }
+        config.v4l2_args.clear();
+        assert_eq!(direct_size(&config, "/dev/video9"), Some(WORK_SIZE));
+        config.v4l2_direct = false;
+        assert_eq!(direct_size(&config, "/dev/video9"), None);
+        let args = converter_args((1280, 720), 60).join(" ");
+        assert!(args.contains("-pix_fmt yuyv422 -video_size 1280x720 -framerate 60 -i pipe:0"));
+        assert!(
+            args.contains("format=yuv420p -fps_mode passthrough -threads 1 -f rawvideo pipe:1")
+        );
+    }
+
+    /// A device stand-in: frames of 4 x 2 YUYV (16 bytes) filled with their
+    /// number, handed out a batch per wait, each with its capture time
+    struct FakeDevice {
+        batches: VecDeque<Vec<(u64, bool)>>,
+        buffers: Vec<Option<u8>>,
+        next: u8,
+        /// The frames whose buffers went back
+        requeued: Vec<u8>,
+    }
+
+    impl FrameSource for FakeDevice {
+        fn size(&self) -> (u32, u32) {
+            (4, 2)
+        }
+        fn ready(&mut self, _: Duration) -> Result<Vec<Dequeued>> {
+            let batch = self.batches.pop_front().unwrap_or_default();
+            Ok(batch
+                .into_iter()
+                .map(|(captured, whole)| {
+                    let index = self.buffers.iter().position(Option::is_none).unwrap() as u32;
+                    self.buffers[index as usize] = Some(self.next);
+                    self.next += 1;
+                    Dequeued {
+                        index,
+                        captured: Some(captured),
+                        sequence: 0,
+                        bytes: if whole { 16 } else { 8 },
+                        error: false,
+                    }
+                })
+                .collect())
+        }
+        fn frame(&self, index: u32) -> &[u8] {
+            const FRAMES: [[u8; 16]; 16] = {
+                let mut frames = [[0u8; 16]; 16];
+                let mut n = 0;
+                while n < 16 {
+                    frames[n] = [n as u8; 16];
+                    n += 1;
+                }
+                frames
+            };
+            &FRAMES[self.buffers[index as usize].unwrap() as usize]
+        }
+        fn requeue(&mut self, index: u32) -> Result<()> {
+            let frame = self.buffers[index as usize].take();
+            self.requeued.push(frame.expect("requeued twice"));
+            Ok(())
+        }
+    }
+
+    /// What reaches the policy: frame numbers and capture times
+    #[derive(Default)]
+    struct Policy(Mutex<Vec<(u8, u64)>>);
+
+    impl PolicySink for Policy {
+        fn frame(&self, frame: &[u8], size: (u32, u32), times: PolicyTimes) {
+            assert_eq!(size, (4, 2));
+            self.0.lock().unwrap().push((frame[0], times.captured));
+        }
+    }
+
+    #[test]
+    fn our_reader_feeds_the_policy_the_newest_and_the_rest_every_frame() {
+        let ms = 1_000_000;
+        let base = mono_ns() - 10_000 * ms;
+        let at = |t: u64| base + t * ms;
+        let mut device = FakeDevice {
+            batches: VecDeque::from([
+                vec![(at(0), true)],
+                vec![(at(17), true)],
+                // Behind: two ready at once, the second one short
+                vec![(at(33), true), (at(50), false)],
+                // The source skipped a frame
+                vec![(at(83), true)],
+                vec![(at(100), true), (at(117), true)],
+            ]),
+            buffers: vec![None; 4],
+            next: 0,
+            requeued: Vec::new(),
+        };
+        let times = Mutex::default();
+        let policy = Arc::new(Policy::default());
+        let sink: Arc<dyn PolicySink> = policy.clone();
+        let sinks = Mutex::new(Some(sink));
+        let mut converter = Vec::new();
+        let waits = core::cell::Cell::new(0);
+        pump(&mut device, &mut converter, 60, &times, &sinks, || {
+            waits.set(waits.get() + 1);
+            waits.get() <= 5
+        })
+        .unwrap();
+        // Every slot from 0 ms to 117 ms: frame 2 again for the short one
+        // (50 ms) and the one skipped (67 ms); 83 ms is slot 5
+        let written: Vec<u8> = converter.chunks(16).map(|f| f[0]).collect();
+        assert_eq!(written, [0, 1, 2, 2, 2, 4, 5, 6]);
+        assert!(converter.chunks(16).all(|f| f.iter().all(|&b| b == f[0])));
+        let times: Vec<u64> = times.into_inner().unwrap().into();
+        assert_eq!(times.len(), 8);
+        assert!(times.windows(2).all(|w| w[1] > w[0]));
+        // The policy: the newest whole frame, 25 ms or more apart
+        let seen = policy.0.lock().unwrap().clone();
+        assert_eq!(seen, [(0, at(0)), (2, at(33)), (4, at(83)), (6, at(117))]);
+        // The short frame went back at once; the last one written is held
+        assert_eq!(device.requeued, [0, 1, 3, 2, 4, 5]);
+        assert_eq!(device.buffers.iter().flatten().collect::<Vec<_>>(), [&6]);
     }
 
     #[test]

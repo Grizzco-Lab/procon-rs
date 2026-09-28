@@ -89,6 +89,11 @@ impl LoggingConfig {
     }
 }
 
+/// On unless the file says otherwise
+fn yes() -> bool {
+    true
+}
+
 /// Load any configuration struct from a TOML file
 pub fn load<T: DeserializeOwned, P: AsRef<Path>>(path: P) -> Result<T> {
     let contents = fs::read_to_string(&path)
@@ -265,6 +270,11 @@ pub struct VideoConfig {
     pub fps: u32,
     /// Extra ffmpeg input options for V4L2 devices, such as format and size
     pub v4l2_args: Vec<String>,
+    /// Read a V4L2 device ourselves (memory-mapped, a few buffers, the
+    /// kernel's timestamps) when `v4l2_args` ask for no more than YUYV at a
+    /// size; ffmpeg reads it otherwise, and when reading it ourselves fails
+    #[serde(default = "yes")]
+    pub v4l2_direct: bool,
     /// Recorded height in pixels, 0 for the source size; the dashboard can change it
     pub record_height: u32,
     /// Recorded frame rate; the dashboard can change it

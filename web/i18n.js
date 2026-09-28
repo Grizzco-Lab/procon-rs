@@ -1199,9 +1199,9 @@ const I18N = {
     "po.loop.wait": "waiting for the model",
     "po.loop.waitNote":
       "Until AgentZero took the frame: the model busy with the frame before (it takes only the newest), or waking up",
-    "po.loop.upload": "Onto the device",
+    "po.loop.upload": "To the model's input",
     "po.loop.uploadNote":
-      "The frame onto the model's device (the GPU; on the CPU there is nothing to move)",
+      "The capture card's YUYV frame onto the model's device (the GPU, through pinned memory) and scaled there to 640 x 360 RGB",
     "po.loop.model": "Model",
     "po.loop.modelNote": "The policy's time for one frame",
     "po.loop.send": "Send",
@@ -1216,6 +1216,7 @@ const I18N = {
       "From a frame's time in the paced video to its action being ready",
     "po.loop.rate": "{rate} actions/s",
     "po.loop.skipped": "{n} frames skipped",
+    "po.loop.direct": "capture card read directly",
     "po.loop.footLive":
       "Over the last 10 seconds, on this machine's monotonic clock.",
     "po.loop.footVideo":
