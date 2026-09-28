@@ -313,8 +313,14 @@
   };
 
   $("p-cancel").onclick = async () => {
-    pred.job = await api("cancel", {});
+    $("p-cancel").disabled = true;
+    try {
+      pred.job = await api("cancel", {});
+    } catch (error) {
+      showRunError(error.message);
+    }
     renderJob();
+    poll();
   };
 
   function showRunError(message) {
@@ -350,6 +356,9 @@
     const job = pred.job;
     const busy = running(job);
     $("p-cancel").hidden = !busy;
+    // Told to stop: the run ends within seconds (see `cancel` in
+    // src/predictor.rs)
+    $("p-cancel").disabled = Boolean(job?.stopping);
     checkForm();
     renderChip(job);
     const meter = $("p-progress");
@@ -362,7 +371,8 @@
         : job.state === "cancelled"
           ? "warning"
           : "ok";
-    $("p-state").textContent = STATES[job.state] ?? job.state;
+    $("p-state").textContent =
+      busy && job.stopping ? "Cancelling…" : (STATES[job.state] ?? job.state);
     const share = job.total ? job.done / job.total : busy ? 0 : 1;
     $("p-count").textContent = job.total
       ? `${job.done} / ${job.total}`

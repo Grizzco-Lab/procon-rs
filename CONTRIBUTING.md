@@ -420,9 +420,13 @@ and `--cpu`, each only when the command's `--help` lists it. Its `progress
 d/t` lines drive the progress bar, its last output lines stay with the job, and
 CUDA running out of memory is told apart. The predictions go to
 `[predictor] results/<video>/<checkpoint>/pred.jsonl` (renamed from `.part`
-on success) with `run.json`. The page asks for windows of predictions (and, for
-sessions, the truth through the Inkspector's alignment) and for the agreement
-over a range; videos play through Cuttlefish's video endpoint.
+on success) with `run.json`. The command runs in its own process group, since
+`uv run` starts Python as its child and a signal to `uv` alone would leave
+Python predicting: Cancel sends the group SIGTERM, then SIGKILL after five
+seconds, and keeps nothing; a run under way stops with the studio. The page
+asks for windows of predictions (and, for sessions, the truth through the
+Inkspector's alignment) and for the agreement over a range; videos play
+through Cuttlefish's video endpoint.
 
 ### gameplay-data
 

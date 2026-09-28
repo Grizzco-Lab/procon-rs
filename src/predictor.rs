@@ -8,7 +8,8 @@
 //! video or a video file on this machine.
 //!
 //! A run is `agentzero-predict` in the AgentZero folder, one at a time, as a
-//! child process the page follows:
+//! child process the page follows, in a process group of its own so that a
+//! cancel reaches the Python `uv run` starts as well as `uv`:
 //!
 //! ```text
 //! uv run agentzero-predict <session dir> --segment <file> --checkpoint <ckpt> -o <out>
@@ -38,7 +39,8 @@
 //! - `GET agreement?key=&ckpt=&start=&stop=`: only the agreement, over up
 //!   to an hour of frames
 //! - `POST run` with a [`RunRequest`] starts a run (409 while one runs)
-//! - `POST cancel` stops the current run
+//! - `POST cancel` stops the current run: SIGTERM to its process group, then
+//!   SIGKILL after [`KILL_AFTER`]; nothing of it is kept
 //!
 //! Errors are `{"error": "..."}` with status 400.
 
@@ -49,11 +51,13 @@ use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::time::Duration;
 use gameplay_data::labels::{self, Label};
 use gameplay_data::session::SessionInfo;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -82,6 +86,9 @@ const MAX_AGREEMENT: usize = 216_000;
 
 /// Largest request body
 const BODY_LIMIT: u64 = 16 << 10;
+
+/// How long a cancelled run has to end after SIGTERM before SIGKILL
+pub const KILL_AFTER: Duration = Duration::from_secs(5);
 
 /// The Predictor's settings, from `[predictor]`
 #[derive(Clone, Debug, PartialEq)]
@@ -201,6 +208,9 @@ pub struct Job {
     pub end_s: Option<f64>,
     pub cpu: bool,
     pub state: JobState,
+    /// Told to stop (`POST cancel`) and not ended yet
+    #[serde(default)]
+    pub stopping: bool,
     /// Windows or frames done and in all, from `progress` lines
     pub done: u64,
     pub total: Option<u64>,
@@ -272,7 +282,11 @@ pub struct Predictor {
     settings: Settings,
     capabilities: Mutex<Option<Capabilities>>,
     job: Mutex<Option<Job>>,
+    /// The running `uv`, leader of the run's process group, until its
+    /// output ends and [`Predictor::work`] takes it back to reap it; while
+    /// it is here, its group's id cannot go to another process
     child: Mutex<Option<Child>>,
+    /// The current run was told to stop
     cancel: AtomicBool,
     next_id: Mutex<u64>,
     predictions: Mutex<Option<Cached>>,
@@ -679,6 +693,7 @@ impl Predictor {
             end_s: request.end_s,
             cpu: request.cpu,
             state: JobState::Running,
+            stopping: false,
             done: 0,
             total: None,
             error: None,
@@ -698,9 +713,10 @@ impl Predictor {
             finished_ms: None,
             seconds: None,
         };
+        // Before the job shows, so a cancel of it is not undone
+        self.cancel.store(false, Ordering::Relaxed);
         *current = Some(job.clone());
         drop(current);
-        self.cancel.store(false, Ordering::Relaxed);
         log::info!("Predicting {} with {}", video.title, request.checkpoint);
         let predictor = Arc::clone(self);
         std::thread::Builder::new()
@@ -712,13 +728,15 @@ impl Predictor {
                 predictor.update(|job| {
                     job.finished_ms = Some(now_ms());
                     job.seconds = Some((started.elapsed().as_secs_f64() * 10.0).round() / 10.0);
+                    job.stopping = false;
                     match result {
-                        _ if cancelled => job.state = JobState::Cancelled,
+                        // Stored before a late cancel: done after all
                         Ok(frames) => {
                             job.state = JobState::Done;
                             job.frames = frames.0;
                             job.frame_offset = frame_offset(job.start_s, job.fps, frames.1);
                         }
+                        Err(_) if cancelled => job.state = JobState::Cancelled,
                         Err(e) => {
                             job.state = JobState::Failed;
                             job.out_of_memory = out_of_memory(&job.log);
@@ -755,17 +773,27 @@ impl Predictor {
         std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
         let partial = dir.join(format!("{PRED_FILE}.part"));
         let _ = std::fs::remove_file(&partial);
-        let mut child = Command::new("uv")
-            .args(args)
-            .current_dir(&self.settings.agentzero)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("cannot run uv")?;
-        let stdout = child.stdout.take().context("no stdout")?;
-        let stderr = child.stderr.take().context("no stderr")?;
-        *self.child.lock().unwrap() = Some(child);
+        let (stdout, stderr) = {
+            let mut slot = self.child.lock().unwrap();
+            // Under the lock: a cancel before this point means nothing
+            // runs, one after it finds the process
+            ensure!(!self.cancel.load(Ordering::Relaxed), "cancelled");
+            // A group of its own: `uv run` starts Python as its child, and
+            // a cancel signals both (see `cancel`)
+            let mut child = Command::new("uv")
+                .args(args)
+                .current_dir(&self.settings.agentzero)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .process_group(0)
+                .spawn()
+                .context("cannot run uv")?;
+            let stdout = child.stdout.take().context("no stdout")?;
+            let stderr = child.stderr.take().context("no stderr")?;
+            *slot = Some(child);
+            (stdout, stderr)
+        };
         let log = Arc::new(Mutex::new(VecDeque::new()));
         let keep = |log: &Mutex<VecDeque<String>>, line: &str| {
             let mut log = log.lock().unwrap();
@@ -795,15 +823,16 @@ impl Predictor {
             }
         });
         let _ = reader.join();
-        let status = self
-            .child
-            .lock()
-            .unwrap()
-            .take()
-            .context("the run was lost")?
-            .wait()?;
+        // The output ended with the command
+        let child = self.child.lock().unwrap().take();
+        let status = child.context("the run was lost")?.wait()?;
         let lines: Vec<String> = log.lock().unwrap().iter().cloned().collect();
         self.update(|job| job.log = lines.clone());
+        if self.cancel.load(Ordering::Relaxed) {
+            // A cancelled run keeps nothing, even what it wrote to the end
+            let _ = std::fs::remove_file(&partial);
+            bail!("cancelled");
+        }
         if !status.success() {
             let _ = std::fs::remove_file(&partial);
             let last = lines
@@ -831,11 +860,52 @@ impl Predictor {
         Ok((predicted.len(), predicted.iter().map(|l| l.frame).min()))
     }
 
-    /// Stop the current run
-    pub fn cancel(&self) {
+    /// Stop the current run: SIGTERM to its process group (`uv` and the
+    /// Python it starts; a SIGKILL to `uv` alone would leave Python
+    /// predicting on), then SIGKILL to what is left of it after
+    /// [`KILL_AFTER`]. The job shows as stopping until it ends, then as
+    /// cancelled.
+    pub fn cancel(self: &Arc<Self>) {
         self.cancel.store(true, Ordering::Relaxed);
-        if let Some(child) = self.child.lock().unwrap().as_mut() {
-            let _ = child.kill();
+        self.update(|job| job.stopping = !job.finished());
+        let pid = {
+            let child = self.child.lock().unwrap();
+            // None: not started yet (see `work`) or over
+            let Some(child) = child.as_ref() else {
+                return;
+            };
+            log::info!("Cancelling the prediction (pid {})", child.id());
+            signal_group(child, libc::SIGTERM);
+            child.id()
+        };
+        let predictor = Arc::clone(self);
+        std::thread::spawn(move || {
+            std::thread::sleep(KILL_AFTER);
+            // Still there: some of the group still holds the output
+            if let Some(child) = predictor
+                .child
+                .lock()
+                .unwrap()
+                .as_ref()
+                .filter(|child| child.id() == pid)
+            {
+                log::warn!("The prediction outlived SIGTERM; killing it");
+                signal_group(child, libc::SIGKILL);
+            }
+        });
+    }
+
+    /// Stop a run at the studio's exit and wait for it to end: in a group
+    /// of its own, it does not get the terminal's Ctrl-C
+    pub fn stop(self: &Arc<Self>) {
+        let running = || self.job().is_some_and(|job| !job.finished());
+        if !running() {
+            return;
+        }
+        self.cancel();
+        let deadline = Instant::now() + KILL_AFTER + Duration::from_secs(1);
+        while running() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 
@@ -962,6 +1032,15 @@ impl Predictor {
         };
         Ok((pred, truth))
     }
+}
+
+/// Send `signal` to the process group `child` leads (spawned with
+/// `process_group(0)`); only while `child` is not reaped, which keeps the
+/// group's id from going to another process
+fn signal_group(child: &Child, signal: libc::c_int) {
+    // SAFETY: kill(2) with a negative pid signals the group the child
+    // leads; it touches no memory
+    unsafe { libc::kill(-(child.id() as libc::pid_t), signal) };
 }
 
 /// `/api/cuttlefish/video`'s name of a kind
@@ -1358,6 +1437,29 @@ options:
         assert_eq!(signal("right_x")["r"], Value::Null);
         // The truth has no camera turn
         assert_eq!(signal("turn_x")["n"], 0);
+    }
+
+    #[test]
+    fn a_cancel_reaches_the_whole_group() {
+        use std::io::{BufRead, BufReader, Read};
+        // `sh` stands for `uv` and its `sleep` for the Python it starts:
+        // both hold the output, as they hold the command's stderr
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30 & echo started; wait"])
+            .stdout(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        stdout.read_line(&mut line).unwrap();
+        assert_eq!(line, "started\n");
+        let sent = Instant::now();
+        signal_group(&child, libc::SIGTERM);
+        // The output ends at once, not when `sleep` would have
+        stdout.read_to_end(&mut Vec::new()).unwrap();
+        assert!(sent.elapsed() < Duration::from_secs(5));
+        assert!(!child.wait().unwrap().success());
     }
 
     #[test]

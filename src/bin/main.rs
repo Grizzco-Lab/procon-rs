@@ -247,7 +247,7 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         tokio::select! {
-            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, Arc::clone(&vision), predictor, Arc::clone(&follow), &config.web) => {}
+            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, Arc::clone(&vision), Arc::clone(&predictor), Arc::clone(&follow), &config.web) => {}
             _ = tokio::signal::ctrl_c() => {
                 // Let ffmpeg finish the video file and session.json get its end time
                 if studio.recorder.status().state != RecorderState::Idle {
@@ -259,9 +259,11 @@ fn main() -> anyhow::Result<()> {
             }
         }
     });
-    // A tracker or detector started from the page ends with the studio
+    // A tracker, detector or prediction started from the page ends with the
+    // studio
     follow.stop_service();
     vision.stop_detector();
+    predictor.stop();
     // Stops ffmpeg even when idle
     studio.video.set_input(None)?;
     studio.video.stop_audio();
