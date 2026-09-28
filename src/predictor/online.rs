@@ -33,23 +33,24 @@
 //! default: the page asks for confirmation each time, for a set time (at most
 //! [`MAX_PLAY_S`]). The studio then writes each action to the proxy's replay
 //! port as a replay line with `mix` (see [`crate::replay`]): the proxy
-//! combines it with the physical controller, so a button pressed, or a stick
-//! pushed further than the bot's, reaches the Switch at once whatever the
-//! studio does. The studio also reads the reports coming back: any input the
-//! actions sent before the proxy read a report do not explain
-//! ([`person_input`]; dated by the report's own timestamp, since the studio
-//! may read it late) pauses it at once with a neutral line (mixed, that is
-//! the controller alone), and it stays paused until [`TAKEOVER_HOLD`] has
-//! passed without such input. Without
-//! `mix`, the proxy would pass on the bot's reports alone: a person could
-//! neither reach the Switch nor be seen. Sending ends, with a neutral line
-//! and the connection closed (the controller is back), when the time is up,
-//! on the page's Stop (or Esc), when the mode stops, when no dashboard page
-//! has been open for [`PAGE_GONE`], when the policy goes quiet for
-//! [`STALL`], when the Replay panel starts playing (the proxy serves one
-//! replay client at a time), and when the proxy's frames stop reaching the
-//! studio (a person's input could not be seen; it does not start without
-//! them either).
+//! combines it with the physical controller on every report, so a person
+//! holding it corrects the bot live, without pausing it: their buttons add
+//! to the bot's, and a stick they push past a small deadzone, or a turn
+//! faster than 10 °/s, replaces the bot's while they do. Without `mix`, the
+//! proxy would pass on the bot's reports alone. Before a line goes out, the
+//! bot's buttons are held to [`Limits`] ([`limits`]): the d-pad and the
+//! special blocked unless unticked, Home and Capture never, and no button
+//! pressed faster than a person could. Sending ends, with a neutral line
+//! and the connection closed (the controller alone again), when the time is
+//! up, on the page's Stop bot (or Esc, anywhere on the page), when the mode
+//! stops, when no dashboard page has been open for [`PAGE_GONE`], when the
+//! policy goes quiet for [`STALL`], when the Replay panel starts playing
+//! (the proxy serves one replay client at a time), and when the proxy's
+//! frames stop reaching the studio (what reaches the Switch could not be
+//! seen; it does not start without them either).
+//!
+//! The bot also measures a person's fastest tapping of ZR from the proxy's
+//! frames ([`limits::Tapping`]), for the page to set the cap from.
 //!
 //! **The loop's latency** (live), on this machine's clock: from the capture
 //! card's timestamp of a frame to its action written to the replay port, in
@@ -77,9 +78,17 @@
 //! - `POST stop`: stops the run; a video's predictions so far are kept
 //! - `POST play` `{"seconds": N}`: let AgentZero play for N seconds
 //! - `POST release`: stop sending, the controller is back
+//! - `POST limits` with [`Limits`]: what the bot may press, kept in the
+//!   studio's state file
+//! - `POST measure`: measure a person tapping ZR (`{"cancel": true}` stops
+//!   it); its progress and result are in the bot's status
 //!
 //! Each action also goes to the dashboard's WebSocket as an `agent` message
-//! ([`Online::subscribe`]), for the page's overlay.
+//! ([`Online::subscribe`]), for the page's overlay; the bot's status goes
+//! there with the studio's (see [`crate::web`]), so every app shows Stop bot
+//! while it plays.
+
+pub mod limits;
 
 use super::{
     BODY_LIMIT, CHECKPOINT_FILE, Checkpoint, Job, JobState, KILL_AFTER, LOG_LINES, MAX_WINDOW,
@@ -91,7 +100,6 @@ use crate::dump::{Dumper, Frame};
 use crate::objects::write_atomic;
 use crate::recorder::RecorderState;
 use crate::replay::Action;
-use crate::stream::LinkStats;
 use crate::studio::Studio;
 use crate::video::{self, PolicyFeed, SharedFrame};
 use alloc::collections::{BTreeMap, VecDeque};
@@ -100,6 +108,7 @@ use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 use gameplay_data::labels::{self, Label};
+use limits::{Limiter, Limits, Tapping, TappingStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -138,33 +147,8 @@ const HANDED: usize = 256;
 /// newest)
 const FEED_QUEUE: usize = 2;
 
-/// A person's input pauses the bot until this long after the last of it
-pub const TAKEOVER_HOLD: Duration = Duration::from_secs(3);
-
-/// A report may carry any action sent this long before the proxy read it
-/// (by its timestamp, on this machine's clock)
-const SENT_WINDOW_MS: u64 = 300;
-
-/// Leeway for the clock offset between the proxy and this machine, in ms
-const CLOCK_SLACK_MS: u64 = 5;
-
-/// How long sent actions are kept, for reports the studio reads late (under
-/// load it can fall behind by a lot); a report later than that is taken as a
-/// person's, which only pauses the bot
-const RECENT_KEEP: Duration = Duration::from_secs(2);
-
-/// A stick this far from the centre (raw 12-bit units, about 30% of the
-/// way) is pushed by a person unless the bot sent that value
-pub const STICK_TAKEOVER: f64 = 600.0;
-
-/// A person's turn (°/s) is this much faster than any the bot sent lately
-pub const GYRO_TAKEOVER_DPS: f64 = 90.0;
-
-/// Degrees per second of a raw gyro unit
-const GYRO_DPS_PER_LSB: f64 = 0.07;
-
-/// Stick value at rest
-const STICK_CENTER: f64 = 2048.0;
+/// The button a person's tapping is measured on: the one a turbo repeats
+pub const TAPPED: &str = "zr";
 
 /// Longest AgentZero plays per confirmation, in seconds
 pub const MAX_PLAY_S: f64 = 600.0;
@@ -350,11 +334,10 @@ pub struct PlayCapabilities {
     pub error: Option<String>,
 }
 
-/// Runs the policy and follows it
+/// Runs the policy and follows it; plays through the studio's [`Bot`]
 pub struct Online {
     predictor: Arc<Predictor>,
     studio: Arc<Studio>,
-    bot: Bot,
     run: Mutex<Option<Run>>,
     /// The running `uv`, leader of the run's process group, until its output
     /// ends and the run's thread takes it back to reap it
@@ -369,12 +352,11 @@ pub struct Online {
 
 impl Online {
     /// The online mode of `predictor`, taking frames from `studio`'s capture
-    /// and playing through `bot`; starts the watchdog that ends sending
-    pub fn new(predictor: Arc<Predictor>, studio: Arc<Studio>, bot: Bot) -> Arc<Self> {
+    /// and playing through its bot; starts the watchdog that ends sending
+    pub fn new(predictor: Arc<Predictor>, studio: Arc<Studio>) -> Arc<Self> {
         let online = Arc::new(Self {
             predictor,
             studio,
-            bot,
             run: Mutex::default(),
             child: Mutex::default(),
             stop: AtomicBool::new(false),
@@ -641,7 +623,7 @@ impl Online {
                 let result = online.work(&args, live);
                 // Nothing reaches the pipe or the proxy any more
                 online.studio.video.set_policy_feed(None);
-                online.bot.release(Ended::Stopped);
+                online.studio.bot.release(Ended::Stopped);
                 let stopped = online.stop.load(Ordering::Relaxed);
                 online.update(|run| {
                     let status = &mut run.status;
@@ -782,12 +764,12 @@ impl Online {
             model,
             ..Default::default()
         };
-        let mut sent = false;
+        // What went to the Switch, after the bot's limits
+        let mut sent = None;
         if live {
             let action = Action::parse(&value["send"].to_string()).context("bad send")?;
-            let sent_at = self.bot.send(&action);
-            sent = sent_at.is_some();
-            let done = sent_at.unwrap_or(got);
+            sent = self.studio.bot.send(&action);
+            let done = sent.as_ref().map_or(got, |(at, _)| *at);
             let frame = handed
                 .lock()
                 .unwrap()
@@ -833,7 +815,11 @@ impl Online {
             }
             fields.insert("type".into(), json!("agent"));
             fields.insert("id".into(), json!(id));
-            fields.insert("sent".into(), json!(sent));
+            fields.insert("sent".into(), json!(sent.is_some()));
+            // The page draws what reached the Switch while it plays
+            if let Some((_, line)) = &sent {
+                fields.insert("send".into(), json!(line));
+            }
             fields.insert("total_ms".into(), json!(sample.total));
         }
         self.ticks.send_replace(tick.to_string());
@@ -905,7 +891,7 @@ impl Online {
     pub fn stop(self: &Arc<Self>) {
         self.stop.store(true, Ordering::Relaxed);
         self.studio.video.set_policy_feed(None);
-        self.bot.release(Ended::Stopped);
+        self.studio.bot.release(Ended::Stopped);
         self.update(|run| run.status.stopping = run.status.state == JobState::Running);
         let pid = {
             let child = self.child.lock().unwrap();
@@ -957,13 +943,28 @@ impl Online {
             !self.studio.player.status().playing,
             "the Replay panel is playing to the proxy; stop it first"
         );
-        // A person taking over shows in those frames only
+        // What reaches the Switch shows in those frames only
         ensure!(
             self.studio.link.connected.load(Ordering::Relaxed),
-            "the proxy's frames do not reach the studio, so your input on the controller \
+            "the proxy's frames do not reach the studio, so what reaches the Switch \
              could not be seen; connect the proxy first"
         );
-        self.bot.play(seconds)
+        self.studio.bot.play(seconds)
+    }
+
+    /// Measure a person tapping [`TAPPED`] as fast as they can, from the
+    /// proxy's frames (see [`limits::Tapping`])
+    pub fn measure(&self) -> Result<()> {
+        // Replayed lines would count as the person's presses
+        ensure!(
+            !self.studio.player.status().playing,
+            "the Replay panel is playing to the proxy; stop it first"
+        );
+        ensure!(
+            self.studio.link.connected.load(Ordering::Relaxed),
+            "the proxy's frames do not reach the studio: connect the proxy first"
+        );
+        self.studio.bot.measure(TAPPED)
     }
 
     /// End sending on the rules of the module docs, every [`WATCH_EVERY`];
@@ -985,8 +986,8 @@ impl Online {
                 None
             };
             match reason {
-                Some(reason) => self.bot.release(reason),
-                None => self.bot.check(),
+                Some(reason) => self.studio.bot.release(reason),
+                None => self.studio.bot.check(),
             }
             let recording = self.studio.recorder.status().state != RecorderState::Idle;
             let forbidden = self.run.lock().unwrap().as_ref().is_some_and(|run| {
@@ -1064,17 +1065,15 @@ fn write_frames(mut stdin: impl Write, frames: Receiver<(u64, SharedFrame)>, han
 
 // ------------------------------------------------------------------ the bot
 
-/// The bot's hold on the proxy's replay port while AgentZero plays, and the
-/// watch for a person's input on the controller (a [`Dumper`] of the frames
-/// the proxy streams). See the module docs.
+/// The bot's hold on the proxy's replay port while AgentZero plays, with
+/// what it may press ([`Limits`]); a [`Dumper`] of the frames the proxy
+/// streams, for measuring a person's tapping. See the module docs.
 #[derive(Clone)]
 pub struct Bot(Arc<BotInner>);
 
 struct BotInner {
     /// `host:port` of the proxy's replay port
     address: String,
-    /// The proxy's link, whose clock offset dates its reports on this clock
-    link: Arc<LinkStats>,
     state: Mutex<BotState>,
 }
 
@@ -1085,20 +1084,17 @@ struct BotState {
     /// End of the time confirmed
     until: Option<Instant>,
     until_ms: u64,
-    /// Actions sent lately with the Unix ms they went out, for telling a
-    /// person's input apart
-    recent: VecDeque<(Instant, u64, Action)>,
     /// When the last action went out
     last_sent: Option<Instant>,
-    /// When a person last moved the controller while it played, and how
-    /// (see [`person_input`])
-    taken_at: Option<Instant>,
-    taken_ms: u64,
-    taken_by: Option<String>,
     /// Actions written to the replay port since it was let play
     sent: u64,
     /// Why sending last ended
     ended: Option<Ended>,
+    /// What it may press, and the presses it made lately
+    limits: Limits,
+    limiter: Limiter,
+    /// A person's tapping, measured
+    tapping: Option<Tapping>,
 }
 
 /// Why AgentZero stopped playing the Switch
@@ -1107,14 +1103,14 @@ struct BotState {
 pub enum Ended {
     /// The time confirmed is up
     Time,
-    /// Stopped on the page (or Esc)
+    /// Stop bot on the page, or Esc
     You,
     /// No dashboard page was open for [`PAGE_GONE`]
     Page,
     /// The Replay panel started playing to the proxy
     Replay,
-    /// The proxy's frames stopped reaching the studio: a person's input
-    /// could not be seen
+    /// The proxy's frames stopped reaching the studio: what reaches the
+    /// Switch could not be seen
     Link,
     /// No action came for [`STALL`]
     Stall,
@@ -1131,24 +1127,19 @@ pub struct BotStatus {
     pub playing: bool,
     /// End of the time confirmed (Unix ms)
     pub until_ms: Option<u64>,
-    /// Paused by a person's input: until when (Unix ms), and what it was
-    /// (see [`person_input`])
-    pub paused_until_ms: Option<u64>,
-    pub taken_by: Option<String>,
     pub sent: u64,
     /// Why sending last ended
     pub ended: Option<Ended>,
     /// Where it sends
     pub address: String,
+    /// What it may press
+    pub limits: Limits,
+    /// The last measurement of a person's tapping
+    pub tapping: Option<TappingStatus>,
 }
 
 impl BotState {
-    /// Paused by a person's input
-    fn paused(&self) -> bool {
-        self.taken_at.is_some_and(|at| at.elapsed() < TAKEOVER_HOLD)
-    }
-
-    /// Write one action; a failed write ends sending
+    /// Write one line; a failed write ends sending
     fn write(&mut self, action: &Action) -> bool {
         let Some(stream) = self.stream.as_mut() else {
             return false;
@@ -1162,63 +1153,50 @@ impl BotState {
             self.ended = Some(Ended::Proxy);
             return false;
         }
-        let now = Instant::now();
-        self.recent.push_back((now, now_ms(), action.clone()));
-        while self
-            .recent
-            .front()
-            .is_some_and(|(at, _, _)| now.duration_since(*at) > RECENT_KEEP)
-        {
-            self.recent.pop_front();
-        }
         true
     }
 
-    /// The actions a report the proxy read at `read_ms` (Unix ms, this
-    /// machine's clock) may carry: those sent up to [`SENT_WINDOW_MS`]
-    /// before it, and the one still in effect then (the proxy applies the
-    /// latest until the next)
-    fn sent_before(&self, read_ms: u64) -> Vec<&Action> {
-        let opened = read_ms.saturating_sub(SENT_WINDOW_MS);
-        let first = self
-            .recent
-            .iter()
-            .rposition(|(_, sent_ms, _)| *sent_ms <= opened)
-            .unwrap_or(0);
-        self.recent
-            .iter()
-            .skip(first)
-            .filter(|(_, sent_ms, _)| *sent_ms <= read_ms + CLOCK_SLACK_MS)
-            .map(|(_, _, action)| action)
-            .collect()
+    fn measuring(&self) -> bool {
+        self.tapping.as_ref().is_some_and(Tapping::active)
     }
 }
 
-/// Nothing pressed, sticks at rest, no turn; mixed, the controller alone
+/// Nothing pressed, and no sticks or gyro of its own: mixed, the controller
+/// alone (a stick at 2048 would stand in for a resting one, which reads its
+/// calibrated centre)
 fn neutral() -> Action {
     Action {
         buttons: Some(Vec::new()),
-        left_stick: Some([2048, 2048]),
-        right_stick: Some([2048, 2048]),
-        gyro: Some([0, 0, 0]),
         mix: true,
         ..Default::default()
     }
 }
 
 impl Bot {
-    /// A bot for the proxy's replay port at `address` (`host:port`), dating
-    /// the proxy's reports by `link`'s clock offset
-    pub fn new(address: String, link: Arc<LinkStats>) -> Self {
+    /// A bot for the proxy's replay port at `address` (`host:port`), which
+    /// may press what `limits` allow
+    pub fn new(address: String, limits: Limits) -> Self {
         Self(Arc::new(BotInner {
             address,
-            link,
-            state: Mutex::default(),
+            state: Mutex::new(BotState {
+                limits,
+                ..Default::default()
+            }),
         }))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, BotState> {
         self.0.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// What it may press
+    pub fn limits(&self) -> Limits {
+        self.lock().limits
+    }
+
+    /// From the next action on, while it plays too
+    pub fn set_limits(&self, limits: Limits) {
+        self.lock().limits = limits;
     }
 
     /// Connect to the replay port and play for `seconds`
@@ -1227,7 +1205,14 @@ impl Bot {
             seconds > 0.0 && seconds <= MAX_PLAY_S,
             "play between 0 and {MAX_PLAY_S} seconds, not {seconds}"
         );
-        ensure!(self.lock().stream.is_none(), "AgentZero is playing already");
+        {
+            let state = self.lock();
+            ensure!(state.stream.is_none(), "AgentZero is playing already");
+            ensure!(
+                !state.measuring(),
+                "your tapping is being measured; let it finish first"
+            );
+        }
         let address = &self.0.address;
         let socket = address
             .to_socket_addrs()?
@@ -1239,39 +1224,42 @@ impl Bot {
         stream.set_write_timeout(Some(Duration::from_millis(500)))?;
         let mut state = self.lock();
         let now = Instant::now();
-        *state = BotState {
-            stream: Some(stream),
-            until: Some(now + Duration::from_secs_f64(seconds)),
-            until_ms: now_ms() + (seconds * 1000.0) as u64,
-            last_sent: Some(now),
-            ..Default::default()
-        };
+        state.stream = Some(stream);
+        state.until = Some(now + Duration::from_secs_f64(seconds));
+        state.until_ms = now_ms() + (seconds * 1000.0) as u64;
+        state.last_sent = Some(now);
+        state.sent = 0;
+        state.ended = None;
+        state.limiter = Limiter::default();
         log::info!("AgentZero plays through {address} for {seconds} s");
         Ok(())
     }
 
-    /// Send one action, unless not playing or paused by a person; answers
-    /// with the Unix ms it was written at
-    pub fn send(&self, action: &Action) -> Option<f64> {
+    /// Send one action, its buttons held to the limits, unless not playing;
+    /// answers with the Unix ms it was written at and the line written
+    pub fn send(&self, action: &Action) -> Option<(f64, Action)> {
         let mut state = self.lock();
-        if state.stream.is_none() || state.paused() {
-            return None;
-        }
-        let action = Action {
+        state.stream.as_ref()?;
+        let now = Instant::now();
+        let wanted = action.buttons.clone().unwrap_or_default();
+        let limits = state.limits;
+        let buttons = state.limiter.buttons(&wanted, &limits, now);
+        let line = Action {
+            buttons: Some(buttons),
             mix: true,
             t_ms: None,
             ..action.clone()
         };
-        if !state.write(&action) {
+        if !state.write(&line) {
             return None;
         }
         state.sent += 1;
-        state.last_sent = Some(Instant::now());
-        Some(unix_ms())
+        state.last_sent = Some(now);
+        Some((unix_ms(), line))
     }
 
-    /// Stop sending: a neutral line, then the connection closes and the
-    /// controller is back
+    /// Stop sending: a neutral line, letting go of everything at once, then
+    /// the connection closes and the controller is alone again
     pub fn release(&self, reason: Ended) {
         let mut state = self.lock();
         if state.stream.is_none() {
@@ -1293,7 +1281,7 @@ impl Bot {
             }
             if state.until.is_some_and(|until| Instant::now() >= until) {
                 Ended::Time
-            } else if !state.paused() && state.last_sent.is_some_and(|at| at.elapsed() > STALL) {
+            } else if state.last_sent.is_some_and(|at| at.elapsed() > STALL) {
                 Ended::Stall
             } else {
                 return;
@@ -1302,103 +1290,62 @@ impl Bot {
         self.release(reason);
     }
 
+    /// Measure a person tapping `button` from the frames to come; not while
+    /// it plays, whose presses would count
+    pub fn measure(&self, button: &str) -> Result<()> {
+        let mut state = self.lock();
+        ensure!(
+            state.stream.is_none(),
+            "AgentZero is playing; stop it before measuring your tapping"
+        );
+        state.tapping = Some(Tapping::new(button));
+        log::info!("Measuring your tapping of {button}");
+        Ok(())
+    }
+
+    /// Stop a measurement under way
+    pub fn cancel_measure(&self) {
+        if let Some(tapping) = self.lock().tapping.as_mut() {
+            tapping.cancel();
+        }
+    }
+
     pub fn status(&self) -> BotStatus {
         let state = self.lock();
         BotStatus {
             playing: state.stream.is_some(),
             until_ms: state.stream.as_ref().map(|_| state.until_ms),
-            paused_until_ms: (state.stream.is_some() && state.paused())
-                .then(|| state.taken_ms + TAKEOVER_HOLD.as_millis() as u64),
-            taken_by: state.taken_by.clone(),
             sent: state.sent,
             ended: state.ended,
             address: self.0.address.clone(),
+            limits: state.limits,
+            tapping: state.tapping.as_ref().map(Tapping::status),
         }
     }
 }
 
-/// Watch the proxy's reports for a person's input while AgentZero plays
+/// The proxy's frames: a person's presses while their tapping is measured
 impl Dumper for Bot {
     fn dump(&mut self, frame: &Frame) -> Result<()> {
         let mut state = self.lock();
-        if state.stream.is_none() {
+        let Some(tapping) = state.tapping.as_mut().filter(|t| t.active()) else {
             return Ok(());
-        }
+        };
         let Some(report) = Action::from_report(frame.payload()) else {
             return Ok(());
         };
-        // When the proxy read it, on this clock: the studio may read it
-        // late, and the actions sent since cannot be in it
-        let offset = self.0.link.clock_offset_ms.load(Ordering::Relaxed);
-        let read_ms = frame.timestamp_ms.saturating_add_signed(offset);
-        let Some(what) = person_input(&report, &state.sent_before(read_ms)) else {
-            return Ok(());
-        };
-        let now = Instant::now();
-        if !state.paused() {
-            // The controller alone, now; the next actions wait
-            state.write(&neutral());
-            log::info!("You took over AgentZero: {what}");
-        }
-        state.taken_at = Some(now);
-        state.taken_ms = now_ms();
-        state.taken_by = Some(what);
+        let pressed = report
+            .buttons
+            .iter()
+            .flatten()
+            .any(|b| b == tapping.button());
+        tapping.report(frame.timestamp_ms, pressed);
         Ok(())
     }
 
     fn flush(&mut self) -> Result<()> {
         Ok(())
     }
-}
-
-/// What a person did on the controller that the bot's recent actions do not
-/// explain, if anything: a button none of them pressed (`button:<name>`), a
-/// stick pushed past [`STICK_TAKEOVER`] to where none of them put it
-/// (`stick:left`, `stick:right`), or a turn faster than theirs by
-/// [`GYRO_TAKEOVER_DPS`] (`gyro`). With `mix`, the proxy reports each button
-/// pressed on either, each stick and the gyro of whichever moves more, so a
-/// person's input shows as such a difference.
-pub fn person_input(report: &Action, recent: &[&Action]) -> Option<String> {
-    for name in report.buttons.iter().flatten() {
-        let sent = recent
-            .iter()
-            .any(|action| action.buttons.iter().flatten().any(|b| b == name));
-        if !sent {
-            return Some(format!("button:{name}"));
-        }
-    }
-    type Pick = fn(&Action) -> Option<[u16; 2]>;
-    let sticks: [(&str, Pick); 2] = [("left", |a| a.left_stick), ("right", |a| a.right_stick)];
-    for (name, pick) in sticks {
-        let Some([x, y]) = pick(report) else { continue };
-        let pushed =
-            (f64::from(x) - STICK_CENTER).hypot(f64::from(y) - STICK_CENTER) > STICK_TAKEOVER;
-        // The proxy writes the bot's value as it is
-        let sent = recent.iter().filter_map(|a| pick(a)).any(|[sx, sy]| {
-            (i32::from(sx) - i32::from(x)).abs() <= 2 && (i32::from(sy) - i32::from(y)).abs() <= 2
-        });
-        if pushed && !sent {
-            return Some(format!("stick:{name}"));
-        }
-    }
-    if let Some(gyro) = report.gyro {
-        let rate = |g: [i16; 3]| {
-            g.iter()
-                .map(|&v| f64::from(v) * GYRO_DPS_PER_LSB)
-                .map(|v| v * v)
-                .sum::<f64>()
-                .sqrt()
-        };
-        let own = recent
-            .iter()
-            .filter_map(|a| a.gyro)
-            .map(rate)
-            .fold(0.0, f64::max);
-        if rate(gyro) > own + GYRO_TAKEOVER_DPS {
-            return Some("gyro".to_string());
-        }
-    }
-    None
 }
 
 // ------------------------------------------------------------------ HTTP
@@ -1412,7 +1359,7 @@ impl Online {
         match path {
             "status" => Ok(json!({
                 "run": self.status(),
-                "bot": self.bot.status(),
+                "bot": self.studio.bot.status(),
             })),
             "checkpoints" => Ok(self.info(text("refresh") == "1")),
             "labels" => Ok(self.labels(number("start")?, number("stop")?)?),
@@ -1446,11 +1393,27 @@ impl Online {
                     .and_then(|v| v["seconds"].as_f64())
                     .context("give seconds")?;
                 self.play(seconds)?;
-                Ok(json!(self.bot.status()))
+                Ok(json!(self.studio.bot.status()))
             }
             "release" => {
-                self.bot.release(Ended::You);
-                Ok(json!(self.bot.status()))
+                self.studio.bot.release(Ended::You);
+                Ok(json!(self.studio.bot.status()))
+            }
+            "limits" => {
+                let limits: Limits =
+                    serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("bad limits: {e}"))?;
+                self.studio.set_bot_limits(limits)?;
+                Ok(json!(self.studio.bot.status()))
+            }
+            "measure" => {
+                let cancel = serde_json::from_slice::<Value>(body)
+                    .is_ok_and(|v| v["cancel"].as_bool() == Some(true));
+                if cancel {
+                    self.studio.bot.cancel_measure();
+                } else {
+                    self.measure()?;
+                }
+                Ok(json!(self.studio.bot.status()))
             }
             _ => Err(HttpError(
                 StatusCode::NOT_FOUND,
@@ -1502,57 +1465,22 @@ mod tests {
     }
 
     #[test]
-    fn a_person_is_told_from_the_bot() {
-        let bot = action(
-            r#"{"buttons": ["zr", "zl"], "left_stick": [2100, 3360], "right_stick": [2100, 2100], "gyro": [19, -86, 700]}"#,
-        );
-        let recent = [&bot];
-        // What the bot sent comes back as it is: nobody touched anything
-        let same = action(
-            r#"{"buttons": ["zr", "zl"], "left_stick": [2100, 3360], "right_stick": [2060, 2030], "gyro": [19, -86, 700]}"#,
-        );
-        assert_eq!(person_input(&same, &recent), None);
-        // A button the bot did not press
-        let pressed = action(r#"{"buttons": ["zr", "zl", "a"]}"#);
-        assert_eq!(person_input(&pressed, &recent).as_deref(), Some("button:a"));
-        // A stick pushed further than the bot's wins in the mix
-        let pushed = action(r#"{"left_stick": [300, 2048]}"#);
-        assert_eq!(
-            person_input(&pushed, &recent).as_deref(),
-            Some("stick:left")
-        );
-        // A small push stays below the line
-        let nudged = action(r#"{"right_stick": [2300, 2200]}"#);
-        assert_eq!(person_input(&nudged, &recent), None);
-        // A turn much faster than the bot's (700 units = 49 °/s)
-        let turned = action(r#"{"gyro": [0, 0, -3000]}"#);
-        assert_eq!(person_input(&turned, &recent).as_deref(), Some("gyro"));
-        // Hands holding the controller still
-        let held = action(r#"{"gyro": [40, -35, 60]}"#);
-        assert_eq!(person_input(&held, &[&neutral()]), None);
-        // Paused (the neutral line sent): any input is a person's
-        assert_eq!(
-            person_input(&action(r#"{"buttons": ["zr"]}"#), &[&neutral()]).as_deref(),
-            Some("button:zr")
-        );
-    }
-
-    #[test]
     fn neutral_mixed_is_the_controller_alone() {
         let mut report = [0u8; 64];
         report[0] = 0x30;
         report[3] = 0x80; // ZR
-        let controller = {
-            let mut with = report;
-            // Left stick pushed, gyro turning
-            Action::parse(r#"{"left_stick": [100, 4000], "gyro": [-300, 20, 5]}"#)
-                .unwrap()
-                .apply(&mut with);
-            with
-        };
-        let mut mixed = controller;
-        neutral().apply(&mut mixed);
-        assert_eq!(mixed, controller);
+        // Left stick pushed and turning; then at rest, off 2048 as real
+        // sticks rest, the gyro reading its bias
+        for state in [
+            r#"{"left_stick": [100, 4000], "gyro": [-300, 20, 5]}"#,
+            r#"{"left_stick": [2068, 1876], "right_stick": [2084, 2148], "gyro": [21, -28, 4]}"#,
+        ] {
+            let mut controller = report;
+            action(state).apply(&mut controller);
+            let mut mixed = controller;
+            neutral().apply(&mut mixed);
+            assert_eq!(mixed, controller, "{state}");
+        }
     }
 
     #[test]
@@ -1587,8 +1515,9 @@ mod tests {
         assert!(handed.iter().all(|h| h.written_ms > 1.7e12));
     }
 
-    #[test]
-    fn the_bot_sends_mixed_and_stops_for_a_person() {
+    /// A stand-in for the proxy's replay port: the lines it got, once the
+    /// bot let go
+    fn replay_port() -> (String, std::thread::JoinHandle<Vec<Action>>) {
         use std::io::{BufRead, BufReader};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap().to_string();
@@ -1597,59 +1526,107 @@ mod tests {
             BufReader::new(stream)
                 .lines()
                 .map_while(Result::ok)
-                .collect::<Vec<_>>()
+                .map(|line| action(&line))
+                .collect()
         });
-        // The proxy's clock is this one
-        let mut bot = Bot::new(address, Arc::default());
-        // Not playing: nothing goes out, and nothing is watched
-        let zr = action(
-            r#"{"buttons": ["zr"], "left_stick": [2100, 3360], "right_stick": [2048, 2048], "gyro": [0, 0, 0]}"#,
-        );
-        let calm = neutral();
-        assert_eq!(bot.send(&zr), None);
+        (address, proxy)
+    }
+
+    /// A report the proxy read at `read_ms` with `buttons` pressed
+    fn report(buttons: &str, read_ms: u64) -> Frame {
+        let mut report = [0u8; 64];
+        report[0] = 0x30;
+        action(&format!(r#"{{"buttons": {buttons}}}"#)).apply(&mut report);
+        Frame::new(read_ms, 0, &report)
+    }
+
+    #[test]
+    fn the_bot_sends_mixed_within_its_limits_and_stops_at_once() {
+        let (address, proxy) = replay_port();
+        let mut bot = Bot::new(address, Limits::default());
+        let wants = |buttons: &str| {
+            action(&format!(
+                r#"{{"buttons": {buttons}, "left_stick": [2100, 3360], "right_stick": [2048, 2048], "gyro": [0, 0, 0]}}"#
+            ))
+        };
+        // Not playing: nothing goes out
+        assert!(bot.send(&wants(r#"["zr"]"#)).is_none());
         assert!(bot.play(0.0).is_err() && bot.play(MAX_PLAY_S + 1.0).is_err());
         bot.play(30.0).unwrap();
-        let zr_ms = now_ms();
-        assert!(bot.send(&zr).is_some());
-        // A report the proxy read at `read_ms`, with the controller at rest
-        let report = |buttons: &str, read_ms: u64| {
-            let mut report = [0u8; 64];
-            report[0] = 0x30;
-            let json = format!(
-                r#"{{"buttons": {buttons}, "left_stick": [2100, 3360], "right_stick": [2040, 2060]}}"#
-            );
-            action(&json).apply(&mut report);
-            Frame::new(read_ms, 0, &report)
-        };
-        // The bot's ZR comes back: nobody is there, nor while the bot is
-        // quiet (the proxy holds its last action)
-        bot.dump(&report(r#"["zr"]"#, zr_ms + 1)).unwrap();
-        bot.dump(&report(r#"["zr"]"#, zr_ms + 1000)).unwrap();
-        assert!(bot.status().paused_until_ms.is_none());
-        // Once it let go of ZR, a report from before that still has it,
-        // however late the studio reads it
-        std::thread::sleep(Duration::from_millis(2 * CLOCK_SLACK_MS));
-        assert!(bot.send(&calm).is_some());
-        bot.dump(&report(r#"["zr"]"#, zr_ms + 1)).unwrap();
-        assert!(bot.status().paused_until_ms.is_none());
-        // Someone presses B: a neutral line at once, then nothing
-        bot.dump(&report(r#"["b"]"#, now_ms())).unwrap();
-        let status = bot.status();
-        assert!(status.paused_until_ms.is_some());
-        assert_eq!(status.taken_by.as_deref(), Some("button:b"));
-        assert_eq!(bot.send(&zr), None);
+        // The d-pad, the special and Home are held back; ZR goes
+        let (_, line) = bot
+            .send(&wants(r#"["zr", "up", "r_stick", "home"]"#))
+            .unwrap();
+        assert_eq!(line.buttons, Some(vec!["zr".to_string()]));
+        assert!(line.mix);
+        // A person pressing B and A on the controller: the bot plays on
+        bot.dump(&report(r#"["b", "a"]"#, now_ms())).unwrap();
+        // ZR let go at once: held to the shortest press
+        let (_, line) = bot.send(&wants("[]")).unwrap();
+        assert_eq!(line.buttons, Some(vec!["zr".to_string()]));
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(bot.send(&wants("[]")).unwrap().1.buttons, Some(Vec::new()));
+        // Pressed again too soon: waits until 130 ms after the last press
+        assert_eq!(
+            bot.send(&wants(r#"["zr"]"#)).unwrap().1.buttons,
+            Some(Vec::new())
+        );
+        std::thread::sleep(Duration::from_millis(90));
+        assert_eq!(
+            bot.send(&wants(r#"["zr"]"#)).unwrap().1.buttons,
+            Some(vec!["zr".to_string()])
+        );
+        // Unblocked on the page: the d-pad goes too, Home never
+        bot.set_limits(Limits {
+            block_dpad: false,
+            ..Limits::default()
+        });
+        assert_eq!(
+            bot.send(&wants(r#"["zr", "up", "home"]"#))
+                .unwrap()
+                .1
+                .buttons,
+            Some(vec!["up".to_string(), "zr".to_string()])
+        );
+        assert_eq!(bot.status().sent, 6);
+        // Stop: a line that lets go of everything, then nothing more
         bot.release(Ended::You);
-        assert!(!bot.status().playing);
+        assert!(bot.send(&wants(r#"["zr"]"#)).is_none());
+        let status = bot.status();
+        assert!(!status.playing);
+        assert_eq!(status.ended, Some(Ended::You));
         let lines = proxy.join().unwrap();
-        assert_eq!(lines.len(), 4);
-        for line in &lines {
-            assert!(Action::parse(line).unwrap().mix, "{line}");
+        assert_eq!(lines.len(), 7);
+        assert!(lines.iter().all(|line| line.mix));
+        let last = lines.last().unwrap();
+        assert_eq!(last.buttons, Some(Vec::new()));
+        assert!(last.left_stick.is_none() && last.gyro.is_none());
+    }
+
+    #[test]
+    fn a_persons_tapping_is_measured_from_the_proxys_frames() {
+        let mut bot = Bot::new("127.0.0.1:9".to_string(), Limits::default());
+        bot.measure(TAPPED).unwrap();
+        // Every 16 ms, ZR pressed for 48 ms every 112 (8.9 a second)
+        for k in 0..800u64 {
+            let at = 1_000 + 16 * k;
+            let buttons = if (at - 1_000) % 112 < 48 {
+                r#"["zr", "zl"]"#
+            } else {
+                r#"["zl"]"#
+            };
+            bot.dump(&report(buttons, at)).unwrap();
         }
-        assert!(lines[0].contains("zr"));
-        // The neutral line after the person, the one closing the connection
-        for line in &lines[2..] {
-            assert_eq!(Action::parse(line).unwrap().buttons, Some(Vec::new()));
-        }
-        assert_eq!(bot.status().ended, Some(Ended::You));
+        let tapping = bot.status().tapping.unwrap();
+        assert_eq!(tapping.state, "done");
+        let result = tapping.result.unwrap();
+        assert_eq!(result.fastest_hz, 8.9);
+        assert_eq!(result.cap_hz, 9.8);
+        assert_eq!(result.shortest_hold_ms, Some(48));
+        // Playing while it measures would count the bot's presses
+        bot.measure(TAPPED).unwrap();
+        assert!(bot.play(30.0).is_err());
+        bot.cancel_measure();
+        assert_eq!(bot.status().tapping.unwrap().state, "cancelled");
     }
 }

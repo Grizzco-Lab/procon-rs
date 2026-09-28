@@ -1573,6 +1573,8 @@ function connect() {
         pushGyro(performance.now(), latestState.gyro[0]);
     } else if (message.type === "status") {
       renderStatus(message);
+      // AgentZero playing the Switch, for Stop bot over every app
+      window.dispatchEvent(new CustomEvent("bot", { detail: message.bot }));
     } else if (message.type === "agent") {
       // AgentZero's action, for the Predictor's online mode
       window.dispatchEvent(new CustomEvent("agent", { detail: message }));

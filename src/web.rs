@@ -622,11 +622,13 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
                     studio.video_bytes(),
                     recount.then(|| studio.other_sessions_bytes()),
                     disk_space(&studio.recorder.prefix_dir()),
+                    // Its lock is held while a line goes to the proxy
+                    studio.bot.status(),
                 )
             })
             .await
         };
-        let Ok((recorder, video, video_bytes, recounted, disk)) = snapshot else {
+        let Ok((recorder, video, video_bytes, recounted, disk, bot)) = snapshot else {
             continue;
         };
         if let Some(bytes) = recounted {
@@ -677,6 +679,8 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
                 "game_settings": studio.game_settings(),
                 "techniques": studio.techniques_status(),
                 "replay": studio.player.status(),
+                // AgentZero playing the Switch: every app shows Stop bot
+                "bot": bot,
                 "video": video,
                 // Bytes per second, and bytes of the current or last session
                 "rates": { "controller": controller_rate, "video": video_rate },

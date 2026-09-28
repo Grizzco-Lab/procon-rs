@@ -7467,6 +7467,118 @@ body {
   font-size: 12.5px;
 }
 
+/* What AgentZero may press: masks, the press-rate cap, measuring a person */
+.po-limits {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 10px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+}
+
+.po-limits legend {
+  padding: 0 4px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.po-cap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.po-cap .po-field {
+  gap: 6px;
+}
+
+.po-cap .select.po-num {
+  width: 64px;
+  max-width: none;
+}
+
+.po-measure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.po-measure .po-play-note {
+  flex: 1 1 14em;
+  min-width: 0;
+}
+
+/* AgentZero playing the Switch: Stop bot, over every app; the page gets
+   room to scroll its end out from under it */
+body.bot-playing {
+  padding-bottom: 88px;
+}
+
+.bot-stop {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  min-height: 52px;
+  padding: 0 20px;
+  border: 2px solid color-mix(in oklab, var(--critical) 70%, #000000);
+  border-radius: 999px;
+  background: var(--critical);
+  color: #ffffff;
+  font: inherit;
+  font-size: 16px;
+  white-space: nowrap;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
+  cursor: pointer;
+  transform: translateX(-50%);
+}
+
+.bot-stop:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--critical) 82%, #000000);
+}
+
+.bot-stop:focus-visible {
+  outline: 3px solid var(--text);
+  outline-offset: 3px;
+}
+
+.bot-stop:disabled {
+  cursor: progress;
+  opacity: 0.8;
+}
+
+.bot-stop-glyph {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background: #ffffff;
+}
+
+.bot-stop-left {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
+.bot-stop kbd {
+  padding: 1px 6px;
+  border: 1px solid rgb(255 255 255 / 0.6);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+}
+
 .po-loop-table td,
 .po-loop-table th {
   text-align: right;
@@ -7512,11 +7624,6 @@ body {
   outline-offset: -3px;
 }
 
-.po-live[data-state="paused"] > .screen {
-  outline: 3px solid var(--warning);
-  outline-offset: -3px;
-}
-
 .po-hud .hud-dot,
 .po-hud .hud-bar {
   fill: var(--s2);
@@ -7545,11 +7652,6 @@ body {
 
 .po-live[data-state="playing"] .po-badge {
   background: var(--critical);
-}
-
-.po-live[data-state="paused"] .po-badge {
-  background: var(--warning);
-  color: #1b1b1b;
 }
 
 .po-dialog {

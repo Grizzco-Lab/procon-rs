@@ -13,9 +13,26 @@
 //! and 1/4096 g per unit) for all three samples of a report. `t_ms` is when
 //! the line plays, counted from the first line; the proxy ignores it.
 //!
-//! With `"mix": true` the line is combined with the controller instead:
-//! buttons pressed on either count, for each stick and the gyro whichever moves
-//! more wins, and the accelerometer stays the controller's.
+//! With `"mix": true` the line is combined with the controller instead, so a
+//! person holding it can correct what the line plays, live:
+//!
+//! - **buttons**: pressed on either count (OR);
+//! - **each stick**: the controller's while it is pushed further than
+//!   [`STICK_DEADZONE`] from the centre, else the line's. The deadzone is
+//!   measured from 2048 and so has to hold a stick at rest, which reads its
+//!   calibrated centre, not 2048: the owner's controller rests 70 to 205 raw
+//!   units off it (its sessions of 2026-09-25/27), a thumb on it adds some,
+//!   and past about 250 its readings are the stick on its way out;
+//! - **the gyro**: the controller's while it turns faster than
+//!   [`GYRO_DEADZONE_DPS`] in any of a report's three samples (all three are
+//!   then its own), else the line's. The person's turn wins over the line's
+//!   rather than adding to it: both raw readings carry the controller's rest
+//!   bias (2 to 3 °/s on the owner's), which the Switch subtracts once, so a
+//!   sum would drift; and a line that aims by what it sees (a policy) would
+//!   turn twice as far as the two meant when both turn towards the same
+//!   thing. Below the deadzone, hands holding the controller still, the
+//!   line aims alone;
+//! - **the accelerometer** stays the controller's.
 //!
 //! The proxy listens on its `[replay]` port for one client at a time; the
 //! studio's replay panel is one, and a model can be another. While a client is
@@ -44,6 +61,15 @@ const STICK_CENTER: i32 = 2048;
 const IMU_OFFSET: usize = 13;
 /// Bytes per IMU sample: accel x, y, z then gyro x, y, z, each i16 LE
 const IMU_SAMPLE: usize = 12;
+/// With `mix`, a controller's stick further than this from the centre (raw
+/// units, under a quarter of the way out) is a person's and wins; see the
+/// module docs
+pub const STICK_DEADZONE: i32 = 300;
+/// With `mix`, a controller turning faster than this (°/s) is turned by a
+/// person and keeps its own gyro; see the module docs
+pub const GYRO_DEADZONE_DPS: f64 = 10.0;
+/// Degrees per second of a raw gyro unit
+const GYRO_DPS_PER_LSB: f64 = 0.07;
 
 /// Button names with their byte in the report and bit mask
 const BUTTONS: [(&str, usize, u8); 22] = [
@@ -169,17 +195,27 @@ impl Action {
         }
         for (stick, at) in [(self.left_stick, 6), (self.right_stick, 9)] {
             let Some(stick) = stick else { continue };
-            let reach = |[x, y]: [u16; 2]| {
-                let (dx, dy) = (x as i32 - STICK_CENTER, y as i32 - STICK_CENTER);
-                dx * dx + dy * dy
-            };
-            if !self.mix || reach(stick) > reach(read_stick(&report[at..at + 3])) {
+            let [x, y] = read_stick(&report[at..at + 3]);
+            let (dx, dy) = (x as i32 - STICK_CENTER, y as i32 - STICK_CENTER);
+            let pushed = dx * dx + dy * dy > STICK_DEADZONE * STICK_DEADZONE;
+            if !self.mix || !pushed {
                 write_stick(&mut report[at..at + 3], stick);
             }
         }
         if report[0] != REPORT_FULL || report.len() < IMU_OFFSET + 3 * IMU_SAMPLE {
             return;
         }
+        let gyro_at = |sample: usize| IMU_OFFSET + sample * IMU_SAMPLE + 6;
+        // Squared raw units, to compare without roots
+        let deadzone = (GYRO_DEADZONE_DPS / GYRO_DPS_PER_LSB).powi(2);
+        let turning = (0..3).any(|sample| {
+            let at = gyro_at(sample);
+            let speed: f64 = read_axes(&report[at..at + 6])
+                .iter()
+                .map(|&v| f64::from(v).powi(2))
+                .sum();
+            speed > deadzone
+        });
         for sample in 0..3 {
             let at = IMU_OFFSET + sample * IMU_SAMPLE;
             if let Some(accel) = self.accel
@@ -187,12 +223,10 @@ impl Action {
             {
                 write_axes(&mut report[at..at + 6], accel);
             }
-            if let Some(gyro) = self.gyro {
-                let speed = |axes: [i16; 3]| axes.iter().map(|&v| (v as i32).pow(2)).sum::<i32>();
-                let own = read_axes(&report[at + 6..at + 12]);
-                if !self.mix || speed(gyro) > speed(own) {
-                    write_axes(&mut report[at + 6..at + 12], gyro);
-                }
+            if let Some(gyro) = self.gyro
+                && !(self.mix && turning)
+            {
+                write_axes(&mut report[gyro_at(sample)..gyro_at(sample) + 6], gyro);
             }
         }
     }
@@ -365,17 +399,79 @@ mod tests {
     #[test]
     fn mix_combines_with_the_controller() {
         let mut report = full_report();
-        // The controller holds ZR, left stick far out, gyro -300 on x
-        Action::parse(
+        // The controller holds ZR, both sticks far out, gyro -300 on x (21 °/s)
+        let line = Action::parse(
             r#"{"mix": true, "buttons": ["a"], "left_stick": [2100, 2048], "right_stick": [0, 2048], "gyro": [10, 0, 0], "accel": [1, 2, 3]}"#,
         )
-        .unwrap()
-        .apply(&mut report);
+        .unwrap();
+        line.apply(&mut report);
         assert_eq!(report[3], 0x88); // ZR and A
-        assert_eq!(read_stick(&report[6..9]), [100, 4000]); // controller moves more
-        assert_eq!(read_stick(&report[9..12]), [0, 2048]); // replay moves more
+        // Pushed by a person: theirs, however far the line's goes
+        assert_eq!(read_stick(&report[6..9]), [100, 4000]);
+        assert_eq!(read_stick(&report[9..12]), [2048, 1]);
+        // Turned by a person: theirs
         assert_eq!(read_axes(&report[IMU_OFFSET + 6..]), [-300, 0, 0]);
         assert_eq!(read_axes(&report[IMU_OFFSET..]), [0, 0, 0]); // accel untouched
+
+        // A controller at rest, off 2048 as real sticks rest, the gyro
+        // reading its bias: the line's sticks and turn
+        let mut resting = [0u8; 64];
+        resting[0] = REPORT_FULL;
+        write_stick(&mut resting[6..9], [2068, 1876]);
+        write_stick(&mut resting[9..12], [2230, 2200]);
+        for sample in 0..3 {
+            let at = IMU_OFFSET + sample * IMU_SAMPLE + 6;
+            write_axes(&mut resting[at..at + 6], [21, -28, 4]);
+        }
+        line.apply(&mut resting);
+        assert_eq!(resting[3], 0x08); // A
+        assert_eq!(read_stick(&resting[6..9]), [2100, 2048]);
+        assert_eq!(read_stick(&resting[9..12]), [0, 2048]);
+        for sample in 0..3 {
+            let at = IMU_OFFSET + sample * IMU_SAMPLE + 6;
+            assert_eq!(read_axes(&resting[at..]), [10, 0, 0]);
+        }
+    }
+
+    #[test]
+    fn a_person_reaches_the_switch_unchanged() {
+        // Whatever the line plays, a person's presses, sticks pushed past
+        // the deadzone and turns faster than it come through as they are
+        let line = Action::parse(
+            r#"{"mix": true, "buttons": ["zr", "up"], "left_stick": [4000, 2048], "right_stick": [2048, 100], "gyro": [-2000, 900, 1500]}"#,
+        )
+        .unwrap();
+        let person = |tick: i32| {
+            let mut report = [0u8; 64];
+            report[0] = REPORT_FULL;
+            report[3] = 0x04 << (tick % 2); // B, then A
+            report[5] = 0x80; // ZL
+            write_stick(&mut report[6..9], [(2048 - 400 - tick) as u16, 2048]);
+            write_stick(&mut report[9..12], [2048, (2048 + 1500 + tick) as u16]);
+            for sample in 0..3 {
+                let at = IMU_OFFSET + sample * IMU_SAMPLE;
+                // 150 raw units: 10.5 °/s, just past the deadzone, in one sample
+                let turn = if sample == 1 { 150 } else { 20 };
+                write_axes(&mut report[at..at + 6], [0, -200, 4096]);
+                write_axes(&mut report[at + 6..at + 12], [3, turn, -tick as i16]);
+            }
+            report
+        };
+        for tick in 0..8 {
+            let before = person(tick);
+            let mut mixed = before;
+            line.apply(&mut mixed);
+            // Every button of theirs, the line's added
+            for byte in 3..6 {
+                assert_eq!(mixed[byte] & before[byte], before[byte]);
+            }
+            assert_eq!(mixed[3..6], [before[3] | 0x80, 0, 0x80 | 0x02]);
+            // Sticks, gyro and accelerometer: all theirs
+            assert_eq!(
+                mixed[6..IMU_OFFSET + 3 * IMU_SAMPLE],
+                before[6..IMU_OFFSET + 3 * IMU_SAMPLE]
+            );
+        }
     }
 
     #[test]

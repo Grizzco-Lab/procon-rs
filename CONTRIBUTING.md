@@ -128,8 +128,9 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
    inherit it. Each frame's `forward_us` is the time from reading a
    report to the Switch taking it; the dashboard shows it as "Proxy +x ms".
 5. While a client is connected to the replay port, the latest action replaces
-   (or, with `mix`, combines with) each input report before it is forwarded
-   and recorded.
+   (or, with `mix`, combines with: buttons on either, each stick and the gyro
+   the controller's while a person moves it past a deadzone) each input
+   report before it is forwarded and recorded.
 6. While the Switch sleeps, reports are dropped and Home signals remote wakeup
    (`wake.rs`).
 
@@ -449,15 +450,31 @@ send. Each action goes to the dashboard's WebSocket as an `agent` message
 `lendScreen` in `app.js`); a video's actions are kept as labels (for frame
 seen + lead, the frame whose input they predict) and stored as a run
 `policy-<checkpoint>` when it ends. `agentzero-play` never sends anything:
-the `Bot` does, only after `POST online/play` (a confirmation on the page
-each time, for a set time), writing each action to the replay port with
-`mix`. The bot is also a dumper of the proxy's frames: a report the recent
-actions do not explain (`person_input`: a button, a stick pushed past 600,
-a turn 90 °/s faster) writes a neutral line at once and pauses it until 3 s
-pass without such input; a watchdog thread ends sending at the time's end,
-when the policy stalls (500 ms), when no dashboard page has been connected
-for 5 s, when the Replay panel plays and when the proxy's frames stop; the
-studio's exit and Ctrl-C stop it first.
+the `Bot` does (the studio holds it, beside the Replay panel's `Player`),
+only after `POST online/play` (a confirmation on the page each time, for a
+set time), writing each action to the replay port with `mix`, so a person
+corrects it live and it never pauses: the proxy ORs the buttons and takes
+each stick and the gyro from the controller while it is pushed past
+`STICK_DEADZONE` (300 raw units from 2048, past where a resting stick reads
+its calibrated centre) or turned faster than `GYRO_DEADZONE_DPS` (10 °/s),
+else from the line (`src/replay.rs`; a person's turn replaces the bot's
+rather than adding to it, since both raw readings carry the controller's
+rest bias and a policy aiming by the picture would double a shared turn).
+Before a line goes out, a `Limiter` holds its buttons to the page's
+`Limits` (`src/predictor/online/limits.rs`, kept in the state file): the
+d-pad and the special blocked unless unticked, Home and Capture never, and
+each button's presses at least `1 / max_hz` apart and `min_hold_ms` long
+(7.7 a second and 40 ms by default: 1.1 times the 7 a second a person keeps
+up; the module docs cite the tapping studies, the records and the owner's
+sessions); the stop's neutral line (buttons only, so mixed it is the
+controller alone) lets go at once. The bot is also a dumper of the proxy's
+frames, which measures a person tapping ZR (`Tapping`: 10 s from the first
+press, the fastest six in a row, 1.1 times that offered as the cap). A
+watchdog thread ends sending at the time's end, when the policy stalls
+(500 ms), when no dashboard page has been connected for 5 s, when the Replay
+panel plays and when the proxy's frames stop; the studio's exit and Ctrl-C
+stop it first. The bot's status goes out with every `status` message on
+`/ws`, so every app shows Stop bot while it plays and Esc stops it anywhere.
 
 ### gameplay-data
 

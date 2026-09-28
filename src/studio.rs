@@ -4,11 +4,13 @@
 //! `video-01.mkv`, `video-02.mkv`, … (one per stretch between pauses) and
 //! `session.json` describing how to line them up.
 //!
-//! It also holds the replay [`Player`], which plays loaded actions to the Switch.
+//! It also holds the replay [`Player`], which plays loaded actions to the
+//! Switch, and the [`Bot`], through which the Predictor's AgentZero plays it:
+//! the two clients of the proxy's replay port.
 //!
 //! Settings changed from the dashboard (path prefix, video input, replay file,
-//! techniques added to the list) are saved to a small JSON state file so they
-//! survive restarts.
+//! techniques added to the list, what the bot may press) are saved to a small
+//! JSON state file so they survive restarts.
 //!
 //! While a session is open, the Techniques panel marks spans of it as a
 //! technique practised: a span started and stopped by hand, or the last few
@@ -19,6 +21,8 @@
 use crate::audio;
 use crate::dump::unix_ms;
 use crate::player::Player;
+use crate::predictor::online::Bot;
+use crate::predictor::online::limits::Limits;
 use crate::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
 use crate::stream::LinkStats;
 use crate::video::Video;
@@ -96,6 +100,8 @@ pub struct SavedState {
     /// Techniques added to the Techniques panel's list (the dashboard has
     /// the usual ones)
     pub techniques: Option<Vec<Technique>>,
+    /// What the Predictor's bot may press
+    pub bot_limits: Option<Limits>,
 }
 
 /// A technique added to the Techniques panel's list
@@ -259,6 +265,8 @@ pub struct Studio {
     pub recorder: Recorder,
     pub video: Video,
     pub player: Player,
+    /// AgentZero's hold on the replay port, when it plays
+    pub bot: Bot,
     pub link: Arc<LinkStats>,
     pub proxy_address: String,
     state_path: PathBuf,
@@ -274,6 +282,7 @@ impl Studio {
         recorder: Recorder,
         video: Video,
         player: Player,
+        bot: Bot,
         link: Arc<LinkStats>,
         proxy_address: String,
         state_path: PathBuf,
@@ -284,6 +293,7 @@ impl Studio {
             recorder,
             video,
             player,
+            bot,
             link,
             proxy_address,
             state_path,
@@ -483,6 +493,15 @@ impl Studio {
         self.game_settings.lock().unwrap().clone()
     }
 
+    /// What the bot may press, from its next action on; saved
+    pub fn set_bot_limits(&self, limits: Limits) -> Result<()> {
+        limits.validate()?;
+        // One save at a time, as the dashboard's commands do
+        let _session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        self.bot.set_limits(limits);
+        self.save_state()
+    }
+
     /// The Techniques panel's state: the techniques added to the list, the
     /// span being marked (`label`, `term`, `elapsed_ms`) and the markers of
     /// the current or last session (`counts` by label, `total`)
@@ -629,6 +648,7 @@ impl Studio {
             replay_path: self.player.path(),
             replay_mix: Some(self.player.mix()),
             techniques: Some(self.techniques.lock().unwrap().clone()),
+            bot_limits: Some(self.bot.limits()),
         };
         // Write then rename, so a crash never leaves a half-written file
         let temp = self.state_path.with_extension("tmp");

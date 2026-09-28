@@ -115,8 +115,13 @@ fn main() -> anyhow::Result<()> {
         saved.record_audio.unwrap_or(true),
     );
     let link = Arc::new(LinkStats::default());
-    // The Predictor's online mode plays the Switch through the same port
-    let bot = Bot::new(config.proxy.replay_address.clone(), Arc::clone(&link));
+    // The Predictor's online mode plays the Switch through the same port,
+    // held to what it may press (a broken saved setting means the defaults)
+    let limits = saved
+        .bot_limits
+        .filter(|limits| limits.validate().is_ok())
+        .unwrap_or_default();
+    let bot = Bot::new(config.proxy.replay_address.clone(), limits);
     let player = Player::new(
         config.proxy.replay_address,
         saved.replay_mix.unwrap_or(false),
@@ -125,7 +130,7 @@ fn main() -> anyhow::Result<()> {
     let feed = LiveFeed::new();
 
     // Frames from the proxy go to the recorder and the live view, and to the
-    // bot, which watches them for a person's input while it plays
+    // bot, which measures a person's tapping from them
     let mut pipeline = MultiDumper::new();
     pipeline.add_dumper(Box::new(recorder.clone()));
     pipeline.add_dumper(Box::new(feed.clone()));
@@ -138,6 +143,7 @@ fn main() -> anyhow::Result<()> {
         recorder,
         video,
         player,
+        bot,
         link,
         config.proxy.address,
         state_path,
@@ -247,7 +253,7 @@ fn main() -> anyhow::Result<()> {
         Arc::clone(&cuttlefish),
         predictor_settings,
     ));
-    let online = Online::new(Arc::clone(&predictor), Arc::clone(&studio), bot);
+    let online = Online::new(Arc::clone(&predictor), Arc::clone(&studio));
     let follow = Arc::new(Follow::new(Arc::clone(&inspector), follow_settings));
 
     let rt = tokio::runtime::Runtime::new()?;

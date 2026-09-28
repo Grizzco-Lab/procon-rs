@@ -1124,7 +1124,6 @@ const I18N = {
     "po.state.live": "Watching the live capture",
     "po.state.video": "Playing along the video",
     "po.state.playing": "Playing the Switch",
-    "po.state.paused": "You took over",
     "po.state.done": "Done",
     "po.state.cancelled": "Stopped",
     "po.state.failed": "Failed",
@@ -1137,18 +1136,41 @@ const I18N = {
     "po.notYet": "AgentZero has not run since the studio started.",
     "po.log": "Command and output",
     "po.play.start": "Let AgentZero play…",
-    "po.play.stop": "Stop AgentZero playing (Esc)",
+    "po.play.stop": "Stop bot (Esc)",
     "po.play.off":
       "Off: AgentZero only watches, and nothing reaches the Switch.",
     "po.play.left":
       "Playing the Switch, mixed with your controller: {left} left, {sent} actions sent.",
-    "po.play.paused":
-      "Paused: you {what}. AgentZero goes on {s} s after your last input.",
     "po.play.ended": "Stopped playing: {why}.",
-    "po.took.button": "pressed {button}",
-    "po.took.left": "moved the left stick",
-    "po.took.right": "moved the right stick",
-    "po.took.gyro": "turned the controller",
+    "po.limits.title": "What AgentZero may press",
+    "po.limits.dpad": "Block the d-pad (signals)",
+    "po.limits.dpadNote":
+      'The d-pad sends signals ("This way!", "Booyah!") that disturb teammates. Your own presses still reach the Switch.',
+    "po.limits.special": "Block the special (R-stick click)",
+    "po.limits.specialNote": "Your own presses still reach the Switch.",
+    "po.limits.cap": "At most",
+    "po.limits.capUnit": "presses a second per button,",
+    "po.limits.hold": "each held",
+    "po.limits.holdUnit": "ms or more",
+    "po.limits.capNote":
+      "No button faster than a person could press it, so its play never looks like a turbo or a macro. The default, 7.7, is 1.1 times the 7 a second a person keeps up (ordinary people tapping hard reach 6 to 7); measure your own to set it from yours.",
+    "po.limits.note":
+      "Never Home or Capture. Your own presses always reach the Switch.",
+    "po.limits.dpadShort": "the d-pad",
+    "po.limits.specialShort": "the special",
+    "po.limits.systemShort": "Home or Capture",
+    "po.limits.and": ", ",
+    "po.measure.start": "Measure my max…",
+    "po.measure.startNote":
+      "Tap ZR as fast as you can for 10 s; the studio counts your presses from the controller's reports",
+    "po.measure.cancel": "Cancel measuring",
+    "po.measure.waiting":
+      "Tap ZR as fast as you can: 10 s from your first press.",
+    "po.measure.counting": "{n} presses, {s} s left…",
+    "po.measure.result":
+      "Your fastest: {fastest} presses a second (six in a row), {average} over the 10 s; shortest press {hold} ms.",
+    "po.measure.none": "No presses of ZR to measure.",
+    "po.measure.use": "Use {hz} a second (1.1×)",
     "po.ended.time": "its time was up",
     "po.ended.you": "you stopped it",
     "po.ended.page": "no dashboard page was open",
@@ -1159,7 +1181,6 @@ const I18N = {
     "po.ended.proxy": "the proxy closed the replay connection",
     "po.badge.watching": "AgentZero watching",
     "po.badge.playing": "AgentZero playing",
-    "po.badge.paused": "You took over",
     "po.loop.title": "Loop",
     "po.loop.median": "median ms",
     "po.loop.handoff": "Frame hand-off",
@@ -1193,14 +1214,19 @@ const I18N = {
       "Over the last 5 seconds; the video is paced at 30 fps, as if live.",
     "po.confirm.title": "Let AgentZero play the Switch?",
     "po.confirm.what":
-      "AgentZero's actions go to the Switch through the proxy's replay port, mixed with your controller: a button you press, or a stick you push further, always reaches the Switch.",
-    "po.confirm.takeover":
-      "Any input on the controller pauses AgentZero at once; it goes on 3 seconds after your last one. Put the controller down to let it play. Stop or Esc ends it.",
+      "AgentZero's actions go to the Switch through the proxy's replay port, mixed with your controller.",
+    "po.confirm.mix":
+      "Your controller stays live and AgentZero never pauses for it: your buttons add to its own, and a stick you push past a small deadzone, or a turn faster than 10°/s, replaces its own while you do. Stop bot (always on screen) or Esc ends it.",
+    "po.confirm.limits":
+      "It never presses {blocked}, and presses a button at most {hz} times a second, each held {ms} ms or more.",
     "po.confirm.where":
       "Only in the practice area or a private job, with you at the console. Never in public jobs.",
     "po.confirm.for": "Play for",
     "po.confirm.cancel": "Cancel",
     "po.confirm.play": "Let it play",
+    "bot.stop": "Stop bot",
+    "bot.stopNote": "AgentZero is playing the Switch: stop it (Esc)",
+    "bot.left": "{left} left",
   },
 };
 

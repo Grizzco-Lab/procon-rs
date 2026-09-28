@@ -1047,7 +1047,6 @@ I18N.zh = {
   "po.state.live": "正在看实时画面",
   "po.state.video": "正在跟着视频推断",
   "po.state.playing": "正在操作 Switch",
-  "po.state.paused": "你已接管",
   "po.state.done": "完成",
   "po.state.cancelled": "已停止",
   "po.state.failed": "失败",
@@ -1060,17 +1059,38 @@ I18N.zh = {
   "po.notYet": "工作室启动以来 AgentZero 还没有运行过。",
   "po.log": "命令与输出",
   "po.play.start": "让 AgentZero 操作…",
-  "po.play.stop": "停止 AgentZero 操作（Esc）",
+  "po.play.stop": "停止机器人（Esc）",
   "po.play.off": "关闭：AgentZero 只观看，不会向 Switch 发送任何操作。",
   "po.play.left":
     "正在操作 Switch，与你的手柄混合：剩余 {left}，已发送 {sent} 个操作。",
-  "po.play.paused":
-    "已暂停：你{what}。你最后一次操作 {s} 秒后 AgentZero 继续。",
   "po.play.ended": "已停止操作：{why}。",
-  "po.took.button": "按下了 {button}",
-  "po.took.left": "推动了左摇杆",
-  "po.took.right": "推动了右摇杆",
-  "po.took.gyro": "转动了手柄",
+  "po.limits.title": "AgentZero 可以按什么",
+  "po.limits.dpad": "屏蔽十字键（信号）",
+  "po.limits.dpadNote":
+    "十字键会向队友发出信号，打扰队友。你自己按的仍会传到 Switch。",
+  "po.limits.special": "屏蔽特殊武器（按下 R 摇杆）",
+  "po.limits.specialNote": "你自己按的仍会传到 Switch。",
+  "po.limits.cap": "每个键每秒最多",
+  "po.limits.capUnit": "次，",
+  "po.limits.hold": "每次至少按住",
+  "po.limits.holdUnit": "ms",
+  "po.limits.capNote":
+    "任何键都不会比人按得更快，免得看起来像连发或宏。默认的 7.7 是人能持续的每秒 7 次的 1.1 倍（普通人用力连按每秒 6 到 7 次）；测一下你自己的速度，就能按你的来设。",
+  "po.limits.note": "从不按 HOME 键和截图键。你自己按的总能传到 Switch。",
+  "po.limits.dpadShort": "十字键",
+  "po.limits.specialShort": "特殊武器",
+  "po.limits.systemShort": "HOME 键和截图键",
+  "po.limits.and": "、",
+  "po.measure.start": "测我的最快速度…",
+  "po.measure.startNote":
+    "用最快的速度连按 ZR 10 秒；工作室从手柄的报告里数你按了几次",
+  "po.measure.cancel": "取消测量",
+  "po.measure.waiting": "用最快的速度连按 ZR：从你第一次按下起计 10 秒。",
+  "po.measure.counting": "已按 {n} 次，还剩 {s} 秒…",
+  "po.measure.result":
+    "你最快每秒 {fastest} 次（连续 6 次），10 秒平均每秒 {average} 次；最短一次按住 {hold} ms。",
+  "po.measure.none": "没有可测的 ZR 按键。",
+  "po.measure.use": "改为每秒 {hz} 次（1.1 倍）",
   "po.ended.time": "时间到了",
   "po.ended.you": "你停止了它",
   "po.ended.page": "没有打开的控制台页面",
@@ -1081,7 +1101,6 @@ I18N.zh = {
   "po.ended.proxy": "代理关闭了回放连接",
   "po.badge.watching": "AgentZero 观看中",
   "po.badge.playing": "AgentZero 操作中",
-  "po.badge.paused": "你已接管",
   "po.loop.title": "回路",
   "po.loop.median": "中位数 ms",
   "po.loop.handoff": "画面传递",
@@ -1113,12 +1132,17 @@ I18N.zh = {
   "po.loop.footVideo": "最近 5 秒；视频按 30 fps 播放，如同直播。",
   "po.confirm.title": "让 AgentZero 操作 Switch？",
   "po.confirm.what":
-    "AgentZero 的操作经代理的回放端口发给 Switch，并与你的手柄混合：你按下的按键、推得更远的摇杆，总能传到 Switch。",
-  "po.confirm.takeover":
-    "手柄上的任何操作都会立刻暂停 AgentZero；你最后一次操作 3 秒后它才继续。把手柄放下它才能操作。点“停止”或按 Esc 结束。",
+    "AgentZero 的操作经代理的回放端口发给 Switch，并与你的手柄混合。",
+  "po.confirm.mix":
+    "你的手柄一直有效，AgentZero 也不会因此暂停：你按的键会加到它的操作上；你把摇杆推出一个小死区，或以超过 10°/s 的速度转动手柄时，就以你的为准。点“停止机器人”（一直显示在屏幕上）或按 Esc 结束。",
+  "po.confirm.limits":
+    "它从不按{blocked}；每个键每秒最多按 {hz} 次，每次至少按住 {ms} ms。",
   "po.confirm.where":
     "只在练习场或私人打工中使用，并且你要在主机前。绝不在公开打工中使用。",
   "po.confirm.for": "操作时长",
   "po.confirm.cancel": "取消",
   "po.confirm.play": "让它操作",
+  "bot.stop": "停止机器人",
+  "bot.stopNote": "AgentZero 正在操作 Switch：停止它（Esc）",
+  "bot.left": "剩余 {left}",
 };

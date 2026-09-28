@@ -17,7 +17,11 @@
 // run when it ends); on the live capture, the Studio's screen is lent here
 // (lendScreen in app.js) with AgentZero's action drawn over it from the
 // socket's `agent` messages, the loop's latency beside it, and "Let
-// AgentZero play", asked for each time, sends its actions to the Switch.
+// AgentZero play", asked for each time, sends its actions to the Switch,
+// mixed with the controller, held to what it may press (the d-pad and the
+// special blocked, a press-rate cap a person's measured tapping can set).
+// While it plays, Stop bot sits over every app, from the bot's status in
+// the socket's `status` messages, and Esc stops it anywhere on the page.
 "use strict";
 
 (() => {
@@ -25,6 +29,8 @@
   const POLL_MS = 1000;
   /** How often AgentZero is asked about while it runs, in ms */
   const ONLINE_POLL_MS = 500;
+  /** How often while a person's tapping is measured, in ms */
+  const MEASURE_POLL_MS = 250;
   /** GPU memory the policy wants free, in MiB */
   const POLICY_GPU_MIB = 1536;
   /** Frames AgentZero's last action is shown held over frames it skipped */
@@ -94,10 +100,13 @@
     model: "idm",
     /** Policy checkpoints and what agentzero-play can do */
     onlineInfo: null,
-    /** AgentZero's current or last run, and the bot (letting it play) */
+    /** AgentZero's current or last run, and the bot (letting it play),
+     * also from every `status` message on the socket */
     online: null,
     bot: null,
     onlineTimer: null,
+    /** A Stop bot request under way */
+    releasing: false,
     /** Watching AgentZero's run (/predictor/online) */
     watching: false,
     /** The run the player was opened for, and whether it started playing */
@@ -590,8 +599,13 @@
     pollOnline();
   };
 
+  /** A person's tapping being measured */
+  const measuring = () =>
+    ["waiting", "counting"].includes(pred.bot?.tapping?.state);
+
   /** AgentZero's run and the bot, again every ONLINE_POLL_MS while it runs
-   * and the app is shown */
+   * (MEASURE_POLL_MS while a person's tapping is measured) and the app is
+   * shown */
   async function pollOnline() {
     clearTimeout(pred.onlineTimer);
     try {
@@ -603,9 +617,10 @@
     }
     renderOnline();
     if (pred.watching) followOnline();
-    const active = onlineRunning() || pred.bot?.playing;
+    const active = onlineRunning() || pred.bot?.playing || measuring();
     if (active && pred.shown && !document.hidden) {
-      pred.onlineTimer = setTimeout(pollOnline, ONLINE_POLL_MS);
+      const every = measuring() ? MEASURE_POLL_MS : ONLINE_POLL_MS;
+      pred.onlineTimer = setTimeout(pollOnline, every);
     }
   }
 
@@ -616,13 +631,10 @@
     checkForm();
     if (!run) return;
     const busy = run.state === "running";
-    const bot = pred.bot;
     const state = run.loading
       ? "loading"
-      : busy && bot?.playing
-        ? bot.paused_until_ms
-          ? "paused"
-          : "playing"
+      : busy && pred.bot?.playing
+        ? "playing"
         : busy
           ? run.live
             ? "live"
@@ -635,7 +647,6 @@
         live: "good",
         video: "good",
         playing: "critical",
-        paused: "warning",
         done: "off",
         cancelled: "off",
         failed: "critical",
@@ -668,8 +679,9 @@
     renderLoop();
   }
 
-  /** "Let AgentZero play": off, playing (with the time left), paused by a
-   * person; only while it runs on the live capture */
+  /** "Let AgentZero play": off or playing (with the time left), what it may
+   * press and the measurement of a person's tapping; only while it runs on
+   * the live capture */
   function renderPlay() {
     const run = pred.online;
     const bot = pred.bot;
@@ -680,13 +692,10 @@
     $("po-play-label").textContent = playing
       ? t("po.play.stop")
       : t("po.play.start");
+    // Its presses would count as the person's
+    $("po-play-btn").disabled = !playing && measuring();
     let note;
-    if (playing && bot.paused_until_ms) {
-      note = t("po.play.paused", {
-        what: tookText(bot.taken_by),
-        s: Math.max(0, (bot.paused_until_ms - Date.now()) / 1000).toFixed(1),
-      });
-    } else if (playing) {
+    if (playing) {
       note = t("po.play.left", {
         left: clockText(Math.max(0, (bot.until_ms - Date.now()) / 1000)),
         sent: bot.sent,
@@ -697,32 +706,124 @@
       note = t("po.play.off");
     }
     $("po-play-note").textContent = note;
-    $("po-live").dataset.state = playing
-      ? bot.paused_until_ms
-        ? "paused"
-        : "playing"
-      : "watching";
+    $("po-live").dataset.state = playing ? "playing" : "watching";
     $("po-badge").textContent = playing
-      ? bot.paused_until_ms
-        ? t("po.badge.paused")
-        : t("po.badge.playing")
+      ? t("po.badge.playing")
       : t("po.badge.watching");
+    renderLimits();
+    renderMeasure();
+    renderStopBot();
   }
 
-  /** What a person did, from the bot's words for it: `button:<name>`,
-   * `stick:left`, `stick:right` or `gyro` */
-  function tookText(code) {
-    const [kind, what] = (code ?? "").split(":");
-    if (kind === "button")
-      return t("po.took.button", { button: what.toUpperCase() });
-    if (kind === "stick")
-      return t(what === "left" ? "po.took.left" : "po.took.right");
-    return t("po.took.gyro");
+  // ------------------------------------------------ what it may press
+
+  /** The masks and the cap as the studio holds them; a number being typed
+   * is left alone */
+  function renderLimits() {
+    const limits = pred.bot?.limits;
+    if (!limits) return;
+    $("po-block-dpad").checked = limits.block_dpad;
+    $("po-block-special").checked = limits.block_special;
+    for (const [id, value] of [
+      ["po-cap", limits.max_hz],
+      ["po-hold", limits.min_hold_ms],
+    ]) {
+      if (document.activeElement !== $(id)) $(id).value = value;
+    }
   }
+
+  /** Change what it may press; the studio keeps it, and it holds from the
+   * next action on, while it plays too */
+  async function saveLimits(change) {
+    try {
+      pred.bot = await api("online/limits", { ...pred.bot?.limits, ...change });
+    } catch (error) {
+      showRunError(error.message);
+    }
+    renderPlay();
+  }
+
+  $("po-block-dpad").onchange = () =>
+    saveLimits({ block_dpad: $("po-block-dpad").checked });
+  $("po-block-special").onchange = () =>
+    saveLimits({ block_special: $("po-block-special").checked });
+  $("po-cap").onchange = () =>
+    saveLimits({ max_hz: Number($("po-cap").value) });
+  $("po-hold").onchange = () =>
+    saveLimits({ min_hold_ms: Number($("po-hold").value) });
+
+  /** What it may not press and how fast it may, for the confirmation */
+  function limitsText(limits) {
+    if (!limits) return "";
+    const blocked = [
+      limits.block_dpad && t("po.limits.dpadShort"),
+      limits.block_special && t("po.limits.specialShort"),
+      t("po.limits.systemShort"),
+    ].filter(Boolean);
+    return t("po.confirm.limits", {
+      blocked: blocked.join(t("po.limits.and")),
+      hz: limits.max_hz,
+      ms: limits.min_hold_ms,
+    });
+  }
+
+  // ------------------------------------------ measuring a person's tapping
+
+  /** The measurement: waiting for the first press, counting, the result
+   * with the cap it suggests */
+  function renderMeasure() {
+    const tapping = pred.bot?.tapping;
+    const state = tapping?.state;
+    const button = $("po-measure-btn");
+    button.textContent = measuring()
+      ? t("po.measure.cancel")
+      : t("po.measure.start");
+    button.disabled = Boolean(pred.bot?.playing);
+    const result = state === "done" ? tapping.result : null;
+    const note = {
+      waiting: () => t("po.measure.waiting"),
+      counting: () =>
+        t("po.measure.counting", {
+          n: tapping.presses,
+          s: tapping.left_s.toFixed(1),
+        }),
+      done: () =>
+        t("po.measure.result", {
+          fastest: result.fastest_hz,
+          average: result.average_hz,
+          hold: result.shortest_hold_ms ?? "–",
+        }),
+      none: () => t("po.measure.none"),
+    }[state];
+    $("po-measure-note").textContent = note ? note() : "";
+    const use = $("po-measure-use");
+    use.hidden = !result || result.cap_hz === pred.bot.limits.max_hz;
+    if (result) use.textContent = t("po.measure.use", { hz: result.cap_hz });
+  }
+
+  $("po-measure-btn").onclick = async () => {
+    try {
+      pred.bot = await api(
+        "online/measure",
+        measuring() ? { cancel: true } : {},
+      );
+    } catch (error) {
+      showRunError(error.message);
+    }
+    renderPlay();
+    pollOnline();
+  };
+
+  // The cap from the person's own fastest
+  $("po-measure-use").onclick = () =>
+    saveLimits({ max_hz: pred.bot.tapping.result.cap_hz });
+
+  // ------------------------------------------------------- playing, Stop
 
   $("po-play-btn").onclick = () => {
     if (pred.bot?.playing) return release();
     // Asked every time
+    $("po-confirm-limits").textContent = limitsText(pred.bot?.limits);
     $("po-confirm").showModal();
   };
 
@@ -739,22 +840,58 @@
     pollOnline();
   });
 
+  /** Stop bot: the studio lets go at once (one request at a time; another
+   * press tries again if it failed) */
   async function release() {
+    if (pred.releasing) return;
+    pred.releasing = true;
+    $("bot-stop").disabled = true;
     try {
       pred.bot = await api("online/release", {});
     } catch (error) {
       showRunError(error.message);
+    } finally {
+      pred.releasing = false;
+      $("bot-stop").disabled = false;
     }
     renderPlay();
   }
 
-  // Esc stops AgentZero playing, wherever the page is
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && pred.bot?.playing) {
-      event.preventDefault();
-      release();
-    }
+  /** Stop bot over every app, while AgentZero plays, with the time left */
+  function renderStopBot() {
+    const bot = pred.bot;
+    const button = $("bot-stop");
+    button.hidden = !bot?.playing;
+    document.body.classList.toggle("bot-playing", !button.hidden);
+    if (button.hidden) return;
+    $("bot-stop-left").textContent = t("bot.left", {
+      left: clockText(Math.max(0, (bot.until_ms - Date.now()) / 1000)),
+    });
+  }
+
+  $("bot-stop").onclick = release;
+
+  // The bot's status twice a second from the socket, whichever app is shown
+  window.addEventListener("bot", ({ detail }) => {
+    if (!detail) return;
+    const was = pred.bot?.playing;
+    pred.bot = detail;
+    renderStopBot();
+    if (pred.shown && (was || detail.playing)) renderPlay();
   });
+
+  // Esc stops AgentZero playing, wherever the page is: first, before any
+  // other use of the key
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Escape" && pred.bot?.playing) {
+        event.preventDefault();
+        release();
+      }
+    },
+    true,
+  );
 
   /** The loop's latency (live) or the model's time (a video), median and
    * 95th percentile over the last seconds */

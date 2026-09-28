@@ -693,15 +693,25 @@ AgentZero whose `agentzero-play` has `--json`). Its view is
 - **Let AgentZero play…** (the live capture only, off by default) sends its
   actions to the Switch through the proxy's replay port, as the Replay panel
   does, after a confirmation every time and for the time chosen there (up to
-  10 minutes). They are mixed with the controller (`mix`): a button you press
-  or a stick you push further always reaches the Switch, and any input on
-  the controller pauses AgentZero at once (an amber frame, "You took over")
-  until 3 s after your last one; put the controller down to let it play.
-  Stop or Esc ends it, as do the end of the time, Stop of the run, the
-  Replay panel starting, the proxy's frames not reaching the studio, the
-  policy going quiet for half a second and closing every dashboard page. A
-  red frame marks it playing. Only in the practice area or a private job,
-  with you at the console.
+  10 minutes). They are mixed with the controller (`mix`) and AgentZero never
+  pauses for you, so you correct it live: your buttons add to its own, and a
+  stick you push past a small deadzone, or a turn faster than 10 °/s,
+  replaces its own while you do. **Stop bot**, a big red button over every
+  app while it plays, or Esc anywhere on the page ends it, as do the end of
+  the time, Stop of the run, the Replay panel starting, the proxy's frames
+  not reaching the studio, the policy going quiet for half a second and
+  closing every dashboard page. A red frame marks it playing. Only in the
+  practice area or a private job, with you at the console.
+- **What AgentZero may press** (under that button, kept with the dashboard's
+  settings, held to in every line the studio sends): the d-pad (its signals
+  disturb teammates) and the special (the right stick's click) are blocked
+  unless unticked, Home and Capture always; your own presses still reach the
+  Switch. No button is pressed faster than a person could, so its play never
+  looks like a turbo: by default at most 7.7 presses a second per button (1.1
+  times the 7 a second a person keeps up; people tapping as hard as they can
+  manage 6 to 7), each held 40 ms or more. **Measure my max…** counts your
+  own ZR presses from the controller for 10 s from your first one and offers
+  1.1 times your fastest as the cap.
 - It does not start while the studio records unless **Allow while
   recording** is ticked, and stops when a recording starts without it. The
   page warns when the GPU has less than 1.5 GiB free; **CPU** runs it
@@ -745,8 +755,11 @@ load a session folder, a `controller.bin` or a `.jsonl`, then Play. The studio
 sends them to the proxy's replay port; while it plays, the Switch gets the
 replayed input instead of the controller's (and that is what gets recorded),
 and the controller takes over again on Stop or at the end. "Mix with the
-controller" combines the two instead: buttons pressed on either count, and each
-stick and the gyro take whichever moves more.
+controller" combines the two instead, so you can correct a replay as it plays:
+buttons pressed on either count, each stick is the controller's while you push
+it past a deadzone (300 raw units from the centre, beyond where a resting stick
+reads) and the gyro while you turn faster than 10 °/s, else the replay's. The
+proxy does the mixing: after updating, deploy it again (`./scripts/deploy.sh`).
 
 A `.jsonl` file has one action per line:
 

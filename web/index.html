@@ -1046,8 +1046,8 @@
           <input type="checkbox" id="replay-mix" />
           Mix with the controller
           <span class="check-note"
-            >Buttons combine; each stick and the gyro take whichever moves
-            more</span
+            >Buttons combine; a stick you push past a small deadzone, or a turn
+            faster than 10°/s, is yours while you do</span
           >
         </label>
         <div class="rec-file">
@@ -3741,6 +3741,90 @@
                   >
                 </button>
                 <p class="po-play-note" id="po-play-note"></p>
+                <!-- What it may press, held to in every line sent (masks and
+                     the press-rate cap, online/limits.rs), and a person's
+                     fastest tapping measured to set the cap from -->
+                <fieldset class="po-limits">
+                  <legend data-i18n="po.limits.title">
+                    What AgentZero may press
+                  </legend>
+                  <label
+                    class="check"
+                    title="The d-pad sends signals that disturb teammates. Your own presses still reach the Switch."
+                    data-i18n-title="po.limits.dpadNote"
+                    ><input type="checkbox" id="po-block-dpad" checked />
+                    <span data-i18n="po.limits.dpad"
+                      >Block the d-pad (signals)</span
+                    ></label
+                  >
+                  <label
+                    class="check"
+                    title="Your own presses still reach the Switch."
+                    data-i18n-title="po.limits.specialNote"
+                    ><input type="checkbox" id="po-block-special" checked />
+                    <span data-i18n="po.limits.special"
+                      >Block the special (R-stick click)</span
+                    ></label
+                  >
+                  <div
+                    class="po-cap"
+                    title="No button faster than a person could press it, so its play never looks like a turbo"
+                    data-i18n-title="po.limits.capNote"
+                  >
+                    <label class="po-field"
+                      ><span data-i18n="po.limits.cap">At most</span>
+                      <input
+                        type="number"
+                        class="select num po-num"
+                        id="po-cap"
+                        min="2"
+                        max="15"
+                        step="0.1"
+                        aria-label="Presses a second"
+                      />
+                      <span data-i18n="po.limits.capUnit"
+                        >presses a second per button,</span
+                      ></label
+                    >
+                    <label class="po-field"
+                      ><span data-i18n="po.limits.hold">each held</span>
+                      <input
+                        type="number"
+                        class="select num po-num"
+                        id="po-hold"
+                        min="20"
+                        max="250"
+                        step="1"
+                        aria-label="Shortest press in ms"
+                      />
+                      <span data-i18n="po.limits.holdUnit"
+                        >ms or more</span
+                      ></label
+                    >
+                  </div>
+                  <p class="po-play-note" data-i18n="po.limits.note">
+                    Never Home or Capture. Your own presses always reach the
+                    Switch.
+                  </p>
+                  <div class="po-measure">
+                    <button
+                      type="button"
+                      class="btn btn-small"
+                      id="po-measure-btn"
+                      title="Tap ZR as fast as you can for 10 s; the studio counts your presses from the controller"
+                      data-i18n-title="po.measure.startNote"
+                    >
+                      Measure my max…
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-small"
+                      id="po-measure-use"
+                      hidden
+                    ></button>
+                    <span class="po-play-note" id="po-measure-note"></span>
+                  </div>
+                </fieldset>
               </div>
               <details class="p-log" id="po-log-wrap">
                 <summary data-i18n="po.log">Command and output</summary>
@@ -3890,14 +3974,15 @@
           </header>
           <p data-i18n="po.confirm.what">
             AgentZero's actions go to the Switch through the proxy's replay
-            port, mixed with your controller: a button you press, or a stick you
-            push further, always reaches the Switch.
+            port, mixed with your controller.
           </p>
-          <p data-i18n="po.confirm.takeover">
-            Any input on the controller pauses AgentZero at once; it goes on 3
-            seconds after your last one. Put the controller down to let it play.
-            Stop or Esc ends it.
+          <p data-i18n="po.confirm.mix">
+            Your controller stays live and AgentZero never pauses for it: your
+            buttons add to its own, and a stick you push past a small deadzone,
+            or a turn faster than 10°/s, replaces its own while you do. Stop bot
+            (always on screen) or Esc ends it.
           </p>
+          <p id="po-confirm-limits"></p>
           <p class="notice" data-i18n="po.confirm.where">
             Only in the practice area or a private job, with you at the console.
             Never in public jobs.
@@ -3934,6 +4019,22 @@
         </form>
       </dialog>
     </div>
+
+    <!-- AgentZero playing the Switch: Stop bot over every app, as long as
+         it plays (Esc too, anywhere on the page; predictor.js) -->
+    <button
+      type="button"
+      class="bot-stop"
+      id="bot-stop"
+      hidden
+      title="AgentZero is playing the Switch: stop it (Esc)"
+      data-i18n-title="bot.stopNote"
+    >
+      <span class="bot-stop-glyph" aria-hidden="true"></span>
+      <b data-i18n="bot.stop">Stop bot</b>
+      <span class="bot-stop-left" id="bot-stop-left"></span>
+      <kbd>Esc</kbd>
+    </button>
 
     <script src="/icons/inline.js"></script>
     <script src="/i18n.js"></script>
