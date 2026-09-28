@@ -665,6 +665,13 @@ it is for: labeling gameplay nobody recorded a controller for.
 - **Agreement**, for sessions: F1 per button and the correlation of each
   stick axis, the gyro and the camera turn, over the frames in view or the
   whole video. Plain videos show predictions only.
+- **Camera turn**: the true one is AgentZero's camera turn fit for the
+  session (in its `sessions.json`, the one the IDM trains on) applied to the
+  recorded gyro and right stick, in the same pixels per frame as the
+  prediction. Players push the right stick only for big turns and the IDM
+  may read those as gyro, which turns the camera just the same, so the turn
+  says better than the stick and gyro apart how well it reads the aiming.
+  Sessions AgentZero has not fitted have no true turn.
 - The URL keeps the view (`/predictor/<video>/<checkpoint>?t=<s>`).
 
 #### AgentZero online
@@ -784,7 +791,7 @@ Both programs take `--config <path>`.
 | `[web]` | Dashboard `port` |
 | `[recording]` | Default path `prefix` until one is set on the dashboard |
 | `[video]` | First `input` (`"screen"`, `/dev/video0`, a video file played in a loop as if live, or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
-| `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) `annotations` (object labels, default `Annotations` next to the root), `tracker` (Follow's tracker, default `http://127.0.0.1:7340`), `tracker_command` and `tracker_dir` (what Start tracker runs, default `uv run agentzero-track-serve --port <port>` in `../AgentZero`); relative paths start at the config's folder |
+| `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`; AgentZero's `sessions.json` beside it gives the camera turn fits) `annotations` (object labels, default `Annotations` next to the root), `tracker` (Follow's tracker, default `http://127.0.0.1:7340`), `tracker_command` and `tracker_dir` (what Start tracker runs, default `uv run agentzero-track-serve --port <port>` in `../AgentZero`); relative paths start at the config's folder |
 | `[cuttlefish]` | Optional: `reviews` (one folder per review with its video, and the translator's `translations.jsonl`; default `Reviews` next to the root), `knowledge` (the knowledge store with its `inbox/`, default `Knowledge` next to the root), `backend` (`auto`, `api` or `claude-cli`), `model` and `translate_model` |
 | `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model), `confidence` (0.25), `detector` (the Salmon Run detector, default `http://127.0.0.1:7341`), `detector_command` and `detector_dir` (what Start detector runs, default `uv run agentzero-detect-serve --port <port>` in `../AgentZero`) |
 | `[predictor]` | Optional: `agentzero` (the AgentZero folder, default `../AgentZero`) and `results` (stored predictions, default `Predictions` next to the root) |

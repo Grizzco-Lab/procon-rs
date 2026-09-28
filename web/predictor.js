@@ -1651,10 +1651,19 @@
       )
       .join("");
     const names = Object.fromEntries(SIGNALS.map(([n, l]) => [n, l]));
+    // A camera turn without pairs: the session has no turn fit (so the
+    // truth has no turn), or the model no turn head
+    const truthTurn = pred.chunk?.truth?.some((l) => l?.camera_turn) ?? false;
+    const missing = (name) =>
+      !name.startsWith("turn")
+        ? "–"
+        : truthTurn
+          ? "not predicted"
+          : "no turn fit";
     const signals = a.signals
       .map(
         (s) =>
-          `<tr><td>${escapeHtml(names[s.name] ?? s.name)}</td><td class="num ${level(s.r)}">${value(s.r)}</td><td class="num" colspan="2">${s.n ? `${s.n} frames` : s.name.startsWith("turn") ? "no truth" : "–"}</td></tr>`,
+          `<tr><td>${escapeHtml(names[s.name] ?? s.name)}</td><td class="num ${level(s.r)}">${value(s.r)}</td><td class="num" colspan="2">${s.n ? `${s.n} frames` : missing(s.name)}</td></tr>`,
       )
       .join("");
     $("p-agree").innerHTML = `

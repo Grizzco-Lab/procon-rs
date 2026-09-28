@@ -134,6 +134,8 @@ pub struct InspectConfig {
     /// AgentZero's `calibration.json` with each session's video delay,
     /// relative to this config file; by default
     /// `../AgentZero/calibration.json`. A missing file means no calibration.
+    /// AgentZero's `sessions.json` next to it gives the sessions' camera
+    /// turn fits, which the truth's camera turn comes from.
     pub calibration: Option<String>,
     /// Folder of object labels (`classes.json`, `<session>/<segment
     /// stem>.objects.jsonl`), relative to this config file; by default

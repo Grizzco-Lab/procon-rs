@@ -8,8 +8,9 @@
 //! A session folder holds `session.json` ([`session`]), `controller.bin`
 //! ([`frame`], [`controller`]) and one video file per segment. [`align`]
 //! turns the controller log into actions per video frame, [`labels`] writes
-//! and reads them as JSON lines and [`calibration`] holds each session's
-//! measured video delay.
+//! and reads them as JSON lines, [`calibration`] holds each session's
+//! measured video delay and [`turn`] applies AgentZero's camera turn fits to
+//! the actions.
 
 extern crate alloc;
 
@@ -19,6 +20,7 @@ pub mod controller;
 pub mod frame;
 pub mod labels;
 pub mod session;
+pub mod turn;
 
 #[cfg(feature = "python")]
 mod python;

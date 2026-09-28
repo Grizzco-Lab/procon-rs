@@ -15,7 +15,10 @@
 //! - `info?s=&seg=`: frame count, fps, delays and calibration of a segment
 //! - `frame?s=&seg=&n=`: frame `n` as a 640x360 JPEG
 //! - `labels?s=&seg=&start=&stop=&delay=&pred=`: labels of frames
-//!   `[start, stop)`, and those of a predictions file (`.jsonl`) if given
+//!   `[start, stop)`, and those of a predictions file (`.jsonl`) if given;
+//!   the truth has the camera turn too (`camera_turn`, as the IDM predicts
+//!   it) when AgentZero's `sessions.json`, next to the calibration file,
+//!   has the session's turn fit (see [`gameplay_data::turn`])
 //! - `random?s=&seg=&delay=&active=1`: a random frame, with `active` one
 //!   where a button changes or the gyro turns
 //! - `POST delay` with `{"s": session, "video_delay_ms": ms}` sets a
@@ -50,6 +53,7 @@ use gameplay_data::calibration::{
 use gameplay_data::controller::ControllerLog;
 use gameplay_data::labels::{self, Label};
 use gameplay_data::session::{Marker, SESSION_FILE, SessionInfo, write_markers};
+use gameplay_data::turn::{self, TurnFit, read_turn_fits};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -83,7 +87,8 @@ pub struct Inspector {
     /// Folder holding the session folders; None follows the recording prefix
     root: Option<PathBuf>,
     recorder: Recorder,
-    /// AgentZero's `calibration.json`
+    /// AgentZero's `calibration.json`; its `sessions.json` beside it holds
+    /// the camera turn fits
     calibration: PathBuf,
     open: Mutex<Vec<Arc<OpenSegment>>>,
     /// Video header facts by file, which never change once recorded
@@ -127,6 +132,13 @@ struct Probe {
     pts_ms: Option<Vec<f64>>,
 }
 
+/// A segment's actions aligned with one delay
+struct Aligned {
+    actions: FrameActions,
+    /// The gyro's reading at rest over them ([`turn::gyro_bias`])
+    gyro_bias: [f32; 3],
+}
+
 /// One segment being inspected
 struct OpenSegment {
     session: String,
@@ -138,11 +150,13 @@ struct OpenSegment {
     frames: usize,
     log: ControllerLog,
     calibration: Option<Calibration>,
+    /// The session's camera turn fit, if AgentZero made one
+    turn_fit: Option<TurnFit>,
     summary: Value,
     has_audio: bool,
     /// The sound track as WebM, extracted on first request
     audio: Mutex<Option<Arc<Vec<u8>>>>,
-    alignments: Mutex<Vec<(u64, Arc<FrameActions>)>>,
+    alignments: Mutex<Vec<(u64, Arc<Aligned>)>>,
     jpegs: Mutex<BTreeMap<usize, Arc<Vec<u8>>>>,
     /// Held while ffmpeg decodes, so parallel misses wait for one window
     decoding: Mutex<()>,
@@ -184,6 +198,18 @@ impl Inspector {
             log::warn!("Ignoring the calibration file: {:#}", e);
             Calibrations::new()
         })
+    }
+
+    /// Session `name`'s camera turn fit in AgentZero's `sessions.json` next
+    /// to the calibration file
+    fn turn_fit(&self, name: &str) -> Option<TurnFit> {
+        let path = self.calibration.with_file_name(turn::SESSIONS_FILE);
+        read_turn_fits(&path)
+            .unwrap_or_else(|e| {
+                log::warn!("Ignoring the camera turn fits: {:#}", e);
+                BTreeMap::new()
+            })
+            .remove(name)
     }
 
     /// Summaries of every session under the root, newest first
@@ -331,6 +357,7 @@ impl Inspector {
             frames,
             log: ControllerLog::read(&dir.join(&info.controller.file))?,
             calibration: calibrations.get(name).cloned(),
+            turn_fit: self.turn_fit(name),
             summary: self.summary(&dir, calibrations.get(name))?,
             has_audio: entry.has_audio(),
             audio: Mutex::default(),
@@ -377,8 +404,9 @@ impl Inspector {
         segment.jpeg(n)
     }
 
-    /// Labels of frames `[start, stop)` aligned with `delay`, and those of
-    /// the predictions file `pred` if given
+    /// Labels of frames `[start, stop)` aligned with `delay`, the truth with
+    /// its camera turn when the session has a turn fit, and those of the
+    /// predictions file `pred` if given
     pub fn labels(
         &self,
         name: &str,
@@ -389,8 +417,11 @@ impl Inspector {
     ) -> Result<Value> {
         let segment = self.segment(name, file)?;
         let range = range.start.min(segment.frames)..range.end.min(segment.frames);
-        let actions = segment.actions(delay.unwrap_or_else(|| segment.default_delay()));
-        let truth = labels::frame_labels(&actions, range.clone());
+        let aligned = segment.actions(delay.unwrap_or_else(|| segment.default_delay()));
+        let mut truth = labels::frame_labels(&aligned.actions, range.clone());
+        if let Some(fit) = &segment.turn_fit {
+            turn::add_camera_turn(&mut truth, &aligned.actions, fit, aligned.gyro_bias);
+        }
         let predictions = pred
             .map(|path| -> Result<Value> {
                 let predicted = self.predictions(Path::new(path))?;
@@ -440,7 +471,9 @@ impl Inspector {
         ensure!(segment.frames > 0, "the segment has no frames");
         let mut candidates = Vec::new();
         if active {
-            let actions = segment.actions(delay.unwrap_or_else(|| segment.default_delay()));
+            let actions = &segment
+                .actions(delay.unwrap_or_else(|| segment.default_delay()))
+                .actions;
             for n in 0..actions.len() {
                 let changed = n > 0 && actions.buttons[n] != actions.buttons[n - 1];
                 let [x, y, z] = actions.gyro[n].map(f64::from);
@@ -673,24 +706,29 @@ impl OpenSegment {
             .unwrap_or(0.0)
     }
 
-    /// Actions of every frame aligned with `delay` ms of video delay
-    fn actions(&self, delay: f64) -> Arc<FrameActions> {
+    /// Actions of every frame aligned with `delay` ms of video delay, with
+    /// the gyro's rest bias over them
+    fn actions(&self, delay: f64) -> Arc<Aligned> {
         let key = delay.to_bits();
         let mut alignments = self.alignments.lock().unwrap();
-        if let Some((_, actions)) = alignments.iter().find(|(k, _)| *k == key) {
-            return Arc::clone(actions);
+        if let Some((_, aligned)) = alignments.iter().find(|(k, _)| *k == key) {
+            return Arc::clone(aligned);
         }
         let times = match &self.probe.pts_ms {
             // As the training code does: frame n at start + its timestamp
             Some(pts_ms) => align::variable_rate_times(self.start_unix_ms, pts_ms, delay),
             None => align::constant_rate_times(self.start_unix_ms, self.frames, self.fps, delay),
         };
-        let actions = Arc::new(align::align(&self.log, &times, 1000.0 / self.fps, 0.0));
-        alignments.push((key, Arc::clone(&actions)));
+        let actions = align::align(&self.log, &times, 1000.0 / self.fps, 0.0);
+        let aligned = Arc::new(Aligned {
+            gyro_bias: turn::gyro_bias(&actions),
+            actions,
+        });
+        alignments.push((key, Arc::clone(&aligned)));
         if alignments.len() > CACHED_ALIGNMENTS {
             alignments.remove(0);
         }
-        actions
+        aligned
     }
 
     /// The sound track as WebM, extracted once: ffmpeg copies the Opus

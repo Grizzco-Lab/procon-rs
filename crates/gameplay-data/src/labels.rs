@@ -52,7 +52,7 @@ pub struct Label {
 }
 
 /// Round to `digits` decimals, halves to even, as Python's `round` does
-fn round(value: f32, digits: usize) -> f64 {
+pub(crate) fn round(value: f32, digits: usize) -> f64 {
     alloc::format!("{:.digits$}", f64::from(value))
         .parse()
         .unwrap()

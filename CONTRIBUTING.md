@@ -102,7 +102,7 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results through our classes, dataset overview, send to labels |
 | `src/predictor.rs` | Predictor app backend: `agentzero-predict` runs as a child process, stored predictions, windows of predictions and truth, agreement numbers |
 | `src/predictor/online.rs` | The Predictor's online mode: `agentzero-play --json` on a paced video or the live capture's piped frames, the loop's latency, and the bot (`Bot`) that plays the Switch through the replay port with a person's input taking over |
-| `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
+| `crates/gameplay-data` | Recording format, alignment, labels, calibration, the camera turn from AgentZero's fits; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
 | `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, inbox, name tables, assets, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
 | `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `translate.js`, `vision.js`, `predictor.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
@@ -262,7 +262,9 @@ theme. Our own doodles in the Salmon Run spirit; never Nintendo's artwork.
 
 `src/inspect.rs` reads sessions under `[inspect] root` with `gameplay-data`.
 Frames are decoded by ffmpeg on request (a seek, then a short window at 360p)
-and cached; labels come from `gameplay_data::align` at the requested delay; a
+and cached; labels come from `gameplay_data::align` at the requested delay,
+the truth with its camera turn (`gameplay_data::turn`) when AgentZero's
+`sessions.json` next to the calibration file has the session's fit; a
 segment's sound is served as WebM with byte ranges. `POST
 /api/inspect/delay` sets or removes a delay by hand in the calibration file.
 `web/inspect.js` opens the segment in the player and keeps its state in the
@@ -430,8 +432,9 @@ on success) with `run.json`. The command runs in its own process group, since
 Python predicting: Cancel sends the group SIGTERM, then SIGKILL after five
 seconds, and keeps nothing; a run under way stops with the studio. The page
 asks for windows of predictions (and, for sessions, the truth through the
-Inkspector's alignment) and for the agreement over a range; videos play
-through Cuttlefish's video endpoint.
+Inkspector's alignment, with the camera turn where AgentZero fitted the
+session) and for the agreement over a range; videos play through
+Cuttlefish's video endpoint.
 
 The online mode (`src/predictor/online.rs`) runs AgentZero's policy
 (`runs/policy/*/best.pt`) with `uv run agentzero-play --dry-run --json`, in
@@ -490,4 +493,8 @@ One definition of a recording for the recorder (Rust) and the training code
   predictions;
 - `calibration`: `calibration.json` entries and the rule for the delay to
   apply: set by hand, else the session's own when its confidence is high or
-  medium, else its setup era's.
+  medium, else its setup era's;
+- `turn`: the camera turn per frame as AgentZero defines it (`x = a * yaw +
+  b * (stick_x - 2100)`, `y = c * pitch`, pixels per frame at 640 x 360,
+  the gyro's rest bias removed), with each session's `a`, `b`, `c` read
+  from AgentZero's `sessions.json`, never fitted here.

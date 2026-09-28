@@ -35,7 +35,9 @@
 //! - `GET runs`: every stored run, newest first
 //! - `GET labels?key=&ckpt=&start=&stop=`: frames `[start, stop)` of a
 //!   stored run: `{"pred", "truth"}` (truth for session videos, else
-//!   `null`) and their [`agreement`]
+//!   `null`) and their [`agreement`]; the truth has a `camera_turn` like the
+//!   prediction's when AgentZero fitted the session's camera turn (the fit
+//!   applied to the recorded gyro and stick, see [`gameplay_data::turn`])
 //! - `GET agreement?key=&ckpt=&start=&stop=`: only the agreement, over up
 //!   to an hour of frames
 //! - `POST run` with a [`RunRequest`] starts a run (409 while one runs)
@@ -1117,6 +1119,8 @@ fn camera_turn(label: &Label) -> Option<[f64; 2]> {
 /// How well predictions agree with the truth over the frames both have
 /// (truth with controller reports): F1 per button pressed in either, and
 /// the correlation of each stick axis, gyro pitch and yaw, and camera turn
+/// (for sessions with a turn fit; the fairer score of aiming, since yaw and
+/// the right stick mix in many ways for one sideways turn)
 pub fn agreement(truth: &[Label], pred: &[Option<Label>]) -> Value {
     let pairs: Vec<(&Label, &Label)> = truth
         .iter()
@@ -1457,8 +1461,31 @@ options:
         assert_eq!(signal("gyro_yaw")["r"], 1.0);
         // Sticks that never move have no correlation
         assert_eq!(signal("right_x")["r"], Value::Null);
-        // The truth has no camera turn
+        // Without the session's turn fit, the truth has no camera turn
         assert_eq!(signal("turn_x")["n"], 0);
+    }
+
+    #[test]
+    fn agreement_of_camera_turn() {
+        let turns = |values: [f64; 3]| {
+            values
+                .iter()
+                .enumerate()
+                .map(|(n, turn)| label(n as u64, true, &[], 2048.0, Some(*turn)))
+                .collect::<Vec<_>>()
+        };
+        let truth = turns([1.0, 2.0, 3.5]);
+        let pred: Vec<Option<Label>> = turns([1.1, 2.0, 3.2]).into_iter().map(Some).collect();
+        let a = agreement(&truth, &pred);
+        let turn_x = a["signals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == "turn_x")
+            .unwrap()
+            .clone();
+        assert_eq!(turn_x["n"], 3);
+        assert!(turn_x["r"].as_f64().unwrap() > 0.95);
     }
 
     #[test]

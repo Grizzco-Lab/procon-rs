@@ -45,7 +45,8 @@ preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerol
 [inspect]
 # Folder of session folders for the Inkspector; by default the recording prefix's folder
 # root = "/data/procon"
-# AgentZero's per-session video delays, relative to this file (a missing file means none)
+# AgentZero's per-session video delays, relative to this file (a missing file means none);
+# its sessions.json beside it gives the camera turn fits, the truth's camera turn
 # calibration = "../AgentZero/calibration.json"
 # Object labels drawn in the Inkspector; by default "Annotations" next to the root
 # annotations = "/data/Annotations"
