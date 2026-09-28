@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Records Nintendo Switch gameplay for training datasets: Pro Controller input, timestamped, next to the console's video and sound. The README is the user guide; CONTRIBUTING.md has the same architecture in more words; `doc/index.html` is the illustrated write-up (screenshots in `doc/images/`, hero image `doc/demo.png`).
+Records Nintendo Switch gameplay for training datasets: Pro Controller input, timestamped, next to the console's video and sound. The README is the user guide; CONTRIBUTING.md has the same architecture in more words; `doc/index.html` is the illustrated write-up (screenshots in `doc/images/`, hero image `doc/demo.png`); `doc/story.html` is the project's story in English and Chinese (ideas, decisions, dead ends and optimisations, chapter by chapter, with a new chapter after each major milestone: its end says how), its videos `doc/story/<scene>-<lang>.mp4` rendered from the page's own canvas scenes by `node doc/story/render.mjs [scene]` (headless Chrome, ffmpeg).
 
 - `procon-proxy` (`src/bin/procon-proxy.rs`, config `proxy.toml`): USB proxy on a Raspberry Pi 4 between the Pro Controller and the Switch (USB gadget); streams timestamped frames over TCP (`[stream] port`, 7331) and takes replayed actions (`[replay] port`, 7332); resets the controller at start.
 - `procon` (`src/bin/main.rs`, config `config.toml`): the studio on the Linux host with the capture card. Web dashboard with five apps: Studio (live preview, controller view incl. 3D, recording with sound and game settings, technique markers, replay, data, motion), Inkspector (recorded sessions frame by frame: labels, delays, sound, overlays, predictions, object labeling), Cuttlefish (a chat with the AI reviewer, saved in reviews; VOD reviews with comments and drawings; a Translate view for jargon over the glossary; a Knowledge view managing the `cuttlefish` store), Vision (detection and tracking with `gameplay-vision` through our classes, dataset overview, send to labels) and Predictor (AgentZero's IDM on any video, its predictions against the truth; AgentZero's policy online, on a video or on the live capture, where it can play the Switch). Every project is used from the page, not the CLI.
@@ -28,7 +28,8 @@ Records Nintendo Switch gameplay for training datasets: Pro Controller input, ti
 cargo build --release                 # both binaries
 cargo test --workspace                # procon and every crate's unit tests
 cargo clippy --workspace --all-targets
-cargo fmt                             # Rust; `prettier --write` for web/*.html and doc/index.html
+cargo fmt                             # Rust; `prettier --write` for web/*.html, doc/index.html and doc/story.html
+node doc/story/render.mjs [scene]     # the story's videos from its canvas scenes (--at 2,6 --out <dir> for stills)
 ./scripts/run.sh                      # studio with config.toml
 ./scripts/deploy.sh [ssh-host]        # cross-compile procon-proxy (aarch64-unknown-linux-musl, rust-lld), copy to the Pi, restart
 ./scripts/run-proxy.sh                # build and run procon-proxy on the Pi itself

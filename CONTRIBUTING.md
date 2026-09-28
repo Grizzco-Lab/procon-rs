@@ -107,7 +107,7 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, inbox, name tables, assets, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
 | `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `translate.js`, `vision.js`, `predictor.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
 | `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy (or one at rest, `--still`) and applies replayed actions |
-| `doc/` | Setup and dashboard write-up with screenshots, published to GitHub Pages |
+| `doc/` | Setup and dashboard write-up with screenshots (`index.html`), and the project's story (`story.html`; its videos rendered from the page's canvas scenes by `story/render.mjs`), published to GitHub Pages |
 
 ## How it works
 

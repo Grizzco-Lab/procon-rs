@@ -19,6 +19,10 @@ Switch.
 >
 > The hardware you need, how it is wired, and what the studio does, with
 > screenshots. Source: [doc/index.html](doc/index.html).
+>
+> How it all came about, from the rig to the first policies: the ideas, the
+> decisions, the dead ends and the numbers, with charts and videos, in English
+> and Chinese: [doc/story.html](doc/story.html).
 
 ![The Studio app: live video with the input overlay, the 3D controller, recording, replay, data and motion panels](doc/demo.png)
 

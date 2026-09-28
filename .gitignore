@@ -11,3 +11,6 @@
 
 # Local secrets for scripts/run.sh (prefer ~/.config/procon/env)
 /.env
+
+# Stills of the story's scenes (node doc/story/render.mjs --at ...)
+/doc/story/stills/
