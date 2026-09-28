@@ -471,8 +471,9 @@
     }
     cf.listing = data;
     drawReviews();
-    // Titles being looked up come in a moment
-    if (data.fetching?.length && cf.shown && !cf.review) {
+    // Titles being looked up, and the list being read again, come in a
+    // moment
+    if ((data.fetching?.length || data.refreshing) && cf.shown && !cf.review) {
       cf.listTimer = setTimeout(loadReviews, 2000);
     }
   }

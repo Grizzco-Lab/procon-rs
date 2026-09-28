@@ -214,8 +214,9 @@ fn main() -> anyhow::Result<()> {
         },
     ));
     // Reviews of the older layout move into folders, with their YouTube
-    // videos from the download cache of before; on a thread, since the
-    // reviews may sit on a network mount (and a video is moved across)
+    // videos from the download cache of before, then the reviews list is
+    // read for the library; on a thread, since the reviews may sit on a
+    // network mount (and a video is moved across)
     let legacy_cache = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
@@ -225,6 +226,9 @@ fn main() -> anyhow::Result<()> {
     std::thread::spawn(move || {
         if let Err(e) = migrating.migrate(&legacy_cache) {
             log::warn!("Could not move reviews into folders: {:#}", e);
+        }
+        if let Err(e) = migrating.warm() {
+            log::warn!("Could not read the reviews: {:#}", e);
         }
     });
 

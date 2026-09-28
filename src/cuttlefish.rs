@@ -64,8 +64,10 @@
 //! Endpoints under `/api/cuttlefish/`:
 //!
 //! - `GET reviews`: every review, newest first (with its video, if any, its
-//!   counts and the first message of its chat), and `fetching`, the reviews
-//!   whose YouTube title is being looked up; `GET`, `PUT`, `DELETE
+//!   counts and the first message of its chat), `fetching`, the reviews
+//!   whose YouTube title is being looked up, and `refreshing` while the
+//!   list is read again ([`ReviewList`]: kept in memory, since the folder
+//!   may be a network mount); `GET`, `PUT`, `DELETE
 //!   reviews/<id>` read, write and delete one (deleting removes its folder,
 //!   video included; `PUT` answers with the video as saved); `POST
 //!   reviews/<id>/copy` copies a local file review's video into its folder
@@ -129,6 +131,8 @@ use crate::pedia::Pedia;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::time::Duration;
 use cuttlefish::corpus_reviews::{Origin, Unplaced};
 use cuttlefish::game::Game;
 use cuttlefish::llm::{Role, Settings, Turn};
@@ -144,7 +148,8 @@ use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
+use std::time::Instant;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::{Method, Response, StatusCode};
@@ -166,6 +171,14 @@ const REVIEW_FILE: &str = "review.json";
 
 /// A downloaded YouTube range in its review folder
 const VIDEO_FILE: &str = "video.mp4";
+
+/// Review files read at once when the list is read: on a network mount
+/// each is a round trip of its own
+const LIST_READERS: usize = 16;
+
+/// How long the list is served as it is before it is read again in the
+/// background, for reviews written by others (`cuttlefish corpus reviews`)
+const LIST_FRESH: Duration = Duration::from_secs(30);
 
 /// Gungee's community Salmon Run tools, whose stage maps the page shows
 const GUNGEE: &str = "https://salmon-learn-nw.gungee.jp";
@@ -504,11 +517,176 @@ struct Thumbs {
     images: HashMap<(PathBuf, u64), Vec<u8>>,
 }
 
+/// A review as the library lists it
+#[derive(Clone)]
+struct Listed {
+    /// When its `review.json` changed
+    modified_ms: u64,
+    video: Option<VideoRef>,
+    /// The library's row
+    row: Value,
+}
+
+impl Listed {
+    fn new(id: &str, review: &Review, modified_ms: u64) -> Self {
+        let topic = review
+            .messages
+            .iter()
+            .find(|m| m.role == Role::User)
+            .map(|m| m.text.chars().take(TOPIC_CHARS).collect::<String>());
+        let row = json!({
+            "id": id,
+            "video": review.video,
+            "title": review.title,
+            "game": review.game,
+            "stage": review.stage,
+            "from": review.source.as_ref().map(|s| &s.from),
+            "eggstra_event": review.source.as_ref().and_then(|s| s.eggstra_event),
+            "comments": review.comments.len(),
+            "messages": review.messages.len(),
+            "topic": topic,
+            "modified_ms": modified_ms,
+        });
+        Self {
+            modified_ms,
+            video: review.video.clone(),
+            row,
+        }
+    }
+}
+
+/// The reviews listing, kept in memory: the reviews folder may be a network
+/// mount (rclone on Dropbox), where every review folder not looked at in
+/// the last minutes costs a round trip. It is read once at startup
+/// ([`Cuttlefish::warm`]), with [`LIST_READERS`] files at once; the studio's
+/// own writes update it, and a listing older than [`LIST_FRESH`] is served
+/// while it is read again in the background. No lock is held while files
+/// are read.
+struct ReviewList {
+    dir: PathBuf,
+    state: Mutex<ListState>,
+    /// Signalled when a reading ends
+    read: Condvar,
+}
+
+#[derive(Default)]
+struct ListState {
+    /// Every review by id, once read
+    reviews: Option<BTreeMap<String, Listed>>,
+    read_at: Option<Instant>,
+    /// A reading is under way
+    reading: bool,
+    /// The studio's changes while a reading is under way, applied over its
+    /// result (`None`: deleted)
+    changed: Vec<(String, Option<Listed>)>,
+}
+
+impl ReviewList {
+    fn new(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            state: Mutex::default(),
+            read: Condvar::new(),
+        }
+    }
+
+    /// Every review and whether the list is being read again; the first
+    /// call waits for the list to be read
+    fn rows(self: &Arc<Self>) -> Result<(Vec<Listed>, bool)> {
+        let mut state = self.state.lock().unwrap();
+        loop {
+            if let Some(reviews) = &state.reviews {
+                let rows = reviews.values().cloned().collect();
+                if !state.reading && state.read_at.is_none_or(|t| t.elapsed() > LIST_FRESH) {
+                    state.reading = true;
+                    state.changed.clear();
+                    let list = Arc::clone(self);
+                    std::thread::spawn(move || {
+                        if let Err(e) = list.read_all() {
+                            log::warn!("Could not read the reviews again: {:#}", e);
+                        }
+                    });
+                }
+                return Ok((rows, state.reading));
+            }
+            if state.reading {
+                state = self.read.wait(state).unwrap();
+                continue;
+            }
+            state.reading = true;
+            state.changed.clear();
+            drop(state);
+            self.read_all()?;
+            state = self.state.lock().unwrap();
+        }
+    }
+
+    /// Read the list now, unless a reading is under way
+    fn refresh(&self) -> Result<()> {
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.reading {
+                return Ok(());
+            }
+            state.reading = true;
+            state.changed.clear();
+        }
+        self.read_all()
+    }
+
+    /// Read every review (the caller has set `reading`)
+    fn read_all(&self) -> Result<()> {
+        let started = Instant::now();
+        let result = read_listing(&self.dir);
+        let mut state = self.state.lock().unwrap();
+        state.reading = false;
+        self.read.notify_all();
+        let changed = core::mem::take(&mut state.changed);
+        let mut reviews = result?;
+        log::debug!(
+            "Read {} reviews in {} ms",
+            reviews.len(),
+            started.elapsed().as_millis()
+        );
+        for (id, listed) in changed {
+            match listed {
+                Some(listed) => reviews.insert(id, listed),
+                None => reviews.remove(&id),
+            };
+        }
+        state.reviews = Some(reviews);
+        state.read_at = Some(Instant::now());
+        Ok(())
+    }
+
+    /// The studio wrote review `id` (`None`: deleted it)
+    fn put(&self, id: &str, review: Option<&Review>) {
+        let listed = review.map(|review| Listed::new(id, review, now_ms()));
+        let mut state = self.state.lock().unwrap();
+        if state.reading {
+            state.changed.push((id.to_string(), listed.clone()));
+        }
+        if let Some(reviews) = state.reviews.as_mut() {
+            match listed {
+                Some(listed) => reviews.insert(id.to_string(), listed),
+                None => reviews.remove(id),
+            };
+        }
+    }
+
+    /// Others may have written reviews: the next listing reads them again
+    fn stale(&self) {
+        self.state.lock().unwrap().read_at = None;
+    }
+}
+
 /// Reviews and the downloads under way
 pub struct Cuttlefish {
     /// Sessions are read from the Inkspector's root
     inspector: Arc<Inspector>,
     reviews: PathBuf,
+    /// The reviews as the library lists them
+    list: Arc<ReviewList>,
     downloads: Arc<Mutex<BTreeMap<String, Download>>>,
     /// Held while a review file is written
     writing: Arc<Mutex<()>>,
@@ -575,6 +753,7 @@ impl Cuttlefish {
     ) -> Self {
         Self {
             inspector,
+            list: Arc::new(ReviewList::new(reviews.clone())),
             reviews,
             downloads: Arc::default(),
             writing: Arc::default(),
@@ -604,65 +783,30 @@ impl Cuttlefish {
     }
 
     /// Every review: its id, video, comment and message counts, the first
-    /// message of its chat and its last change, newest first
+    /// message of its chat and its last change, newest first; from memory
+    /// ([`ReviewList`])
     pub fn reviews(&self) -> Result<Value> {
-        let entries = match std::fs::read_dir(&self.reviews) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(json!({ "dir": self.reviews, "reviews": [] }));
+        let (mut rows, refreshing) = self.list.rows()?;
+        for listed in &rows {
+            if let (Some(id), Some(video)) = (listed.row["id"].as_str(), &listed.video) {
+                self.look_up_meta(id, video);
             }
-            Err(e) => {
-                return Err(e).with_context(|| format!("cannot list {}", self.reviews.display()));
-            }
-        };
-        let mut reviews: Vec<(u64, Value)> = entries
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
-                let id = entry.file_name().to_str()?.to_string();
-                if check_id(&id).is_err() {
-                    return None;
-                }
-                let path = entry.path().join(REVIEW_FILE);
-                let modified_ms = std::fs::metadata(&path)
-                    .ok()?
-                    .modified()
-                    .ok()?
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .ok()?
-                    .as_millis() as u64;
-                let review = read_review(&path)
-                    .inspect_err(|e| log::warn!("Skipping review {id}: {:#}", e))
-                    .ok()?;
-                if let Some(video) = &review.video {
-                    self.look_up_meta(&id, video);
-                }
-                let topic = review
-                    .messages
-                    .iter()
-                    .find(|m| m.role == Role::User)
-                    .map(|m| m.text.chars().take(TOPIC_CHARS).collect::<String>());
-                Some((
-                    modified_ms,
-                    json!({
-                        "id": id,
-                        "video": review.video,
-                        "title": review.title,
-                        "game": review.game,
-                        "stage": review.stage,
-                        "from": review.source.as_ref().map(|s| &s.from),
-                        "eggstra_event": review.source.as_ref().and_then(|s| s.eggstra_event),
-                        "comments": review.comments.len(),
-                        "messages": review.messages.len(),
-                        "topic": topic,
-                        "modified_ms": modified_ms,
-                    }),
-                ))
-            })
-            .collect();
-        reviews.sort_by_key(|(modified_ms, _)| core::cmp::Reverse(*modified_ms));
-        let reviews: Vec<Value> = reviews.into_iter().map(|(_, review)| review).collect();
+        }
+        rows.sort_by_key(|listed| core::cmp::Reverse(listed.modified_ms));
+        let reviews: Vec<Value> = rows.into_iter().map(|listed| listed.row).collect();
         let fetching = self.lookups.lock().unwrap().running.clone();
-        Ok(json!({ "dir": self.reviews, "reviews": reviews, "fetching": fetching }))
+        Ok(json!({
+            "dir": self.reviews,
+            "reviews": reviews,
+            "fetching": fetching,
+            "refreshing": refreshing,
+        }))
+    }
+
+    /// Read the reviews list now, so that the library's first listing does
+    /// not wait for the folder; the studio calls it on a thread at startup
+    pub fn warm(&self) -> Result<()> {
+        self.list.refresh()
     }
 
     /// One review
@@ -686,6 +830,7 @@ impl Cuttlefish {
             video.add_meta(known.meta());
         }
         write_atomic(&path, &serde_json::to_vec_pretty(&review)?)?;
+        self.list.put(id, Some(&review));
         Ok(review)
     }
 
@@ -709,6 +854,7 @@ impl Cuttlefish {
         let (id, url) = (id.to_string(), video.reference.clone());
         let writing = Arc::clone(&self.writing);
         let lookups = Arc::clone(&self.lookups);
+        let list = Arc::clone(&self.list);
         std::thread::spawn(move || {
             let result = ytdlp_meta(&url).and_then(|meta| {
                 let _writing = writing.lock().unwrap();
@@ -717,6 +863,7 @@ impl Cuttlefish {
                 if video.add_meta(meta) {
                     let title = video.title.clone();
                     write_atomic(&path, &serde_json::to_vec_pretty(&review)?)?;
+                    list.put(&id, Some(&review));
                     return Ok(title);
                 }
                 Ok(video.title.clone())
@@ -733,7 +880,10 @@ impl Cuttlefish {
     pub fn delete_review(&self, id: &str) -> Result<()> {
         let dir = self.review_dir(id)?;
         ensure!(dir.join(REVIEW_FILE).is_file(), "no review {id}");
-        std::fs::remove_dir_all(&dir).with_context(|| format!("cannot delete {}", dir.display()))
+        std::fs::remove_dir_all(&dir)
+            .with_context(|| format!("cannot delete {}", dir.display()))?;
+        self.list.put(id, None);
+        Ok(())
     }
 
     /// A new review id from the local time, unused in the reviews folder
@@ -753,17 +903,17 @@ impl Cuttlefish {
     }
 
     /// The review of the same video whose folder holds it, if any
-    fn review_with_video(&self, video: &VideoRef) -> Option<(String, Review)> {
-        let entries = std::fs::read_dir(&self.reviews).ok()?;
-        entries.filter_map(|e| e.ok()).find_map(|entry| {
-            let id = entry.file_name().to_str()?.to_string();
-            let review = read_review(&entry.path().join(REVIEW_FILE)).ok()?;
-            let stored = review.video.as_ref()?;
-            let has_file = stored
-                .file
-                .as_ref()
-                .is_some_and(|f| entry.path().join(f).is_file());
-            (has_file && stored.same(video)).then_some((id, review))
+    fn review_with_video(&self, video: &VideoRef) -> Option<String> {
+        let (rows, _) = self.list.rows().ok()?;
+        rows.into_iter().find_map(|listed| {
+            let id = listed.row["id"].as_str()?;
+            let stored = listed.video.as_ref().filter(|v| v.same(video))?;
+            let file = stored.file.as_ref()?;
+            self.review_dir(id)
+                .ok()?
+                .join(file)
+                .is_file()
+                .then(|| id.to_string())
         })
     }
 
@@ -808,6 +958,7 @@ impl Cuttlefish {
     pub fn community_reviews(&self) -> Result<Value, Status> {
         let reviews = self.reviews.clone();
         let writing = Arc::clone(&self.writing);
+        let list = Arc::clone(&self.list);
         let job = self.knowledge.start_job(
             "Reviews from #vod-review".to_string(),
             move |knowledge, id| {
@@ -828,7 +979,9 @@ impl Cuttlefish {
                 let stats = corpus::Stats::of(&built, root);
                 let written = {
                     let _writing = writing.lock().unwrap();
-                    corpus_reviews::write(&built, root, &reviews)?
+                    let written = corpus_reviews::write(&built, root, &reviews);
+                    list.stale();
+                    written?
                 };
                 knowledge.log(id, stats.to_string());
                 knowledge.log(id, format!("reviews: {written}"));
@@ -915,6 +1068,7 @@ impl Cuttlefish {
             moved += 1;
         }
         if moved > 0 {
+            self.list.stale();
             log::info!(
                 "Moved {moved} reviews into folders in {}",
                 self.reviews.display()
@@ -1152,7 +1306,7 @@ impl Cuttlefish {
                 id.to_string()
             }
             None => {
-                if let Some((id, _)) = self.review_with_video(&video) {
+                if let Some(id) = self.review_with_video(&video) {
                     return Ok(Download {
                         id,
                         url: url.to_string(),
@@ -1185,6 +1339,7 @@ impl Cuttlefish {
         let job = download.clone();
         let downloads = Arc::clone(&self.downloads);
         let writing = Arc::clone(&self.writing);
+        let list = Arc::clone(&self.list);
         let review_file = dir.join(REVIEW_FILE);
         let existing = into.is_some();
         std::thread::spawn(move || {
@@ -1213,7 +1368,9 @@ impl Cuttlefish {
                     },
                 };
                 review.video = Some(video);
-                write_atomic(&review_file, &serde_json::to_vec_pretty(&review)?)
+                write_atomic(&review_file, &serde_json::to_vec_pretty(&review)?)?;
+                list.put(&job.id, Some(&review));
+                Ok(())
             });
             let mut downloads = downloads.lock().unwrap();
             if let Some(download) = downloads.get_mut(&job.id) {
@@ -1935,6 +2092,51 @@ fn newest_prediction(
     best.map(|(_, dir, job)| (dir, job))
 }
 
+/// Every review in `dir` by id, [`LIST_READERS`] files at once; folders
+/// without a readable `review.json` are left out
+fn read_listing(dir: &Path) -> Result<BTreeMap<String, Listed>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(e) => return Err(e).with_context(|| format!("cannot list {}", dir.display())),
+    };
+    let ids: Vec<String> = entries
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|id| check_id(id).is_ok())
+        .collect();
+    let next = AtomicUsize::new(0);
+    let found = Mutex::new(BTreeMap::new());
+    std::thread::scope(|scope| {
+        for _ in 0..LIST_READERS.min(ids.len()) {
+            scope.spawn(|| {
+                while let Some(id) = ids.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    if let Some(listed) = read_listed(dir, id) {
+                        found.lock().unwrap().insert(id.clone(), listed);
+                    }
+                }
+            });
+        }
+    });
+    Ok(found.into_inner().unwrap())
+}
+
+/// Review `id` in `dir` as the library lists it, if it has a readable
+/// `review.json`
+fn read_listed(dir: &Path, id: &str) -> Option<Listed> {
+    let path = dir.join(id).join(REVIEW_FILE);
+    let modified_ms = std::fs::metadata(&path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
+    let review = read_review(&path)
+        .inspect_err(|e| log::warn!("Skipping review {id}: {:#}", e))
+        .ok()?;
+    Some(Listed::new(id, &review, modified_ms))
+}
+
 /// A review file
 fn read_review(path: &Path) -> Result<Review> {
     let text =
@@ -2378,6 +2580,39 @@ mod tests {
         cuttlefish.delete_review("r-1").unwrap();
         assert!(!dir.join("reviews/r-1").exists());
         assert!(cuttlefish.review("r-1").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_list_is_kept_in_memory() {
+        let (dir, cuttlefish) = scratch("list");
+        let review: Review = serde_json::from_str(REVIEW).unwrap();
+        cuttlefish.save_review("r-1", &review).unwrap();
+        cuttlefish.warm().unwrap();
+        let ids = |cuttlefish: &Cuttlefish| {
+            let list = cuttlefish.reviews().unwrap();
+            let ids: Vec<String> = list["reviews"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["id"].as_str().unwrap().to_string())
+                .collect();
+            ids
+        };
+        assert_eq!(ids(&cuttlefish), ["r-1"]);
+
+        // The studio's own writes show at once, newest first
+        cuttlefish.save_review("r-2", &review).unwrap();
+        assert_eq!(ids(&cuttlefish), ["r-2", "r-1"]);
+        cuttlefish.delete_review("r-1").unwrap();
+        assert_eq!(ids(&cuttlefish), ["r-2"]);
+
+        // Another program's review shows once the list is read again
+        std::fs::create_dir_all(dir.join("reviews/r-3")).unwrap();
+        std::fs::write(dir.join("reviews/r-3/review.json"), REVIEW).unwrap();
+        assert_eq!(ids(&cuttlefish), ["r-2"]);
+        cuttlefish.warm().unwrap();
+        assert_eq!(ids(&cuttlefish).len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
