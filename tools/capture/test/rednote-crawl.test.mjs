@@ -137,9 +137,10 @@ class FakePage {
   }
 }
 
-const quick = () =>
+/** A pace without waits; no caps unless `caps` sets them */
+const quick = (caps = {}) =>
   new Pace(
-    { maxActions: null, dailyCap: null },
+    { maxActions: null, dailyCap: null, ...caps },
     { sleep: async () => true, random: () => 0.5 },
   );
 
@@ -151,10 +152,11 @@ function crawl(
   options = {},
   st = state.load(dir, rn.TOOL),
   random = () => 0.999,
+  pace = quick(),
 ) {
   const lines = [];
   const c = new Crawl(page, {
-    pace: quick(),
+    pace,
     state: st,
     dir,
     log: (l) => lines.push(l),
@@ -518,6 +520,27 @@ test("a visit reads a random share of the unread notes, at most --per-creator; l
   assert.deepEqual([s3.fresh, s3.kept, s3.left], [1, 1, 1]);
   assert.deepEqual(opened(page3), [more[0]]);
   assert.deepEqual(state.load(dir, rn.TOOL).accounts[A].notes, more);
+  rmSync(dir, { recursive: true });
+});
+
+test("a stop during a visit still counts the unread notes left with the creator", async () => {
+  const dir = scratch();
+  const page = new FakePage(manyNotes(ids(5)));
+  // The daily cap arrives while the visit's notes are read
+  const c = crawl(
+    page,
+    dir,
+    { creators: [A] },
+    undefined,
+    () => 0,
+    quick({ dailyCap: 6 }),
+  );
+  const s = await c.run();
+  assert.equal(s.stopped?.reason, "daily-cap", c.lines.join("\n"));
+  const st = state.load(dir, rn.TOOL);
+  // One note read before the stop; the rest of the five wait
+  assert.deepEqual([s.kept, s.left], [1, 4]);
+  assert.equal(s.left, unread(st.accounts[A], st.seen).length);
   rmSync(dir, { recursive: true });
 });
 

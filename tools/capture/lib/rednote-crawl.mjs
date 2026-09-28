@@ -409,16 +409,20 @@ export class Crawl {
       `  ${listed.size} notes listed, ${fresh.length} new${reachedEnd ? "" : " (list not finished)"}; ${left.length} unread, reading ${chosen.length}`,
     );
     this.save();
-    for (const n of chosen) {
-      if (this.full()) break;
-      const l = listed.get(n) ?? {
-        id: n,
-        title: "",
-        xsec_token: record.tokens[n],
-      };
-      await this.note(id, record, l, profile, record.notes);
+    try {
+      for (const n of chosen) {
+        if (this.full()) break;
+        const l = listed.get(n) ?? {
+          id: n,
+          title: "",
+          xsec_token: record.tokens[n],
+        };
+        await this.note(id, record, l, profile, record.notes);
+      }
+    } finally {
+      // Counted also when a stop (a cap, a challenge) ends the visit
+      this.summary.left += unread(record, this.state.seen).length;
     }
-    this.summary.left += unread(record, this.state.seen).length;
     this.save();
   }
 
