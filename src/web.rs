@@ -23,7 +23,9 @@
 //! - `/api/vision/...`: the Vision app's runs and results, see
 //!   [`crate::vision`]
 //! - `/api/predictor/...`: the Predictor app's runs and predictions, see
-//!   [`crate::predictor`]
+//!   [`crate::predictor`]; `/api/predictor/online/...`: its online mode,
+//!   AgentZero's policy frame by frame, see [`crate::predictor::online`],
+//!   whose actions also go to `/ws` as `{"type":"agent"}` text
 
 use crate::config::WebConfig;
 use crate::cuttlefish::{self, Cuttlefish};
@@ -32,6 +34,7 @@ use crate::follow::{self, Follow};
 use crate::inspect::Inspector;
 use crate::motion::Orientation;
 use crate::parser::ProConParser;
+use crate::predictor::online::{self, Online};
 use crate::predictor::{self, Predictor};
 use crate::studio::{Command, Studio};
 use crate::video::{ChunkKind, PreviewChunk};
@@ -105,6 +108,7 @@ pub async fn serve(
     cuttlefish: Arc<Cuttlefish>,
     vision: Arc<Vision>,
     predictor: Arc<Predictor>,
+    online: Arc<Online>,
     follow: Arc<Follow>,
     web: &WebConfig,
 ) {
@@ -316,13 +320,15 @@ pub async fn serve(
         });
 
     let video = studio.video.clone();
+    let agent = Arc::clone(&online);
     let websocket = warp::path!("ws")
         .and(warp::ws())
         .map(move |ws: warp::ws::Ws| {
             let state = feed.state.subscribe();
             let status = status.subscribe();
             let preview = video.subscribe();
-            ws.on_upgrade(move |socket| stream_to_client(socket, state, status, preview))
+            let agent = agent.subscribe();
+            ws.on_upgrade(move |socket| stream_to_client(socket, state, status, preview, agent))
         });
 
     let api = warp::path!("api" / "command")
@@ -370,6 +376,7 @@ pub async fn serve(
         .or(under("api/inspect/follow").and(follow::routes(follow)))
         .or(under("api/cuttlefish").and(cuttlefish::routes(cuttlefish)))
         .or(under("api/vision").and(vision::routes(vision)))
+        .or(under("api/predictor/online").and(online::routes(online)))
         .or(under("api/predictor").and(predictor::routes(predictor)));
     let routes = same_origin(web.allowed_hosts.clone())
         .and(routes)
@@ -510,12 +517,14 @@ fn asset(body: &'static str, content_type: &'static str) -> impl warp::Reply {
     warp::reply::with_header(body, "content-type", content_type)
 }
 
-/// Forward controller state, status and preview frames to one browser
+/// Forward controller state, status, preview frames and AgentZero's actions
+/// to one browser
 async fn stream_to_client(
     socket: WebSocket,
     mut state: watch::Receiver<String>,
     mut status: watch::Receiver<String>,
     (init, mut preview): (Option<PreviewChunk>, broadcast::Receiver<PreviewChunk>),
+    mut agent: watch::Receiver<String>,
 ) {
     let (mut tx, mut rx) = socket.split();
     // Send the current status right away instead of waiting for the next tick
@@ -539,6 +548,10 @@ async fn stream_to_client(
             },
             changed = status.changed() => match changed {
                 Ok(()) => Message::text(status.borrow_and_update().clone()),
+                Err(_) => break,
+            },
+            changed = agent.changed() => match changed {
+                Ok(()) => Message::text(agent.borrow_and_update().clone()),
                 Err(_) => break,
             },
             chunk = preview.recv() => match chunk {

@@ -136,7 +136,8 @@ const CUTTLEFISH_VIEWS = ["translate", "knowledge", "pedia"];
  *   `/cuttlefish/video?kind=&ref=&start_s=&end_s=&t=` (a video not reviewed
  *   yet)
  * - `/vision`, `/vision/<session>?seg=&n=` (`s`)
- * - `/predictor`, `/predictor/<video key>/<checkpoint>?t=` (`key`, `ckpt`)
+ * - `/predictor`, `/predictor/<video key>/<checkpoint>?t=` (`key`, `ckpt`),
+ *   `/predictor/online` (`view`: AgentZero running online)
  */
 function appUrl(app, state = {}) {
   const query = new URLSearchParams(state);
@@ -149,6 +150,8 @@ function appUrl(app, state = {}) {
   if (app === "inspect" || app === "vision") {
     const session = take("s");
     if (session) segments.push(session);
+  } else if (app === "predictor" && query.get("view") === "online") {
+    segments.push(take("view"));
   } else if (app === "predictor" && query.get("key") && query.get("ckpt")) {
     segments.push(take("key"), take("ckpt"));
   } else if (app === "cuttlefish") {
@@ -180,6 +183,8 @@ function routeOf(url) {
   if (!rest.length) return { app, state };
   if (app === "inspect" || app === "vision") {
     state.set("s", rest.join("/"));
+  } else if (app === "predictor" && rest.length === 1 && rest[0] === "online") {
+    state.set("view", "online");
   } else if (app === "predictor" && rest.length > 1) {
     state.set("key", rest[0]);
     state.set("ckpt", rest.slice(1).join("/"));
@@ -282,6 +287,32 @@ window.addEventListener("hashchange", () => {
 
 /** The Studio app is on screen, so its live views are worth drawing */
 const studioShown = () => root.dataset.app === "studio" && !document.hidden;
+
+/** The Studio's screen (the live preview with its input overlay), and where
+ * it sits when at home */
+const studioScreen = document.querySelector(
+  '[data-app-section="studio"] .p-video .screen',
+);
+const studioScreenHome = studioScreen.parentElement;
+let screenLent = false;
+
+/**
+ * Lend the Studio's screen to another app, which shows it in `host` (the
+ * Predictor's live mode), or take it home (`null`). One live preview plays
+ * wherever the screen is.
+ */
+function lendScreen(host) {
+  screenLent = Boolean(host);
+  const place = host ?? studioScreenHome;
+  if (studioScreen.parentElement === place) return;
+  // At home it follows the panel's head
+  if (host) host.prepend(studioScreen);
+  else studioScreenHome.append(studioScreen);
+}
+
+/** The live preview is on screen: in the Studio, or lent */
+const previewShown = () =>
+  (root.dataset.app === "studio" || screenLent) && !document.hidden;
 
 // ------------------------------------------------------------- app order
 
@@ -1091,7 +1122,7 @@ function pump() {
     }
     // Decoding the preview while nobody sees it costs a CPU core in browsers
     // without hardware decoding; keep buffering, and jump to live on return
-    if (!studioShown()) {
+    if (!previewShown()) {
       if (!player.el.paused) player.el.pause();
     } else if (player.el.paused) player.el.play().catch(() => {});
     if (end - ranges.start(0) > 30) {
@@ -1542,6 +1573,9 @@ function connect() {
         pushGyro(performance.now(), latestState.gyro[0]);
     } else if (message.type === "status") {
       renderStatus(message);
+    } else if (message.type === "agent") {
+      // AgentZero's action, for the Predictor's online mode
+      window.dispatchEvent(new CustomEvent("agent", { detail: message }));
     }
   };
   socket.onclose = () => {

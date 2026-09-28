@@ -12,6 +12,7 @@ use procon::dump::MultiDumper;
 use procon::follow::{self, Follow};
 use procon::inspect::Inspector;
 use procon::player::Player;
+use procon::predictor::online::{Bot, Online};
 use procon::predictor::{self, Predictor};
 use procon::recorder::{Recorder, RecorderState};
 use procon::stream::{self, LinkStats};
@@ -113,18 +114,22 @@ fn main() -> anyhow::Result<()> {
         saved.preview_matches_recording.unwrap_or(false),
         saved.record_audio.unwrap_or(true),
     );
+    let link = Arc::new(LinkStats::default());
+    // The Predictor's online mode plays the Switch through the same port
+    let bot = Bot::new(config.proxy.replay_address.clone(), Arc::clone(&link));
     let player = Player::new(
         config.proxy.replay_address,
         saved.replay_mix.unwrap_or(false),
         saved.replay_path,
     );
-    let link = Arc::new(LinkStats::default());
     let feed = LiveFeed::new();
 
-    // Frames from the proxy go to the recorder and the live view
+    // Frames from the proxy go to the recorder and the live view, and to the
+    // bot, which watches them for a person's input while it plays
     let mut pipeline = MultiDumper::new();
     pipeline.add_dumper(Box::new(recorder.clone()));
     pipeline.add_dumper(Box::new(feed.clone()));
+    pipeline.add_dumper(Box::new(bot.clone()));
     let address = config.proxy.address.clone();
     let receiver_link = Arc::clone(&link);
     std::thread::spawn(move || stream::receive_frames(&address, &mut pipeline, &receiver_link));
@@ -242,13 +247,16 @@ fn main() -> anyhow::Result<()> {
         Arc::clone(&cuttlefish),
         predictor_settings,
     ));
+    let online = Online::new(Arc::clone(&predictor), Arc::clone(&studio), bot);
     let follow = Arc::new(Follow::new(Arc::clone(&inspector), follow_settings));
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         tokio::select! {
-            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, Arc::clone(&vision), Arc::clone(&predictor), Arc::clone(&follow), &config.web) => {}
+            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, Arc::clone(&vision), Arc::clone(&predictor), Arc::clone(&online), Arc::clone(&follow), &config.web) => {}
             _ = tokio::signal::ctrl_c() => {
+                // AgentZero may be playing the Switch: the controller first
+                tokio::task::block_in_place(|| online.shutdown());
                 // Let ffmpeg finish the video file and session.json get its end time
                 if studio.recorder.status().state != RecorderState::Idle {
                     log::info!("Stopping the recording before exit");
@@ -259,8 +267,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
     });
-    // A tracker, detector or prediction started from the page ends with the
-    // studio
+    // A tracker, detector, prediction or AgentZero started from the page
+    // ends with the studio
+    online.shutdown();
     follow.stop_service();
     vision.stop_detector();
     predictor.stop();

@@ -11,7 +11,7 @@ cargo test --workspace                 # procon and every crate's unit tests
 cargo clippy --workspace --all-targets
 cargo fmt
 
-cargo run --example fake_proxy [port]  # synthetic controller, no Pi needed (default port 7331)
+cargo run --example fake_proxy [port] [--still]  # synthetic controller, no Pi needed (default port 7331, replay on the next)
 ./scripts/run.sh                       # the studio with config.toml
 ./scripts/deploy.sh [ssh-host]         # cross-compile, copy and restart the proxy on the Pi
 ./scripts/run-proxy.sh                 # build and run the proxy on the Pi itself
@@ -26,10 +26,13 @@ crates), which the proxy has no use for and which need a C compiler for the
 target.
 
 To work on the studio without hardware, run `fake_proxy` on a free port, point
-a copy of `config.toml` at it (`[proxy] address`, a different `[web] port`,
-`[video] input = "screen"` or `""`) and run
+a copy of `config.toml` at it (`[proxy] address`, and `replay_address` at the
+next port, a different `[web] port`, `[video] input = "screen"`, `""` or a
+recorded video file, which plays in a loop as if live) and run
 `target/release/procon --config <copy>`. Dashboard settings are saved next to
-that copy (`<name>.state.json`).
+that copy (`<name>.state.json`). The fake proxy applies replayed actions like
+the proxy; `--still` keeps its synthetic controller at rest, so AgentZero's
+actions can be sent to it without a "person" taking over.
 
 After changing the page's layout or styles, run the layout check against
 such a test studio (Node 22 or later and Chrome; no packages):
@@ -98,11 +101,12 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/pedia.rs` | Cuttlefish's Overfishing Pedia: the terms in scope with sections, games and facets (`cuttlefish::pedia`), their #vod-review mentions searched once and cached until the corpus or the names change, entries with quotes, fact cards, notes and deep questions; `GET source`, the context of a cited source or a quote for the page's source popover (`web/source.js`) |
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results through our classes, dataset overview, send to labels |
 | `src/predictor.rs` | Predictor app backend: `agentzero-predict` runs as a child process, stored predictions, windows of predictions and truth, agreement numbers |
+| `src/predictor/online.rs` | The Predictor's online mode: `agentzero-play --json` on a paced video or the live capture's piped frames, the loop's latency, and the bot (`Bot`) that plays the Switch through the replay port with a person's input taking over |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
 | `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, inbox, name tables, assets, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
 | `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `translate.js`, `vision.js`, `predictor.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
-| `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy |
+| `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy (or one at rest, `--still`) and applies replayed actions |
 | `doc/` | Setup and dashboard write-up with screenshots, published to GitHub Pages |
 
 ## How it works
@@ -427,6 +431,33 @@ seconds, and keeps nothing; a run under way stops with the studio. The page
 asks for windows of predictions (and, for sessions, the truth through the
 Inkspector's alignment) and for the agreement over a range; videos play
 through Cuttlefish's video endpoint.
+
+The online mode (`src/predictor/online.rs`) runs AgentZero's policy
+(`runs/policy/*/best.pt`) with `uv run agentzero-play --dry-run --json`, in
+its own process group like a run: on a video with `--realtime` (paced at
+30 fps, frames skipped while the model is busy, as live), or on the live
+capture with `--capture "-f rawvideo ... -i pipe:0"`. For the latter the
+grabber hands its raw frames to a `PolicyFeed` (`src/video.rs`: thinned to
+30 fps, each with its kernel capture time, a full queue skipping frames),
+and a writer thread pipes them into `agentzero-play`'s stdin, which its
+ffmpeg shares, noting each frame's number, capture time and write time.
+Every JSON line comes back with the number of the frame seen and the Unix
+times the frame arrived and its action was ready, so the loop is timed on
+one clock: hand-off (to the studio, then the pipe and scaling), model and
+send. Each action goes to the dashboard's WebSocket as an `agent` message
+(the page draws it over the Studio's live preview, lent to the Predictor by
+`lendScreen` in `app.js`); a video's actions are kept as labels (for frame
+seen + lead, the frame whose input they predict) and stored as a run
+`policy-<checkpoint>` when it ends. `agentzero-play` never sends anything:
+the `Bot` does, only after `POST online/play` (a confirmation on the page
+each time, for a set time), writing each action to the replay port with
+`mix`. The bot is also a dumper of the proxy's frames: a report the recent
+actions do not explain (`person_input`: a button, a stick pushed past 600,
+a turn 90 °/s faster) writes a neutral line at once and pauses it until 3 s
+pass without such input; a watchdog thread ends sending at the time's end,
+when the policy stalls (500 ms), when no dashboard page has been connected
+for 5 s, when the Replay panel plays and when the proxy's frames stop; the
+studio's exit and Ctrl-C stop it first.
 
 ### gameplay-data
 

@@ -43,6 +43,12 @@
 //!   SIGKILL after [`KILL_AFTER`]; nothing of it is kept
 //!
 //! Errors are `{"error": "..."}` with status 400.
+//!
+//! The online mode ([`online`]) runs AgentZero's policy instead, frame by
+//! frame as if live: on a video, or on the live capture, where it can play
+//! the Switch through the proxy.
+
+pub mod online;
 
 use crate::cuttlefish::{Cuttlefish, VideoKind, VideoRef};
 use crate::inspect::{Inspector, ffprobe};
@@ -141,13 +147,16 @@ pub struct Capabilities {
     pub error: Option<String>,
 }
 
+/// Whether a `--help` text names `option` (a whole word)
+fn help_has(help: &str, option: &str) -> bool {
+    help.split(|c: char| c.is_whitespace() || c == '[' || c == ']' || c == ',')
+        .any(|word| word == option)
+}
+
 impl Capabilities {
     /// The options named in a `--help` text
     pub fn from_help(help: &str) -> Self {
-        let has = |option: &str| {
-            help.split(|c: char| c.is_whitespace() || c == '[' || c == ']' || c == ',')
-                .any(|word| word == option)
-        };
+        let has = |option: &str| help_has(help, option);
         Self {
             video: has("--video"),
             range: has("--start-s") && has("--end-s"),
@@ -399,6 +408,35 @@ fn out_of_memory(log: &[String]) -> bool {
     })
 }
 
+/// `<runs>/*/best.pt`, newest first
+fn checkpoints_in(runs: &Path) -> Vec<Checkpoint> {
+    let Ok(entries) = std::fs::read_dir(runs) else {
+        return Vec::new();
+    };
+    let mut found: Vec<Checkpoint> = entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let path = entry.path().join(CHECKPOINT_FILE);
+            let meta = std::fs::metadata(&path).ok()?;
+            let modified_ms = meta
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_millis() as u64;
+            Some(Checkpoint {
+                name,
+                path,
+                modified_ms,
+                bytes: meta.len(),
+            })
+        })
+        .collect();
+    found.sort_by_key(|c| core::cmp::Reverse(c.modified_ms));
+    found
+}
+
 /// Where frame 0 of the predictions sits in the video: a range's first
 /// frame if the file counts frames from the range's start, else 0
 fn frame_offset(start_s: Option<f64>, fps: Option<f64>, first_frame: Option<u64>) -> u64 {
@@ -467,32 +505,7 @@ impl Predictor {
 
     /// `runs/*/best.pt` in AgentZero, newest first
     pub fn checkpoints(&self) -> Vec<Checkpoint> {
-        let runs = self.settings.agentzero.join("runs");
-        let Ok(entries) = std::fs::read_dir(&runs) else {
-            return Vec::new();
-        };
-        let mut found: Vec<Checkpoint> = entries
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
-                let name = entry.file_name().into_string().ok()?;
-                let path = entry.path().join(CHECKPOINT_FILE);
-                let meta = std::fs::metadata(&path).ok()?;
-                let modified_ms = meta
-                    .modified()
-                    .ok()?
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .ok()?
-                    .as_millis() as u64;
-                Some(Checkpoint {
-                    name,
-                    path,
-                    modified_ms,
-                    bytes: meta.len(),
-                })
-            })
-            .collect();
-        found.sort_by_key(|c| core::cmp::Reverse(c.modified_ms));
-        found
+        checkpoints_in(&self.settings.agentzero.join("runs"))
     }
 
     /// Folders, checkpoints, the command's options and GPU memory
@@ -1021,16 +1034,25 @@ impl Predictor {
                     })
             })
             .collect();
-        let truth: Option<Vec<Label>> = match &job.session {
-            Some((s, seg)) => {
-                let mut value = self
-                    .inspector
-                    .labels(s, Some(seg), start..stop, None, None)?;
-                Some(serde_json::from_value(value["truth"].take())?)
-            }
-            None => None,
-        };
+        let truth = self.truth(job.session.as_ref(), start, stop)?;
         Ok((pred, truth))
+    }
+
+    /// The truth of frames `[start, stop)` of a session's segment, `None`
+    /// for other videos
+    fn truth(
+        &self,
+        session: Option<&(String, String)>,
+        start: usize,
+        stop: usize,
+    ) -> Result<Option<Vec<Label>>> {
+        let Some((s, seg)) = session else {
+            return Ok(None);
+        };
+        let mut value = self
+            .inspector
+            .labels(s, Some(seg), start..stop, None, None)?;
+        Ok(Some(serde_json::from_value(value["truth"].take())?))
     }
 }
 

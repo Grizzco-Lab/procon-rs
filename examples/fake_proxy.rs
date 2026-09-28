@@ -1,15 +1,22 @@
 //! Stand-in for `procon-proxy`: streams a synthetic controller like it does
 //!
 //! ```sh
-//! cargo run --example fake_proxy [port]
+//! cargo run --example fake_proxy [port] [--still]
 //! ```
 //!
 //! Then point `config.toml`'s `[proxy] address` at `localhost:7331` (or the given
 //! port) and run `procon`. No Pro Controller or USB gadget needed.
+//!
+//! Like the proxy, it takes replayed actions on the next port (7332, its
+//! `replay_address`) and applies them to its reports. `--still` leaves the
+//! synthetic controller at rest, as if put down, so what a replay client
+//! (the Replay panel, AgentZero) sends is all that moves; otherwise its
+//! sticks circle and its buttons take turns, as a person playing would.
 
 use core::f64::consts::TAU;
 use core::time::Duration;
 use procon::dump::{Dumper, stamped};
+use procon::replay::Replay;
 use procon::stream::FrameStreamer;
 
 /// (byte offset, bit mask) of every Pro Controller button in an input report
@@ -38,22 +45,53 @@ fn main() -> anyhow::Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
-    let port = match std::env::args().nth(1) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let still = args.iter().any(|a| a == "--still");
+    let port: u16 = match args.iter().find(|a| !a.starts_with("--")) {
         Some(port) => port.parse()?,
         None => 7331,
     };
 
     let mut streamer = FrameStreamer::listen(port)?;
+    let replay = Replay::listen(port + 1)?;
 
     // A wired Pro Controller reports every 8 ms
     for tick in 0u64.. {
-        let mut frame = stamped(tick as u32, &fake_report(tick));
+        let mut report = if still {
+            still_report(tick)
+        } else {
+            fake_report(tick)
+        };
+        // Recordings see what the Switch sees
+        replay.apply(&mut report);
+        let mut frame = stamped(tick as u32, &report);
         // About what a real proxy adds before the Switch takes a report
         frame.forward_us = 400 + (tick % 7) as u16 * 90;
         streamer.dump(&frame)?;
         std::thread::sleep(Duration::from_millis(8));
     }
     Ok(())
+}
+
+/// Build a 0x30 input report of a controller at rest: nothing pressed,
+/// sticks a little off centre, the gyro's small bias and noise
+fn still_report(tick: u64) -> [u8; 64] {
+    let mut report = [0u8; 64];
+    report[0] = 0x30;
+    report[1] = tick as u8;
+    report[2] = 0x91;
+    let stick = |x: u16, y: u16| [x as u8, (x >> 8) as u8 | (y << 4) as u8, (y >> 4) as u8];
+    report[6..9].copy_from_slice(&stick(2031, 2066));
+    report[9..12].copy_from_slice(&stick(2059, 2040));
+    for sample in 0..3 {
+        let noise = ((tick * 3 + sample as u64) % 5) as f64 - 2.0;
+        let imu = [0.0, -200.0, 4096.0, 19.0 + noise, -6.0 - noise, 4.0 + noise];
+        for (i, value) in imu.iter().enumerate() {
+            let offset = 13 + sample * 12 + i * 2;
+            report[offset..offset + 2].copy_from_slice(&(*value as i16).to_le_bytes());
+        }
+    }
+    report
 }
 
 /// Build a 0x30 input report: sticks circle, buttons take turns, gyro wobbles

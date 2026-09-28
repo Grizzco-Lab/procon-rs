@@ -3542,6 +3542,9 @@
               Pick a stored prediction, or run one.
             </p>
           </div>
+          <!-- AgentZero on the live capture: the Studio's screen, lent while
+               shown, with AgentZero's action drawn over it -->
+          <div class="po-live" id="po-live" hidden></div>
           <div class="scrubber" id="p-scrubber"></div>
           <div class="strip" id="p-strip"></div>
           <div id="p-stage"></div>
@@ -3551,11 +3554,50 @@
           <section class="panel p-p-run" aria-labelledby="h-p-run">
             <header class="panel-head">
               <h2 id="h-p-run">Predict</h2>
+              <!-- The IDM labels a video after the fact; AgentZero's policy
+                   runs online, as if live (predictor.js, online mode) -->
+              <div
+                class="seg-switch"
+                role="group"
+                aria-label="Model"
+                data-i18n-aria-label="po.model"
+              >
+                <button
+                  type="button"
+                  class="mode-toggle"
+                  data-model="idm"
+                  aria-pressed="true"
+                  title="The inverse dynamics model labels a whole video after the fact, seeing frames before and after each one"
+                  data-i18n="po.model.idm"
+                  data-i18n-title="po.model.idmNote"
+                >
+                  IDM
+                </button>
+                <button
+                  type="button"
+                  class="mode-toggle"
+                  data-model="policy"
+                  aria-pressed="false"
+                  title="AgentZero's policy, online: frame by frame as if live, seeing only the past; on a video, or on the live capture, where it can play the Switch"
+                  data-i18n="po.model.policy"
+                  data-i18n-title="po.model.policyNote"
+                >
+                  AgentZero online
+                </button>
+              </div>
               <span class="panel-note" id="p-gpu"></span>
             </header>
             <form class="v-form" id="p-form">
               <div class="cf-row">
                 <select class="select" id="p-kind" aria-label="Kind of video">
+                  <option
+                    value="live"
+                    data-policy-only
+                    hidden
+                    data-i18n="po.kind.live"
+                  >
+                    Live capture
+                  </option>
                   <option value="session">Session</option>
                   <option value="review">Review</option>
                   <option value="file">File</option>
@@ -3596,6 +3638,17 @@
                 ></select>
                 <label class="check" id="p-cpu-wrap" hidden
                   ><input type="checkbox" id="p-cpu" /> CPU</label
+                >
+                <label
+                  class="check"
+                  id="po-rec-wrap"
+                  hidden
+                  title="Run AgentZero while the studio records (the recording may want the GPU; AgentZero's own play may be worth recording)"
+                  data-i18n-title="po.allowRecNote"
+                  ><input type="checkbox" id="po-rec" />
+                  <span data-i18n="po.allowRec"
+                    >Allow while recording</span
+                  ></label
                 >
               </div>
               <div class="cf-row p-range">
@@ -3650,6 +3703,76 @@
               <code id="p-command"></code>
               <pre id="p-log"></pre>
             </details>
+
+            <!-- AgentZero online: its run, and letting it play the Switch -->
+            <div class="po-run" id="po-run" hidden>
+              <div class="po-state">
+                <span class="chip" id="po-chip" data-level="off"
+                  ><span class="chip-dot"></span
+                  ><span class="chip-text" id="po-state"></span
+                ></span>
+                <span class="panel-note" id="po-note"></span>
+                <a
+                  class="po-watch"
+                  id="po-watch"
+                  href="/predictor/online"
+                  hidden
+                  data-i18n="po.watch"
+                  >Watch</a
+                >
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  id="po-stop"
+                  hidden
+                  data-i18n="po.stop"
+                >
+                  Stop
+                </button>
+              </div>
+              <p class="notice" id="po-gpu-low" hidden></p>
+              <p class="notice" id="po-error" hidden></p>
+              <p class="panel-note" id="po-stored" hidden></p>
+              <div class="po-play" id="po-play" hidden>
+                <button type="button" class="btn po-danger" id="po-play-btn">
+                  <span class="po-play-glyph" aria-hidden="true"></span>
+                  <span id="po-play-label" data-i18n="po.play.start"
+                    >Let AgentZero play…</span
+                  >
+                </button>
+                <p class="po-play-note" id="po-play-note"></p>
+              </div>
+              <details class="p-log" id="po-log-wrap">
+                <summary data-i18n="po.log">Command and output</summary>
+                <code id="po-command"></code>
+                <pre id="po-log"></pre>
+              </details>
+            </div>
+          </section>
+
+          <!-- AgentZero's loop: from a frame's capture to its action at the
+               proxy (live), or its model time (a video) -->
+          <section
+            class="panel p-p-loop"
+            id="po-loop-panel"
+            aria-labelledby="h-p-loop"
+            hidden
+          >
+            <header class="panel-head">
+              <h2 id="h-p-loop" data-i18n="po.loop.title">Loop</h2>
+              <span class="panel-note" id="po-loop-note"></span>
+            </header>
+            <table class="data-table po-loop-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th data-i18n="po.loop.median">median</th>
+                  <th>p95</th>
+                </tr>
+              </thead>
+              <tbody id="po-loop"></tbody>
+            </table>
+            <p class="panel-note" id="po-loop-foot"></p>
           </section>
 
           <!-- The predicted controller and each button's probability -->
@@ -3758,6 +3881,58 @@
           </div>
         </section>
       </main>
+
+      <!-- Asked each time before AgentZero plays the Switch -->
+      <dialog class="cf-dialog po-dialog" id="po-confirm">
+        <form class="po-confirm" method="dialog">
+          <header class="panel-head">
+            <h2 data-i18n="po.confirm.title">Let AgentZero play the Switch?</h2>
+          </header>
+          <p data-i18n="po.confirm.what">
+            AgentZero's actions go to the Switch through the proxy's replay
+            port, mixed with your controller: a button you press, or a stick you
+            push further, always reaches the Switch.
+          </p>
+          <p data-i18n="po.confirm.takeover">
+            Any input on the controller pauses AgentZero at once; it goes on 3
+            seconds after your last one. Put the controller down to let it play.
+            Stop or Esc ends it.
+          </p>
+          <p class="notice" data-i18n="po.confirm.where">
+            Only in the practice area or a private job, with you at the console.
+            Never in public jobs.
+          </p>
+          <label class="po-field"
+            ><span data-i18n="po.confirm.for">Play for</span>
+            <select class="select" id="po-seconds">
+              <option value="30">30 s</option>
+              <option value="60" selected>1 min</option>
+              <option value="120">2 min</option>
+              <option value="300">5 min</option>
+              <option value="600">10 min</option>
+            </select></label
+          >
+          <footer class="po-dialog-foot">
+            <button
+              type="submit"
+              class="btn"
+              value="cancel"
+              autofocus
+              data-i18n="po.confirm.cancel"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              class="btn po-danger"
+              value="play"
+              data-i18n="po.confirm.play"
+            >
+              Let it play
+            </button>
+          </footer>
+        </form>
+      </dialog>
     </div>
 
     <script src="/icons/inline.js"></script>

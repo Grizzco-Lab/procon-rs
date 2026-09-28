@@ -10,7 +10,9 @@ capture card records them with the video, and its web dashboard has five apps:
 frame by frame and label objects on them; **Cuttlefish**, to review videos with
 comments, drawings and an AI coach, and to manage its knowledge; **Vision**,
 to detect and track objects in recorded sessions; and **Predictor**, to see
-what the inverse dynamics model reads off any video.
+what the inverse dynamics model reads off any video, and to run AgentZero's
+policy online, on a video or on the live capture, where it can play the
+Switch.
 
 > [!TIP]
 > **[See the setup guide and dashboard tour →](https://htmlpreview.github.io/?https://github.com/Grizzco-Lab/procon-rs/blob/main/doc/index.html)**
@@ -80,8 +82,11 @@ Everything runs from the PC.
 
 3. Open `http://<pc>:8090`.
 
-Without a Pi, `cargo run --example fake_proxy [port]` streams a synthetic
-controller; point `[proxy] address` at `localhost:7331`.
+Without a Pi, `cargo run --example fake_proxy [port] [--still]` streams a
+synthetic controller (`--still`: at rest, as if put down) and takes replayed
+actions on the next port; point `[proxy] address` at `localhost:7331` and
+`replay_address` at `localhost:7332`. Without a capture card, `[video] input`
+can be a video file, played in a loop as if live.
 
 ## The dashboard
 
@@ -98,7 +103,7 @@ another is shown. Links from before (`#inspect/...`) still open. The URLs:
 | Inkspector | `/inspect`, `/inspect/<session>?seg=<file>&n=<frame>&delay=<ms>&pred=<path>` (`&label=1` opens the labeling mode) |
 | Cuttlefish | `/cuttlefish` (reviews), `/cuttlefish/translate`, `/cuttlefish/knowledge`, `/cuttlefish/review/<id>?t=<s>`, `/cuttlefish/video?kind=&ref=&start_s=&end_s=&t=` (a video not reviewed yet) |
 | Vision | `/vision`, `/vision/<session>?seg=<file>&n=<frame>` |
-| Predictor | `/predictor`, `/predictor/<video>/<checkpoint>?t=<s>` |
+| Predictor | `/predictor`, `/predictor/<video>/<checkpoint>?t=<s>`, `/predictor/online` (AgentZero running online) |
 
 The apps form one pipeline: the Studio captures data (recordings), the
 Inkspector inspects and labels them frame by frame (labels), Cuttlefish
@@ -662,6 +667,46 @@ it is for: labeling gameplay nobody recorded a controller for.
   whole video. Plain videos show predictions only.
 - The URL keeps the view (`/predictor/<video>/<checkpoint>?t=<s>`).
 
+#### AgentZero online
+
+The Predict panel's other model, **AgentZero online**, runs AgentZero's
+policy (checkpoints `runs/policy/*/best.pt`), which sees only the frames up
+to the one in hand, frame by frame as if live (`uv run agentzero-play
+--json`, one at a time, stopped with **Stop** or with the studio; it needs an
+AgentZero whose `agentzero-play` has `--json`). Its view is
+`/predictor/online`.
+
+- **On a video** (a session, a review's video or a file, with an optional
+  range): the video is paced at 30 fps as if it were live, frames the model
+  is too busy for are skipped, and the player plays along with each frame's
+  predicted action on the Full overlay (against the truth for sessions
+  recorded at 30 fps; a skipped frame shows the action still held). When it
+  ends or is stopped, the predictions are kept as a run named
+  `policy-<checkpoint>` in **Predictions**.
+- **On the live capture**: the frames the studio grabs, 30 a second, go
+  straight into the policy (the capture card opens only once). The video
+  panel shows the Studio's live preview with AgentZero's action drawn over
+  it in orange, and **Loop** the latency from the capture card's timestamp
+  of a frame to its action written to the proxy's replay port: the frame's
+  hand-off (to the studio, then the pipe and scaling), the model, the send,
+  median and 95th percentile over the last 5 s.
+- **Let AgentZero play…** (the live capture only, off by default) sends its
+  actions to the Switch through the proxy's replay port, as the Replay panel
+  does, after a confirmation every time and for the time chosen there (up to
+  10 minutes). They are mixed with the controller (`mix`): a button you press
+  or a stick you push further always reaches the Switch, and any input on
+  the controller pauses AgentZero at once (an amber frame, "You took over")
+  until 3 s after your last one; put the controller down to let it play.
+  Stop or Esc ends it, as do the end of the time, Stop of the run, the
+  Replay panel starting, the proxy's frames not reaching the studio, the
+  policy going quiet for half a second and closing every dashboard page. A
+  red frame marks it playing. Only in the practice area or a private job,
+  with you at the console.
+- It does not start while the studio records unless **Allow while
+  recording** is ticked, and stops when a recording starts without it. The
+  page warns when the GPU has less than 1.5 GiB free; **CPU** runs it
+  without the GPU (much slower).
+
 ## Recordings
 
 A session is a folder named from the path prefix and the start time: prefix
@@ -725,7 +770,7 @@ Both programs take `--config <path>`.
 | `[proxy]` | `address` (the Pi's stream port) and `replay_address` (its replay port) |
 | `[web]` | Dashboard `port` |
 | `[recording]` | Default path `prefix` until one is set on the dashboard |
-| `[video]` | First `input` (`"screen"`, `/dev/video0` or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
+| `[video]` | First `input` (`"screen"`, `/dev/video0`, a video file played in a loop as if live, or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
 | `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`) `annotations` (object labels, default `Annotations` next to the root), `tracker` (Follow's tracker, default `http://127.0.0.1:7340`), `tracker_command` and `tracker_dir` (what Start tracker runs, default `uv run agentzero-track-serve --port <port>` in `../AgentZero`); relative paths start at the config's folder |
 | `[cuttlefish]` | Optional: `reviews` (one folder per review with its video, and the translator's `translations.jsonl`; default `Reviews` next to the root), `knowledge` (the knowledge store with its `inbox/`, default `Knowledge` next to the root), `backend` (`auto`, `api` or `claude-cli`), `model` and `translate_model` |
 | `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model), `confidence` (0.25), `detector` (the Salmon Run detector, default `http://127.0.0.1:7341`), `detector_command` and `detector_dir` (what Start detector runs, default `uv run agentzero-detect-serve --port <port>` in `../AgentZero`) |

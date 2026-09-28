@@ -15,6 +15,14 @@
 //! - A recording encoder per video file, fed the same frames from Record on,
 //!   so a file begins with the next frame and pausing never touches the input.
 //!
+//! The Predictor's live policy gets the same raw frames too ([`PolicyFeed`]),
+//! thinned to its rate, each with its capture time: the capture card opens
+//! only once, so the policy never grabs it itself.
+//!
+//! Besides the screen and V4L2 devices, the input can be a video file, played
+//! in a loop at its own pace as if it were live (for trying the studio
+//! without a console); its frames are stamped with the time they were read.
+//!
 //! Frames reach recordings at a constant rate: frame `n` of a file was captured
 //! `n / fps` seconds after its first frame, whose Unix time is kept. That time
 //! is when the capture card delivered the frame to the kernel, which ffmpeg
@@ -181,8 +189,9 @@ pub struct VideoStatus {
     pub error: Option<String>,
 }
 
-/// A raw frame shared by the preview and the recording
-type SharedFrame = Arc<Vec<u8>>;
+/// A raw frame shared by the preview, the recording and the policy: 4:2:0
+/// at 1920 x 1080 (see [`raw_input`])
+pub type SharedFrame = Arc<Vec<u8>>;
 
 /// The preview encoder's input, and how to thin the capture rate to its rate
 #[derive(Clone)]
@@ -191,6 +200,16 @@ struct PreviewFeed {
     /// Keep `fps` frames of every `capture_fps`
     fps: u32,
     capture_fps: u32,
+}
+
+/// Grabbed frames for the Predictor's live policy: each with its capture
+/// time (Unix ms), thinned to `fps`; a full queue skips frames, as the
+/// policy only wants the newest
+#[derive(Clone)]
+pub struct PolicyFeed {
+    pub frames: SyncSender<(u64, SharedFrame)>,
+    /// Keep `fps` frames of every one the capture delivers per second
+    pub fps: u32,
 }
 
 /// An ffmpeg fed raw frames on stdin through a queue
@@ -235,6 +254,7 @@ pub struct Video {
     /// Where grabbed frames go; separate locks, as the grabber's reader takes
     /// them for every frame
     preview_feed: Arc<Mutex<Option<PreviewFeed>>>,
+    policy_feed: Arc<Mutex<Option<PolicyFeed>>>,
     /// When each frame still inside the preview encoder was sent to it
     preview_sent: Arc<Mutex<VecDeque<Instant>>>,
     /// Smoothed preview encoding time in µs
@@ -295,6 +315,7 @@ impl Video {
                 error: None,
             })),
             preview_feed: Arc::default(),
+            policy_feed: Arc::default(),
             preview_sent: Arc::default(),
             preview_encode_us: Arc::default(),
             recording: Arc::default(),
@@ -376,6 +397,12 @@ impl Video {
     /// Selected input id
     pub fn input(&self) -> Option<String> {
         self.lock().input.clone()
+    }
+
+    /// Hand grabbed frames to the Predictor's live policy from the next
+    /// frame on, or stop (`None`)
+    pub fn set_policy_feed(&self, feed: Option<PolicyFeed>) {
+        *lock(&self.policy_feed) = feed;
     }
 
     /// Size and rate of recordings from the next file on; not while recording
@@ -578,7 +605,8 @@ impl Video {
         unsafe { libc::fcntl(stdout.as_raw_fd(), libc::F_SETPIPE_SZ, 1 << 22) };
         let generation = self.grabber_generation.load(Ordering::SeqCst);
         let video = self.clone();
-        thread::spawn(move || video.read_frames(stdout, generation));
+        let capture_fps = inner.config.fps;
+        thread::spawn(move || video.read_frames(stdout, generation, capture_fps));
         let video = self.clone();
         thread::spawn(move || video.read_log(stderr, generation));
         Ok(child)
@@ -648,12 +676,13 @@ impl Video {
         self.preview_generation.load(Ordering::SeqCst) == generation
     }
 
-    /// Hand grabbed frames to the preview and the recording; when the grabber
-    /// dies on its own, retry after a pause
-    fn read_frames(&self, mut stdout: ChildStdout, generation: u64) {
+    /// Hand grabbed frames to the preview, the recording and the policy;
+    /// when the grabber dies on its own, retry after a pause
+    fn read_frames(&self, mut stdout: ChildStdout, generation: u64, capture_fps: u32) {
         let mut frame = vec![0u8; FRAME_BYTES];
-        // Counts toward the next frame kept for the preview
+        // Count toward the next frame kept for the preview and the policy
         let mut preview_phase = 0;
+        let mut policy_phase = 0;
         // Since when frames have been arriving too long after capture
         let mut backlog_since: Option<Instant> = None;
         // Read to the end even when stale, so ffmpeg can exit
@@ -692,12 +721,24 @@ impl Video {
                 }
                 keep
             });
+            let policy = lock(&self.policy_feed).clone().filter(|feed| {
+                policy_phase += feed.fps;
+                let keep = policy_phase >= capture_fps;
+                if keep {
+                    policy_phase -= capture_fps;
+                }
+                keep
+            });
             let mut recording = lock(&self.recording);
-            if preview.is_none() && recording.is_none() {
+            if preview.is_none() && recording.is_none() && policy.is_none() {
                 continue;
             }
             // Consumers share the frame; the next one gets a fresh buffer
             let shared = Arc::new(core::mem::replace(&mut frame, vec![0u8; FRAME_BYTES]));
+            if let Some(policy) = policy {
+                // A policy still busy with earlier frames skips this one
+                let _ = policy.frames.try_send((captured_ms, Arc::clone(&shared)));
+            }
             if let Some(preview) = preview {
                 // A busy preview skips a frame
                 if preview.frames.try_send(Arc::clone(&shared)).is_ok() {
@@ -962,7 +1003,7 @@ fn preview_quality(inner: &Inner) -> (u32, u32) {
 }
 
 /// Input options for raw frames from the grabber, arriving at `fps`
-fn raw_input(fps: u32) -> Vec<String> {
+pub fn raw_input(fps: u32) -> Vec<String> {
     let mut args: Vec<String> = ["-f", "rawvideo", "-pix_fmt", "yuv420p", "-video_size"]
         .map(String::from)
         .to_vec();
@@ -978,12 +1019,19 @@ fn grabber_args(config: &VideoConfig, input: &str) -> Vec<String> {
         .map(String::from)
         .to_vec();
     // Frame times: X11 stamps frames with the wall clock itself; for V4L2,
-    // the kernel's capture time, converted to Unix time
+    // the kernel's capture time, converted to Unix time; a file's frames
+    // get the wall clock when they are read
+    let mut stamp = "";
     if input == SCREEN {
         let display = std::env::var("DISPLAY").unwrap_or_else(|_| ":0".to_string());
         args.extend(["-f", "x11grab", "-framerate"].map(String::from));
         args.push(config.fps.to_string());
         args.extend(["-i".to_string(), display]);
+    } else if Path::new(input).is_file() {
+        // At its own pace, over and over, as if live
+        args.extend(["-re", "-stream_loop", "-1", "-i"].map(String::from));
+        args.push(input.to_string());
+        stamp = "setpts=RTCTIME/(1000000*TB),";
     } else {
         args.extend(["-f", "v4l2", "-ts", "mono2abs"].map(String::from));
         args.extend(config.v4l2_args.iter().cloned());
@@ -997,7 +1045,7 @@ fn grabber_args(config: &VideoConfig, input: &str) -> Vec<String> {
     args.push("-copyts".to_string());
     args.push("-vf".to_string());
     args.push(format!(
-        "scale={width}:{height}:force_original_aspect_ratio=decrease,\
+        "{stamp}scale={width}:{height}:force_original_aspect_ratio=decrease,\
          pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={},format=yuv420p,showinfo=checksum=0",
         config.fps
     ));

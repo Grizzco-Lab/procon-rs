@@ -17,7 +17,9 @@ port = 8090
 prefix = "recordings/"
 
 [video]
-# Input at first launch: "screen", a device like "/dev/video0", or "" for none
+# Input at first launch: "screen", a device like "/dev/video0", a video file
+# (played in a loop as if live, to try the studio without a console), or ""
+# for none
 input = "/dev/video0"
 # Capture frame rate
 fps = 60

@@ -9,11 +9,26 @@
 // escapeHtml, stickPercent, appUrl, StageMap). Runs go through /api/predictor (see
 // src/predictor.rs); the video plays from /api/cuttlefish/video. State lives
 // in the address: /predictor/<video>/<checkpoint>?t=<seconds>.
+//
+// The online mode (the model switch's "AgentZero online") runs AgentZero's
+// policy instead, frame by frame as if live, through /api/predictor/online
+// (src/predictor/online.rs), watched at /predictor/online: on a video, the
+// player plays it along and its predictions arrive as it goes (kept as a
+// run when it ends); on the live capture, the Studio's screen is lent here
+// (lendScreen in app.js) with AgentZero's action drawn over it from the
+// socket's `agent` messages, the loop's latency beside it, and "Let
+// AgentZero play", asked for each time, sends its actions to the Switch.
 "use strict";
 
 (() => {
   /** How often a running prediction is asked about, in ms */
   const POLL_MS = 1000;
+  /** How often AgentZero is asked about while it runs, in ms */
+  const ONLINE_POLL_MS = 500;
+  /** GPU memory the policy wants free, in MiB */
+  const POLICY_GPU_MIB = 1536;
+  /** Frames AgentZero's last action is shown held over frames it skipped */
+  const HOLD_FRAMES = 15;
   /** Frames fetched around the playhead for the timeline */
   const CHUNK = 1800;
   /** Button lanes, in controller order */
@@ -75,6 +90,23 @@
     pollTimer: null,
     agreeTimer: null,
     agreeAt: 0,
+    /** The form's model: "idm" or "policy" (AgentZero online) */
+    model: "idm",
+    /** Policy checkpoints and what agentzero-play can do */
+    onlineInfo: null,
+    /** AgentZero's current or last run, and the bot (letting it play) */
+    online: null,
+    bot: null,
+    onlineTimer: null,
+    /** Watching AgentZero's run (/predictor/online) */
+    watching: false,
+    /** The run the player was opened for, and whether it started playing */
+    watchedId: null,
+    playedId: null,
+    /** Frames of the online predictions fetched into the chunk so far */
+    patched: null,
+    /** The newest action from the socket, drawn at the next frame */
+    agent: null,
   };
 
   const canvas = $("p-timeline");
@@ -132,13 +164,36 @@
   /** Folders, checkpoints and what agentzero-predict can do */
   async function loadInfo(refresh = false) {
     if (pred.info && !refresh) return;
-    $("p-caps").textContent = "Checking agentzero-predict…";
+    if (pred.model === "idm")
+      $("p-caps").textContent = "Checking agentzero-predict…";
     pred.info = await api(`info${refresh ? "?refresh=1" : ""}`);
-    const { info } = pred;
+    fillCheckpoints();
+    renderCaps();
+  }
+
+  /** Policy checkpoints, what agentzero-play can do and GPU memory */
+  async function loadOnlineInfo(refresh = false) {
+    if (pred.onlineInfo && !refresh) return;
+    if (pred.model === "policy") $("p-caps").textContent = t("po.checking");
+    pred.onlineInfo = await api(
+      `online/checkpoints${refresh ? "?refresh=1" : ""}`,
+    );
+    fillCheckpoints();
+    renderCaps();
+  }
+
+  /** The checkpoints of the form's model, the one chosen before kept */
+  function fillCheckpoints() {
+    const policy = pred.model === "policy";
+    const list = (policy ? pred.onlineInfo : pred.info)?.checkpoints;
+    if (!list) return;
     const select = $("p-ckpt");
-    const kept = select.value || remembered("ckpt", "");
+    const kept =
+      (select.dataset.model === pred.model && select.value) ||
+      remembered(policy ? "policy" : "ckpt", "");
+    select.dataset.model = pred.model;
     select.replaceChildren(
-      ...info.checkpoints.map(
+      ...list.map(
         (c) =>
           new Option(
             `${c.name} · ${new Date(c.modified_ms).toLocaleString()}`,
@@ -146,13 +201,25 @@
           ),
       ),
     );
-    if (!info.checkpoints.length) select.add(new Option("No checkpoints", ""));
-    if (info.checkpoints.some((c) => c.name === kept)) select.value = kept;
-    renderCaps();
+    if (!list.length)
+      select.add(
+        new Option(policy ? t("po.noCheckpoint") : "No checkpoints", ""),
+      );
+    if (list.some((c) => c.name === kept)) select.value = kept;
+  }
+
+  /** GPU memory in use, as the header says it */
+  function gpuText(gpu) {
+    const used = (gpu.used_mib / 1024).toFixed(1);
+    const total = (gpu.total_mib / 1024).toFixed(1);
+    return pred.model === "policy"
+      ? t("po.gpu", { used, total })
+      : `GPU memory ${used} of ${total} GiB in use`;
   }
 
   /** The note about the command's options, and the inputs they allow */
   function renderCaps() {
+    if (pred.model === "policy") return renderOnlineCaps();
     const { info } = pred;
     if (!info) return;
     const caps = info.capabilities;
@@ -171,10 +238,33 @@
     caps_el.hidden = !notes.length;
     for (const id of ["p-start", "p-end"]) $(id).disabled = !caps.range;
     $("p-cpu-wrap").hidden = !caps.cpu;
+    $("p-gpu").textContent = info.gpu ? gpuText(info.gpu) : "";
+    checkForm();
+  }
+
+  /** The online mode's notes: agentzero-play without --json, no policy
+   * checkpoint, too little GPU memory for the policy */
+  function renderOnlineCaps() {
+    const info = pred.onlineInfo;
+    if (!info) return;
+    const notes = [];
+    const caps = info.capabilities;
+    if (caps.error) notes.push(caps.error);
+    else if (!caps.json) notes.push(t("po.noJson"));
+    if (!info.checkpoints.length)
+      notes.push(t("po.noPolicy", { folder: info.folder }));
     const gpu = info.gpu;
-    $("p-gpu").textContent = gpu
-      ? `GPU memory ${(gpu.used_mib / 1024).toFixed(1)} of ${(gpu.total_mib / 1024).toFixed(1)} GiB in use`
-      : "";
+    const free = gpu ? gpu.total_mib - gpu.used_mib : null;
+    if (free != null && free < POLICY_GPU_MIB && !$("p-cpu").checked)
+      notes.push(t("po.gpuLow", { free: (free / 1024).toFixed(1) }));
+    if ($("p-kind").value === "live" && !info.input)
+      notes.push(t("po.noInput"));
+    const el = $("p-caps");
+    el.textContent = notes.join(" ");
+    el.hidden = !notes.length;
+    for (const id of ["p-start", "p-end"]) $(id).disabled = false;
+    $("p-cpu-wrap").hidden = false;
+    $("p-gpu").textContent = gpu ? gpuText(gpu) : "";
     checkForm();
   }
 
@@ -243,15 +333,18 @@
     if (!pred.reviews.length) $("p-review").add(new Option("No reviews", ""));
   }
 
-  /** Show the inputs of the chosen kind of video */
+  /** Show the inputs of the chosen kind of video (or the live capture) */
   function showKind() {
     const kind = $("p-kind").value;
-    remember("kind", kind);
+    remember(pred.model === "policy" ? "policyKind" : "kind", kind);
     $("p-session-row").hidden = kind !== "session";
     $("p-review").hidden = kind !== "review";
     $("p-file").hidden = kind !== "file";
+    // The live capture has no range
+    for (const id of ["p-start", "p-end"]) $(id).hidden = kind === "live";
     if (kind === "session") loadSessions();
     if (kind === "review") loadReviews().then(checkForm);
+    if (pred.model === "policy") renderOnlineCaps();
     checkForm();
   }
 
@@ -264,8 +357,16 @@
     return { kind, path: $("p-file").value.trim() };
   }
 
-  /** Whether the chosen video can run with this agentzero-predict */
+  /** Whether the chosen video can run with this agentzero-predict (or
+   * agentzero-play, online) */
   function checkForm() {
+    if (pred.model === "policy") {
+      const info = pred.onlineInfo;
+      const ready = Boolean(info?.capabilities.json && info.checkpoints.length);
+      $("p-run").disabled = !ready || onlineRunning();
+      $("p-run").title = onlineRunning() ? t("po.running") : "";
+      return;
+    }
     const caps = pred.info?.capabilities;
     const src = source();
     const needsVideo =
@@ -279,7 +380,6 @@
       : "";
   }
 
-  $("p-kind").value = remembered("kind", "session");
   $("p-kind").onchange = showKind;
   $("p-session").onchange = () => {
     remember("session", $("p-session").value);
@@ -287,7 +387,45 @@
   };
   $("p-review").onchange = checkForm;
   $("p-file").oninput = checkForm;
-  $("p-recheck").onclick = () => loadInfo(true).catch(showRunError);
+  $("p-cpu").onchange = () => pred.model === "policy" && renderOnlineCaps();
+  $("p-recheck").onclick = () =>
+    (pred.model === "policy" ? loadOnlineInfo(true) : loadInfo(true)).catch(
+      (error) => showRunError(error.message),
+    );
+
+  /** Switch the form between the IDM and AgentZero online; with `load`,
+   * read the model's checkpoints (the app does when shown) */
+  function setModel(model, load = true) {
+    pred.model = model === "policy" ? "policy" : "idm";
+    remember("model", pred.model);
+    const policy = pred.model === "policy";
+    for (const button of document.querySelectorAll("[data-model]")) {
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.model === pred.model),
+      );
+    }
+    for (const option of $("p-kind").querySelectorAll("[data-policy-only]")) {
+      option.hidden = !policy;
+    }
+    const kind = policy
+      ? remembered("policyKind", "live")
+      : remembered("kind", "session");
+    $("p-kind").value = !policy && kind === "live" ? "session" : kind;
+    $("po-rec-wrap").hidden = !policy;
+    $("p-run").textContent = policy ? t("po.start") : "Run the IDM";
+    fillCheckpoints();
+    renderCaps();
+    if (!load) return;
+    showKind();
+    const loading = policy ? loadOnlineInfo() : loadInfo();
+    loading.catch((error) => showRunError(error.message));
+  }
+
+  for (const button of document.querySelectorAll("[data-model]")) {
+    button.onclick = () => setModel(button.dataset.model);
+  }
+  setModel(remembered("model", "idm"), false);
 
   $("p-form").onsubmit = async (event) => {
     event.preventDefault();
@@ -295,8 +433,9 @@
       const text = $(id).value.trim();
       return text === "" || $(id).disabled ? null : Number(text);
     };
-    remember("ckpt", $("p-ckpt").value);
     showRunError(null);
+    if (pred.model === "policy") return startOnline(number);
+    remember("ckpt", $("p-ckpt").value);
     try {
       pred.job = await api("run", {
         source: source(),
@@ -417,6 +556,436 @@
     setChip(text, level);
   }
 
+  // ------------------------------------------------------- AgentZero online
+
+  const onlineRunning = () => pred.online?.state === "running";
+
+  async function startOnline(number) {
+    const live = $("p-kind").value === "live";
+    remember("policy", $("p-ckpt").value);
+    try {
+      pred.online = await api("online/start", {
+        source: live ? null : source(),
+        start_s: live ? null : number("p-start"),
+        end_s: live ? null : number("p-end"),
+        checkpoint: $("p-ckpt").value,
+        cpu: $("p-cpu").checked,
+        allow_recording: $("po-rec").checked,
+      });
+    } catch (error) {
+      return showRunError(error.message);
+    }
+    renderOnline();
+    navigate(appUrl("predictor", { view: "online" }));
+    pollOnline();
+  }
+
+  $("po-stop").onclick = async () => {
+    $("po-stop").disabled = true;
+    try {
+      await api("online/stop", {});
+    } catch (error) {
+      showRunError(error.message);
+    }
+    pollOnline();
+  };
+
+  /** AgentZero's run and the bot, again every ONLINE_POLL_MS while it runs
+   * and the app is shown */
+  async function pollOnline() {
+    clearTimeout(pred.onlineTimer);
+    try {
+      const data = await api("online/status");
+      pred.online = data.run;
+      pred.bot = data.bot;
+    } catch {
+      return;
+    }
+    renderOnline();
+    if (pred.watching) followOnline();
+    const active = onlineRunning() || pred.bot?.playing;
+    if (active && pred.shown && !document.hidden) {
+      pred.onlineTimer = setTimeout(pollOnline, ONLINE_POLL_MS);
+    }
+  }
+
+  /** The run's state in the form panel, the loop and "Let AgentZero play" */
+  function renderOnline() {
+    const run = pred.online;
+    $("po-run").hidden = !run;
+    checkForm();
+    if (!run) return;
+    const busy = run.state === "running";
+    const bot = pred.bot;
+    const state = run.loading
+      ? "loading"
+      : busy && bot?.playing
+        ? bot.paused_until_ms
+          ? "paused"
+          : "playing"
+        : busy
+          ? run.live
+            ? "live"
+            : "video"
+          : run.state;
+    $("po-state").textContent = t(`po.state.${state}`);
+    $("po-chip").dataset.level =
+      {
+        loading: "warning",
+        live: "good",
+        video: "good",
+        playing: "critical",
+        paused: "warning",
+        done: "off",
+        cancelled: "off",
+        failed: "critical",
+      }[state] ?? "off";
+    const where = run.device ?? (run.cpu ? "cpu" : null);
+    $("po-note").textContent = [
+      run.live ? t("po.kind.live") : run.title,
+      run.checkpoint,
+      where,
+      run.frames ? t("po.actions", { n: run.frames }) : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    $("po-stop").hidden = !busy;
+    $("po-stop").disabled = Boolean(run.stopping);
+    $("po-stop").textContent = run.stopping ? t("po.stopping") : t("po.stop");
+    $("po-watch").hidden = !busy || pred.watching;
+    const error = $("po-error");
+    error.hidden = !run.error;
+    error.textContent = run.error ?? "";
+    const stored = $("po-stored");
+    stored.hidden = !run.stored;
+    if (run.stored) {
+      const t0 = run.frame_offset / run.fps;
+      stored.innerHTML = `${escapeHtml(t("po.stored"))} <a href="${escapeHtml(runUrl(run.key, run.stored, t0))}">${escapeHtml(t("po.openStored"))}</a>`;
+    }
+    $("po-command").textContent = run.command;
+    $("po-log").textContent = run.log.join("\n");
+    renderPlay();
+    renderLoop();
+  }
+
+  /** "Let AgentZero play": off, playing (with the time left), paused by a
+   * person; only while it runs on the live capture */
+  function renderPlay() {
+    const run = pred.online;
+    const bot = pred.bot;
+    const live = run?.live && run.state === "running" && !run.loading;
+    $("po-play").hidden = !live && !bot?.playing;
+    const playing = Boolean(bot?.playing);
+    $("po-play").classList.toggle("is-playing", playing);
+    $("po-play-label").textContent = playing
+      ? t("po.play.stop")
+      : t("po.play.start");
+    let note;
+    if (playing && bot.paused_until_ms) {
+      note = t("po.play.paused", {
+        what: tookText(bot.taken_by),
+        s: Math.max(0, (bot.paused_until_ms - Date.now()) / 1000).toFixed(1),
+      });
+    } else if (playing) {
+      note = t("po.play.left", {
+        left: clockText(Math.max(0, (bot.until_ms - Date.now()) / 1000)),
+        sent: bot.sent,
+      });
+    } else if (bot?.ended) {
+      note = t("po.play.ended", { why: t(`po.ended.${bot.ended}`) });
+    } else {
+      note = t("po.play.off");
+    }
+    $("po-play-note").textContent = note;
+    $("po-live").dataset.state = playing
+      ? bot.paused_until_ms
+        ? "paused"
+        : "playing"
+      : "watching";
+    $("po-badge").textContent = playing
+      ? bot.paused_until_ms
+        ? t("po.badge.paused")
+        : t("po.badge.playing")
+      : t("po.badge.watching");
+  }
+
+  /** What a person did, from the bot's words for it: `button:<name>`,
+   * `stick:left`, `stick:right` or `gyro` */
+  function tookText(code) {
+    const [kind, what] = (code ?? "").split(":");
+    if (kind === "button")
+      return t("po.took.button", { button: what.toUpperCase() });
+    if (kind === "stick")
+      return t(what === "left" ? "po.took.left" : "po.took.right");
+    return t("po.took.gyro");
+  }
+
+  $("po-play-btn").onclick = () => {
+    if (pred.bot?.playing) return release();
+    // Asked every time
+    $("po-confirm").showModal();
+  };
+
+  $("po-confirm").addEventListener("close", async () => {
+    if ($("po-confirm").returnValue !== "play") return;
+    try {
+      pred.bot = await api("online/play", {
+        seconds: Number($("po-seconds").value),
+      });
+    } catch (error) {
+      showRunError(error.message);
+    }
+    renderPlay();
+    pollOnline();
+  });
+
+  async function release() {
+    try {
+      pred.bot = await api("online/release", {});
+    } catch (error) {
+      showRunError(error.message);
+    }
+    renderPlay();
+  }
+
+  // Esc stops AgentZero playing, wherever the page is
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && pred.bot?.playing) {
+      event.preventDefault();
+      release();
+    }
+  });
+
+  /** The loop's latency (live) or the model's time (a video), median and
+   * 95th percentile over the last seconds */
+  function renderLoop() {
+    const run = pred.online;
+    const panel = $("po-loop-panel");
+    panel.hidden = !pred.watching || !run;
+    if (panel.hidden) return;
+    const timings = run.timings ?? {};
+    // The hand-off's two parts under it
+    const rows = run.live
+      ? ["handoff", "grab", "pipe", "wait", "model", "send", "total"]
+      : ["model", "age"];
+    const ms = (v) => (v == null ? "–" : v.toFixed(1));
+    const sending = Boolean(pred.bot?.playing);
+    const classes = {
+      grab: "po-part",
+      pipe: "po-part",
+      wait: "po-part",
+      total: "po-total",
+    };
+    $("po-loop").innerHTML = rows
+      .map((key) => {
+        const value = timings[key];
+        const label =
+          key === "send" && !sending
+            ? t("po.loop.sendDry")
+            : t(`po.loop.${key}`);
+        const cls = classes[key] ? ` class="${classes[key]}"` : "";
+        return `<tr${cls} title="${escapeHtml(t(`po.loop.${key}Note`))}"><td>${escapeHtml(label)}</td><td class="num">${ms(value?.median)}</td><td class="num">${ms(value?.p95)}</td></tr>`;
+      })
+      .join("");
+    $("po-loop-note").textContent = [
+      timings.rate
+        ? t("po.loop.rate", { rate: timings.rate.toFixed(1) })
+        : null,
+      run.skipped ? t("po.loop.skipped", { n: run.skipped }) : null,
+      run.device,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    $("po-loop-foot").textContent = run.live
+      ? t("po.loop.footLive")
+      : t("po.loop.footVideo");
+  }
+
+  // ---------------------------------------------------- watching it run
+
+  /** The viewer follows AgentZero's run: the live capture, or its video */
+  function followOnline() {
+    const run = pred.online;
+    if (!run) {
+      hideLive();
+      $("p-empty").hidden = false;
+      $("p-viewer-note").textContent = t("po.notYet");
+      return;
+    }
+    if (run.live) {
+      showLive(run);
+      return;
+    }
+    hideLive();
+    if (pred.watchedId !== run.id) openOnlineVideo(run);
+    // Play along once AgentZero sees frames (the video's length known)
+    if (
+      run.state === "running" &&
+      run.frames > 0 &&
+      pred.playedId !== run.id &&
+      player.frames > 0
+    ) {
+      player.play();
+      if (player.playing) pred.playedId = run.id;
+    }
+    if (run.state === "running" || pred.patched !== null) patchOnline(run);
+  }
+
+  /** The thumbnails of a video, for the strip */
+  function thumbOf(play) {
+    return (k) => {
+      const query = new URLSearchParams(play);
+      query.set("t_ms", Math.round((k * 1000) / player.fps));
+      return `/api/cuttlefish/thumb?${query}`;
+    };
+  }
+
+  /** Play AgentZero's video in the viewer, its predictions coming in */
+  function openOnlineVideo(run) {
+    pred.watchedId = run.id;
+    pred.run = {
+      online: true,
+      id: run.id,
+      key: run.key,
+      checkpoint: `policy-${run.checkpoint}`,
+      title: run.title,
+      fps: run.fps,
+      frame_offset: run.frame_offset,
+      play: run.play,
+      session: run.session,
+    };
+    pred.chunk = null;
+    pred.patched = null;
+    renderRuns();
+    $("p-empty").hidden = true;
+    $("p-viewer-note").textContent =
+      `${run.title} · AgentZero ${run.checkpoint} · ${run.fps} fps`;
+    $("p-agree-mode").hidden = true;
+    $("p-agree-mode").value = "view";
+    drawStage(pred.run);
+    player.open(
+      {
+        video: `/api/cuttlefish/video?${new URLSearchParams(run.play)}`,
+        fps: run.fps,
+        sound: true,
+        thumb: thumbOf(run.play),
+        labels,
+        title: `${run.title} · AgentZero ${run.checkpoint}`,
+      },
+      run.frame_offset,
+    );
+  }
+
+  /** Past the newest frame predicted: the one seen, `lead` ahead, in the
+   * video's frames */
+  const onlineHead = (run) =>
+    run.frame_offset + (run.seen ?? 0) + (run.lead ?? 0) + 1;
+
+  /** New predictions of the running video into the loaded frames */
+  async function patchOnline(run) {
+    const chunk = pred.chunk;
+    if (!chunk || !pred.run?.online || pred.run.id !== run.id) return;
+    const end = chunk.start + chunk.pred.length;
+    const from = Math.max(chunk.start, pred.patched ?? chunk.start);
+    const to = Math.min(end, onlineHead(run));
+    if (to <= from) return;
+    let data;
+    try {
+      data = await api(
+        `online/labels?${new URLSearchParams({ start: from, stop: to })}`,
+      );
+    } catch {
+      return;
+    }
+    if (pred.chunk !== chunk) return;
+    data.pred.forEach((label, i) => {
+      if (label) chunk.pred[from - chunk.start + i] = label;
+    });
+    // A little overlap: frames skipped then may still come
+    pred.patched = run.state === "running" ? Math.max(from, to - 8) : null;
+    draw();
+    player.refresh();
+  }
+
+  /** The live capture: the Studio's screen, lent, with AgentZero's action
+   * over it */
+  function showLive(run) {
+    if (!pred.liveShown) {
+      pred.liveShown = true;
+      player.close();
+      pred.run = null;
+      pred.chunk = null;
+      pred.watchedId = run.id;
+      renderRuns();
+      for (const id of ["p-screen", "p-scrubber", "p-strip", "p-stage"]) {
+        $(id).hidden = true;
+      }
+      $("p-player-controls").hidden = true;
+      for (const panel of livePanelsHidden()) panel.hidden = true;
+      $("po-live").hidden = false;
+      $("predictor-layout").classList.add("is-live");
+      lendScreen($("po-live"));
+    }
+    $("p-viewer-note").textContent =
+      `${t("po.kind.live")} · ${run.title} · AgentZero ${run.checkpoint}`;
+  }
+
+  /** The panels about frames of a video, which the live capture has not */
+  const livePanelsHidden = () =>
+    [".p-p-frames", ".p-p-timeline", ".p-p-agree"].map((s) =>
+      document.querySelector(s),
+    );
+
+  function hideLive() {
+    if (!pred.liveShown) return;
+    pred.liveShown = false;
+    lendScreen(null);
+    $("po-live").hidden = true;
+    $("predictor-layout").classList.remove("is-live");
+    for (const id of ["p-screen", "p-scrubber", "p-strip", "p-stage"]) {
+      $(id).hidden = false;
+    }
+    $("p-player-controls").hidden = false;
+    for (const panel of livePanelsHidden()) panel.hidden = false;
+    drawMini(undefined);
+  }
+
+  /** AgentZero's action over the live picture, as the Studio draws the
+   * controller's */
+  const liveHud = $("input-hud").cloneNode(true);
+  liveHud.removeAttribute("id");
+  liveHud.classList.add("po-hud");
+  liveHud.dataset.keys = "";
+  liveHud.removeAttribute("hidden");
+  const badge = document.createElement("span");
+  badge.className = "po-badge";
+  badge.id = "po-badge";
+  $("po-live").append(liveHud, badge);
+
+  // Each action from the socket; drawn at the next frame, the newest only
+  window.addEventListener("agent", ({ detail }) => {
+    if (!pred.liveShown || detail.id !== pred.online?.id) return;
+    if (!pred.agent) requestAnimationFrame(drawAgent);
+    pred.agent = detail;
+  });
+
+  function drawAgent() {
+    const action = pred.agent;
+    pred.agent = null;
+    if (!action || !pred.liveShown) return;
+    const send = action.send ?? {};
+    drawInputHud(liveHud, {
+      left: (send.left_stick ?? [2048, 2048]).map(stickPercent),
+      right: (send.right_stick ?? [2048, 2048]).map(stickPercent),
+      pressed: new Set(send.buttons ?? []),
+      yaw: (send.gyro?.[2] ?? 0) * GYRO_DPS,
+      pitch: (send.gyro?.[1] ?? 0) * GYRO_DPS,
+    });
+    const shown = { ...action, ...send };
+    drawMini(shown);
+    drawProbs(shown, undefined);
+  }
+
   // ------------------------------------------------------------ the runs
 
   async function loadRuns() {
@@ -516,17 +1085,12 @@
     }
     pred.chunk = null;
     drawStage(run);
-    const thumb = (k) => {
-      const query = new URLSearchParams(run.play);
-      query.set("t_ms", Math.round((k * 1000) / player.fps));
-      return `/api/cuttlefish/thumb?${query}`;
-    };
     player.open(
       {
         video: `/api/cuttlefish/video?${new URLSearchParams(run.play)}`,
         fps: run.fps || 30,
         sound: true,
-        thumb,
+        thumb: thumbOf(run.play),
         labels,
         title: `${run.title} · ${run.checkpoint}`,
       },
@@ -553,7 +1117,15 @@
     if (!chunk || n < chunk.start || n >= chunk.start + chunk.pred.length)
       return [undefined, undefined];
     const i = n - chunk.start;
-    return [chunk.pred[i], chunk.truth?.[i]];
+    let p = chunk.pred[i];
+    // AgentZero skips frames while busy, as live; its last action holds
+    // until the next (for as long as the bot's would, STALL in online.rs)
+    if (!p && pred.run?.checkpoint?.startsWith("policy-")) {
+      for (let k = i - 1; k >= Math.max(0, i - HOLD_FRAMES) && !p; k--) {
+        p = chunk.pred[k];
+      }
+    }
+    return [p, chunk.truth?.[i]];
   }
 
   /** The player's labels: [truth, prediction]; nothing until the chunk is here */
@@ -573,16 +1145,24 @@
     if (chunk && low >= chunk.start && high <= chunk.start + chunk.pred.length)
       return;
     const start = Math.max(0, n - CHUNK / 2);
-    const key = `${pred.run.key}/${pred.run.checkpoint}/${start}`;
+    const key = `${pred.run.key}/${pred.run.checkpoint}/${start}/${pred.run.id ?? ""}`;
     if (pred.loading === key) return;
     pred.loading = key;
     const run = pred.run;
+    // AgentZero's run in progress: its predictions so far
+    const range = { start, stop: start + CHUNK };
+    const path = run.online
+      ? `online/labels?${new URLSearchParams(range)}`
+      : `labels?${new URLSearchParams({ key: run.key, ckpt: run.checkpoint, ...range })}`;
     try {
-      const data = await api(
-        `labels?${new URLSearchParams({ key: run.key, ckpt: run.checkpoint, start, stop: start + CHUNK })}`,
-      );
+      const data = await api(path);
       if (pred.run !== run) return;
       pred.chunk = { start, pred: data.pred, truth: data.truth };
+      // Newer predictions come in by patchOnline
+      if (run.online)
+        pred.patched = onlineRunning()
+          ? Math.max(start, onlineHead(pred.online) - 8)
+          : null;
     } catch (error) {
       $("p-viewer-note").textContent = error.message;
     } finally {
@@ -598,6 +1178,8 @@
     ensureChunk(n);
     draw();
     scheduleAgreement();
+    // AgentZero's run keeps its own address
+    if (pred.run.online) return;
     const state = runState(pred.run.key, pred.run.checkpoint, n / fps());
     rememberView(replaceRoute("predictor", state));
   }
@@ -889,15 +1471,18 @@
     const run = pred.run;
     if (!run?.session || !pred.shown) return;
     pred.agreeAt = performance.now();
-    const all = $("p-agree-mode").value === "all";
+    const all = $("p-agree-mode").value === "all" && !run.online;
     const half = Math.round((pred.span * fps()) / 2);
     const start = all ? 0 : Math.max(0, player.frame - half);
     const stop = all ? Math.max(1, frameCount()) : player.frame + half;
     let agreement;
     try {
-      agreement = await api(
-        `agreement?${new URLSearchParams({ key: run.key, ckpt: run.checkpoint, start, stop })}`,
-      );
+      agreement = run.online
+        ? (await api(`online/labels?${new URLSearchParams({ start, stop })}`))
+            .agreement
+        : await api(
+            `agreement?${new URLSearchParams({ key: run.key, ckpt: run.checkpoint, start, stop })}`,
+          );
     } catch (error) {
       $("p-agree").innerHTML =
         `<p class="notice">${escapeHtml(error.message)}</p>`;
@@ -954,10 +1539,23 @@
 
   async function route(state) {
     // Reading the command's options takes seconds; the viewer does not wait
-    loadInfo().catch((error) => showRunError(error.message));
+    const loading = pred.model === "policy" ? loadOnlineInfo() : loadInfo();
+    loading.catch((error) => showRunError(error.message));
     showKind();
     poll();
+    const watching = state.get("view") === "online";
+    const was = pred.watching;
+    pred.watching = watching;
+    if (!watching) hideLive();
+    await pollOnline();
     if (!pred.runs.length) await loadRuns();
+    if (watching) {
+      // Opened afresh: the run as it is now
+      if (!was) pred.watchedId = null;
+      rememberView(appUrl("predictor", { view: "online" }));
+      followOnline();
+      return;
+    }
     const key = state.get("key");
     const ckpt = state.get("ckpt");
     if (key && ckpt) openRun(key, ckpt, Number(state.get("t")) || 0);
@@ -973,14 +1571,28 @@
     else if (was) {
       clearTimeout(pred.pollTimer);
       clearTimeout(pred.agreeTimer);
+      clearTimeout(pred.onlineTimer);
       player.pause();
+      // The Studio's screen goes home with it
+      hideLive();
+      pred.watching = false;
     }
   });
 
   document.addEventListener("visibilitychange", () => {
     if (!pred.shown) return;
     if (document.hidden) player.pause();
-    else poll();
+    else {
+      poll();
+      pollOnline();
+    }
+  });
+
+  // Words the script writes itself
+  window.addEventListener("lang-change", () => {
+    if (pred.model === "policy") $("p-run").textContent = t("po.start");
+    renderCaps();
+    renderOnline();
   });
 
   document.querySelector('.app-nav [data-app="predictor"]').href = storedView(

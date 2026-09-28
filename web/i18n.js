@@ -1095,6 +1095,112 @@ const I18N = {
       n === 1 ? "1 marked in your sessions" : `${n} marked in your sessions`,
     "pedia.examplesNone":
       "None marked yet: pick it in the Studio's Techniques panel while recording.",
+
+    // The Predictor's online mode: AgentZero's policy, as if live
+    "po.model": "Model",
+    "po.model.idm": "IDM",
+    "po.model.idmNote":
+      "The inverse dynamics model labels a whole video after the fact, seeing frames before and after each one",
+    "po.model.policy": "AgentZero online",
+    "po.model.policyNote":
+      "AgentZero's policy, online: frame by frame as if live, seeing only the past; on a video, or on the live capture, where it can play the Switch",
+    "po.kind.live": "Live capture",
+    "po.allowRec": "Allow while recording",
+    "po.allowRecNote":
+      "Run AgentZero while the studio records (the recording may want the GPU; AgentZero's own play may be worth recording)",
+    "po.start": "Start AgentZero",
+    "po.running": "AgentZero is running; stop it first",
+    "po.checking": "Checking agentzero-play…",
+    "po.noCheckpoint": "No policy checkpoints",
+    "po.noPolicy": "No policy checkpoints in {folder} (runs/policy/*/best.pt).",
+    "po.noJson":
+      "This agentzero-play has no --json yet: update AgentZero, then Recheck.",
+    "po.noInput":
+      "The Studio has no video input: choose the capture card there first.",
+    "po.gpu": "GPU {used} / {total} GiB",
+    "po.gpuLow":
+      "Low GPU memory: {free} GiB free, and the policy wants about 1.5 GiB. Tick CPU, or free the GPU first.",
+    "po.state.loading": "Loading the model…",
+    "po.state.live": "Watching the live capture",
+    "po.state.video": "Playing along the video",
+    "po.state.playing": "Playing the Switch",
+    "po.state.paused": "You took over",
+    "po.state.done": "Done",
+    "po.state.cancelled": "Stopped",
+    "po.state.failed": "Failed",
+    "po.actions": ({ n }) => (n === 1 ? "1 action" : `${n} actions`),
+    "po.watch": "Watch",
+    "po.stop": "Stop",
+    "po.stopping": "Stopping…",
+    "po.stored": "Kept as a run of the Predictor.",
+    "po.openStored": "Open it",
+    "po.notYet": "AgentZero has not run since the studio started.",
+    "po.log": "Command and output",
+    "po.play.start": "Let AgentZero play…",
+    "po.play.stop": "Stop AgentZero playing (Esc)",
+    "po.play.off":
+      "Off: AgentZero only watches, and nothing reaches the Switch.",
+    "po.play.left":
+      "Playing the Switch, mixed with your controller: {left} left, {sent} actions sent.",
+    "po.play.paused":
+      "Paused: you {what}. AgentZero goes on {s} s after your last input.",
+    "po.play.ended": "Stopped playing: {why}.",
+    "po.took.button": "pressed {button}",
+    "po.took.left": "moved the left stick",
+    "po.took.right": "moved the right stick",
+    "po.took.gyro": "turned the controller",
+    "po.ended.time": "its time was up",
+    "po.ended.you": "you stopped it",
+    "po.ended.page": "no dashboard page was open",
+    "po.ended.replay": "the Replay panel took the replay port",
+    "po.ended.link": "the proxy's frames stopped reaching the studio",
+    "po.ended.stall": "the policy stopped answering",
+    "po.ended.stopped": "AgentZero stopped",
+    "po.ended.proxy": "the proxy closed the replay connection",
+    "po.badge.watching": "AgentZero watching",
+    "po.badge.playing": "AgentZero playing",
+    "po.badge.paused": "You took over",
+    "po.loop.title": "Loop",
+    "po.loop.median": "median ms",
+    "po.loop.handoff": "Frame hand-off",
+    "po.loop.handoffNote":
+      "From the capture card's timestamp of a frame until the model starts on it: the grabber, the pipe to AgentZero, ffmpeg's scaling and any wait",
+    "po.loop.grab": "capture to studio",
+    "po.loop.grabNote":
+      "From the capture card's timestamp until the studio writes the frame into AgentZero's pipe: the grabber, and the frame waiting for the pipe",
+    "po.loop.pipe": "pipe and scaling",
+    "po.loop.pipeNote":
+      "From the studio writing the frame until AgentZero has it: the pipe and ffmpeg's scaling to 640 x 360",
+    "po.loop.wait": "waiting for the model",
+    "po.loop.waitNote":
+      "The newest frame waiting while the model finishes the one before (AgentZero keeps only the newest)",
+    "po.loop.model": "Model",
+    "po.loop.modelNote": "The policy's time for one frame",
+    "po.loop.send": "Send",
+    "po.loop.sendDry": "Back to the studio",
+    "po.loop.sendNote":
+      "From the action being ready until the studio wrote it to the proxy's replay port (while AgentZero only watches: until the studio had it)",
+    "po.loop.total": "Capture to replay port",
+    "po.loop.totalNote":
+      "From the capture card's timestamp of a frame to its action written to the proxy's replay port; the network to the Pi and the next report come after",
+    "po.loop.age": "Frame to action",
+    "po.loop.ageNote":
+      "From a frame's time in the paced video to its action being ready",
+    "po.loop.rate": "{rate} actions/s",
+    "po.loop.skipped": "{n} frames skipped",
+    "po.loop.footLive": "Over the last 5 seconds, on this machine's clock.",
+    "po.loop.footVideo":
+      "Over the last 5 seconds; the video is paced at 30 fps, as if live.",
+    "po.confirm.title": "Let AgentZero play the Switch?",
+    "po.confirm.what":
+      "AgentZero's actions go to the Switch through the proxy's replay port, mixed with your controller: a button you press, or a stick you push further, always reaches the Switch.",
+    "po.confirm.takeover":
+      "Any input on the controller pauses AgentZero at once; it goes on 3 seconds after your last one. Put the controller down to let it play. Stop or Esc ends it.",
+    "po.confirm.where":
+      "Only in the practice area or a private job, with you at the console. Never in public jobs.",
+    "po.confirm.for": "Play for",
+    "po.confirm.cancel": "Cancel",
+    "po.confirm.play": "Let it play",
   },
 };
 

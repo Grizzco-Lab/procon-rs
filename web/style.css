@@ -7156,6 +7156,9 @@ body {
 [data-theme="telemetry"] .p-p-runs {
   --panel-no: "07";
 }
+[data-theme="telemetry"] .p-p-loop {
+  --panel-no: "08";
+}
 
 /* Narrow windows and phones: one column, the side's panels in reading
  * order: video and neighbours, the frames, the controller, the rest */
@@ -7164,7 +7167,7 @@ body {
     max-width: 900px;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: none;
-    grid-template-areas: "video" "frames" "predicted" "timeline" "agree" "run" "runs";
+    grid-template-areas: "video" "frames" "predicted" "loop" "timeline" "agree" "run" "runs";
   }
 
   :root[data-theme] .p-p-side {
@@ -7176,11 +7179,23 @@ body {
   max-width: 480px;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: none;
-  grid-template-areas: "video" "frames" "predicted" "timeline" "agree" "run" "runs";
+  grid-template-areas: "video" "frames" "predicted" "loop" "timeline" "agree" "run" "runs";
 }
 
 :root[data-layout="phone"][data-theme] .p-p-side {
   display: contents;
+}
+
+/* AgentZero on the live capture: its controls (Stop, Let AgentZero play)
+ * and its loop come right after the picture */
+@media (max-width: 1100px) {
+  :root[data-theme] #predictor-layout.is-live {
+    grid-template-areas: "video" "run" "loop" "predicted" "frames" "timeline" "agree" "runs";
+  }
+}
+
+:root[data-layout="phone"][data-theme] #predictor-layout.is-live {
+  grid-template-areas: "video" "run" "loop" "predicted" "frames" "timeline" "agree" "runs";
 }
 
 /* The run form in three short rows: the video, the checkpoint, the range
@@ -7357,6 +7372,210 @@ body {
   overflow-wrap: anywhere;
   max-height: 240px;
   overflow: auto;
+}
+
+/* ------------------------------------------------ AgentZero online
+ * The Predictor's online mode: the run's state under the form, "Let
+ * AgentZero play" marked as the one control that reaches the Switch, the
+ * loop's latency, and on the live capture the Studio's screen lent to the
+ * video panel with AgentZero's action drawn over it in the prediction's
+ * color. A red frame while it plays, amber while a person has taken over.
+ */
+
+.p-p-loop {
+  grid-area: loop;
+}
+
+/* The model switch and the GPU note share the Predict panel's head */
+.p-p-run .panel-head {
+  flex-wrap: wrap;
+}
+
+.p-p-run .seg-switch .mode-toggle {
+  white-space: nowrap;
+}
+
+.po-run {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.po-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.po-state .panel-note {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+
+.po-play {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px dashed
+    color-mix(in oklab, var(--critical) 55%, var(--panel-border));
+  border-radius: var(--radius-sm);
+}
+
+.po-play.is-playing {
+  border-style: solid;
+  border-color: var(--critical);
+  background: color-mix(in oklab, var(--critical) 10%, var(--panel));
+}
+
+.po-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-color: color-mix(in oklab, var(--critical) 70%, var(--panel-border));
+  background: color-mix(in oklab, var(--critical) 16%, var(--btn-bg));
+  color: var(--text);
+  font-weight: 600;
+}
+
+.po-danger:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--critical) 30%, var(--btn-bg));
+}
+
+.po-play-glyph {
+  width: 0;
+  height: 0;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-left: 10px solid var(--critical);
+}
+
+.po-play.is-playing .po-play-glyph {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--critical);
+}
+
+.po-play-note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.po-loop-table td,
+.po-loop-table th {
+  text-align: right;
+}
+
+.po-loop-table td:first-child,
+.po-loop-table th:first-child {
+  text-align: left;
+}
+
+.po-loop-table tr.po-total td {
+  border-top: 1px solid var(--panel-border);
+  font-weight: 600;
+}
+
+/* The hand-off's parts, under it */
+.po-loop-table tr.po-part td {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.po-loop-table tr.po-part td:first-child {
+  padding-left: 18px;
+}
+
+/* The live capture: the Studio's screen, lent, with AgentZero over it */
+.po-live {
+  position: relative;
+  border-radius: var(--radius-sm);
+}
+
+.po-live > .screen {
+  width: 100%;
+}
+
+/* AgentZero's action stands in for the controller's overlay here */
+.po-live #input-hud {
+  display: none !important;
+}
+
+.po-live[data-state="playing"] > .screen {
+  outline: 3px solid var(--critical);
+  outline-offset: -3px;
+}
+
+.po-live[data-state="paused"] > .screen {
+  outline: 3px solid var(--warning);
+  outline-offset: -3px;
+}
+
+.po-hud .hud-dot,
+.po-hud .hud-bar {
+  fill: var(--s2);
+}
+
+.po-hud .hud-stick circle:not(.hud-dot) {
+  stroke: color-mix(in oklab, var(--s2) 75%, #ffffff);
+}
+
+.po-hud .hud-key rect {
+  stroke: var(--s2);
+}
+
+.po-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.6);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.po-live[data-state="playing"] .po-badge {
+  background: var(--critical);
+}
+
+.po-live[data-state="paused"] .po-badge {
+  background: var(--warning);
+  color: #1b1b1b;
+}
+
+.po-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.po-confirm {
+  display: grid;
+  gap: 10px;
+}
+
+.po-confirm p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.po-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.po-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 /* ---------------------------------------------------------------------
