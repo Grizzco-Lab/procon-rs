@@ -156,6 +156,10 @@ the smallest `host_now - proxy_timestamp` over 10 s as the clock offset.
   kernel capture time (`-ts mono2abs -copyts` + `showinfo`); a recording starts
   at its first frame's capture time, and frames reach it at a constant rate. A
   queue of late frames (over 120 ms for 3 s while idle) restarts the grabber.
+  The grabber's second output (fd 3) is the live policy's frames (see the
+  Predictor below). Every raw output runs `-threads 1`, since ffmpeg's
+  rawvideo encoder is frame threaded and held a frame or two back, and every
+  pipe of frames is grown to 1 MiB.
 - `Audio` reads the `[video] audio_input` PulseAudio source all the time in
   10 ms chunks and keeps the last 2 s; a recording's sound starts at the sample
   that arrived with its first frame and goes to the encoder on fd 3, as an Opus
@@ -440,15 +444,29 @@ The online mode (`src/predictor/online.rs`) runs AgentZero's policy
 (`runs/policy/*/best.pt`) with `uv run agentzero-play --dry-run --json`, in
 its own process group like a run: on a video with `--realtime` (paced at
 30 fps, frames skipped while the model is busy, as live), or on the live
-capture with `--capture "-f rawvideo ... -i pipe:0"`. For the latter the
-grabber hands its raw frames to a `PolicyFeed` (`src/video.rs`: thinned to
-30 fps, each with its kernel capture time, a full queue skipping frames),
-and a writer thread pipes them into `agentzero-play`'s stdin, which its
-ffmpeg shares, noting each frame's number, capture time and write time.
-Every JSON line comes back with the number of the frame seen and the Unix
-times the frame arrived and its action was ready, so the loop is timed on
-one clock: hand-off (to the studio, then the pipe and scaling), model and
-send. Each action goes to the dashboard's WebSocket as an `agent` message
+capture with `--shared-frames`. For the latter the grabber makes the
+policy's frames itself, on a second output (`src/video.rs`, `pipe:3`): split
+off after the 16:9 fit and before the `fps` filter (which holds every frame
+until the next one arrives), thinned by time to 30 fps, scaled to 640 x 360
+RGB with swscale's bilinear filter as AgentZero's training decoder
+(torchcodec) scales, each with its capture time from a second `showinfo`.
+The studio writes each into shared memory (`SharedFrames`: a memfd
+`agentzero-play` inherits as fd 3, a ring of four slots) and announces it
+with a 32-byte notice on its stdin; AgentZero takes the newest notice's
+frame whenever the model is free, with no ffmpeg and no reader thread of
+its own. Every JSON line comes back with the studio's number of the frame
+seen and the moments the policy took it, had it on the model's device and
+had the action, on `CLOCK_MONOTONIC` like the studio's, so each stage is
+timed on one clock: the grabber (capture to ffmpeg writing the frame), the
+pipe into the studio, shared memory, the wait for the model, the upload,
+the model and the send. Where the time went before: ffmpeg's rawvideo
+encoder is frame threaded, which held one or two frames back at every raw
+output (all now `-threads 1`); pipes stayed at 64 KiB, since asking for
+more than `/proc/sys/fs/pipe-max-size` (1 MiB) fails (all now grown to
+1 MiB); the `fps` filter held each frame for the next; and the policy's own
+ffmpeg dropped the first piped frame (`-fflags nobuffer`), so every frame
+it reported was one later than the one timed. Each action goes to the
+dashboard's WebSocket as an `agent` message
 (the page draws it over the Studio's live preview, lent to the Predictor by
 `lendScreen` in `app.js`); a video's actions are kept as labels (for frame
 seen + lead, the frame whose input they predict) and stored as a run

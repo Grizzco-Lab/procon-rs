@@ -15,9 +15,17 @@
 //! - A recording encoder per video file, fed the same frames from Record on,
 //!   so a file begins with the next frame and pausing never touches the input.
 //!
-//! The Predictor's live policy gets the same raw frames too ([`PolicyFeed`]),
-//! thinned to its rate, each with its capture time: the capture card opens
-//! only once, so the policy never grabs it itself.
+//! The grabber also makes the Predictor's live policy its frames, on a
+//! second output of its own ([`PolicySink`]): split off before the constant
+//! rate (which holds each frame until the next one arrives), thinned to
+//! [`POLICY_FPS`] and scaled to [`POLICY_SIZE`] RGB as AgentZero's training
+//! frames are (bilinear), each with its capture time. The capture card
+//! opens only once, so the policy never grabs it itself.
+//!
+//! Every raw output is written with `-threads 1`: ffmpeg's rawvideo encoder
+//! is frame threaded, which holds a frame or two back. And every pipe of
+//! frames is grown as far as the system lets a user ([`grow_pipe`]): at
+//! the default 64 KiB, a 1080p frame takes 48 hand-offs.
 //!
 //! Besides the screen and V4L2 devices, the input can be a video file, played
 //! in a loop at its own pace as if it were live (for trying the studio
@@ -46,7 +54,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 use serde::Serialize;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -54,7 +62,7 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 /// How long a new grabber may take to deliver its first frame
@@ -80,6 +88,24 @@ const WORK_SIZE: (u32, u32) = (1920, 1080);
 
 /// Bytes of one raw 4:2:0 frame at [`WORK_SIZE`]
 const FRAME_BYTES: usize = (WORK_SIZE.0 * WORK_SIZE.1 * 3 / 2) as usize;
+
+/// Size of the frames the grabber makes for the live policy: AgentZero's
+/// input, RGB
+pub const POLICY_SIZE: (u32, u32) = (640, 360);
+
+/// Bytes of one policy frame
+pub const POLICY_BYTES: usize = (POLICY_SIZE.0 * POLICY_SIZE.1 * 3) as usize;
+
+/// Frames per second the policy gets: AgentZero's rate
+pub const POLICY_FPS: u32 = 30;
+
+/// Capture times queued for frames not read yet; more means the log and the
+/// frames are out of step, and the queue starts afresh
+const TIMES_QUEUED: usize = 120;
+
+/// Pipes of frames are grown to this, or as far as the system lets a user
+/// (1 MiB unless /proc/sys/fs/pipe-max-size says otherwise)
+const PIPE_BYTES: [i32; 2] = [1 << 22, 1 << 20];
 
 /// Input id for capturing the X11 screen
 pub const SCREEN: &str = "screen";
@@ -189,8 +215,8 @@ pub struct VideoStatus {
     pub error: Option<String>,
 }
 
-/// A raw frame shared by the preview, the recording and the policy: 4:2:0
-/// at 1920 x 1080 (see [`raw_input`])
+/// A raw frame shared by the preview and the recording: 4:2:0 at 1920 x
+/// 1080 (see [`raw_input`])
 pub type SharedFrame = Arc<Vec<u8>>;
 
 /// The preview encoder's input, and how to thin the capture rate to its rate
@@ -202,14 +228,45 @@ struct PreviewFeed {
     capture_fps: u32,
 }
 
-/// Grabbed frames for the Predictor's live policy: each with its capture
-/// time (Unix ms), thinned to `fps`; a full queue skips frames, as the
-/// policy only wants the newest
-#[derive(Clone)]
-pub struct PolicyFeed {
-    pub frames: SyncSender<(u64, SharedFrame)>,
-    /// Keep `fps` frames of every one the capture delivers per second
-    pub fps: u32,
+/// When a policy frame went through each hand-off, on `CLOCK_MONOTONIC` in
+/// ns ([`mono_ns`]), the clock the policy's process reads too
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PolicyTimes {
+    /// The capture card's timestamp of the frame (a file's frames: when
+    /// ffmpeg decoded them)
+    pub captured: u64,
+    /// Its first bytes arrived from the grabber: ffmpeg wrote it
+    pub emitted: u64,
+    /// The whole frame was read
+    pub read: u64,
+}
+
+/// Where the grabber's policy frames go: [`POLICY_SIZE`] RGB at
+/// [`POLICY_FPS`], called on the grabber's thread for each, which must not
+/// wait (ffmpeg waits for every output)
+pub trait PolicySink: Send + Sync {
+    fn frame(&self, frame: &[u8], times: PolicyTimes);
+}
+
+/// Now on `CLOCK_MONOTONIC`, in ns: the clock the live policy's loop is
+/// timed on, the same in every process (Python's `time.monotonic`)
+pub fn mono_ns() -> u64 {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime fills the timespec it is given
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
+    now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
+}
+
+/// A Unix time in seconds (ffmpeg's capture times) on `CLOCK_MONOTONIC`, ns
+fn unix_to_mono(seconds: f64) -> u64 {
+    let unix_now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos() as u64);
+    let age = unix_now.saturating_sub((seconds * 1e9) as u64);
+    mono_ns().saturating_sub(age)
 }
 
 /// An ffmpeg fed raw frames on stdin through a queue
@@ -251,10 +308,10 @@ struct Inner {
 #[derive(Clone)]
 pub struct Video {
     inner: Arc<Mutex<Inner>>,
-    /// Where grabbed frames go; separate locks, as the grabber's reader takes
+    /// Where grabbed frames go; separate locks, as the grabber's readers take
     /// them for every frame
     preview_feed: Arc<Mutex<Option<PreviewFeed>>>,
-    policy_feed: Arc<Mutex<Option<PolicyFeed>>>,
+    policy_sink: Arc<Mutex<Option<Arc<dyn PolicySink>>>>,
     /// When each frame still inside the preview encoder was sent to it
     preview_sent: Arc<Mutex<VecDeque<Instant>>>,
     /// Smoothed preview encoding time in µs
@@ -274,6 +331,8 @@ pub struct Video {
     last_preview_ms: Arc<AtomicU64>,
     /// Capture times (Unix µs) the grabber logged for frames not read yet
     capture_times: Arc<Mutex<VecDeque<u64>>>,
+    /// The same for the policy's frames, on `CLOCK_MONOTONIC` (ns)
+    policy_times: Arc<Mutex<VecDeque<u64>>>,
     /// Smoothed time from capture to reading a frame, in µs
     capture_us: Arc<AtomicU64>,
     /// The sound source, when one is configured
@@ -315,7 +374,7 @@ impl Video {
                 error: None,
             })),
             preview_feed: Arc::default(),
-            policy_feed: Arc::default(),
+            policy_sink: Arc::default(),
             preview_sent: Arc::default(),
             preview_encode_us: Arc::default(),
             recording: Arc::default(),
@@ -327,6 +386,7 @@ impl Video {
             last_frame_ms: Arc::default(),
             last_preview_ms: Arc::default(),
             capture_times: Arc::default(),
+            policy_times: Arc::default(),
             capture_us: Arc::default(),
             audio,
         };
@@ -399,10 +459,10 @@ impl Video {
         self.lock().input.clone()
     }
 
-    /// Hand grabbed frames to the Predictor's live policy from the next
-    /// frame on, or stop (`None`)
-    pub fn set_policy_feed(&self, feed: Option<PolicyFeed>) {
-        *lock(&self.policy_feed) = feed;
+    /// Hand the grabber's policy frames to the Predictor's live policy from
+    /// the next frame on, or stop (`None`)
+    pub fn set_policy_sink(&self, sink: Option<Arc<dyn PolicySink>>) {
+        *lock(&self.policy_sink) = sink;
     }
 
     /// Size and rate of recordings from the next file on; not while recording
@@ -455,10 +515,15 @@ impl Video {
         // Room for the encoder to start up without losing frames
         let queue = (inner.config.fps * RECORDING_QUEUE_SECS) as usize;
         drop(inner);
-        let audio_pipe = if with_audio { audio_pipe() } else { Ok(None) };
+        // Sound goes to the encoder through a pipe of its own, its fd 3
+        let audio_pipe = if with_audio {
+            pipe().map(Some)
+        } else {
+            Ok(None)
+        };
         let spawned = audio_pipe.and_then(|pipe| {
             let (read_end, write_end) = pipe.unzip();
-            let (worker, _) = spawn_worker(&args, queue, false, read_end)?;
+            let (worker, _) = spawn_worker(&args, queue, false, read_end.map(OwnedFd::from))?;
             Ok((worker, write_end))
         });
         match spawned {
@@ -566,6 +631,7 @@ impl Video {
         inner.error = None;
         self.last_frame_ms.store(0, Ordering::Relaxed);
         lock(&self.capture_times).clear();
+        lock(&self.policy_times).clear();
         self.capture_us.store(0, Ordering::Relaxed);
 
         let Some(input) = inner.input.clone() else {
@@ -588,7 +654,11 @@ impl Video {
     fn spawn_grabber(&self, inner: &Inner, input: &str) -> Result<Child> {
         let args = grabber_args(&inner.config, input);
         log::info!("Starting ffmpeg {}", args.join(" "));
-        let mut child = Command::new("ffmpeg")
+        // The policy's frames come on the grabber's fd 3
+        let (policy_frames, policy_end) = pipe()?;
+        let mut command = Command::new("ffmpeg");
+        inherit_as_fd3(&mut command, &policy_end);
+        let mut child = command
             .args(&args)
             .stdin(Stdio::null())
             // Own process group: a terminal Ctrl+C reaches the studio, which then stops ffmpeg in order
@@ -597,16 +667,18 @@ impl Video {
             .stderr(Stdio::piped())
             .spawn()
             .context("cannot run ffmpeg; is it installed?")?;
+        // The child has its copy; ours would keep the pipe open
+        drop(policy_end);
 
         let stdout = child.stdout.take().context("no ffmpeg stdout")?;
         let stderr = child.stderr.take().context("no ffmpeg stderr")?;
-        // Frames are megabytes; a bigger pipe means fewer wakeups. Best effort.
-        // SAFETY: fcntl on a descriptor we own
-        unsafe { libc::fcntl(stdout.as_raw_fd(), libc::F_SETPIPE_SZ, 1 << 22) };
+        grow_pipe(&stdout);
+        grow_pipe(&policy_frames);
         let generation = self.grabber_generation.load(Ordering::SeqCst);
         let video = self.clone();
-        let capture_fps = inner.config.fps;
-        thread::spawn(move || video.read_frames(stdout, generation, capture_fps));
+        thread::spawn(move || video.read_frames(stdout, generation));
+        let video = self.clone();
+        thread::spawn(move || video.read_policy_frames(policy_frames, generation));
         let video = self.clone();
         thread::spawn(move || video.read_log(stderr, generation));
         Ok(child)
@@ -676,13 +748,12 @@ impl Video {
         self.preview_generation.load(Ordering::SeqCst) == generation
     }
 
-    /// Hand grabbed frames to the preview, the recording and the policy;
-    /// when the grabber dies on its own, retry after a pause
-    fn read_frames(&self, mut stdout: ChildStdout, generation: u64, capture_fps: u32) {
+    /// Hand grabbed frames to the preview and the recording; when the
+    /// grabber dies on its own, retry after a pause
+    fn read_frames(&self, mut stdout: ChildStdout, generation: u64) {
         let mut frame = vec![0u8; FRAME_BYTES];
-        // Count toward the next frame kept for the preview and the policy
+        // Count toward the next frame kept for the preview
         let mut preview_phase = 0;
-        let mut policy_phase = 0;
         // Since when frames have been arriving too long after capture
         let mut backlog_since: Option<Instant> = None;
         // Read to the end even when stale, so ffmpeg can exit
@@ -721,24 +792,12 @@ impl Video {
                 }
                 keep
             });
-            let policy = lock(&self.policy_feed).clone().filter(|feed| {
-                policy_phase += feed.fps;
-                let keep = policy_phase >= capture_fps;
-                if keep {
-                    policy_phase -= capture_fps;
-                }
-                keep
-            });
             let mut recording = lock(&self.recording);
-            if preview.is_none() && recording.is_none() && policy.is_none() {
+            if preview.is_none() && recording.is_none() {
                 continue;
             }
             // Consumers share the frame; the next one gets a fresh buffer
             let shared = Arc::new(core::mem::replace(&mut frame, vec![0u8; FRAME_BYTES]));
-            if let Some(policy) = policy {
-                // A policy still busy with earlier frames skips this one
-                let _ = policy.frames.try_send((captured_ms, Arc::clone(&shared)));
-            }
             if let Some(preview) = preview {
                 // A busy preview skips a frame
                 if preview.frames.try_send(Arc::clone(&shared)).is_ok() {
@@ -784,6 +843,28 @@ impl Video {
             self.restart_grabber(&mut inner);
             // Keep the reason visible until frames flow again
             inner.error = error.or(Some("ffmpeg exited".to_string()));
+        }
+    }
+
+    /// Hand the grabber's policy frames to the live policy while one wants
+    /// them; read them all the same, as ffmpeg waits for every output
+    fn read_policy_frames(&self, mut pipe: File, generation: u64) {
+        let mut frame = vec![0u8; POLICY_BYTES];
+        // Read to the end even when stale, so ffmpeg can exit
+        while let Some(emitted) = read_frame(&mut pipe, &mut frame) {
+            let read = mono_ns();
+            if !self.grabber_is_current(generation) {
+                continue;
+            }
+            let captured = self.policy_capture_time().unwrap_or(read);
+            if let Some(sink) = lock(&self.policy_sink).clone() {
+                let times = PolicyTimes {
+                    captured,
+                    emitted,
+                    read,
+                };
+                sink.frame(&frame, times);
+            }
         }
     }
 
@@ -838,17 +919,13 @@ impl Video {
     }
 
     /// Capture time (Unix ms) of the frame just read, `now` if unknown
-    ///
-    /// The grabber logs each frame's time just before writing the frame, so it
-    /// is normally waiting; give the log reader a moment if not.
     fn capture_time(&self, now: u64) -> u64 {
-        for _ in 0..20 {
-            if let Some(us) = lock(&self.capture_times).pop_front() {
-                return us / 1000;
-            }
-            thread::sleep(Duration::from_millis(1));
-        }
-        now
+        next_time(&self.capture_times).map_or(now, |us| us / 1000)
+    }
+
+    /// Capture time (`CLOCK_MONOTONIC` ns) of the policy frame just read
+    fn policy_capture_time(&self) -> Option<u64> {
+        next_time(&self.policy_times)
     }
 
     /// Collect each frame's capture time, and keep the grabber's errors for the dashboard
@@ -864,12 +941,18 @@ impl Video {
                 if let Some(seconds) = seconds
                     && self.grabber_is_current(generation)
                 {
-                    let mut times = lock(&self.capture_times);
+                    // The policy's output, or the main one
+                    let (times, time) = if line.starts_with(POLICY_LOG) {
+                        (&self.policy_times, unix_to_mono(seconds))
+                    } else {
+                        (&self.capture_times, (seconds * 1e6) as u64)
+                    };
+                    let mut times = lock(times);
                     // Out of step with the frames somehow: start afresh
-                    if times.len() > 120 {
+                    if times.len() > TIMES_QUEUED {
                         times.clear();
                     }
-                    times.push_back((seconds * 1e6) as u64);
+                    times.push_back(time);
                 }
                 continue;
             }
@@ -894,17 +977,7 @@ fn spawn_worker(
     log::info!("Starting ffmpeg {}", args.join(" "));
     let mut command = Command::new("ffmpeg");
     if let Some(fd) = &fd3 {
-        let raw = fd.as_raw_fd();
-        // SAFETY: dup2 is async-signal-safe; the copy at 3 is inherited, as
-        // copies do not keep the close-on-exec flag
-        unsafe {
-            command.pre_exec(move || {
-                if libc::dup2(raw, 3) < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
+        inherit_as_fd3(&mut command, fd);
     }
     let mut child = command
         .args(args)
@@ -921,8 +994,7 @@ fn spawn_worker(
     // The child has its copy; ours would keep the pipe open
     drop(fd3);
     let stdin = child.stdin.take().context("no ffmpeg stdin")?;
-    // SAFETY: fcntl on a descriptor we own; bigger pipes suit megabyte frames
-    unsafe { libc::fcntl(stdin.as_raw_fd(), libc::F_SETPIPE_SZ, 1 << 22) };
+    grow_pipe(&stdin);
     let stdout = child.stdout.take();
     if let Some(stderr) = child.stderr.take() {
         thread::spawn(move || {
@@ -943,17 +1015,79 @@ fn spawn_worker(
     ))
 }
 
-/// A pipe for sound into an encoder: the end ffmpeg reads (as fd 3), and ours
-fn audio_pipe() -> Result<Option<(OwnedFd, File)>> {
+/// A pipe: the end to read and the end to write, both closed on exec (a
+/// child gets its end through [`inherit_as_fd3`])
+fn pipe() -> Result<(File, File)> {
     let mut fds = [0; 2];
     // SAFETY: pipe2 fills both descriptors, which we then own
     if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {
-        return Err(std::io::Error::last_os_error()).context("cannot make a pipe for sound");
+        return Err(std::io::Error::last_os_error()).context("cannot make a pipe");
     }
     // SAFETY: fresh descriptors from pipe2, owned by nothing else
-    let (read_end, write_end) =
-        unsafe { (OwnedFd::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) };
-    Ok(Some((read_end, write_end)))
+    Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
+}
+
+/// Give the child `command` starts `fd` as its descriptor 3 (ffmpeg's
+/// `pipe:3`, AgentZero's shared frames)
+pub fn inherit_as_fd3(command: &mut Command, fd: &impl AsRawFd) {
+    let raw = fd.as_raw_fd();
+    // SAFETY: dup2 and fcntl are async-signal-safe. The copy at 3 is
+    // inherited, as copies do not keep the close-on-exec flag; a descriptor
+    // that is 3 already only loses the flag.
+    unsafe {
+        command.pre_exec(move || {
+            let done = if raw == 3 {
+                libc::fcntl(3, libc::F_SETFD, 0)
+            } else {
+                libc::dup2(raw, 3)
+            };
+            if done < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+/// Grow a pipe of frames as far as the system lets a user (see
+/// [`PIPE_BYTES`]): a frame then takes a few hand-offs instead of dozens.
+/// Best effort.
+pub fn grow_pipe(pipe: &impl AsRawFd) {
+    for bytes in PIPE_BYTES {
+        // SAFETY: fcntl on a descriptor the caller owns
+        if unsafe { libc::fcntl(pipe.as_raw_fd(), libc::F_SETPIPE_SZ, bytes) } >= 0 {
+            return;
+        }
+    }
+}
+
+/// Read one whole frame into `frame`, answering when its first bytes came
+/// ([`mono_ns`]); `None` at the end of the stream
+fn read_frame(reader: &mut impl Read, frame: &mut [u8]) -> Option<u64> {
+    let first = loop {
+        match reader.read(frame) {
+            Ok(0) => return None,
+            Ok(n) => break n,
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(_) => return None,
+        }
+    };
+    let came = mono_ns();
+    reader.read_exact(&mut frame[first..]).ok()?;
+    Some(came)
+}
+
+/// The next queued capture time; the grabber logs a frame's time just
+/// before writing the frame, so it is normally there: give the log reader a
+/// moment if not
+fn next_time(times: &Mutex<VecDeque<u64>>) -> Option<u64> {
+    for _ in 0..20 {
+        if let Some(time) = lock(times).pop_front() {
+            return Some(time);
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    None
 }
 
 /// Feed queued frames to an ffmpeg until the queue closes
@@ -1013,7 +1147,8 @@ pub fn raw_input(fps: u32) -> Vec<String> {
     args
 }
 
-/// Command line for the grabber: `input` as raw 1080p frames on stdout
+/// Command line for the grabber: `input` as raw 1080p frames on stdout, and
+/// the policy's frames on fd 3
 fn grabber_args(config: &VideoConfig, input: &str) -> Vec<String> {
     let mut args: Vec<String> = ["-hide_banner", "-nostdin", "-nostats", "-loglevel", "info"]
         .map(String::from)
@@ -1039,19 +1174,48 @@ fn grabber_args(config: &VideoConfig, input: &str) -> Vec<String> {
         args.extend(["-i".to_string(), input.to_string()]);
     }
 
-    // Fit the source into 16:9, padded if it has another shape, at a constant
-    // rate; showinfo logs each frame's capture time (kept absolute by -copyts)
+    // Fit the source into 16:9, padded if it has another shape, then split:
+    // at a constant rate on stdout, and for the policy on fd 3 before that
+    // (the constant rate holds each frame until the next one comes), a
+    // frame once 3/4 of the policy's frame time passed since the last (every
+    // other one at 60 fps, every one at 30 even when they jitter), scaled as
+    // AgentZero's training frames are. showinfo logs each frame's capture
+    // time (kept absolute by -copyts); the policy's timestamps in µs never
+    // collide, since the muxer drops a frame whose time repeats.
     let (width, height) = WORK_SIZE;
+    let (small_width, small_height) = POLICY_SIZE;
     args.push("-copyts".to_string());
-    args.push("-vf".to_string());
+    args.push("-filter_complex".to_string());
     args.push(format!(
-        "{stamp}scale={width}:{height}:force_original_aspect_ratio=decrease,\
-         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={},format=yuv420p,showinfo=checksum=0",
-        config.fps
+        "[0:v]{stamp}scale={width}:{height}:force_original_aspect_ratio=decrease,\
+         pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,split[main][policy];\
+         [main]fps={fps},showinfo=checksum=0[out];\
+         [policy]select='isnan(prev_selected_t)+gte(t-prev_selected_t,{gap})',\
+         scale={small_width}:{small_height}:flags=bilinear,format=rgb24,settb=AVTB,\
+         showinfo@policy=checksum=0[small]",
+        fps = config.fps,
+        gap = 0.75 / POLICY_FPS as f64,
     ));
-    args.extend(["-f", "rawvideo", "pipe:1"].map(String::from));
+    args.extend(["-map", "[out]", "-threads", "1", "-f", "rawvideo", "pipe:1"].map(String::from));
+    args.extend(
+        [
+            "-map",
+            "[small]",
+            "-fps_mode",
+            "passthrough",
+            "-threads",
+            "1",
+            "-f",
+            "rawvideo",
+            "pipe:3",
+        ]
+        .map(String::from),
+    );
     args
 }
+
+/// How the grabber's log lines about the policy's frames begin
+const POLICY_LOG: &str = "[showinfo@policy ";
 
 /// Command line for the preview: low-latency H.264 as fragmented MP4 on stdout
 fn preview_args(inner: &Inner) -> Vec<String> {
@@ -1147,4 +1311,95 @@ fn has_keyframe(mut payload: &[u8]) -> bool {
         payload = payload.get(4 + length..).unwrap_or_default();
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> VideoConfig {
+        VideoConfig {
+            input: String::new(),
+            fps: 60,
+            v4l2_args: ["-input_format", "yuyv422"].map(String::from).to_vec(),
+            record_height: 720,
+            record_fps: 30,
+            encoder: Vec::new(),
+            extension: "mkv".to_string(),
+            preview_height: 1080,
+            preview_fps: 60,
+            preview_encoder: Vec::new(),
+            audio_input: String::new(),
+            audio_offset_ms: 0,
+        }
+    }
+
+    /// The options of `output` in `args`, from its `-map` on
+    fn output_options<'a>(args: &'a [String], output: &str) -> &'a [String] {
+        let end = args.iter().position(|a| a == output).unwrap();
+        let start = args[..end].iter().rposition(|a| a == "-map").unwrap();
+        &args[start..end]
+    }
+
+    #[test]
+    fn the_grabber_splits_off_the_policys_frames_before_the_constant_rate() {
+        let args = grabber_args(&config(), "/dev/video9");
+        let graph = &args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1];
+        let (main, policy) = graph.split_once("[main]fps=60").unwrap();
+        // One fit for both, then the constant rate on the main output only
+        assert!(main.ends_with("format=yuv420p,split[main][policy];"));
+        assert!(!policy.contains("fps="));
+        assert!(policy.contains("scale=640:360:flags=bilinear,format=rgb24"));
+        assert!(policy.contains("gte(t-prev_selected_t,0.025)"));
+        assert!(policy.contains(&POLICY_LOG[1..POLICY_LOG.len() - 1]));
+        // Both raw outputs without the frame-threaded encoder's delay
+        let out = output_options(&args, "pipe:1");
+        assert_eq!(out, ["-map", "[out]", "-threads", "1", "-f", "rawvideo"]);
+        let small = output_options(&args, "pipe:3");
+        assert!(small.windows(2).any(|w| w == ["-threads", "1"]));
+        assert!(small.windows(2).any(|w| w == ["-fps_mode", "passthrough"]));
+        // The capture card's own timestamps; a file is stamped as read
+        assert!(args.windows(2).any(|w| w == ["-ts", "mono2abs"]));
+        let file = std::env::current_exe().unwrap();
+        let args = grabber_args(&config(), &file.display().to_string());
+        assert!(args.iter().any(|a| a.contains("[0:v]setpts=RTCTIME")));
+    }
+
+    /// Hands out its bytes a few at a time, as a pipe does
+    struct Trickle(Vec<u8>);
+
+    impl Read for Trickle {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = buf.len().min(self.0.len()).min(7);
+            buf[..n].copy_from_slice(&self.0[..n]);
+            self.0.drain(..n);
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn frames_are_read_whole() {
+        let mut pipe = Trickle((0..50).collect());
+        let mut frame = [0u8; 20];
+        let before = mono_ns();
+        let came = read_frame(&mut pipe, &mut frame).unwrap();
+        assert!(came >= before && came <= mono_ns());
+        assert_eq!(frame[19], 19);
+        read_frame(&mut pipe, &mut frame).unwrap();
+        assert_eq!(frame[0], 20);
+        // Ten bytes left: not a frame
+        assert_eq!(read_frame(&mut pipe, &mut frame), None);
+    }
+
+    #[test]
+    fn capture_times_move_to_the_monotonic_clock() {
+        let unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        let now = mono_ns();
+        let mono = unix_to_mono(unix - 0.25);
+        let age_ms = (now as f64 - mono as f64) / 1e6;
+        assert!((249.0..260.0).contains(&age_ms), "{age_ms}");
+    }
 }

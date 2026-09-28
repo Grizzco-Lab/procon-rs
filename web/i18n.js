@@ -1115,6 +1115,8 @@ const I18N = {
     "po.noPolicy": "No policy checkpoints in {folder} (runs/policy/*/best.pt).",
     "po.noJson":
       "This agentzero-play has no --json yet: update AgentZero, then Recheck.",
+    "po.noShared":
+      "This agentzero-play cannot take the live capture's frames yet (--shared-frames): update AgentZero, then Recheck. Videos run.",
     "po.noInput":
       "The Studio has no video input: choose the capture card there first.",
     "po.gpu": "GPU {used} / {total} GiB",
@@ -1185,16 +1187,21 @@ const I18N = {
     "po.loop.median": "median ms",
     "po.loop.handoff": "Frame hand-off",
     "po.loop.handoffNote":
-      "From the capture card's timestamp of a frame until the model starts on it: the grabber, the pipe to AgentZero, ffmpeg's scaling and any wait",
-    "po.loop.grab": "capture to studio",
-    "po.loop.grabNote":
-      "From the capture card's timestamp until the studio writes the frame into AgentZero's pipe: the grabber, and the frame waiting for the pipe",
-    "po.loop.pipe": "pipe and scaling",
-    "po.loop.pipeNote":
-      "From the studio writing the frame until AgentZero has it: the pipe and ffmpeg's scaling to 640 x 360",
+      "From the capture card's timestamp of a frame until AgentZero took it: the grabber, the pipe into the studio, shared memory and any wait",
+    "po.loop.grabber": "capture card and grabber",
+    "po.loop.grabberNote":
+      "From the capture card's timestamp until the grabber wrote the frame out: the card's USB transfer, then ffmpeg's decoding, fitting and scaling to 640 x 360",
+    "po.loop.pipe": "pipe to the studio",
+    "po.loop.pipeNote": "The frame through the grabber's pipe into the studio",
+    "po.loop.shared": "into shared memory",
+    "po.loop.sharedNote":
+      "The frame written into shared memory and announced to AgentZero",
     "po.loop.wait": "waiting for the model",
     "po.loop.waitNote":
-      "The newest frame waiting while the model finishes the one before (AgentZero keeps only the newest)",
+      "Until AgentZero took the frame: the model busy with the frame before (it takes only the newest), or waking up",
+    "po.loop.upload": "Onto the device",
+    "po.loop.uploadNote":
+      "The frame onto the model's device (the GPU; on the CPU there is nothing to move)",
     "po.loop.model": "Model",
     "po.loop.modelNote": "The policy's time for one frame",
     "po.loop.send": "Send",
@@ -1209,9 +1216,10 @@ const I18N = {
       "From a frame's time in the paced video to its action being ready",
     "po.loop.rate": "{rate} actions/s",
     "po.loop.skipped": "{n} frames skipped",
-    "po.loop.footLive": "Over the last 5 seconds, on this machine's clock.",
+    "po.loop.footLive":
+      "Over the last 10 seconds, on this machine's monotonic clock.",
     "po.loop.footVideo":
-      "Over the last 5 seconds; the video is paced at 30 fps, as if live.",
+      "Over the last 10 seconds; the video is paced at 30 fps, as if live.",
     "po.confirm.title": "Let AgentZero play the Switch?",
     "po.confirm.what":
       "AgentZero's actions go to the Switch through the proxy's replay port, mixed with your controller.",

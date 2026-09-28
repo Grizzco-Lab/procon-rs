@@ -260,6 +260,8 @@
     const caps = info.capabilities;
     if (caps.error) notes.push(caps.error);
     else if (!caps.json) notes.push(t("po.noJson"));
+    else if (!caps.shared && $("p-kind").value === "live")
+      notes.push(t("po.noShared"));
     if (!info.checkpoints.length)
       notes.push(t("po.noPolicy", { folder: info.folder }));
     const gpu = info.gpu;
@@ -371,7 +373,12 @@
   function checkForm() {
     if (pred.model === "policy") {
       const info = pred.onlineInfo;
-      const ready = Boolean(info?.capabilities.json && info.checkpoints.length);
+      const caps = info?.capabilities;
+      // The live capture needs the studio's shared frames
+      const live = $("p-kind").value === "live";
+      const ready = Boolean(
+        caps?.json && (caps.shared || !live) && info.checkpoints.length,
+      );
       $("p-run").disabled = !ready || onlineRunning();
       $("p-run").title = onlineRunning() ? t("po.running") : "";
       return;
@@ -894,22 +901,33 @@
   );
 
   /** The loop's latency (live) or the model's time (a video), median and
-   * 95th percentile over the last seconds */
+   * 99th percentile over the last seconds */
   function renderLoop() {
     const run = pred.online;
     const panel = $("po-loop-panel");
     panel.hidden = !pred.watching || !run;
     if (panel.hidden) return;
     const timings = run.timings ?? {};
-    // The hand-off's two parts under it
+    // The hand-off's parts under it
     const rows = run.live
-      ? ["handoff", "grab", "pipe", "wait", "model", "send", "total"]
+      ? [
+          "handoff",
+          "grabber",
+          "pipe",
+          "shared",
+          "wait",
+          "upload",
+          "model",
+          "send",
+          "total",
+        ]
       : ["model", "age"];
     const ms = (v) => (v == null ? "–" : v.toFixed(1));
     const sending = Boolean(pred.bot?.playing);
     const classes = {
-      grab: "po-part",
+      grabber: "po-part",
       pipe: "po-part",
+      shared: "po-part",
       wait: "po-part",
       total: "po-total",
     };
@@ -921,7 +939,7 @@
             ? t("po.loop.sendDry")
             : t(`po.loop.${key}`);
         const cls = classes[key] ? ` class="${classes[key]}"` : "";
-        return `<tr${cls} title="${escapeHtml(t(`po.loop.${key}Note`))}"><td>${escapeHtml(label)}</td><td class="num">${ms(value?.median)}</td><td class="num">${ms(value?.p95)}</td></tr>`;
+        return `<tr${cls} title="${escapeHtml(t(`po.loop.${key}Note`))}"><td>${escapeHtml(label)}</td><td class="num">${ms(value?.median)}</td><td class="num">${ms(value?.p99)}</td></tr>`;
       })
       .join("");
     $("po-loop-note").textContent = [

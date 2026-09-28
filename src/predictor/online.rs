@@ -13,15 +13,19 @@
 //!   are kept as a run of the Predictor (`<results>/<video key>/policy-<checkpoint>/`,
 //!   frames at 30 fps from the start of the range), with the truth beside
 //!   them for sessions recorded at 30 fps;
-//! - **the live capture**: the frames the studio grabs, thinned to 30 fps and
-//!   piped raw into `agentzero-play`'s stdin, whose ffmpeg scales them (the
-//!   capture card opens only once, and the studio holds it). Each frame's
-//!   capture time is kept by its number in the pipe, which `agentzero-play`
-//!   reports back with its action.
+//! - **the live capture**: the studio holds the capture card (it opens only
+//!   once), and its grabber makes the policy's frames on an output of their
+//!   own ([`video::PolicySink`]): 640 x 360 RGB at 30 fps, split off before
+//!   the recording's constant rate. Each is written into shared memory
+//!   ([`SharedFrames`]: a memfd `agentzero-play` gets as its fd 3, a ring of
+//!   [`SLOTS`] slots) with a notice on its stdin, and the policy takes the
+//!   newest whenever the model is free: no pipe of pictures, no ffmpeg and
+//!   no reader thread on its side. Frames keep the studio's numbers, which
+//!   `agentzero-play` reports back with its action.
 //!
 //! ```text
 //! uv run agentzero-play --checkpoint <ckpt> --video <file> [--start-s S] [--end-s E] --realtime --dry-run --json [--cpu]
-//! uv run agentzero-play --checkpoint <ckpt> --capture "-f rawvideo ... -i pipe:0" --dry-run --json [--cpu]
+//! uv run agentzero-play --checkpoint <ckpt> --shared-frames --dry-run --json [--cpu]
 //! ```
 //!
 //! One runs at a time, in a process group of its own (Stop sends it SIGTERM,
@@ -52,13 +56,17 @@
 //! The bot also measures a person's fastest tapping of ZR from the proxy's
 //! frames ([`limits::Tapping`]), for the page to set the cap from.
 //!
-//! **The loop's latency** (live), on this machine's clock: from the capture
-//! card's timestamp of a frame to its action written to the replay port, in
-//! three parts: the frame's hand-off (until the studio writes it into the
-//! pipe, on through the pipe and ffmpeg's scaling, then waiting for the model
-//! to finish the frame before), the model, and the send (the line back to
-//! the studio and onto the socket; while not sending, until the studio has
-//! it).
+//! **The loop's latency** (live), every moment on `CLOCK_MONOTONIC`
+//! ([`video::mono_ns`], Python's `time.monotonic` too): from the capture
+//! card's timestamp of a frame to its action written to the replay port.
+//! The frame's hand-off, until the policy took it: the grabber (until ffmpeg
+//! wrote it: for the capture card the USB transfer, the grabber's decoding,
+//! fitting and scaling), the pipe into the studio, the shared memory (in its
+//! slot, announced) and the wait (the model busy with the frame before, the
+//! policy waking up); then the upload onto the model's device, the model,
+//! and the send (the line back to the studio and onto the socket; while not
+//! sending, until the studio has it). The page shows each as median and
+//! 99th percentile over [`WINDOW`] actions.
 //!
 //! Running while the studio records needs `allow_recording` (the recording
 //! may want the GPU; the bot's own play may be worth recording): a start is
@@ -101,26 +109,27 @@ use crate::objects::write_atomic;
 use crate::recorder::RecorderState;
 use crate::replay::Action;
 use crate::studio::Studio;
-use crate::video::{self, PolicyFeed, SharedFrame};
+use crate::video::{self, POLICY_BYTES, POLICY_SIZE, PolicySink, PolicyTimes, mono_ns};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use core::time::Duration;
 use gameplay_data::labels::{self, Label};
 use limits::{Limiter, Limits, Tapping, TappingStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::Write;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::fs::FileExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::sync::mpsc::{Receiver, sync_channel};
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 use tokio::sync::watch;
 use warp::Filter;
 use warp::filters::BoxedFilter;
@@ -133,19 +142,35 @@ const POLICY_RUNS: &str = "policy";
 /// A policy's stored runs are named `policy-<checkpoint>`, beside the IDM's
 const STORED_PREFIX: &str = "policy-";
 
-/// Frames per second the policy works at
-pub const FPS: f64 = 30.0;
+/// Frames per second the policy works at (the grabber's policy frames)
+pub const FPS: f64 = video::POLICY_FPS as f64;
 
-/// Actions the timings are taken over (5 s at 30 fps)
-const WINDOW: usize = 150;
+/// Actions the timings are taken over (10 s at 30 fps)
+const WINDOW: usize = 300;
 
-/// Capture times of the frames piped to the policy, kept to match its
+/// The times of the frames published lately, kept to match the policy's
 /// actions to them
 const HANDED: usize = 256;
 
-/// Frames waiting for the policy's pipe; more are skipped (it only wants the
-/// newest)
-const FEED_QUEUE: usize = 2;
+/// Slots in the ring of shared frames: a frame stays this many frames in
+/// its slot (133 ms at 30 fps), long enough for the policy to copy it out
+pub const SLOTS: usize = 4;
+
+/// The first bytes of the shared frames; the layout (AgentZero's
+/// `SharedFrames` reads it): magic, then little-endian `u32` version,
+/// slots, width, height, `u64` bytes of a frame, bytes from one slot to the
+/// next, where slot 0 starts ([`SHARED_DATA`]); at [`SLOT_NUMBERS`], a `u64`
+/// per slot: the number of the frame in it, all ones while it is written
+const SHARED_MAGIC: &[u8; 8] = b"PCFRAME1";
+
+/// The layout's version
+const SHARED_VERSION: u32 = 1;
+
+/// Where the slots' numbers start
+const SLOT_NUMBERS: u64 = 64;
+
+/// Where slot 0 starts: the header takes a page
+const SHARED_DATA: u64 = 4096;
 
 /// The button a person's tapping is measured on: the one a turbo repeats
 pub const TAPPED: &str = "zr";
@@ -166,12 +191,15 @@ const WATCH_EVERY: Duration = Duration::from_millis(100);
 /// Keys of an action line that stay in a stored prediction
 const KEPT_EXTRA: [&str; 4] = ["button_probs", "camera_turn", "seen", "model_ms"];
 
-/// Unix time in ms, with fractions
-fn unix_ms() -> f64 {
-    SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |d| d.as_secs_f64() * 1000.0)
-}
+/// Keys of an action line the page's `agent` messages leave out
+const TICK_DROPPED: [&str; 6] = [
+    "event",
+    "arrived_ms",
+    "ready_ms",
+    "taken_ns",
+    "placed_ns",
+    "ready_ns",
+];
 
 /// A request to start the online mode
 #[derive(Clone, Debug, Deserialize)]
@@ -240,9 +268,10 @@ pub struct Status {
     /// The last frame the policy saw
     pub seen: Option<u64>,
     /// Latency over the last actions (see the module docs): `handoff` with
-    /// its parts `grab`, `pipe` and `wait`, `model`, `send`, `total` (live),
-    /// `age` (a video's frame from its time to its action), each `{median,
-    /// p95}` ms, and `rate` (actions per second)
+    /// its parts `grabber`, `pipe`, `shared` and `wait`, then `upload`,
+    /// `model`, `send` and `total` (live), `age` (a video's frame from its
+    /// time to its action), each `{median, p99}` ms, and `rate` (actions per
+    /// second)
     pub timings: Value,
     /// The stored run's checkpoint name, once kept
     pub stored: Option<String>,
@@ -250,38 +279,54 @@ pub struct Status {
     pub finished_ms: Option<u64>,
 }
 
-/// One action's times, for [`Status::timings`]
-#[derive(Clone, Copy, Debug, Default)]
+/// One action's times in ms, for [`Status::timings`]
+#[derive(Clone, Copy, Debug, Default, Serialize)]
 struct Sample {
-    /// Unix ms when the studio had the action
+    /// When the studio had the action ([`mono_ns`] in ms)
+    #[serde(skip)]
     at: f64,
-    model: f64,
-    /// The frame's hand-off, and its parts: from the capture until the
-    /// studio wrote it into the pipe (`grab`), on until the policy had it
-    /// (`pipe`: the pipe and ffmpeg's scaling) and until the model started
-    /// on it (`wait`: the model busy with the frame before)
+    /// The frame's hand-off, until the policy took it, and its parts (see
+    /// the module docs): until ffmpeg wrote it (`grabber`), the studio had
+    /// it (`pipe`), it was in shared memory and announced (`shared`), the
+    /// policy took it (`wait`)
     handoff: Option<f64>,
-    grab: Option<f64>,
+    grabber: Option<f64>,
     pipe: Option<f64>,
+    shared: Option<f64>,
     wait: Option<f64>,
+    /// Onto the model's device
+    upload: Option<f64>,
+    model: f64,
     send: Option<f64>,
     total: Option<f64>,
+    /// A video's frame, from its time to its action
     age: Option<f64>,
 }
 
-/// A frame piped to the policy: its number there, when it was captured and
-/// when the studio began writing it (Unix ms)
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Handed {
-    number: u64,
-    captured_ms: u64,
-    written_ms: f64,
+impl Sample {
+    /// A live action's stages, from its frame's times and the policy's
+    /// moments (all [`mono_ns`]): it took the frame, had it on the model's
+    /// device, had the action; the studio `sent` it (or had it)
+    fn live(frame: &Published, taken: u64, placed: u64, ready: u64, sent: u64) -> Self {
+        let ms = |from: u64, to: u64| Some((to as f64 - from as f64) / 1e6);
+        let times = &frame.times;
+        Self {
+            at: sent as f64 / 1e6,
+            handoff: ms(times.captured, taken),
+            grabber: ms(times.captured, times.emitted),
+            pipe: ms(times.emitted, times.read),
+            shared: ms(times.read, frame.published),
+            wait: ms(frame.published, taken),
+            upload: ms(taken, placed),
+            model: (ready as f64 - placed as f64) / 1e6,
+            send: ms(ready, sent),
+            total: ms(times.captured, sent),
+            age: None,
+        }
+    }
 }
 
-/// The frames piped lately, shared by the writer and the reader of actions
-type HandedLog = Mutex<VecDeque<Handed>>;
-
-/// Median and 95th percentile (nearest rank) of some ms
+/// Median and 99th percentile (nearest rank) of some ms
 fn spread(mut values: Vec<f64>) -> Value {
     if values.is_empty() {
         return Value::Null;
@@ -290,7 +335,7 @@ fn spread(mut values: Vec<f64>) -> Value {
     let rank = |share: f64| {
         values[((share * values.len() as f64).ceil() as usize).clamp(1, values.len()) - 1]
     };
-    json!({ "median": rank(0.5), "p95": rank(0.95) })
+    json!({ "median": rank(0.5), "p99": rank(0.99) })
 }
 
 /// The timings of [`Status::timings`] over some samples
@@ -304,15 +349,143 @@ fn timings(samples: &VecDeque<Sample>) -> Value {
     };
     json!({
         "handoff": pick(|s| s.handoff),
-        "grab": pick(|s| s.grab),
+        "grabber": pick(|s| s.grabber),
         "pipe": pick(|s| s.pipe),
+        "shared": pick(|s| s.shared),
         "wait": pick(|s| s.wait),
+        "upload": pick(|s| s.upload),
         "model": pick(|s| Some(s.model)),
         "send": pick(|s| s.send),
         "total": pick(|s| s.total),
         "age": pick(|s| s.age),
         "rate": rate,
     })
+}
+
+/// A frame published to the policy: its number, its times, and when it
+/// was in shared memory and announced ([`mono_ns`])
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Published {
+    number: u64,
+    times: PolicyTimes,
+    published: u64,
+}
+
+/// The live capture's frames for the policy in shared memory (see the
+/// module docs and [`SHARED_MAGIC`] for the layout): a memfd the policy
+/// gets as its fd 3, and a notice per frame on its stdin, 32 bytes of
+/// little-endian `u64`s: the frame's number, its slot, when it was
+/// captured and when it was published ([`mono_ns`]). Nothing waits: a
+/// frame goes into the next slot, and a notice the pipe has no room for is
+/// dropped (the policy is not reading; it takes the newest anyway).
+pub struct SharedFrames {
+    memory: File,
+    /// The policy's stdin, once it is ready for frames
+    notices: Mutex<Option<File>>,
+    next: AtomicU64,
+    /// The frames published lately, to match the policy's actions to
+    published: Mutex<VecDeque<Published>>,
+}
+
+/// Bytes from one slot to the next: a frame, whole pages
+const SLOT_BYTES: u64 = (POLICY_BYTES as u64).div_ceil(4096) * 4096;
+
+impl SharedFrames {
+    /// Room for [`SLOTS`] frames, with the header written
+    pub fn new() -> Result<Self> {
+        // SAFETY: memfd_create takes a NUL-terminated name and returns a
+        // fresh descriptor we then own
+        let fd = unsafe { libc::memfd_create(c"procon-policy-frames".as_ptr(), libc::MFD_CLOEXEC) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error()).context("cannot make shared memory");
+        }
+        // SAFETY: a fresh descriptor from memfd_create
+        let memory = unsafe { File::from_raw_fd(fd) };
+        memory.set_len(SHARED_DATA + SLOTS as u64 * SLOT_BYTES)?;
+        let (width, height) = POLICY_SIZE;
+        let mut header = Vec::with_capacity(48);
+        header.extend_from_slice(SHARED_MAGIC);
+        for value in [SHARED_VERSION, SLOTS as u32, width, height] {
+            header.extend_from_slice(&value.to_le_bytes());
+        }
+        for value in [POLICY_BYTES as u64, SLOT_BYTES, SHARED_DATA] {
+            header.extend_from_slice(&value.to_le_bytes());
+        }
+        memory.write_all_at(&header, 0)?;
+        // No slot holds a frame yet
+        for slot in 0..SLOTS as u64 {
+            memory.write_all_at(&u64::MAX.to_le_bytes(), SLOT_NUMBERS + 8 * slot)?;
+        }
+        Ok(Self {
+            memory,
+            notices: Mutex::default(),
+            next: AtomicU64::new(0),
+            published: Mutex::default(),
+        })
+    }
+
+    /// Announce frames on `notices` (the policy's stdin) from now on
+    fn start(&self, notices: impl Into<OwnedFd>) {
+        let notices = File::from(notices.into());
+        // A notice the pipe has no room for is dropped, never waited for
+        // SAFETY: fcntl on a descriptor we own
+        unsafe {
+            let flags = libc::fcntl(notices.as_raw_fd(), libc::F_GETFL);
+            libc::fcntl(notices.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+        *self.notices.lock().unwrap() = Some(notices);
+    }
+
+    /// The frame numbered `number`, if published lately
+    fn find(&self, number: u64) -> Option<Published> {
+        let published = self.published.lock().unwrap();
+        published.iter().rev().find(|p| p.number == number).copied()
+    }
+}
+
+impl PolicySink for SharedFrames {
+    fn frame(&self, frame: &[u8], times: PolicyTimes) {
+        let number = self.next.fetch_add(1, Ordering::Relaxed);
+        let slot = number % SLOTS as u64;
+        let slot_number = SLOT_NUMBERS + 8 * slot;
+        // Marked as being written, then the frame, then its number: a
+        // policy still copying the frame there before sees the change
+        let written = self
+            .memory
+            .write_all_at(&u64::MAX.to_le_bytes(), slot_number)
+            .and_then(|()| {
+                self.memory
+                    .write_all_at(frame, SHARED_DATA + slot * SLOT_BYTES)
+            })
+            .and_then(|()| self.memory.write_all_at(&number.to_le_bytes(), slot_number));
+        if let Err(e) = written {
+            log::warn!("Cannot write a frame for AgentZero: {e}");
+            return;
+        }
+        let published = mono_ns();
+        {
+            let mut log = self.published.lock().unwrap();
+            if log.len() >= HANDED {
+                log.pop_front();
+            }
+            log.push_back(Published {
+                number,
+                times,
+                published,
+            });
+        }
+        let mut notice = [0u8; 32];
+        for (i, value) in [number, slot, times.captured, published]
+            .into_iter()
+            .enumerate()
+        {
+            notice[8 * i..8 * i + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        if let Some(stdin) = self.notices.lock().unwrap().as_mut() {
+            // All 32 bytes or none (a pipe write under 4 KiB is atomic)
+            let _ = stdin.write(&notice);
+        }
+    }
 }
 
 /// The current or last run, with what it predicted
@@ -330,6 +503,9 @@ struct Run {
 pub struct PlayCapabilities {
     /// `--json`: lines the studio can follow (without it, nothing runs)
     pub json: bool,
+    /// `--shared-frames`: the live capture's frames from the studio
+    /// (without it, only videos run)
+    pub shared: bool,
     /// Why the help could not be read
     pub error: Option<String>,
 }
@@ -427,12 +603,17 @@ impl Online {
             .stdin(Stdio::null())
             .output()
         {
-            Ok(output) if output.status.success() => PlayCapabilities {
-                json: help_has(&String::from_utf8_lossy(&output.stdout), "--json"),
-                error: None,
-            },
+            Ok(output) if output.status.success() => {
+                let help = String::from_utf8_lossy(&output.stdout);
+                PlayCapabilities {
+                    json: help_has(&help, "--json"),
+                    shared: help_has(&help, "--shared-frames"),
+                    error: None,
+                }
+            }
             Ok(output) => PlayCapabilities {
                 json: false,
+                shared: false,
                 error: Some(format!(
                     "agentzero-play --help failed: {}",
                     String::from_utf8_lossy(&output.stderr)
@@ -443,6 +624,7 @@ impl Online {
             },
             Err(e) => PlayCapabilities {
                 json: false,
+                shared: false,
                 error: Some(format!("cannot run uv: {e}")),
             },
         };
@@ -484,9 +666,15 @@ impl Online {
                 other.map(|s| format!(" ({s})")).unwrap_or_default()
             );
         }
+        let capabilities = self.capabilities(false);
         ensure!(
-            self.capabilities(false).json,
+            capabilities.json,
             "this agentzero-play has no --json yet; update AgentZero, then Recheck"
+        );
+        ensure!(
+            capabilities.shared || request.source.is_some(),
+            "this agentzero-play cannot take the live capture's frames yet (--shared-frames); \
+             update AgentZero, then Recheck"
         );
         let mut args: Vec<String> = ["run", "agentzero-play", "--checkpoint"]
             .map(String::from)
@@ -501,8 +689,7 @@ impl Online {
                     request.start_s.is_none() && request.end_s.is_none(),
                     "the live capture has no range"
                 );
-                args.push("--capture".to_string());
-                args.push(video::raw_input(FPS as u32).join(" "));
+                args.push("--shared-frames".to_string());
                 (input, None)
             }
             Some(source) => {
@@ -621,8 +808,8 @@ impl Online {
             .spawn(move || {
                 let started = Instant::now();
                 let result = online.work(&args, live);
-                // Nothing reaches the pipe or the proxy any more
-                online.studio.video.set_policy_feed(None);
+                // No more frames for it, nothing for the proxy
+                online.studio.video.set_policy_sink(None);
                 online.studio.bot.release(Ended::Stopped);
                 let stopped = online.stop.load(Ordering::Relaxed);
                 online.update(|run| {
@@ -650,12 +837,22 @@ impl Online {
 
     /// Run the command and follow its lines until it ends
     fn work(self: &Arc<Self>, args: &[String], live: bool) -> Result<()> {
+        // The live capture's frames reach it in shared memory, its fd 3
+        let shared = if live {
+            Some(Arc::new(SharedFrames::new()?))
+        } else {
+            None
+        };
         let (stdin, stdout, stderr) = {
             let mut slot = self.child.lock().unwrap();
             // Under the lock: a stop before this point means nothing runs,
             // one after it finds the process
             ensure!(!self.stop.load(Ordering::Relaxed), "stopped");
-            let mut child = Command::new("uv")
+            let mut command = Command::new("uv");
+            if let Some(shared) = &shared {
+                video::inherit_as_fd3(&mut command, &shared.memory);
+            }
+            let mut child = command
                 .args(args)
                 .current_dir(&self.predictor.settings.agentzero)
                 .stdin(if live { Stdio::piped() } else { Stdio::null() })
@@ -687,7 +884,6 @@ impl Online {
                 online.update(|run| run.status.log = lines);
             });
         });
-        let handed: Arc<HandedLog> = Arc::default();
         let mut stdin = stdin;
         crate::cuttlefish::for_each_line(stdout, |line| {
             let Ok(value) = serde_json::from_str::<Value>(line) else {
@@ -701,14 +897,16 @@ impl Online {
                         run.status.lead = value["lead"].as_u64();
                     });
                     // The model is ready: frames from now on
-                    if let Some(stdin) = stdin.take()
+                    if let (Some(stdin), Some(shared)) = (stdin.take(), &shared)
                         && !self.stop.load(Ordering::Relaxed)
                     {
-                        self.feed(stdin, Arc::clone(&handed));
+                        shared.start(stdin);
+                        let sink: Arc<dyn PolicySink> = shared.clone();
+                        self.studio.video.set_policy_sink(Some(sink));
                     }
                 }
                 Some("action") => {
-                    if let Err(e) = self.on_action(value, &handed) {
+                    if let Err(e) = self.on_action(value, shared.as_deref()) {
                         log::warn!("AgentZero's action: {:#}", e);
                     }
                 }
@@ -732,27 +930,13 @@ impl Online {
         Ok(())
     }
 
-    /// Pipe the grabbed frames into the policy, thinned to its rate, noting
-    /// each one's capture time by its number
-    fn feed(&self, stdin: ChildStdin, handed: Arc<HandedLog>) {
-        // Megabyte frames: a bigger pipe means fewer wakeups. Best effort.
-        // SAFETY: fcntl on a descriptor we own
-        unsafe { libc::fcntl(stdin.as_raw_fd(), libc::F_SETPIPE_SZ, 1 << 22) };
-        let (frames, queued) = sync_channel(FEED_QUEUE);
-        std::thread::spawn(move || write_frames(stdin, queued, &handed));
-        self.studio.video.set_policy_feed(Some(PolicyFeed {
-            frames,
-            fps: FPS as u32,
-        }));
-    }
-
-    /// One action line: timings, the bot, the page, the predictions
-    fn on_action(&self, value: Value, handed: &HandedLog) -> Result<()> {
-        let got = unix_ms();
+    /// One action line: timings, the bot, the page, the predictions; for
+    /// the live capture, `shared` holds its frames' times
+    fn on_action(&self, value: Value, shared: Option<&SharedFrames>) -> Result<()> {
+        let got = mono_ns();
         let number = |key: &str| value[key].as_f64();
+        let moment = |key: &str| value[key].as_u64();
         let seen = value["seen"].as_u64().context("no seen")?;
-        let model = number("model_ms").unwrap_or_default();
-        let ready = number("ready_ms").unwrap_or(got);
         let (id, live) = self
             .run
             .lock()
@@ -760,8 +944,8 @@ impl Online {
             .as_ref()
             .map_or((0, false), |run| (run.status.id, run.status.live));
         let mut sample = Sample {
-            at: got,
-            model,
+            at: got as f64 / 1e6,
+            model: number("model_ms").unwrap_or_default(),
             ..Default::default()
         };
         // What went to the Switch, after the bot's limits
@@ -770,25 +954,16 @@ impl Online {
             let action = Action::parse(&value["send"].to_string()).context("bad send")?;
             sent = self.studio.bot.send(&action);
             let done = sent.as_ref().map_or(got, |(at, _)| *at);
-            let frame = handed
-                .lock()
-                .unwrap()
-                .iter()
-                .rev()
-                .find(|frame| frame.number == seen)
-                .copied();
-            sample.send = Some(done - ready);
-            if let Some(frame) = frame {
-                let captured = frame.captured_ms as f64;
-                let began = ready - model;
-                let arrived = number("arrived_ms").unwrap_or(began);
-                sample.handoff = Some(began - captured);
-                sample.grab = Some(frame.written_ms - captured);
-                sample.pipe = Some(arrived - frame.written_ms);
-                sample.wait = Some(began - arrived);
-                sample.total = Some(done - captured);
+            let frame = shared.and_then(|shared| shared.find(seen));
+            if let (Some(frame), Some(taken), Some(placed), Some(ready)) = (
+                frame,
+                moment("taken_ns"),
+                moment("placed_ns"),
+                moment("ready_ns"),
+            ) {
+                sample = Sample::live(&frame, taken, placed, ready, done);
             }
-        } else if let Some(arrived) = number("arrived_ms") {
+        } else if let (Some(arrived), Some(ready)) = (number("arrived_ms"), number("ready_ms")) {
             sample.age = Some(ready - arrived);
         }
         let label: Label = serde_json::from_value(value.clone()).context("bad label")?;
@@ -810,7 +985,7 @@ impl Online {
         });
         let mut tick = value;
         if let Some(fields) = tick.as_object_mut() {
-            for key in ["event", "arrived_ms", "ready_ms"] {
+            for key in TICK_DROPPED {
                 fields.remove(key);
             }
             fields.insert("type".into(), json!("agent"));
@@ -821,6 +996,10 @@ impl Online {
                 fields.insert("send".into(), json!(line));
             }
             fields.insert("total_ms".into(), json!(sample.total));
+            // Each stage of this action's loop (live), in ms
+            if live {
+                fields.insert("stages".into(), json!(sample));
+            }
         }
         self.ticks.send_replace(tick.to_string());
         Ok(())
@@ -890,7 +1069,7 @@ impl Online {
     /// process group, SIGKILL after [`KILL_AFTER`] to what is left
     pub fn stop(self: &Arc<Self>) {
         self.stop.store(true, Ordering::Relaxed);
-        self.studio.video.set_policy_feed(None);
+        self.studio.video.set_policy_sink(None);
         self.studio.bot.release(Ended::Stopped);
         self.update(|run| run.status.stopping = run.status.state == JobState::Running);
         let pid = {
@@ -1039,27 +1218,6 @@ impl Online {
             .as_ref()
             .map(|truth| agreement(truth, &pred[..truth.len()]));
         Ok(json!({ "start": start, "pred": pred, "truth": truth, "agreement": agreement }))
-    }
-}
-
-/// Pipe frames into the policy's stdin until the feed stops, noting each
-/// frame's number, capture time and time written as it goes in
-fn write_frames(mut stdin: impl Write, frames: Receiver<(u64, SharedFrame)>, handed: &HandedLog) {
-    for (number, (captured_ms, frame)) in (0u64..).zip(frames) {
-        {
-            let mut handed = handed.lock().unwrap();
-            if handed.len() >= HANDED {
-                handed.pop_front();
-            }
-            handed.push_back(Handed {
-                number,
-                captured_ms,
-                written_ms: unix_ms(),
-            });
-        }
-        if stdin.write_all(&frame).is_err() {
-            return;
-        }
     }
 }
 
@@ -1236,8 +1394,8 @@ impl Bot {
     }
 
     /// Send one action, its buttons held to the limits, unless not playing;
-    /// answers with the Unix ms it was written at and the line written
-    pub fn send(&self, action: &Action) -> Option<(f64, Action)> {
+    /// answers with when it was written ([`mono_ns`]) and the line written
+    pub fn send(&self, action: &Action) -> Option<(u64, Action)> {
         let mut state = self.lock();
         state.stream.as_ref()?;
         let now = Instant::now();
@@ -1255,7 +1413,7 @@ impl Bot {
         }
         state.sent += 1;
         state.last_sent = Some(now);
-        Some((unix_ms(), line))
+        Some((mono_ns(), line))
     }
 
     /// Stop sending: a neutral line, letting go of everything at once, then
@@ -1486,33 +1644,110 @@ mod tests {
     #[test]
     fn spreads() {
         assert_eq!(spread(Vec::new()), Value::Null);
-        let s = spread((1..=100).map(f64::from).collect());
-        assert_eq!(s["median"], 50.0);
-        assert_eq!(s["p95"], 95.0);
+        let s = spread((1..=200).map(f64::from).collect());
+        assert_eq!(s["median"], 100.0);
+        assert_eq!(s["p99"], 198.0);
         let one = spread(vec![7.0]);
         assert_eq!(
-            (one["median"].as_f64(), one["p95"].as_f64()),
+            (one["median"].as_f64(), one["p99"].as_f64()),
             (Some(7.0), Some(7.0))
         );
     }
 
+    /// A little-endian `u64` of the shared memory
+    fn word(memory: &File, at: u64) -> u64 {
+        let mut bytes = [0u8; 8];
+        memory.read_exact_at(&mut bytes, at).unwrap();
+        u64::from_le_bytes(bytes)
+    }
+
     #[test]
-    fn frames_are_numbered_as_they_go_in() {
-        let (frames, queued) = sync_channel(4);
-        let handed = HandedLog::default();
-        for (ms, byte) in [(1000, 1u8), (1033, 2), (1067, 3)] {
-            frames.send((ms, Arc::new(vec![byte; 10]))).unwrap();
+    fn frames_go_into_shared_memory_with_a_notice_each() {
+        use std::io::Read;
+        let shared = SharedFrames::new().unwrap();
+        let memory = &shared.memory;
+        // The header AgentZero reads
+        let mut magic = [0u8; 8];
+        memory.read_exact_at(&mut magic, 0).unwrap();
+        assert_eq!(&magic, SHARED_MAGIC);
+        assert_eq!(word(memory, 8), 1 | (SLOTS as u64) << 32);
+        assert_eq!(word(memory, 16), 640 | 360 << 32);
+        assert_eq!(
+            [word(memory, 24), word(memory, 32), word(memory, 40)],
+            [691_200, 692_224, 4096]
+        );
+        assert_eq!(word(memory, SLOT_NUMBERS), u64::MAX);
+        // Frames before the policy is ready go in, unannounced
+        let times = |n: u64| PolicyTimes {
+            captured: 1000 + n,
+            emitted: 2000 + n,
+            read: 3000 + n,
+        };
+        shared.frame(&vec![9u8; POLICY_BYTES], times(0));
+        let (mut notices, writer) = std::io::pipe().unwrap();
+        shared.start(writer);
+        for n in 1..6u64 {
+            shared.frame(&vec![n as u8; POLICY_BYTES], times(n));
         }
-        // The feed stops: the writer ends
-        drop(frames);
-        let mut pipe = Vec::new();
-        write_frames(&mut pipe, queued, &handed);
-        assert_eq!(pipe.len(), 30);
-        assert_eq!(pipe[10], 2);
-        let handed = handed.into_inner().unwrap();
-        let numbered: Vec<(u64, u64)> = handed.iter().map(|h| (h.number, h.captured_ms)).collect();
-        assert_eq!(numbered, [(0, 1000), (1, 1033), (2, 1067)]);
-        assert!(handed.iter().all(|h| h.written_ms > 1.7e12));
+        let mut notice = [0u8; 32 * 5];
+        notices.read_exact(&mut notice).unwrap();
+        let fields: Vec<u64> = notice
+            .chunks(8)
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+        for (i, n) in (1..6u64).enumerate() {
+            let [number, slot, captured, published] = fields[4 * i..4 * i + 4] else {
+                unreachable!()
+            };
+            assert_eq!((number, slot, captured), (n, n % SLOTS as u64, 1000 + n));
+            assert_eq!(shared.find(n).unwrap().published, published);
+        }
+        // Each slot holds the newest frame of its turn, numbered
+        for (slot, n) in [(0, 4u64), (1, 5), (2, 2), (3, 3)] {
+            assert_eq!(word(memory, SLOT_NUMBERS + 8 * slot), n);
+            let mut pixel = [0u8; 1];
+            memory
+                .read_exact_at(&mut pixel, SHARED_DATA + slot * SLOT_BYTES + 1234)
+                .unwrap();
+            assert_eq!(pixel[0], n as u8);
+        }
+        let frame = shared.find(3).unwrap();
+        assert_eq!(frame.times, times(3));
+        assert!(frame.published >= frame.times.read);
+    }
+
+    #[test]
+    fn a_policy_not_reading_never_holds_the_frames_up() {
+        let shared = SharedFrames::new().unwrap();
+        let (_notices, writer) = std::io::pipe().unwrap();
+        // The smallest pipe: room for 128 notices
+        // SAFETY: fcntl on a descriptor we own
+        unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_SETPIPE_SZ, 4096) };
+        shared.start(writer);
+        let frame = vec![0u8; POLICY_BYTES];
+        for _ in 0..200 {
+            shared.frame(&frame, PolicyTimes::default());
+        }
+        assert_eq!(shared.next.load(Ordering::Relaxed), 200);
+    }
+
+    #[test]
+    fn a_live_sample_splits_the_loop() {
+        let frame = Published {
+            number: 7,
+            times: PolicyTimes {
+                captured: 1_000_000,
+                emitted: 3_000_000,
+                read: 3_500_000,
+            },
+            published: 3_600_000,
+        };
+        let s = Sample::live(&frame, 4_600_000, 4_800_000, 9_800_000, 10_300_000);
+        let parts = [s.grabber, s.pipe, s.shared, s.wait].map(Option::unwrap);
+        assert_eq!(parts, [2.0, 0.5, 0.1, 1.0]);
+        assert!((parts.iter().sum::<f64>() - s.handoff.unwrap()).abs() < 1e-9);
+        assert_eq!((s.upload, s.model, s.send), (Some(0.2), 5.0, Some(0.5)));
+        assert_eq!(s.total, Some(9.3));
     }
 
     /// A stand-in for the proxy's replay port: the lines it got, once the

@@ -1039,6 +1039,8 @@ I18N.zh = {
   "po.noPolicy": "{folder} 中没有策略检查点（runs/policy/*/best.pt）。",
   "po.noJson":
     "这个 agentzero-play 还没有 --json：请更新 AgentZero，再点“重新检查”。",
+  "po.noShared":
+    "这个 agentzero-play 还不能接收实时采集的画面（--shared-frames）：请更新 AgentZero，再点“重新检查”。视频仍可运行。",
   "po.noInput": "工作室没有视频输入：请先在工作室里选择采集卡。",
   "po.gpu": "GPU 显存 {used} / {total} GiB",
   "po.gpuLow":
@@ -1105,16 +1107,19 @@ I18N.zh = {
   "po.loop.median": "中位数 ms",
   "po.loop.handoff": "画面传递",
   "po.loop.handoffNote":
-    "从采集卡给一帧打的时间戳到模型开始处理它：采集进程、到 AgentZero 的管道、ffmpeg 缩放以及等待",
-  "po.loop.grab": "采集到工作室",
-  "po.loop.grabNote":
-    "从采集卡的时间戳到工作室把这一帧写进 AgentZero 的管道：采集进程，以及等待管道",
-  "po.loop.pipe": "管道与缩放",
-  "po.loop.pipeNote":
-    "从工作室写入这一帧到 AgentZero 收到它：管道，以及 ffmpeg 缩放到 640 x 360",
+    "从采集卡给一帧打的时间戳到 AgentZero 取走它：采集进程、进入工作室的管道、共享内存以及等待",
+  "po.loop.grabber": "采集卡与采集进程",
+  "po.loop.grabberNote":
+    "从采集卡的时间戳到采集进程写出这一帧：采集卡的 USB 传输，以及 ffmpeg 的解码、适配和缩放到 640 x 360",
+  "po.loop.pipe": "管道到工作室",
+  "po.loop.pipeNote": "这一帧经采集进程的管道进入工作室",
+  "po.loop.shared": "写入共享内存",
+  "po.loop.sharedNote": "这一帧写入共享内存并通知 AgentZero",
   "po.loop.wait": "等待模型",
   "po.loop.waitNote":
-    "最新的一帧等模型处理完上一帧（AgentZero 只保留最新的一帧）",
+    "直到 AgentZero 取走这一帧：模型还在处理上一帧（它只取最新的一帧），或正在唤醒",
+  "po.loop.upload": "送上设备",
+  "po.loop.uploadNote": "这一帧送到模型所在的设备（GPU；在 CPU 上则无需传送）",
   "po.loop.model": "模型",
   "po.loop.modelNote": "策略模型处理一帧的时间",
   "po.loop.send": "发送",
@@ -1128,8 +1133,8 @@ I18N.zh = {
   "po.loop.ageNote": "从按节奏播放的视频中一帧的时间到它的操作算好",
   "po.loop.rate": "每秒 {rate} 个操作",
   "po.loop.skipped": "跳过 {n} 帧",
-  "po.loop.footLive": "最近 5 秒，按本机时钟计。",
-  "po.loop.footVideo": "最近 5 秒；视频按 30 fps 播放，如同直播。",
+  "po.loop.footLive": "最近 10 秒，按本机单调时钟计。",
+  "po.loop.footVideo": "最近 10 秒；视频按 30 fps 播放，如同直播。",
   "po.confirm.title": "让 AgentZero 操作 Switch？",
   "po.confirm.what":
     "AgentZero 的操作经代理的回放端口发给 Switch，并与你的手柄混合。",
