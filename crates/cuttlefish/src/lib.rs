@@ -18,7 +18,9 @@
 //! The [`inbox`] takes anything dropped into the data folder: prose becomes
 //! documents, multilingual name tables become glossary terms ([`tables`];
 //! message folders such as stat.ink's PHP ones through [`messages`] and
-//! [`php`]), images an asset catalogue ([`assets`]).
+//! [`php`]), images an asset catalogue ([`assets`]); the images of the
+//! fetched Discord channels are read into text by the model
+//! ([`image_text`]), which joins their messages.
 //! The #vod-review archive becomes a corpus of reviewed VODs ([`corpus`]),
 //! their videos downloaded at 480p ([`corpus_videos`]) and each conversation
 //! a review of the studio ([`corpus_reviews`]); each reviewer's comment is
@@ -61,6 +63,7 @@ pub mod game;
 pub mod glossary;
 pub mod google;
 pub mod html;
+pub mod image_text;
 pub mod inbox;
 pub mod index;
 pub mod ingest;

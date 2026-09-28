@@ -688,8 +688,8 @@ pub struct Media {
 
 /// How one download ended
 enum Outcome {
-    /// The file is whole, with this many bytes taken this run
-    Fetched(u64),
+    /// The file is whole, `len` bytes long, `taken` of them this run
+    Fetched { taken: u64, len: u64 },
     /// 403, 404 or 410: the link expired or the file is gone
     Gone,
     /// The server sent the whole file although a part was asked for; the
@@ -1532,23 +1532,23 @@ impl Fetcher<'_> {
                 let mut restarted = false;
                 loop {
                     match self.download(a, &url, &dir, &guild)? {
-                        Outcome::Fetched(bytes) => {
+                        Outcome::Fetched { taken, len } => {
                             let path = dir.join(a.relative_path());
                             manifest.add(Entry {
                                 message_id: a.message_id.clone(),
                                 attachment_id: a.id.clone(),
                                 filename: a.filename.clone(),
-                                size: a.size,
+                                size: len,
                                 content_type: a.content_type.clone(),
                                 path: a.relative_path(),
                                 sha256: discord_media::sha256_file(&path)?,
                             })?;
-                            total += a.size;
-                            media.downloaded.add(bytes);
+                            total += len;
+                            media.downloaded.add(taken);
                             (self.report)(&alloc::format!(
                                 "{} ({}) of message {}: {} of {} files of #{name}; delay {:.1} s",
                                 a.safe_name(),
-                                discord_media::size(a.size),
+                                discord_media::size(len),
                                 a.message_id,
                                 i + 1,
                                 n,
@@ -1656,7 +1656,12 @@ impl Fetcher<'_> {
 
     /// Downloads `a` from `url` into `dir/<message id>/<file name>`,
     /// through `<file name>.part`, which a later run continues with a
-    /// `Range` request. Ctrl+C stops the run and keeps the part.
+    /// `Range` request. Ctrl+C stops the run and keeps the part. The file
+    /// is whole when it has the length the answer announced
+    /// (`Content-Length`, after the part a `Range` continued), else the
+    /// attachment's size: the CDN serves an image in the format its file
+    /// name says (a JPEG named `.png` as a PNG), longer or shorter than the
+    /// attachment it was uploaded as.
     fn download(&mut self, a: &Attachment, url: &str, dir: &Path, guild: &str) -> Result<Outcome> {
         self.wait()?;
         let path = dir.join(a.relative_path());
@@ -1672,9 +1677,9 @@ impl Fetcher<'_> {
         if offset > 0 && offset < a.size {
             headers.push((String::from("Range"), alloc::format!("bytes={offset}-")));
         }
-        let status = if offset == a.size && a.size > 0 {
+        let (status, announced) = if offset == a.size && a.size > 0 {
             // Left whole by an interrupted run, only the rename missing
-            206
+            (206, None)
         } else {
             let file = std::fs::OpenOptions::new()
                 .create(true)
@@ -1686,7 +1691,11 @@ impl Fetcher<'_> {
                 clock: &*self.clock,
             };
             match self.http.download(url, &headers, &mut out) {
-                Ok(resp) => resp.status,
+                Ok(resp) => (
+                    resp.status,
+                    resp.header("content-length")
+                        .and_then(|n| n.trim().parse::<u64>().ok()),
+                ),
                 Err(_) if self.clock.stopped() => return Err(Stop::Interrupted.into()),
                 Err(e) => return Ok(Outcome::Failed(alloc::format!("{e:#}"))),
             }
@@ -1698,16 +1707,19 @@ impl Fetcher<'_> {
             }
             200 | 206 => {
                 let len = std::fs::metadata(&part).map_or(0, |m| m.len());
-                if len != a.size {
+                let whole = announced.map_or(a.size, |n| offset + n);
+                if len != whole {
                     std::fs::remove_file(&part)?;
                     return Ok(Outcome::Failed(alloc::format!(
-                        "got {len} bytes, the attachment has {}",
-                        a.size
+                        "got {len} bytes, the file has {whole}"
                     )));
                 }
                 std::fs::rename(&part, &path)
                     .with_context(|| alloc::format!("renaming {}", part.display()))?;
-                Ok(Outcome::Fetched(a.size - offset))
+                Ok(Outcome::Fetched {
+                    taken: len - offset,
+                    len,
+                })
             }
             403 | 404 | 410 => Ok(Outcome::Gone),
             s => Ok(Outcome::Failed(alloc::format!("HTTP {s}"))),
@@ -2761,6 +2773,70 @@ mod tests {
         let mut fake = Fake::new(alloc::vec![("/channels/2", ok(channel("2", 0, 105)))]);
         let (summary, _) = go(&mut fake, &mut clock, &out, opts).unwrap();
         assert_eq!(summary.media, None);
+        std::fs::remove_dir_all(&out).unwrap();
+    }
+
+    #[test]
+    fn keeps_images_the_cdn_converted() {
+        let out = temp("converted");
+        let media = out.join("media");
+        let now: i64 = 1_700_000_000;
+        let cdn = |aid: &str, name: &str| {
+            alloc::format!(
+                "https://cdn.discordapp.com/attachments/2/{aid}/{name}?ex={:x}&is=1&hm=abc",
+                now + 86_400
+            )
+        };
+        let mut opts = options(false);
+        opts.attachments = Attachments::Media;
+        opts.media = media.clone();
+        let mut clock = FakeClock {
+            now,
+            ..FakeClock::default()
+        };
+        // Uploaded as JPEGs of 4 bytes, served as PNGs of 6: whole when
+        // the answer announced 6, cut off when it announced 9
+        let page = Value::Array(alloc::vec![
+            with_files(11, &[("81", "a.png", 4, Some(now + 86_400))]),
+            with_files(10, &[("80", "b.png", 4, Some(now + 86_400))]),
+        ]);
+        let mut fake = Fake::new(alloc::vec![
+            ("/channels/2", ok(channel("2", 0, 11))),
+            ("/channels/2/messages?limit=100", ok(page)),
+        ]);
+        let announced = |n: &str| Response {
+            status: 200,
+            headers: alloc::vec![(String::from("Content-Length"), String::from(n))],
+            body: String::new(),
+        };
+        fake.expect_download(&cdn("81", "a.png"), announced("6"), b"\x89PNG!!");
+        fake.expect_download(&cdn("80", "b.png"), announced("9"), b"\x89PNG!!");
+        let (summary, lines) = go(&mut fake, &mut clock, &out, opts).unwrap();
+        assert!(fake.downloads.is_empty());
+        let m = summary.media.unwrap();
+        assert_eq!(m.downloaded, Tally { files: 1, bytes: 6 });
+        assert_eq!(m.failed, 1);
+        let dir = media.join("1/2");
+        assert_eq!(std::fs::read(dir.join("11/a.png")).unwrap(), b"\x89PNG!!");
+        assert!(!dir.join("10/b.png").exists() && !dir.join("10/b.png.part").exists());
+        // The manifest holds the file as it is, so the next run skips it
+        let manifest = Manifest::load(&dir).unwrap();
+        assert_eq!(manifest.get("81").unwrap().size, 6);
+        assert!(manifest.has(&Attachment {
+            message_id: String::from("11"),
+            conversation: String::from("2"),
+            id: String::from("81"),
+            filename: String::from("a.png"),
+            size: 4,
+            content_type: None,
+            url: cdn("81", "a.png"),
+        }));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("b.png of message 10: got 6 bytes, the file has 9")),
+            "{lines:?}"
+        );
         std::fs::remove_dir_all(&out).unwrap();
     }
 

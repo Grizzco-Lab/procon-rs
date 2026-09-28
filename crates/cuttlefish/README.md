@@ -33,6 +33,7 @@ cuttlefish ingest discord-export vod-review.json
 DISCORD_BOT_TOKEN=... cuttlefish ingest discord-bot --channel 123456789012345678
 cuttlefish fetch discord --channel https://discord.com/channels/<server>/<channel> --count   # your own account: against Discord's terms, see below
 cuttlefish fetch discord --channel ... --attachments videos    # also download the uploaded VODs (see "Downloading the VODs")
+cuttlefish read-images --effort medium     # the downloaded images as text, read once each by the model (see "Reading the images")
 cuttlefish corpus build                    # the reviewed VODs of the archive as corpus/vod-review.jsonl, with counts
 cuttlefish corpus videos --list            # the YouTube VODs with their 480p sizes; `corpus videos` downloads them slowly
 cuttlefish corpus align                    # read the HUD of the videos on disk (wave tables), place the wave-timer moments
@@ -95,6 +96,9 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
   media/discord/<guild>/<channel>/<message id>/<file>
                      VODs and images downloaded by `fetch discord --attachments`,
                      with a media.jsonl manifest per channel (large: see below)
+  media/image-text.jsonl
+                     what the model read in those images, by their SHA-256
+                     (`read-images`, see "Reading the images")
   media/youtube/<id>.mp4, <id>.info.json
                      the corpus's YouTube VODs at 480p (`corpus videos`) with
                      title, channel, duration, size, or why one is unavailable
@@ -233,7 +237,8 @@ against term ids, names and imported keys: `Wst_Shooter_Normal_00.png` is the
 term whose key is `Shooter_Normal_00`). Thumbnails are made by ffmpeg on
 request into the cache; small icons and SVGs are served as they are. Images
 are not embedded; an image embedder (CLIP, SigLIP) could make them searchable
-by content later.
+by content later. (The images of fetched Discord channels are read as text
+instead, see "Reading the images".)
 
 **Dedup.** `inbox.json` remembers each file's size, time, content hash and
 the version of the reader that took it (`inbox::version`, per kind of file).
@@ -522,6 +527,11 @@ The files land in `<knowledge>/media/discord/<guild id>/<channel
 id>/<message id>/<file name>` (with `--out`, in `<out>/media/...`), newest
 message first, and `media.jsonl` in the channel's folder records each one:
 message id, attachment id, file name, size, content type, path and SHA-256.
+The CDN serves an image in the format its file name says (a phone's
+screenshot uploaded as a JPEG named `IMG_1.png` comes as a PNG), so an
+image's file is seldom the attachment's size: a file is whole when it has
+the length the answer announced (`Content-Length`), and the manifest
+records the file's own size.
 A run is **resumable**: a file the manifest names with its full size is
 skipped, a partial download (`<file name>.part`) is continued with a
 `Range` request, and one that came back with the wrong size is discarded
@@ -547,6 +557,58 @@ cuttlefish fetch discord --channel https://discord.com/channels/7373597082766541
   --attachments videos --max-total-gb 200
 
 cuttlefish ingest inbox             # the rows now carry video_local
+```
+
+#### Reading the images
+
+The images people post hold what no message says: a table of every
+weapon's damage per second, a stage map with circles, arrows and lettered
+spawn points, a screenshot with numbers. `--attachments media` downloads
+them with the videos (`--max-file-mb 2` keeps it to the images and the
+smallest clips), and **`cuttlefish read-images`** (`image_text.rs`) sends
+each image once to the model backend (`--backend`: the API with
+`ANTHROPIC_API_KEY`, else the Claude Code CLI on your subscription; one
+call per image, `--parallel 3` at once) with the message it was posted
+with (channel or thread, author, date, text) and the glossary's entries
+for the terms named there. The model writes the text in the image in its
+own language (tables as Markdown tables with every row, numbers as shown,
+`[unreadable]` where it cannot read), then the same in English with what
+the image shows: the kind of picture, a map's stage and tide, what is
+marked where and what the marks mean. The image goes as a JPEG at high
+quality without chroma subsampling (small colored text stays sharp),
+scaled down to the model's limits (2576 pixels on the longer side, 2560 x
+1440 pixels in all) and over white where it is transparent.
+
+The answers are kept by the image's SHA-256 (the manifest's) in
+`<knowledge>/media/image-text.jsonl`, with the backend, the model and the
+time: an image is paid for once however many messages post it, a run reads
+only images without a text (`--refresh` reads them all again), and an image
+that failed is tried again by the next run; three failures before any
+success stop a run. The next `cuttlefish ingest inbox` reads a channel
+again when texts of its images arrived (their hash joins the channel's)
+and puts each text under its image's link in the conversation's document,
+so a search finds the image's content with its message, which the answer
+then cites:
+
+```text
+[2025-09-17 06:01 UTC] Ka: Salmon Run weapon DPS
+  [IMG_5574.png: https://cdn.discordapp.com/attachments/...]
+  Image IMG_5574.png, as the model read it:
+  Text in the image:
+  | ... | ... |
+
+  In English:
+  | ... | ... |
+  A table of ...
+```
+
+The import's report says how many images of a channel came as text.
+
+```bash
+cuttlefish fetch discord --channel https://discord.com/channels/<server>/<channel> --attachments media --max-file-mb 2
+cuttlefish read-images --dry-run                 # what a run would read; nothing is sent
+cuttlefish read-images --channel https://discord.com/channels/<server>/<channel> --effort medium
+cuttlefish ingest inbox                          # the texts join their messages
 ```
 
 #### The VOD-review corpus

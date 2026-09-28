@@ -99,6 +99,26 @@ fn extension(name: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Video or image by the content type, else by the file name
+pub fn kind_of(content_type: Option<&str>, filename: &str) -> Kind {
+    if let Some(t) = content_type {
+        if t.starts_with("video/") {
+            return Kind::Video;
+        }
+        if t.starts_with("image/") {
+            return Kind::Image;
+        }
+    }
+    let ext = extension(filename);
+    if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
+        Kind::Video
+    } else if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        Kind::Image
+    } else {
+        Kind::Other
+    }
+}
+
 impl Attachment {
     /// The attachments of an API message object
     pub fn from_message(m: &Value, conversation: &str) -> Vec<Attachment> {
@@ -125,22 +145,7 @@ impl Attachment {
 
     /// Video or image by the content type, else by the file name
     pub fn kind(&self) -> Kind {
-        if let Some(t) = &self.content_type {
-            if t.starts_with("video/") {
-                return Kind::Video;
-            }
-            if t.starts_with("image/") {
-                return Kind::Image;
-            }
-        }
-        let ext = extension(&self.filename);
-        if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
-            Kind::Video
-        } else if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-            Kind::Image
-        } else {
-            Kind::Other
-        }
+        kind_of(self.content_type.as_deref(), &self.filename)
     }
 
     /// Whether `which` asks for this attachment
@@ -225,6 +230,13 @@ pub struct Entry {
     pub sha256: String,
 }
 
+impl Entry {
+    /// Video or image, as its attachment was ([`kind_of`])
+    pub fn kind(&self) -> Kind {
+        kind_of(self.content_type.as_deref(), &self.filename)
+    }
+}
+
 /// What a channel's media folder holds, by attachment id
 #[derive(Clone, Debug, Default)]
 pub struct Manifest {
@@ -267,6 +279,11 @@ impl Manifest {
     /// The entry of an attachment id
     pub fn get(&self, attachment_id: &str) -> Option<&Entry> {
         self.entries.get(attachment_id)
+    }
+
+    /// Every file listed, by attachment id
+    pub fn entries(&self) -> impl Iterator<Item = &Entry> {
+        self.entries.values()
     }
 
     /// Bytes of the files listed

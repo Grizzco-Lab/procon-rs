@@ -25,7 +25,7 @@ use cuttlefish::lock::{self, WriteLock};
 use cuttlefish::review::{Reviewer, translate};
 use cuttlefish::slang::{self, UserGlossary};
 use cuttlefish::store::{self, Retrieval, Store};
-use cuttlefish::{assets, env_file, inbox, leanny, tables};
+use cuttlefish::{assets, env_file, image_text, inbox, leanny, tables};
 use cuttlefish::{corpus, corpus_reviews, corpus_videos, expert};
 use cuttlefish::{deep_eval, notes, questions};
 use std::path::{Path, PathBuf};
@@ -140,6 +140,32 @@ enum Command {
     },
     /// Re-chunk and re-embed every stored document
     Reindex,
+    /// Read the images `fetch discord --attachments media` downloaded,
+    /// with the model (see --backend): the text in each, in its language
+    /// and in English, and what it shows (tables, marks on maps, numbers),
+    /// kept by the image's hash in <knowledge>/media/image-text.jsonl, so
+    /// no image is sent twice; the next `ingest inbox` puts each under its
+    /// message
+    ReadImages {
+        /// Only these channels (links, <server>/<channel> or ids;
+        /// repeatable); by default every fetched channel with images
+        #[arg(long)]
+        channel: Vec<discord_fetch::ChannelRef>,
+        /// Only count and list the images a run would read
+        #[arg(long)]
+        dry_run: bool,
+        /// Read images again that have a text
+        #[arg(long)]
+        refresh: bool,
+        /// At most this many images this run
+        #[arg(long)]
+        max: Option<usize>,
+        /// Images read at once (at most 8)
+        #[arg(long, default_value_t = image_text::DEFAULT_PARALLEL)]
+        parallel: usize,
+        #[command(flatten)]
+        model: ModelArgs,
+    },
     /// Slang suggestions from the community documents, as the studio's
     /// Slang panel makes them (the studio reads the file on each request;
     /// its chat picks the changes up on the next slang change or restart)
@@ -908,6 +934,56 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Slang(s) => slang_command(&data, s),
+        Command::ReadImages {
+            channel,
+            dry_run,
+            refresh,
+            max,
+            parallel,
+            model,
+        } => {
+            let channels: Vec<String> = channel.into_iter().map(|c| c.channel).collect();
+            let texts = image_text::Texts::load(&data)?;
+            let mut plan = image_text::plan(&data, &texts, &channels, refresh)?;
+            println!(
+                "{} images in the fetched channels' media folders, {} of them read before: {} to read",
+                plan.images,
+                plan.read,
+                plan.jobs.len()
+            );
+            if let Some(max) = max {
+                plan.jobs.truncate(max);
+            }
+            if dry_run || plan.jobs.is_empty() {
+                for job in &plan.jobs {
+                    println!("  {}", job.context);
+                }
+                return Ok(());
+            }
+            let client = Client::from_env(model.settings())?;
+            println!(
+                "reading {} images through {}, {} at once",
+                plan.jobs.len(),
+                client.backend(),
+                parallel.clamp(1, image_text::MAX_PARALLEL)
+            );
+            let glossary = Store::load_glossary(&data)?;
+            let stop = ctrl_c()?;
+            let tally = image_text::read(
+                &client,
+                &glossary,
+                &data,
+                &plan.jobs,
+                parallel,
+                &|| stop.load(Ordering::Relaxed),
+                &|line| println!("{line}"),
+            )?;
+            println!(
+                "{tally}; kept in {}; `cuttlefish ingest inbox` puts them under their messages",
+                image_text::Texts::path(&data).display()
+            );
+            Ok(())
+        }
     }
 }
 

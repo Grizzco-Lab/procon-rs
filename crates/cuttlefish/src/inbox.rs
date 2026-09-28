@@ -49,7 +49,7 @@ use crate::ingest::{Meta, Sink};
 use crate::messages::{self, Category};
 use crate::store::{Store, write_atomic};
 use crate::tables::{self, Member};
-use crate::{discord, discord_fetch, rednote, x};
+use crate::{discord, discord_fetch, image_text, rednote, x};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -685,6 +685,8 @@ struct Import<'a> {
     /// Archives unpacked again although unchanged: those around a
     /// re-import's target
     forced: Vec<String>,
+    /// What the model read in the fetched channels' images, by hash
+    texts: image_text::Texts,
 }
 
 /// Whether `pattern` (a path, or a family such as `locales/*/x.json`)
@@ -726,7 +728,8 @@ impl Import<'_> {
             || self.forced.contains(&found.rel)
             || old.as_ref().is_some_and(|s| s.version < version);
         // A fetched channel's documents also change when its files were
-        // downloaded, so its manifest is hashed with the messages
+        // downloaded or its images read, so its manifest and the texts of
+        // its images are hashed with the messages
         let media = (route == Route::DiscordArchive)
             .then(|| media_folder(&self.root, &found.rel))
             .flatten()
@@ -742,6 +745,11 @@ impl Import<'_> {
                 if let Some(m) = &media {
                     hash.push('+');
                     hash.push_str(&hash_file(m)?);
+                    let manifest = MediaManifest::load(m.parent().context("no folder")?)?;
+                    if let Some(read) = self.texts.digest(&manifest) {
+                        hash.push('+');
+                        hash.push_str(&read);
+                    }
                 }
                 let same = old.as_ref().is_some_and(|s| s.hash == hash);
                 (hash, same && !again)
@@ -848,26 +856,37 @@ impl Import<'_> {
             seen.kind = String::from("empty");
             return Ok(());
         }
-        let mut docs = discord::to_documents(&channel, &messages, channel.thread);
-        // The videos the fetcher downloaded, by their path from the
+        // The files the fetcher downloaded, and their path from the
         // knowledge folder
-        let mut local = 0;
-        if route == Route::DiscordArchive
-            && let Some((dir, below)) = media_folder(&self.root, &found.rel)
-        {
-            let manifest = MediaManifest::load(&dir)?;
-            if !manifest.is_empty() {
-                discord::link_media(&mut docs, &|id| {
-                    manifest
-                        .get(id)
-                        .map(|e| alloc::format!("{below}/{}", e.path))
-                });
-                local = docs
-                    .iter()
-                    .flat_map(|d| &d.messages)
-                    .filter(|r| r.video_local.is_some())
-                    .count();
+        let media = match media_folder(&self.root, &found.rel) {
+            Some((dir, below)) if route == Route::DiscordArchive => {
+                Some((MediaManifest::load(&dir)?, below))
             }
+            _ => None,
+        };
+        // What the model read in its images, under their links
+        let read = core::cell::Cell::new(0);
+        let texts = &self.texts;
+        let image_text = |id: &str| {
+            let (manifest, _) = media.as_ref()?;
+            let text = texts.get(&manifest.get(id)?.sha256)?;
+            read.set(read.get() + 1);
+            Some(String::from(text))
+        };
+        let mut docs = discord::to_documents_with(&channel, &messages, channel.thread, &image_text);
+        // The videos, by their path
+        let mut local = 0;
+        if let Some((manifest, below)) = media.as_ref().filter(|(m, _)| !m.is_empty()) {
+            discord::link_media(&mut docs, &|id| {
+                manifest
+                    .get(id)
+                    .map(|e| alloc::format!("{below}/{}", e.path))
+            });
+            local = docs
+                .iter()
+                .flat_map(|d| &d.messages)
+                .filter(|r| r.video_local.is_some())
+                .count();
         }
         for mut doc in docs.iter().cloned() {
             self.meta.apply(&mut doc);
@@ -879,12 +898,17 @@ impl Import<'_> {
             docs.len()
         ));
         let detail = alloc::format!(
-            "#{}: {} messages in {} conversations{}",
+            "#{}: {} messages in {} conversations{}{}",
             channel.name,
             messages.len(),
             docs.len(),
             if local > 0 {
                 alloc::format!(", {local} messages with their video on disk")
+            } else {
+                String::new()
+            },
+            if read.get() > 0 {
+                alloc::format!(", {} images as text", read.get())
             } else {
                 String::new()
             }
@@ -1347,6 +1371,7 @@ fn run(
         unpacked: Vec::new(),
         queue: VecDeque::new(),
         forced,
+        texts: image_text::Texts::load(root)?,
     };
     let mut files = Vec::new();
     walk(&inbox, "", &mut files, &mut import.report.notes);
@@ -2169,6 +2194,61 @@ mod tests {
         let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
         assert_eq!(report.count("discord"), 0);
         assert_eq!(report.unchanged, 2, "{report:#?}");
+
+        // An image posted and downloaded, not read yet: only its link
+        more.push_str(&msg("13", "2024-05-01T10:12:00+00:00", "lure here").replace(
+            r#""content""#,
+            r#""attachments": [{"id": "701", "filename": "map.png", "size": 3, "content_type": "image/png", "url": "https://cdn.discordapp.com/attachments/3/701/map.png?ex=1&is=1&hm=a"}], "content""#,
+        ));
+        more.push('\n');
+        write(
+            &root,
+            &alloc::format!("{dir}/threads/3.messages.jsonl"),
+            more.as_bytes(),
+        );
+        MediaManifest::load(&media)
+            .unwrap()
+            .add(discord_media::Entry {
+                message_id: String::from("13"),
+                attachment_id: String::from("701"),
+                filename: String::from("map.png"),
+                size: 3,
+                content_type: Some(String::from("image/png")),
+                path: String::from("13/map.png"),
+                sha256: String::from("mapsha"),
+            })
+            .unwrap();
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert_eq!(report.count("discord"), 1);
+        assert!(!sink.docs[0].text.contains("as the model read it"));
+        // The model read it: the channel is read again, the text under
+        // the image's link
+        let mut texts = image_text::Texts::default();
+        texts.insert(image_text::ImageText {
+            sha256: String::from("mapsha"),
+            text: String::from("In English:\nThe basket, circled"),
+            backend: String::from("api"),
+            model: None,
+            at: Utc::now(),
+        });
+        texts.save(&root).unwrap();
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert_eq!(report.count("discord"), 1, "{report:#?}");
+        assert!(
+            report.taken[0].detail.ends_with(", 1 images as text"),
+            "{report:#?}"
+        );
+        assert_eq!(sink.docs.len(), 1);
+        assert!(
+            sink.docs[0].text.contains(
+                "  [map.png: https://cdn.discordapp.com/attachments/3/701/map.png?ex=1&is=1&hm=a]\n  \
+                 Image map.png, as the model read it:\n  In English:\n  The basket, circled"
+            ),
+            "{}",
+            sink.docs[0].text
+        );
+        let report = import(&mut sink, &root, &cache, &Meta::default()).unwrap();
+        assert_eq!(report.count("discord"), 0);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

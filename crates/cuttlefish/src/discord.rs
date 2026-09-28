@@ -144,6 +144,15 @@ const THREAD_TYPES: [u64; 3] = [10, 11, 12];
 pub const FORUM_TYPES: [u64; 2] = [15, 16];
 
 impl Channel {
+    /// Where the messages were posted, as titles name it: `#channel`, or
+    /// `#channel > thread` for a thread
+    pub fn place(&self) -> String {
+        match &self.parent {
+            Some(p) => alloc::format!("#{p} > {}", self.name),
+            None => alloc::format!("#{}", self.name),
+        }
+    }
+
     /// True for the #vod-review channel and its threads
     pub fn is_vod_review(&self) -> bool {
         let is = |n: &str| n.to_lowercase().contains("vod-review");
@@ -531,6 +540,18 @@ pub fn conversations(messages: &[Message]) -> Vec<Vec<usize>> {
 /// ([`conversations`]). Each keeps its messages' [`rows`] and the game era
 /// of its first message's date.
 pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec<Document> {
+    to_documents_with(channel, messages, whole, &|_| None)
+}
+
+/// [`to_documents`], with what the model read in each image of a message
+/// ([`crate::image_text`]) under the image's link, so the image's content
+/// is found with the message; `images` gives it by attachment id
+pub fn to_documents_with(
+    channel: &Channel,
+    messages: &[Message],
+    whole: bool,
+    images: &dyn Fn(&str) -> Option<String>,
+) -> Vec<Document> {
     let groups = groups(messages, whole);
     let all_rows = rows(channel, messages);
     let source = if channel.is_vod_review() {
@@ -544,11 +565,11 @@ pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec
         .map(|g| {
             let first = &messages[g[0]];
             let url = message_link(channel, &first.id);
-            let place = match &channel.parent {
-                Some(p) => alloc::format!("#{p} > {}", channel.name),
-                None => alloc::format!("#{}", channel.name),
-            };
-            let title = alloc::format!("{place}, {}", first.timestamp.format("%Y-%m-%d"));
+            let title = alloc::format!(
+                "{}, {}",
+                channel.place(),
+                first.timestamp.format("%Y-%m-%d")
+            );
             let mut text = String::new();
             let mut authors: Vec<&str> = Vec::new();
             for &i in &g {
@@ -569,6 +590,19 @@ pub fn to_documents(channel: &Channel, messages: &[Message], whole: bool) -> Vec
                 ));
                 for l in &m.links {
                     text.push_str(&alloc::format!("  [{l}]\n"));
+                    let read = l
+                        .rsplit_once(": ")
+                        .and_then(|(name, url)| Some((name, images(attachment_id(url)?)?)));
+                    if let Some((name, read)) = read {
+                        text.push_str(&alloc::format!("  Image {name}, as the model read it:\n"));
+                        for line in read.lines() {
+                            if !line.trim().is_empty() {
+                                text.push_str("  ");
+                                text.push_str(line.trim_end());
+                            }
+                            text.push('\n');
+                        }
+                    }
                 }
                 text.push('\n');
             }
@@ -1097,6 +1131,47 @@ not json
         );
         assert!(docs[0].text.contains("Cy \u{21aa} Dee: nice"));
         assert_eq!(docs[0].messages.len(), 7);
+    }
+
+    #[test]
+    fn puts_image_texts_under_their_links() {
+        let cdn = |aid: &str, name: &str| {
+            alloc::format!(
+                r#"{{"id": "{aid}", "filename": "{name}", "url": "https://cdn.discordapp.com/attachments/2/{aid}/{name}?ex=1"}}"#
+            )
+        };
+        let files = alloc::format!(
+            r#", "attachments": [{}, {}], "embeds": [{{"title": "clip", "url": "https://youtu.be/c"}}]"#,
+            cdn("71", "map.png"),
+            cdn("72", "chart.png")
+        );
+        let lines = [
+            api("100", 0, "Ka", "where to lure", &files),
+            api("101", 1, "Ben", "thanks", ""),
+        ]
+        .join("\n");
+        let msgs = parse_api_messages(&lines);
+        let docs = to_documents_with(&plain_channel(), &msgs, false, &|id| {
+            (id == "71").then(|| String::from("Text in the image:\nA  B\n\nIn English:\nA map"))
+        });
+        let text = &docs[0].text;
+        assert!(
+            text.contains(
+                "  [map.png: https://cdn.discordapp.com/attachments/2/71/map.png?ex=1]\n  \
+                 Image map.png, as the model read it:\n  Text in the image:\n  A  B\n\n  \
+                 In English:\n  A map\n  [chart.png: "
+            ),
+            "{text}"
+        );
+        // An image without a text and an embed keep only their links
+        assert!(text.contains("chart.png?ex=1]\n  [clip: https://youtu.be/c]\n\n[2024"));
+        assert_eq!(
+            to_documents(&plain_channel(), &msgs, false)[0]
+                .text
+                .matches("as the model read it")
+                .count(),
+            0
+        );
     }
 
     #[test]
