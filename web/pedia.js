@@ -27,6 +27,10 @@
   const SEARCH_MS = 120;
   /** How often (ms) an entry asks again for fact cards still being read */
   const CARDS_MS = 2000;
+  /** Fact cards shown open; with more, each is folded to its title */
+  const FACTS_OPEN = 3;
+  /** Fact cards listed before "Show all" */
+  const FACTS_SHOWN = 8;
   /** Relations a term can have to a broader one */
   const RELATIONS = ["part-of", "kind-of", "related-to"];
   /** Languages offered for a new alias, each named in itself */
@@ -101,6 +105,8 @@
     order: remembered("order", "az"),
     /** A new term rejected from its page, for Undo in the index */
     rejected: null,
+    /** Whether the open entry lists all its fact cards */
+    allFacts: false,
   };
 
   function remembered(key, fallback) {
@@ -268,33 +274,90 @@
     drawIndex();
   }
 
-  /** How well a term matches the search: 0 a whole name, 1 a name's
-   * start, 2 inside a name, 3 the definition; null when it does not */
-  function rank(term, q) {
-    let best = null;
-    for (const name of [term.id, ...(term.search ?? [])]) {
-      const n = name.toLowerCase();
-      const r = n === q ? 0 : n.startsWith(q) ? 1 : n.includes(q) ? 2 : null;
-      if (r !== null && (best === null || r < best)) best = r;
+  /** A name or query as searched: full-width forms made plain (NFKC),
+   * lowercase, letters and digits only, so "splash down", "Splash-Down"
+   * and "ＳＰＬＡＳＨＤＯＷＮ" all read "splashdown" (as the glossary's
+   * search, cuttlefish::glossary::loose) */
+  const loose = (s) =>
+    (s ?? "")
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]/gu, "");
+
+  /** Each term's names and definition as searched, made once per list:
+   * each name loose, and loose from each of its later words on */
+  const searchable = new WeakMap();
+  function searchOf(term) {
+    let found = searchable.get(term);
+    if (!found) {
+      found = {
+        names: [term.id, ...(term.search ?? [])].map((name) => {
+          const words = name
+            .normalize("NFKC")
+            .toLowerCase()
+            .split(/[^\p{L}\p{N}]+/u)
+            .filter(Boolean);
+          return {
+            name,
+            whole: words.join(""),
+            later: words.slice(1).map((_, i) => words.slice(i + 1).join("")),
+          };
+        }),
+        definition: loose(term.definition),
+      };
+      searchable.set(term, found);
     }
-    if (best === null && term.definition?.toLowerCase().includes(q)) best = 3;
+    return found;
+  }
+
+  /** How well a term matches the search `q` (loose): 0 a whole name, 1 a
+   * name's start, 2 a later word's start, 3 inside a name, 4 the
+   * definition, with the name that matched; null when it does not. A
+   * short Latin query only counts at word starts, so "sd" is not found
+   * across "ataques de". */
+  function rank(term, q) {
+    const { names, definition } = searchOf(term);
+    const inside = q.length >= 3 || /[^\p{Script=Latin}\p{N}]/u.test(q);
+    let best = null;
+    for (const { name, whole, later } of names) {
+      const r =
+        whole === q
+          ? 0
+          : whole.startsWith(q)
+            ? 1
+            : later.some((w) => w.startsWith(q))
+              ? 2
+              : inside && whole.includes(q)
+                ? 3
+                : null;
+      if (r !== null && (best === null || r < best.rank))
+        best = { rank: r, name };
+    }
+    if (best === null && q.length >= 3 && definition.includes(q))
+      best = { rank: 4, name: "" };
     return best;
   }
 
-  /** The terms the filters keep (the era: a term of no game in
-   * particular, the seed's and the user's, is in both) */
-  function filtered() {
-    const q = pd.q.trim().toLowerCase();
+  /** The terms the search keeps, each with its rank and the name that
+   * matched, and whether the era, source and section filters keep them
+   * too (the era: a term of no game in particular, the seed's and the
+   * user's, is in both) */
+  function matching() {
+    const q = loose(pd.q);
     return pd.list.terms
-      .map((term) => ({ term, rank: q ? rank(term, q) : 0 }))
-      .filter(({ term, rank }) => {
-        if (rank === null) return false;
-        if (pd.era && term.games.length && !term.games.includes(pd.era))
-          return false;
-        if (pd.source && !term.facets[pd.source]) return false;
-        return true;
+      .map((term) => ({ term, ...(q ? rank(term, q) : { rank: 0 }) }))
+      .filter(({ rank }) => rank !== undefined)
+      .map((found) => {
+        const { term } = found;
+        found.kept =
+          !(pd.era && term.games.length && !term.games.includes(pd.era)) &&
+          !(pd.source && !term.facets[pd.source]);
+        return found;
       });
   }
+
+  /** The terms the search and the filters keep */
+  const filtered = () => matching().filter((found) => found.kept);
 
   function sortTerms(found) {
     const collator = new Intl.Collator(i18nLocale(), { sensitivity: "base" });
@@ -306,14 +369,22 @@
     );
   }
 
-  function cardHtml(term) {
+  /** A term's card in the index; `matched`, the name the search found it
+   * by, shows when the card does not already */
+  function cardHtml(term, matched = "") {
     const icon = classIcon(term);
     const initial = [...nameOf(term)][0] ?? "?";
+    const shown = [nameOf(term), ...otherNames(term)].map(loose);
+    const via =
+      matched && matched !== term.id && !shown.includes(loose(matched))
+        ? matched
+        : "";
     return `<a class="pd-card" href="${entryUrl(term.id)}" data-section="${term.section}">
       <span class="pd-card-art" aria-hidden="true">${icon ? iconSvg(icon, "pd-card-icon") : `<span class="pd-initial">${escapeHtml(initial.toUpperCase())}</span>`}</span>
       <span class="pd-card-text">
         <span class="pd-card-name">${escapeHtml(nameOf(term))}</span>
         ${otherNames(term).length ? `<span class="pd-card-alt">${escapeHtml(otherNames(term).join(" · "))}</span>` : ""}
+        ${via ? `<span class="pd-card-via">${escapeHtml(t("pedia.matched", { name: via }))}</span>` : ""}
         ${term.definition ? `<span class="pd-card-def">${escapeHtml(term.definition)}</span>` : ""}
         <span class="pd-card-meta">
           ${term.kind ? `<span class="pd-kind">${escapeHtml(kindLabel(term.kind))}</span>` : ""}
@@ -326,7 +397,8 @@
 
   function drawIndex() {
     if (!pd.list) return;
-    const found = sortTerms(filtered());
+    const all = matching();
+    const found = sortTerms(all.filter((f) => f.kept));
     const { corpus } = pd.list;
     $("pd-lede").textContent = t("pedia.lede", {
       n: number(pd.list.terms.length),
@@ -346,7 +418,11 @@
           `<a class="pd-section-chip" data-section="${s}" href="${sectionUrl(s)}" ${pd.section === s ? 'aria-current="page"' : ""}>${escapeHtml(t(`pedia.section.${s}`))} <span class="num">${number(counts[s] ?? 0)}</span></a>`,
       ),
     ].join("");
-    const shown = pd.section ? [pd.section] : sections;
+    // While searching, the sections in the order of their best match
+    const order = loose(pd.q)
+      ? [...new Set(found.map(({ term }) => term.section))]
+      : sections;
+    const shown = pd.section ? [pd.section] : order;
     const groups = shown
       .map((s) => {
         const terms = found.filter(({ term }) => term.section === s);
@@ -356,14 +432,22 @@
             <h2 id="pd-h-${s}">${escapeHtml(t(`pedia.section.${s}`))}</h2>
             <span class="panel-note">${escapeHtml(t(`pedia.section.${s}Note`))}</span>
           </header>
-          <div class="pd-cards">${terms.map(({ term }) => cardHtml(term)).join("")}</div>
+          <div class="pd-cards">${terms.map(({ term, name }) => cardHtml(term, name)).join("")}</div>
         </section>`;
       })
       .join("");
     $("pd-groups").innerHTML = groups;
     const empty = !groups;
     $("pd-empty").hidden = !empty;
-    if (empty) $("pd-empty").textContent = t("pedia.noMatch");
+    // What the search finds that the section, era or source filters hide
+    const hidden =
+      all.length -
+      found.filter(({ term }) => shown.includes(term.section)).length;
+    if (empty)
+      $("pd-empty").innerHTML = hidden
+        ? `${escapeHtml(t("pedia.hidden", { n: hidden }))}
+          <button type="button" class="mode-toggle cf-mini" data-clear-filters>${escapeHtml(t("pedia.showAll"))}</button>`
+        : escapeHtml(t("pedia.noMatch"));
     drawRejected();
   }
 
@@ -408,6 +492,17 @@
     pd.q = $("pd-q").value;
     const best = sortTerms(filtered())[0];
     if (best && pd.q.trim()) navigate(entryUrl(best.term.id));
+  });
+
+  // "Show them": the search's matches without the filters
+  $("pd-empty").addEventListener("click", (event) => {
+    if (!event.target.closest("[data-clear-filters]")) return;
+    for (const key of ["era", "source"]) {
+      pd[key] = "";
+      remember(key, "");
+    }
+    if (pd.section) navigate(sectionUrl(""));
+    else drawIndex();
   });
 
   $("pd-random").onclick = () => {
@@ -583,12 +678,52 @@
     </li>`;
   }
 
-  function cardFactHtml(c) {
-    return `<li class="pd-fact">
-      <b>${escapeHtml(c.title)}</b>
-      <p>${escapeHtml(c.text.length > 700 ? `${c.text.slice(0, 700)}…` : c.text)}</p>
-      ${c.attribution ? `<p class="panel-note">${c.url ? `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.attribution)}</a>` : escapeHtml(c.attribution)}</p>` : ""}
-    </li>`;
+  /** A fact card's text (Markdown as the importer writes it) as HTML:
+   * its `# ` title left out (the card shows the title), `- ` lines as
+   * lists, other lines as paragraphs, and each `## ` section (a weapon's
+   * or special's parameters) folded under its heading */
+  function factTextHtml(text) {
+    const sections = [{ heading: "", lines: [] }];
+    for (const line of text.split("\n")) {
+      if (line.startsWith("# ")) continue;
+      if (line.startsWith("## "))
+        sections.push({ heading: line.slice(3), lines: [] });
+      else sections.at(-1).lines.push(line);
+    }
+    const body = (lines) => {
+      let out = "";
+      let items = [];
+      const flush = () => {
+        if (items.length) out += `<ul>${items.join("")}</ul>`;
+        items = [];
+      };
+      for (const line of lines) {
+        if (line.startsWith("- ")) {
+          items.push(`<li>${escapeHtml(line.slice(2))}</li>`);
+          continue;
+        }
+        flush();
+        if (line.trim()) out += `<p>${escapeHtml(line)}</p>`;
+      }
+      flush();
+      return out;
+    };
+    return sections
+      .map(({ heading, lines }) =>
+        heading
+          ? `<details class="pd-fact-more"><summary>${escapeHtml(heading)}</summary>${body(lines)}</details>`
+          : body(lines),
+      )
+      .join("");
+  }
+
+  /** A fact card; `folded`, only its title until opened */
+  function cardFactHtml(c, folded) {
+    const inner = `${factTextHtml(c.text)}
+      ${c.attribution ? `<p class="panel-note">${c.url ? `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.attribution)}</a>` : escapeHtml(c.attribution)}</p>` : ""}`;
+    return folded
+      ? `<li class="pd-fact"><details><summary><b>${escapeHtml(c.title)}</b></summary>${inner}</details></li>`
+      : `<li class="pd-fact"><b>${escapeHtml(c.title)}</b>${inner}</li>`;
   }
 
   function questionHtml(q) {
@@ -602,12 +737,18 @@
     </li>`;
   }
 
-  /** The fact cards of game data, when the term has some */
+  /** The fact cards of game data, when the term has some: a few open,
+   * many (an Eggstra Work's events and waves) folded to their titles,
+   * the first FACTS_SHOWN until "Show all" */
   function factsHtml(e) {
     if (!e.cards.length) return "";
+    const folded = e.cards.length > FACTS_OPEN;
+    const shown = pd.allFacts ? e.cards : e.cards.slice(0, FACTS_SHOWN);
     return `<section class="panel pd-part" aria-labelledby="pd-h-facts">
-      <header class="panel-head pd-part-head"><h2 id="pd-h-facts">${escapeHtml(t("pedia.facts"))}</h2></header>
-      <ul class="pd-facts">${e.cards.map(cardFactHtml).join("")}</ul>
+      <header class="panel-head pd-part-head"><h2 id="pd-h-facts">${escapeHtml(t("pedia.facts"))}</h2>
+        <span class="panel-note">${escapeHtml(t("pedia.factsNote"))}</span></header>
+      <ul class="pd-facts">${shown.map((c) => cardFactHtml(c, folded)).join("")}</ul>
+      ${shown.length < e.cards.length ? `<button type="button" class="mode-toggle" data-all-facts>${escapeHtml(t("pedia.allFacts", { n: e.cards.length }))}</button>` : ""}
     </section>`;
   }
 
@@ -699,6 +840,8 @@
             <div class="pd-form-slot" data-slot="def"></div>
           </section>
 
+          <div class="pd-facts-slot" data-slot="facts">${factsHtml(e)}</div>
+
           <section class="panel pd-part pd-wild" aria-labelledby="pd-h-wild">
             <header class="panel-head pd-part-head">
               <h2 id="pd-h-wild">${escapeHtml(t("pedia.wild"))}</h2>
@@ -717,7 +860,6 @@
           </section>`
               : ""
           }
-          <div class="pd-facts-slot" data-slot="facts">${factsHtml(e)}</div>
           ${
             e.questions.length
               ? `<section class="panel pd-part" aria-labelledby="pd-h-questions">
@@ -1002,6 +1144,11 @@
         names,
       });
     }
+    if (on("[data-all-facts]")) {
+      pd.allFacts = true;
+      slot("facts").innerHTML = factsHtml(e);
+      return;
+    }
     if (on("[data-more]")) {
       pd.quotes += MORE_QUOTES;
       return loadEntry(pd.id, { keepScroll: true });
@@ -1071,7 +1218,10 @@
     $("pd-browse").hidden = Boolean(id);
     $("pd-entry").hidden = !id;
     if (id) {
-      if (id !== pd.id) pd.quotes = QUOTES;
+      if (id !== pd.id) {
+        pd.quotes = QUOTES;
+        pd.allFacts = false;
+      }
       pd.id = id;
       if (pd.entry?.term.id !== id || !pd.entry) loadEntry(id);
       else drawEntry();

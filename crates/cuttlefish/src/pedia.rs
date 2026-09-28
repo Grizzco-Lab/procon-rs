@@ -7,8 +7,9 @@
 //! how they relate. The Pedia shows the part of it about Salmon Run
 //! ([`in_scope`]): every term of the seed and of the user file, every term
 //! with slang or a definition, the names of the Salmon Run tables (bosses,
-//! events, tides, stages, titles), and the weapons, specials and subs of
-//! Splatoon 2 and 3 that #vod-review talks about. Each term goes into a
+//! events, tides, stages, titles, and Lean's datamine's Salmonids, stages,
+//! Salmon Run weapons and specials), and the other weapons, specials and
+//! subs of Splatoon 2 and 3 that #vod-review talks about. Each term goes into a
 //! friendly [`Section`] ([`section`]) from its kind, a few well-known ids
 //! and the broader term it belongs to.
 //!
@@ -304,15 +305,21 @@ const OFF_TOPIC: &[&str] = &[
 /// in scope; their other names are interface text (`Avg. Pts.`)
 const SALMON_KINDS: &[&str] = &["boss", "event", "tide", "stage", "title"];
 
-/// Whether `term` has a name from a Salmon Run table of a kind in scope
+/// Whether `term` has a name from a Salmon Run table: stat.ink's of a
+/// kind in scope, or Lean's datamine's ([`crate::leanny::name_table`]:
+/// every Salmonid, stage, Salmon Run weapon and special)
 fn salmon_name(term: &Term) -> bool {
     let kind = term.kind.as_deref().unwrap_or_default();
-    SALMON_KINDS.contains(&kind) && term.from.iter().any(|f| f.contains("/salmon-"))
+    term.from.iter().any(|f| {
+        f.split('#').next() == Some(crate::leanny::NAMES_SOURCE)
+            || (SALMON_KINDS.contains(&kind) && f.contains("/salmon-"))
+    })
 }
 
 /// Whether a term may be in the Pedia, before knowing what the corpus
 /// says: the seed's and the user's terms, terms with a definition, slang or
-/// a broader term, the names of the Salmon Run tables, and the weapons,
+/// a broader term, the names of the Salmon Run tables ([`salmon_name`]:
+/// every Salmon Run weapon and special among them), and the weapons,
 /// specials and subs of Splatoon 2 and 3 (which [`in_scope`] keeps when
 /// discussed). Placeholders (`?`, `(Normal)`, `Any Weapon`) never are,
 /// nor names of kinds about battles or cosmetics ([`OFF_TOPIC`]) or a
@@ -348,7 +355,8 @@ pub fn candidate(
 }
 
 /// Whether a candidate stays: a weapon, special, sub or stage only when
-/// #vod-review mentions it, Salmon Run names it, the seed or the user has
+/// #vod-review mentions it, a Salmon Run table names it (Lean's datamine
+/// lists every Salmon Run weapon and special), the seed or the user has
 /// it, or it is a Grizzco weapon (the kits and variants of Turf War, and
 /// its stages, never come up; slang alone does not tell); every other
 /// candidate does
@@ -561,7 +569,9 @@ struct CardDoc {
 
 /// The fact cards among the stored documents (`<root>/docs/*.json`), each
 /// with the term its title names: the name before ` (` (`Steelhead
-/// (Salmonid, game data)`), else the first term the title mentions
+/// (Salmonid, game data)`), else the first term the title mentions besides
+/// Salmon Run itself, which every card is about (`Salmon Run hazard level
+/// 40% ...` is Hazard Level's)
 pub fn fact_cards(root: &Path, g: &Glossary) -> Vec<FactCard> {
     let Ok(entries) = std::fs::read_dir(root.join("docs")) else {
         return Vec::new();
@@ -588,9 +598,11 @@ pub fn fact_cards(root: &Path, g: &Glossary) -> Vec<FactCard> {
             continue;
         }
         let name = doc.title.split(" (").next().unwrap_or(&doc.title);
-        let term = g
-            .lookup(name)
-            .or_else(|| g.find_in(&doc.title).into_iter().next());
+        let term = g.lookup(name).or_else(|| {
+            g.find_in(&doc.title)
+                .into_iter()
+                .find(|t| t.id != "salmon-run")
+        });
         if let Some(term) = term {
             out.push(FactCard {
                 term: term.id.clone(),
@@ -766,6 +778,14 @@ mod tests {
         assert!(candidate(&kit, &seed_g, &seed, &user, &s3));
         assert!(!in_scope(&kit, &seed, &user, 0));
         assert!(in_scope(&kit, &seed, &user, 3));
+        // Every Salmon Run weapon of Lean's datamine, discussed or not
+        let mut coop = term("undercover-brella", Some("weapon"), None);
+        coop.from = alloc::vec![
+            "inbox/x/weapon3.php#Undercover Brella".into(),
+            "leanny:names#CommonMsg/Weapon/WeaponName_Main/Shelter_Compact_Coop".into(),
+        ];
+        assert!(candidate(&coop, &seed_g, &seed, &user, &s3));
+        assert!(in_scope(&coop, &seed, &user, 0));
         let mut gear = term("headband", Some("gear"), None);
         gear.from = alloc::vec!["inbox/x/gear3.php#Headband".into()];
         assert!(!candidate(&gear, &seed_g, &seed, &user, &s3));
@@ -825,8 +845,21 @@ mod tests {
             serde_json::to_vec(&other).unwrap(),
         )
         .unwrap();
+        let level = serde_json::json!({
+            "id": "00112233445566ff",
+            "source": "game-data",
+            "title": "Salmon Run hazard level 40% (difficulty 200): wave and occurrence parameters (game data)",
+            "text": "Rush speed",
+        });
+        std::fs::write(
+            docs.join("00112233445566ff.json"),
+            serde_json::to_vec_pretty(&level).unwrap(),
+        )
+        .unwrap();
         let cards = fact_cards(&root, &Glossary::seed());
-        assert_eq!(cards.len(), 1, "{cards:?}");
+        assert_eq!(cards.len(), 2, "{cards:?}");
+        assert_eq!(cards[0].term, "hazard-level");
+        let cards: Vec<FactCard> = cards.into_iter().skip(1).collect();
         assert_eq!(cards[0].term, "steelhead");
         assert_eq!(cards[0].title, "Steelhead (Salmonid, game data)");
         assert_eq!(cards[0].attribution.as_deref(), Some("Lean"));

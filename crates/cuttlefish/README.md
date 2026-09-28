@@ -761,10 +761,11 @@ Lean's credit in every card:
 - `WeaponInfoMain` (the `_Coop` rows, 71) and `WeaponInfoSpecial` (11
   `_Coop` rows): one card per Salmon Run weapon and special, with its
   battle weapon's key, whether it is a Grizzco weapon and the Eggstra Work
-  events it was in; the weapon's card also holds its parameters
+  events it was in; the card also holds its parameters
   (`data/parameter/<version>/weapon/Weapon<Name>_Coop.game__GameParameterTable.json`
-  merged into its parent table, `--no-weapons` skips these files: about
-  160 requests the first time).
+  merged into its parent table; a special's Salmon Run table holds its
+  damage to Salmonids, `spl__BulletBlastParam.DistanceDamage`;
+  `--no-weapons` skips these files: about 180 requests the first time).
 - `spl__CoopLevelsConfig`: one card per hazard level (9): the wave and
   known-occurrence parameters at that difficulty (Rush speed, the
   Mothership's HP, tornado eggs per box, quotas).

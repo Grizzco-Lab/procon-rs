@@ -37,8 +37,9 @@
 //!   chunks
 //! - `GET glossary?q=`: the term named `q`, or the terms mentioned in it
 //!   (the Translate view shows a bare term's entry from it at once);
-//!   `GET terms?q=`: terms whose names contain `q`, for picking one as you
-//!   type
+//!   `GET terms?q=`: terms with a name matching `q` (loosely, ignoring
+//!   case, spaces and punctuation: `cuttlefish::glossary::Glossary::search`),
+//!   for picking one as you type
 //! - `GET slang`: the user glossary (`<knowledge>/glossary-user.toml`, see
 //!   `cuttlefish::slang`): the aliases taught and suggested, newest first,
 //!   with their terms' names, the new terms, the old aliases that could

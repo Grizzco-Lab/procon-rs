@@ -252,6 +252,9 @@ I18N.zh = {
   "pedia.kind.title": "称号",
   "pedia.failed": "百科没有加载：{error}",
   "pedia.noMatch": "没有匹配的词条。换个名字，或少用几个筛选。",
+  "pedia.hidden": ({ n }) => `有 ${n} 个词条匹配，但被分类或筛选隐藏了。`,
+  "pedia.showAll": "显示",
+  "pedia.matched": "即 {name}",
   "pedia.noEntry": "没有词条 {id}：{error}",
   "pedia.rejected": "{name} 被标记为错误，已移出术语表，以后不会再被建议。",
   "pedia.editFailed": "没有保存：{error}",
@@ -283,6 +286,8 @@ I18N.zh = {
   "pedia.notes": "专家笔记",
   "pedia.noteBy": "{author}，{date}（{era}）",
   "pedia.facts": "游戏数据",
+  "pedia.factsNote": "来自游戏文件的精确数值",
+  "pedia.allFacts": ({ n }) => `显示全部 ${n} 张`,
   "pedia.questions": "深度问题",
   "pedia.questionsNote": "来自问题库；可以拿去问鱼干司令",
   "pedia.answered": "已有答案",
@@ -682,7 +687,8 @@ I18N.zh = {
   "k.leanny.dryRunTitle":
     "列出文件及其状态，以及已抓取的副本能生成什么；不抓取也不存储",
   "k.leanny.weapons": "包含武器参数",
-  "k.leanny.weaponsTitle": "鲑鱼跑武器的参数表：第一次约多 160 个请求",
+  "k.leanny.weaponsTitle":
+    "鲑鱼跑武器和特殊武器的参数表：第一次约多 180 个请求",
   "k.leanny.check": "列出文件",
   "k.f.urls":
     "网页地址，每行一个（也可以是通过链接共享的 Google 文档、表格和幻灯片）",

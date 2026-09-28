@@ -282,6 +282,12 @@ const I18N = {
     "pedia.kind.title": "title",
     "pedia.failed": "The Pedia did not load: {error}",
     "pedia.noMatch": "No entry matches. Try another name, or fewer filters.",
+    "pedia.hidden": ({ n }) =>
+      n === 1
+        ? "1 entry matches, hidden by the section or filters."
+        : `${n} entries match, hidden by the section or filters.`,
+    "pedia.showAll": "Show them",
+    "pedia.matched": "as {name}",
     "pedia.noEntry": "No entry {id}: {error}",
     "pedia.rejected":
       "{name} was flagged as wrong and left the glossary; it will not be suggested again.",
@@ -319,6 +325,8 @@ const I18N = {
     "pedia.notes": "Expert notes",
     "pedia.noteBy": "{author}, {date} ({era})",
     "pedia.facts": "Game data",
+    "pedia.factsNote": "Exact numbers from the game's files",
+    "pedia.allFacts": ({ n }) => `Show all ${n}`,
     "pedia.questions": "Deep questions",
     "pedia.questionsNote": "from the question bank; ask Cuttlefish any of them",
     "pedia.answered": "Answered",
@@ -745,7 +753,7 @@ const I18N = {
       "Lists the files with their state and what the copies fetched so far would give; fetches and stores nothing",
     "k.leanny.weapons": "With the weapon parameters",
     "k.leanny.weaponsTitle":
-      "The parameter tables of the Salmon Run weapons: about 160 more requests the first time",
+      "The parameter tables of the Salmon Run weapons and specials: about 180 more requests the first time",
     "k.leanny.check": "List the files",
     "k.f.urls":
       "Page addresses, one per line (Google Docs, Sheets and Slides shared by link too)",

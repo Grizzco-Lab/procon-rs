@@ -223,8 +223,9 @@ pub struct Options {
     pub dry_run: bool,
     /// Build the cards again even when no file changed
     pub refresh: bool,
-    /// Also the parameter files of the Salmon Run weapons (one per weapon
-    /// and its parent table, about 160 more requests the first time)
+    /// Also the parameter files of the Salmon Run weapons and specials
+    /// (one per weapon or special and its parent table, about 180 more
+    /// requests the first time)
     pub weapons: bool,
 }
 
@@ -407,8 +408,8 @@ pub struct Data {
     /// `spl__CoopLevelsConfig`
     pub levels: Value,
     pub names: Names,
-    /// Salmon Run weapon parameters by the weapon's `__RowId`, with its
-    /// parent table merged in
+    /// Salmon Run weapon and special parameters by the row's `__RowId`,
+    /// with its parent table merged in
     pub parameters: BTreeMap<String, Value>,
 }
 
@@ -636,8 +637,25 @@ pub fn stage_cards(data: &Data, scenarios: &[Scenario], events: &[Event]) -> Vec
     out
 }
 
+/// The Parameters section of a Salmon Run weapon's or special's card, when
+/// its parameter table was fetched: a special's holds its damage to
+/// Salmonids (`spl__BulletBlastParam.DistanceDamage`, in the game's units)
+fn parameters_section(data: &Data, key: &str, text: &mut String) {
+    let Some(params) = data.parameters.get(key) else {
+        return;
+    };
+    let mut lines = Vec::new();
+    parameter_lines(&params["GameParameters"], "", &mut lines);
+    if !lines.is_empty() {
+        text.push_str(&alloc::format!(
+            "\n## Parameters of the Salmon Run form (GameParameterTable, the Salmon Run overrides merged into the weapon's table)\n\n{}\n",
+            lines.join("\n")
+        ));
+    }
+}
+
 /// The special cards, one per Salmon Run special (`WeaponInfoSpecial` rows
-/// of type `Coop`)
+/// of type `Coop`), with the parameters when fetched
 pub fn special_cards(data: &Data, scenarios: &[Scenario], events: &[Event]) -> Vec<Document> {
     let mut out = Vec::new();
     for row in &data.specials {
@@ -659,6 +677,7 @@ pub fn special_cards(data: &Data, scenarios: &[Scenario], events: &[Event]) -> V
                 used.join(", ")
             ));
         }
+        parameters_section(data, key, &mut text);
         out.push(card(
             &alloc::format!("leanny:special/{key}"),
             COOP_PAGE,
@@ -715,16 +734,7 @@ pub fn weapon_cards(data: &Data, scenarios: &[Scenario], events: &[Event]) -> Ve
                 used.join(", ")
             ));
         }
-        if let Some(params) = data.parameters.get(key) {
-            let mut lines = Vec::new();
-            parameter_lines(&params["GameParameters"], "", &mut lines);
-            if !lines.is_empty() {
-                text.push_str(&alloc::format!(
-                    "\n## Parameters of the Salmon Run form (GameParameterTable, the Salmon Run overrides merged into the weapon's table)\n\n{}\n",
-                    lines.join("\n")
-                ));
-            }
-        }
+        parameters_section(data, key, &mut text);
         out.push(card(
             &alloc::format!("leanny:weapon/{key}"),
             COOP_PAGE,
@@ -905,10 +915,12 @@ fn fetch_and_build(site: &mut Site) -> Result<Option<Built>> {
     }
     if site.options.weapons {
         let folder = folder.clone();
-        // The weapon's row id and its parameter file (from its actor)
+        // The row id and parameter file (from its actor) of every Salmon
+        // Run weapon and special
         let coop: Vec<(String, String)> = data
             .weapons
             .iter()
+            .chain(&data.specials)
             .filter(|r| r["Type"].as_str() == Some("Coop"))
             .filter_map(|r| {
                 let actor = stem(r["SpecActor"].as_str()?)?;
@@ -1239,7 +1251,7 @@ mod tests {
             "mush/1130/WeaponInfoSpecial.json",
             json!([
                 {"__RowId": "SpNiceBall", "Type": "Versus"},
-                {"__RowId": "SpNiceBall_Coop", "Type": "Coop"}
+                {"__RowId": "SpNiceBall_Coop", "Type": "Coop", "SpecActor": "Work/Actor/WeaponSpNiceBall_Coop.engine__actor__ActorParam.gyml"}
             ])
             .to_string(),
         );
@@ -1279,6 +1291,17 @@ mod tests {
         f.insert(
             "weapon/WeaponShooterNormal.game__GameParameterTable.json",
             json!({"GameParameters": {"DamageParam": {"$type": "x", "ValueMax": 300, "ValueMin": 250}, "WeaponParam": {"InkConsume": 0.0092}}})
+                .to_string(),
+        );
+        f.insert(
+            "weapon/WeaponSpNiceBall_Coop.game__GameParameterTable.json",
+            json!({"$parent": "Work/Component/GameParameterTable/WeaponSpNiceBall.game__GameParameterTable.gyml",
+                   "GameParameters": {"spl__BulletBlastParam": {"$type": "x", "DistanceDamage": [{"Damage": 7000, "Distance": 7.0}]}}})
+            .to_string(),
+        );
+        f.insert(
+            "weapon/WeaponSpNiceBall.game__GameParameterTable.json",
+            json!({"GameParameters": {"spl__BulletBlastParam": {"$type": "x", "DistanceDamage": [{"Damage": 1800, "Distance": 7.0}], "PaintRadius": 14.0}}})
                 .to_string(),
         );
         // Scenario 1 on Sockeye Station (map 1), scenario 2 on Bonerattle
@@ -1402,6 +1425,20 @@ mod tests {
         assert!(weapon.text.contains("- DamageParam.ValueMin: 250"));
         assert!(weapon.text.contains("- WeaponParam.InkConsume: 0.0092"));
         assert!(!weapon.text.contains("$type"));
+        // A special's parameters: its Salmon Run damage over the battle one
+        let special = &sink.docs[&doc_id("leanny:special/SpNiceBall_Coop")];
+        assert!(
+            special.text.contains(
+                "- spl__BulletBlastParam.DistanceDamage: [{\"Damage\":7000,\"Distance\":7.0}]"
+            ),
+            "{}",
+            special.text
+        );
+        assert!(
+            special
+                .text
+                .contains("- spl__BulletBlastParam.PaintRadius: 14.0")
+        );
         let grizzco = &sink.docs[&doc_id("leanny:weapon/Roller_Bear_Coop")];
         assert!(grizzco.text.contains("- Grizzco weapon (IsCoopRare): yes"));
         let level = &sink.docs[&doc_id("leanny:level/1665")];

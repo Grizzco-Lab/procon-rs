@@ -217,6 +217,22 @@ fn key(s: &str) -> String {
     s.trim().to_lowercase()
 }
 
+/// A name or query as searched ([`Glossary::search`]): lowercase, with
+/// full-width Latin letters and digits made plain, and only letters and
+/// digits kept, so `splash down`, `Splash-Down` and `ＳＰＬＡＳＨＤＯＷＮ`
+/// all read `splashdown`
+pub fn loose(s: &str) -> String {
+    s.chars()
+        .map(|c| match c as u32 {
+            // Full-width ASCII (U+FF01 to U+FF5E) to its plain form
+            0xff01..=0xff5e => char::from_u32(c as u32 - 0xfee0).unwrap_or(c),
+            _ => c,
+        })
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 /// Where a glossary's terms are, by id, English name and any name, for
 /// [`Glossary::merge`] and [`Glossary::conflicts`]
 struct Index {
@@ -335,24 +351,36 @@ impl Glossary {
     }
 
     /// Up to `limit` terms with an id or name (official or an approved
-    /// alias) containing `query`, ignoring case: whole names first, then
-    /// names starting with it, then the rest, each in glossary order
+    /// alias) matching `query`, compared [`loose`]ly (ignoring case,
+    /// spaces, punctuation and full-width forms): whole names first, then
+    /// names starting with it, then names with a later word starting with
+    /// it, then names containing it (only for queries of three characters
+    /// or more, or not in Latin letters, so `sd` is not found across
+    /// `ataques de`), each in glossary order
     pub fn search(&self, query: &str, limit: usize) -> Vec<&Term> {
-        let q = key(query);
+        let q = loose(query);
         if q.is_empty() {
             return Vec::new();
         }
+        let inside = q.chars().count() >= 3 || !q.is_ascii();
         let rank = |t: &Term| -> Option<u8> {
             core::iter::once(t.id.as_str())
                 .chain(t.names())
                 .filter_map(|n| {
-                    let n = key(n);
-                    if n == q {
+                    let words: Vec<String> = n
+                        .split(|c: char| !c.is_alphanumeric())
+                        .map(loose)
+                        .filter(|w| !w.is_empty())
+                        .collect();
+                    let whole = words.concat();
+                    if whole == q {
                         Some(0)
-                    } else if n.starts_with(&q) {
+                    } else if whole.starts_with(&q) {
                         Some(1)
+                    } else if (1..words.len()).any(|i| words[i..].concat().starts_with(&q)) {
+                        Some(2)
                     } else {
-                        n.contains(&q).then_some(2)
+                        (inside && whole.contains(&q)).then_some(3)
                     }
                 })
                 .min()
@@ -614,6 +642,14 @@ mod tests {
         assert_eq!(ids("gri"), ["grizzco", "griller", "grizzco-roller"]);
         assert_eq!(ids("熊刷"), ["grizzco-roller"]);
         assert!(ids(" ").is_empty());
+        // Spaces, hyphens, case and full-width letters do not matter
+        assert_eq!(ids("steel eel"), ["steel-eel"]);
+        assert_eq!(ids("SteelEel"), ["steel-eel"]);
+        assert_eq!(ids("ｓｔｅｅｌ－ｅｅｌ"), ["steel-eel"]);
+        assert_eq!(loose("Slammin' Lid"), "slamminlid");
+        // A later word's start; a short query not across words
+        assert_eq!(ids("eel"), ["steel-eel", "steelhead"]);
+        assert!(!ids("ee").contains(&String::from("steelhead")));
     }
 
     #[test]

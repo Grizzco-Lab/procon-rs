@@ -7876,6 +7876,14 @@ body {
   white-space: nowrap;
 }
 
+.pd-card-via {
+  overflow: hidden;
+  color: var(--accent);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pd-card-def {
   display: -webkit-box;
   overflow: hidden;
@@ -8196,6 +8204,25 @@ body {
 
 .pd-note-q:hover {
   color: var(--accent);
+}
+
+.pd-fact ul {
+  margin: 4px 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.pd-fact summary {
+  cursor: pointer;
+}
+
+.pd-fact-more summary {
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .pd-note-body,

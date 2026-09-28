@@ -313,8 +313,9 @@ enum Ingest {
         /// fetch and store nothing
         #[arg(long)]
         dry_run: bool,
-        /// Skip the weapon parameter files (about 160 more requests the
-        /// first time; the cards then lack the Parameters section)
+        /// Skip the weapon and special parameter files (about 180 more
+        /// requests the first time; the cards then lack the Parameters
+        /// section)
         #[arg(long)]
         no_weapons: bool,
         /// Seconds between requests
