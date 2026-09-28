@@ -969,9 +969,10 @@ guides, clears, and discussion in the comments. `tools/capture/rednote.mjs`
 (Node 22+, no packages; the folder's README has the guide) drives the same
 logged-in Chrome as `xcap.mjs`, on the same profile folder
 (`~/.config/procon/browser-profile`, one login for both sites): it reads
-your following list once (from a comment box's @ picker; nothing is sent), each creator's notes list (笔记), and each note
-about Salmon Run for its comments and replies, scrolling and clicking like
-a reader, and keeps the JSON the page loaded for itself (the site's signed
+your following list once (from a comment box's @ picker; nothing is sent), each creator's notes list (笔记), and a random
+60 to 95% of each creator's unread notes (at most 12 a visit, new ones
+first, in a random order; later visits finish the rest) for their comments
+and replies, scrolling and clicking like a reader, and keeps the JSON the page loaded for itself (the site's signed
 headers, `x-s`/`x-t`, are never made or replayed; the page's server state
 and the DOM are the fallbacks). **Automating one's own account can breach
 Xiaohongshu's terms**, and the site watches for it (risk control, sliders,
@@ -981,12 +982,13 @@ accepted it for this private knowledge base. The tool makes no requests of
 its own, writes nothing to the site, downloads no media, and never sees or
 stores credentials.
 
-What it keeps: a note is about Salmon Run when its title in the list (or,
-with `--match detail`, its title, text and tags) matches the same
-three-language glossary as `xcap` (`lib/filter.mjs`: 打工, 鲑鱼跑, 熊先生,
+What it keeps: every note it opens (titles are jargon a filter misses);
+the record's `matched` lists the terms of the same three-language
+glossary as `xcap` found in its title, text and tags, and `on_topic` says
+whether there were any (`lib/filter.mjs`: 打工, 鲑鱼跑, 熊先生,
 金鲑鱼卵, the bosses, the Kings, the stages and their short names (生筋子,
 破船, 发电所), the players' jargon (熊商会, 搬蛋), サーモンラン, バクダン,
-Salmon Run, Grizzco, ...). Each kept note is one JSON line in
+Salmon Run, Grizzco, ...); the importer takes every record. Each note is one JSON line in
 `<knowledge>/inbox/rednote/<user id>/notes.jsonl`: id, author, date,
 title, text, tags, image and video addresses (nothing downloaded), likes,
 collects, shares, the comment count, and the comments with their replies
@@ -994,13 +996,15 @@ collects, shares, the comment count, and the comments with their replies
 answers; a comment that is a picture alone reads `[picture]` in the
 document);
 `inbox/rednote/state.json` holds the following list, a record per creator
-(every note decided on: kept, not about Salmon Run, unreadable) and the
-day's action count, so runs continue and stay incremental. Pace: 8 to 20 s
-between page actions, a 2 to 8 minute pause every 10 to 25, 150 actions a
-run and 450 a day by default; a captcha, a slider, a login prompt, a
+(its notes, which are read and which left), every note read, and the
+day's action count, so runs continue and stay incremental; creators never
+visited come first, then those with notes left. Pace: 6 to 12 s between
+page actions, a 1 to 4 minute pause every 15 to 30, 750 actions a run and
+a day by default; a captcha, a slider, a login prompt, a
 risk-control page or a refused answer stops the run at once, nothing is
-ever solved. About 6 actions a note: 100 notes take roughly 5 to 7
-hours.
+ever solved. About 5 actions a note (3 scrolls of the comments and 5
+reply threads at most): the day's 750 actions read about 120 notes in 3 to
+4 hours.
 
 ```bash
 node tools/capture/rednote.mjs login                          # once, in the window that opens (a code to scan with the app)

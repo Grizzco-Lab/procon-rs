@@ -1,14 +1,16 @@
 // The visit on Xiaohongshu: the account's following list (found once from
 // its own profile, kept in the state), each followed creator's notes list
 // (scrolled until the end, or on later visits until it shows only notes
-// seen before), and each new note about Salmon Run, opened from its tile,
-// its comments scrolled and folded reply threads unfolded, then closed.
-// Notes come from the JSON the page loads for itself and from the page's
-// server state; the DOM is the fallback. Every navigation, scroll, click
-// and key is one paced action (`Pace`); the run stops at a cap, on a
-// blocked answer, or as soon as a page wants a person (a captcha, a
-// slider, a login prompt), which is never solved. The page is an
-// interface (`Page` of cdp.mjs, or a fake in tests).
+// known before), and a random share of the creator's unread notes, each
+// opened from its tile in a random order, its comments scrolled and folded
+// reply threads unfolded, saved (whether the glossary matched it or not),
+// then closed. The state remembers every creator's notes, so later visits
+// finish the ones left. Notes come from the JSON the page loads for itself
+// and from the page's server state; the DOM is the fallback. Every
+// navigation, scroll, click and key is one paced action (`Pace`); the run
+// stops at a cap, on a blocked answer, or as soon as a page wants a person
+// (a captcha, a slider, a login prompt), which is never solved. The page
+// is an interface (`Page` of cdp.mjs, or a fake in tests).
 
 import { matches } from "./filter.mjs";
 import { Stop } from "./pace.mjs";
@@ -22,20 +24,22 @@ export const DEFAULTS = Object.freeze({
   refreshFollowing: false,
   /** Browse and print, write nothing */
   dryRun: false,
-  /** What decides that a note is about Salmon Run: `title` (only those
-   * are opened) or `detail` (every new note is opened; its title, text
-   * and tags decide) */
-  match: "title",
-  /** Notes kept this run, at most */
-  maxNotes: 60,
+  /** Notes read this run, at most (null: the action caps decide) */
+  maxNotes: null,
+  /** The share of a creator's unread notes read per visit, drawn anew
+   * each visit */
+  share: [0.6, 0.95],
+  /** Notes read per creator per visit, at most (after the share); the
+   * rest wait for later visits */
+  perCreator: 12,
   /** Comments (with replies) loaded per note, at most */
   maxComments: 200,
   /** Reply threads unfolded per note, at most */
-  maxReplies: 10,
+  maxReplies: 5,
   /** Scrolls down a creator's list, at most */
   listScrolls: 40,
   /** Scrolls down a note's comments, at most */
-  commentScrolls: 15,
+  commentScrolls: 3,
   /** Scrolls of a creator's list toward a note's tile, at most, before the
    * note is opened by its address instead */
   tileScrolls: 8,
@@ -56,11 +60,54 @@ const isNoteAnswer = (r) => /comment\/page|\/feed/.test(r.url);
 const isComments = (r) => /comment/.test(r.url);
 const isReplies = (r) => /comment\/sub/.test(r.url);
 
+/** Whether a note's state says it was read: saved, or opened and found
+ * unreadable. `off-topic` (an older run's skip by title) is unread. */
+export const isRead = (status) => status === "kept" || status === "failed";
+
+/** The creator's notes not read yet, top of the list first */
+export const unread = (record, seen) =>
+  (record.notes ?? []).filter((id) => !isRead(seen[id]));
+
+/** `items` shuffled in place (Fisher-Yates) with `random()` in [0, 1) */
+export function shuffle(items, random) {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+  return items;
+}
+
+/** The notes of one visit: a share drawn from `share` of the `unread`
+ * notes (at least one), at most `cap`, the ones in `fresh` (never listed
+ * before) first, each group sampled at random; returned in a random
+ * reading order */
+export function choose(unread, fresh, { share, cap }, random) {
+  if (!unread.length) return [];
+  const [lo, hi] = share;
+  const n = Math.min(
+    cap,
+    Math.max(1, Math.round(unread.length * (lo + random() * (hi - lo)))),
+  );
+  const isFresh = new Set(fresh);
+  const pool = [
+    ...shuffle(
+      unread.filter((id) => isFresh.has(id)),
+      random,
+    ),
+    ...shuffle(
+      unread.filter((id) => !isFresh.has(id)),
+      random,
+    ),
+  ];
+  return shuffle(pool.slice(0, n), random);
+}
+
 export class Crawl {
   /**
    * @param {object} page the browser page (cdp.mjs `Page`)
    * @param {object} deps `pace` (a `Pace`), `state` (the loaded state),
-   *   `dir` (the inbox's `rednote` folder), `log(line)`, `options`, `now()`
+   *   `dir` (the inbox's `rednote` folder), `log(line)`, `options`, `now()`,
+   *   `random()` in [0, 1) for the notes chosen and their order
    */
   constructor(page, deps) {
     this.page = page;
@@ -72,6 +119,7 @@ export class Crawl {
     /** The site's origin the home page landed on */
     this.origin = this.options.site ?? rn.SITE;
     this.now = deps.now ?? (() => new Date());
+    this.random = deps.random ?? Math.random;
     this.summary = {
       creators: 0,
       listed: 0,
@@ -80,6 +128,8 @@ export class Crawl {
       offTopic: 0,
       failed: 0,
       comments: 0,
+      /** Unread notes left with the creators visited */
+      left: 0,
       files: new Set(),
     };
   }
@@ -136,7 +186,7 @@ export class Crawl {
       const me = await this.start();
       const creators = await this.following(me);
       for (const id of this.order(creators)) {
-        if (this.summary.kept >= this.options.maxNotes) break;
+        if (this.full()) break;
         await this.creator(id);
       }
     } catch (error) {
@@ -254,11 +304,24 @@ export class Crawl {
     return this.state.following.handles;
   }
 
-  /** Creators never visited first, then the longest unvisited */
+  /** Whether this run read its `maxNotes` */
+  full() {
+    const max = this.options.maxNotes;
+    return max != null && this.summary.kept >= max;
+  }
+
+  /** Creators never visited first, then those with unread notes left,
+   * then the rest; the longest unvisited first within each */
   order(ids) {
+    const rank = (id) => {
+      const a = this.state.accounts[id];
+      if (!a?.visited_at) return 0;
+      return unread(a, this.state.seen).length ? 1 : 2;
+    };
     const at = (id) => this.state.accounts[id]?.visited_at ?? "";
-    return [...ids].sort((a, b) =>
-      at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0,
+    return [...ids].sort(
+      (a, b) =>
+        rank(a) - rank(b) || (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0),
     );
   }
 
@@ -289,11 +352,14 @@ export class Crawl {
     return added;
   }
 
-  /** One creator: the list, then the new notes about Salmon Run */
+  /** One creator: the list, merged into the creator's known notes, then
+   * a random share of the unread ones (`choose`) */
   async creator(id) {
     const record = state.account(this.state, id);
+    record.notes ??= [];
+    record.tokens ??= {};
     const profile = `${this.origin}/user/profile/${id}`;
-    const seen = this.state.seen;
+    const known = new Set(record.notes);
     const listed = new Map();
     const hasMore = { value: null };
     this.log(`creator ${record.nickname ? `${record.nickname} ` : ""}${id}`);
@@ -303,12 +369,12 @@ export class Crawl {
     let idle = 0;
     let reachedEnd = hasMore.value === false;
     for (let i = 0; i < this.options.listScrolls && !reachedEnd; i++) {
-      // Later visits stop once the page shows only notes seen before: new
-      // notes are on top
+      // Later visits stop once the page shows only notes known before:
+      // new notes are on top
       if (
         record.listed_to_end &&
         listed.size &&
-        [...listed.keys()].every((n) => seen[n])
+        [...listed.keys()].every((n) => known.has(n))
       )
         break;
       await this.action(() => this.page.scroll());
@@ -318,25 +384,41 @@ export class Crawl {
       reachedEnd = hasMore.value === false || idle >= 2;
     }
     if (reachedEnd) record.listed_to_end = true;
+    // The list as the page shows it now, then the notes known before
+    // further down
+    record.notes = [
+      ...listed.keys(),
+      ...record.notes.filter((n) => !listed.has(n)),
+    ];
+    for (const l of listed.values())
+      if (l.xsec_token && !isRead(this.state.seen[l.id]))
+        record.tokens[l.id] = l.xsec_token;
     record.visited_at = this.now().toISOString();
+    const fresh = [...listed.keys()].filter((n) => !known.has(n));
+    const left = unread(record, this.state.seen);
+    const chosen = choose(
+      left,
+      fresh,
+      { share: this.options.share, cap: this.options.perCreator },
+      this.random,
+    );
     this.summary.creators++;
     this.summary.listed += listed.size;
-    const fresh = [...listed.values()].filter((l) => !seen[l.id]);
     this.summary.fresh += fresh.length;
     this.log(
-      `  ${listed.size} notes listed, ${fresh.length} new${reachedEnd ? "" : " (list not finished)"}`,
+      `  ${listed.size} notes listed, ${fresh.length} new${reachedEnd ? "" : " (list not finished)"}; ${left.length} unread, reading ${chosen.length}`,
     );
-    for (const l of fresh) {
-      const byTitle = matches(l.title);
-      if (this.options.match === "title" && !byTitle.length) {
-        seen[l.id] = "off-topic";
-        record.off_topic++;
-        this.summary.offTopic++;
-        continue;
-      }
-      if (this.summary.kept >= this.options.maxNotes) break;
-      await this.note(id, record, l, byTitle, profile, [...listed.keys()]);
+    this.save();
+    for (const n of chosen) {
+      if (this.full()) break;
+      const l = listed.get(n) ?? {
+        id: n,
+        title: "",
+        xsec_token: record.tokens[n],
+      };
+      await this.note(id, record, l, profile, record.notes);
     }
+    this.summary.left += unread(record, this.state.seen).length;
     this.save();
   }
 
@@ -392,9 +474,9 @@ export class Crawl {
 
   /** One note: opened from its tile on the creator's page (else by its
    * address), read from the page state, the feed answer or the DOM, its
-   * comments scrolled and reply threads unfolded within the caps, kept
-   * when about Salmon Run, then closed */
-  async note(creator, record, l, byTitle, profile, order = [l.id]) {
+   * comments scrolled and reply threads unfolded within the caps, saved
+   * with the glossary terms it matches (maybe none), then closed */
+  async note(creator, record, l, profile, order = [l.id]) {
     const id = l.id;
     let opened = false;
     if ((await this.page.location()).includes(creator)) {
@@ -419,6 +501,7 @@ export class Crawl {
         user_id: creator,
         nickname: record.nickname ?? "",
       });
+    delete record.tokens?.[id];
     if (!note) {
       this.state.seen[id] = "failed";
       this.summary.failed++;
@@ -466,28 +549,21 @@ export class Crawl {
     note.comments = roots;
     note.comments_complete =
       !hasMore.value && roots.every((c) => c.replies.length >= c.replies_total);
-    const matched = [
-      ...new Set([
-        ...byTitle,
-        ...matches([note.title, note.text, ...note.tags].join("\n")),
-      ]),
-    ];
+    const matched = matches(
+      [l.title, note.title, note.text, ...note.tags].join("\n"),
+    );
     const title = (note.title || note.text).replace(/\s+/g, " ").slice(0, 60);
-    if (!matched.length) {
-      this.state.seen[id] = "off-topic";
-      record.off_topic++;
-      this.summary.offTopic++;
-      this.log(`  ${id} "${title}": not about Salmon Run`);
-      await this.close(profile);
-      return;
-    }
     const line = rn.record(note, matched, this.now());
     this.state.seen[id] = "kept";
     record.kept++;
     this.summary.kept++;
+    if (!matched.length) {
+      record.off_topic++;
+      this.summary.offTopic++;
+    }
     this.summary.comments += total();
     this.log(
-      `  ${this.options.dryRun ? "would keep" : "kept"} ${rn.noteUrl(id)} (${total()} comments${note.comments_complete ? "" : ", more not loaded"}): ${title}`,
+      `  ${this.options.dryRun ? "would keep" : "kept"} ${rn.noteUrl(id)} (${total()} comments${note.comments_complete ? "" : ", more not loaded"}${matched.length ? "" : ", no Salmon Run term"}): ${title}`,
     );
     if (!this.options.dryRun) {
       this.summary.files.add(rn.append(this.dir, creator, [line]));

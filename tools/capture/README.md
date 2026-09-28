@@ -141,7 +141,7 @@ No test touches X or a login; the fixtures are synthetic. The CDP layer
 
 ## rncap: Salmon Run notes from Xiaohongshu
 
-`rednote.mjs` captures the Salmon Run notes (笔记) of the creators you
+`rednote.mjs` captures the notes (笔记) of the Salmon Run creators you
 follow on Xiaohongshu (RedNote, 小红书), each with its comments and their
 replies, into Cuttlefish's inbox (`<knowledge>/inbox/rednote/<user
 id>/notes.jsonl`), where `cuttlefish ingest inbox` (or **Import inbox** on
@@ -180,20 +180,25 @@ a captcha**: anything that wants a person stops the run at once.
   kept in the state for a week, `--refresh-following` reads it
   again, `--creators` gives creators yourself as profile links, ids or
   `@<file>`), each creator's profile, scrolling the notes list until it
-  ends or, on later visits, until it shows only notes seen before, and each
-  new note about Salmon Run: its tile is clicked (the list draws only the
-  tiles near the viewport, so the page is scrolled toward the tile first;
-  a tile not reached within `--tile-scrolls` (8) gives way to the note's
-  address), the comments pane
-  (`.note-scroller`) scrolled while the site says there are more
-  (`--max-comments`, 200), folded reply threads unfolded (`--max-replies`,
-  10), then Escape closes it.
-- **What counts as Salmon Run:** the same three-language glossary as xcap
-  (`lib/filter.mjs`), on the note's title as the list shows it (only
-  matching notes are opened), or with `--match detail` on the whole note
-  (title, text, tags: every new note is opened, one visit each). The
-  creators you follow are Salmon Run creators already, so this keeps their
-  other notes out.
+  ends or, on later visits, until it shows only notes known before, and
+  then a random 60 to 95% of the creator's unread notes (drawn anew each
+  visit), at most `--per-creator` (12) a visit, notes never listed before
+  first, read in a random order: its tile is clicked (the list draws only
+  the tiles near the viewport, so the page is scrolled toward the tile
+  first; a tile not reached within `--tile-scrolls` (8) gives way to the
+  note's address), the comments pane (`.note-scroller`) scrolled up to
+  `--comment-scrolls` (3) times while the site says there are more
+  (`--max-comments`, 200), up to `--max-replies` (5) folded reply threads
+  unfolded, then Escape closes it. A big thread is cut
+  (`comments_complete: false`); the rest of a creator's notes wait for
+  later visits.
+- **Which creators first:** those never visited, then those with unread
+  notes left, then the rest, the longest unvisited first within each.
+- **No title filter:** titles are jargon a filter misses, so every note
+  chosen is opened and saved. The same three-language glossary as xcap
+  (`lib/filter.mjs`) runs on the list's title, the note's title, text and
+  tags: the record's `matched` lists the terms it found and `on_topic`
+  says whether there were any. The importer takes every record.
 - **Where the notes come from** (`lib/rednote.mjs`): the JSON the page
   receives (`user_posted` for a creator's list, `/feed` for a note,
   `comment/page` and `comment/sub/page` for comments and replies, the
@@ -201,25 +206,28 @@ a captcha**: anything that wants a person stops the run at once.
   state's camel case (`__INITIAL_STATE__`, Vue refs unwrapped) alike;
   when a note's answers were missed, its title, text and comments are read
   off the page (`#detail-title`, `#detail-desc`, `.comment-item`).
-- **Pace** (`lib/pace.mjs`): 8 to 20 s between page actions (a navigation,
+- **Pace** (`lib/pace.mjs`): 6 to 12 s between page actions (a navigation,
   a wheel scroll of a few notches, a click, a key), drawn anew each time,
-  plus the page's own settling; a pause of 2 to 8 minutes every 10 to 25
-  actions; at most 150 actions a run and 450 a day (UTC) by default;
-  `--max-notes` (60) and `--max-minutes` if you like. **A stop at once**
+  plus the page's own settling; a pause of 1 to 4 minutes every 15 to 30
+  actions; at most 750 actions a run and 750 a day (UTC) by default;
+  `--max-notes` and `--max-minutes` if you like. **A stop at once**
   on: an address holding `captcha`, `verify`, `login`, `risk` or
   `security`; a page whose text asks for a verification, a slider, a code,
   a login or reports an account or traffic anomaly; an answer with HTTP
   403, 461 or 471; a JSON answer with a code that means the session is not
   accepted (300011 to 300015, -100). The run reports what it saw and ends;
   pass the check yourself in the `login` window, and run again later,
-  gentler (`--delay 8-20 --pause 120-600`). Ctrl+C finishes the action
+  gentler (`--delay 8-20 --pause 120-480 --pause-every 10-25`). Ctrl+C finishes the action
   under way and saves.
 - **Resumable and incremental** (`lib/state.mjs`, `tool: "rncap"`):
   `<inbox>/rednote/state.json` keeps the day's action count, the following
   list (creator ids), a record per creator (nickname, whether the whole
-  list was scrolled once, last visit, counts) and every note id decided on
-  (`kept`, `off-topic`, `failed`). A note not reached before a cap is not
-  marked, so the next run takes it.
+  list was scrolled once, last visit, counts, `notes`: every note of the
+  list known, top first, and `tokens` for the unread ones' addresses) and
+  every note id read (`kept`, or `failed` when the page showed none; an
+  older run's `off-topic`, skipped by title, counts as unread). A note not
+  reached before a cap stays unread, so a later run takes it; `status`
+  counts the creators never visited and the unread notes left.
 
 ### Steps
 
@@ -234,11 +242,11 @@ node tools/capture/rednote.mjs login
 # 2. A dry run: the following list, a creator's notes, a note or two, printed; nothing written but the day's action count
 node tools/capture/rednote.mjs run --dry-run --max-actions 20
 
-# 3. A real run: the following list, the creators, the Salmon Run notes with their comments
+# 3. A real run: the following list, the creators, a share of each one's notes with their comments
 node tools/capture/rednote.mjs run
 
 # Later runs continue where the last stopped (new notes first); run it in an evening or daily
-node tools/capture/rednote.mjs run --max-minutes 60 --max-notes 30
+node tools/capture/rednote.mjs run --max-minutes 60 --per-creator 8
 node tools/capture/rednote.mjs status       # the creators, counts and today's actions
 
 # 4. Into the store: the Knowledge page's Import inbox button, or
@@ -257,14 +265,14 @@ import keeps the last); `<knowledge>/inbox/rednote/state.json` beside
 them. The inbox import sees a changed file and replaces its documents; the
 state file is skipped as the tool's own. Nothing else is written.
 
-**Expected time.** A note costs about 6 page actions: its tile, one or two
-scrolls of the comments, a reply thread or two, Escape, and its share of
-the list's scrolls. At the default pace (14 s between actions on average
-plus the page's settling, a 5-minute pause every 17 actions or so) that is
-about 3 to 4 minutes a note, so **100 notes take roughly 5 to 7 hours**
-depending on how many comments they carry; the default caps (150 actions a
-run) give about 25 notes a run, and the daily cap (450) about 75 a day.
-`--max-comments 60 --max-replies 3` is quicker per note.
+**Expected time.** A note costs about 5 page actions: its tile (and
+sometimes a scroll toward it), up to three scrolls of the comments, a reply
+thread or two, Escape; a creator's list adds one to a few. At the default
+pace (9 s between actions on average plus the page's settling, a
+2.5-minute pause every 22 actions or so) that is about 1.5 minutes a note:
+**750 actions, the daily cap, take 3 to 4 hours** and read about 120 notes
+of some 40 to 50 creators. `--per-creator` and `--max-replies` trade depth
+for breadth.
 
 ### The record
 
@@ -281,11 +289,12 @@ run) give about 25 notes a run, and the daily cap (450) about 75 a day.
                             "location": null, "reply_to": "…", "reply_to_author": "alice",
                             "replies": [], "replies_total": 0}],
                "replies_total": 2}],
- "comments_complete": true, "matched": ["打工"], "captured_at": "2026-09-27T10:00:00.000Z"}
+ "comments_complete": true, "matched": ["打工"], "on_topic": true, "captured_at": "2026-09-27T10:00:00.000Z"}
 ```
 
 Images and videos are addresses only; nothing is downloaded.
-`comments_complete` is false when a cap cut the comments. In the store
+`comments_complete` is false when a cap cut the comments; `matched` is
+empty and `on_topic` false when the glossary found no Salmon Run term. In the store
 (`crates/cuttlefish/src/rednote.rs`) each note is one document titled by
 the note, with a header (`Xiaohongshu note by <creator>, <date>`), the
 text, the tags, and a `## Comments` section of timestamped lines with the

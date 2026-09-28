@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Pace } from "../lib/pace.mjs";
-import { Crawl } from "../lib/rednote-crawl.mjs";
+import { choose, Crawl, shuffle, unread } from "../lib/rednote-crawl.mjs";
 import * as rn from "../lib/rednote.mjs";
 import * as state from "../lib/state.mjs";
 import { commentsFixture, feedFixture, stateFixture } from "./rednote.test.mjs";
@@ -143,7 +143,15 @@ const quick = () =>
     { sleep: async () => true, random: () => 0.5 },
   );
 
-function crawl(page, dir, options = {}, st = state.load(dir, rn.TOOL)) {
+/** A crawl on `page`; its random source just under 1 draws the largest
+ * share of the unread notes and shuffles nothing (the list's order) */
+function crawl(
+  page,
+  dir,
+  options = {},
+  st = state.load(dir, rn.TOOL),
+  random = () => 0.999,
+) {
   const lines = [];
   const c = new Crawl(page, {
     pace: quick(),
@@ -152,6 +160,7 @@ function crawl(page, dir, options = {}, st = state.load(dir, rn.TOOL)) {
     log: (l) => lines.push(l),
     options,
     now: () => NOW,
+    random,
   });
   c.lines = lines;
   return c;
@@ -275,7 +284,7 @@ function firstVisit() {
   };
 }
 
-test("a first visit: the list, the Salmon Run notes with their comments", async () => {
+test("a first visit: the list, every note with its comments, matched or not", async () => {
   const dir = scratch();
   const page = new FakePage(firstVisit());
   const c = crawl(page, dir, { creators: [A] });
@@ -283,7 +292,7 @@ test("a first visit: the list, the Salmon Run notes with their comments", async 
   assert.equal(s.stopped, undefined, c.lines.join("\n"));
   assert.deepEqual(
     [s.creators, s.listed, s.fresh, s.kept, s.offTopic, s.failed],
-    [1, 3, 3, 2, 1, 0],
+    [1, 3, 3, 3, 1, 0],
   );
   assert.deepEqual(page.visited, [
     SITE,
@@ -297,7 +306,15 @@ test("a first visit: the list, the Salmon Run notes with their comments", async 
     "click more",
     "click more",
     "key Escape",
-    // The second note: read off the page, nothing to scroll
+    // The cat, read like the others (list order: nothing is shuffled
+    // here): comments scrolled up to the cap of 3 scrolls, then twice
+    // without news
+    `click a[href*="${CAT}"]`,
+    "scroll .note-scroller",
+    "scroll .note-scroller",
+    "click more",
+    "key Escape",
+    // The last note: read off the page, nothing to scroll
     `click a[href*="${SR2}"]`,
     "click more",
     "key Escape",
@@ -308,7 +325,7 @@ test("a first visit: the list, the Salmon Run notes with their comments", async 
     .map((l) => JSON.parse(l));
   assert.deepEqual(
     lines.map((l) => l.id),
-    [SR, SR2],
+    [SR, CAT, SR2],
   );
   const sr = lines[0];
   // Comments of the page's answer, the scrolled page and the unfolded
@@ -324,7 +341,11 @@ test("a first visit: the list, the Salmon Run notes with their comments", async 
   assert.equal(sr.comments_complete, true);
   assert.equal(sr.author.nickname, "Grizzco Coach");
   assert.deepEqual(sr.matched, ["打工", "炸弹鱼"]);
-  const sr2 = lines[1];
+  assert.equal(sr.on_topic, true);
+  // Saved although the glossary finds no term in it
+  assert.deepEqual(lines[1].matched, []);
+  assert.equal(lines[1].on_topic, false);
+  const sr2 = lines[2];
   assert.equal(sr2.text, "Left side first.");
   assert.equal(sr2.author.user_id, A);
   assert.equal(sr2.date, "2025-01-02T00:00:00.000Z");
@@ -336,24 +357,27 @@ test("a first visit: the list, the Salmon Run notes with their comments", async 
   assert.deepEqual(st.seen, {
     [SR]: "kept",
     [SR2]: "kept",
-    [CAT]: "off-topic",
+    [CAT]: "kept",
   });
-  assert.equal(st.accounts[A].kept, 2);
+  assert.deepEqual(st.accounts[A].notes, [SR, CAT, SR2]);
+  assert.deepEqual(st.accounts[A].tokens, {});
+  assert.equal(st.accounts[A].kept, 3);
   assert.equal(st.accounts[A].off_topic, 1);
   assert.equal(st.accounts[A].listed_to_end, true);
   assert.equal(st.accounts[A].nickname, "Grizzco Coach");
-  assert.equal(st.day.actions, 11);
+  assert.equal(st.day.actions, 16);
   assert.ok(
     c.lines.some((l) => l.includes(`kept ${rn.noteUrl(SR)} (5 comments)`)),
     c.lines.join("\n"),
   );
 
-  // A second run: the list shows only notes seen, nothing is opened
+  // A second run: the list shows only notes known, all read: nothing is
+  // opened
   const again = new FakePage(firstVisit());
   const s2 = await crawl(again, dir, { creators: [A] }).run();
   assert.deepEqual(again.visited, [SITE, PROFILE_A]);
   assert.deepEqual([s2.kept, s2.fresh], [0, 0]);
-  assert.equal(state.load(dir, rn.TOOL).day.actions, 13);
+  assert.equal(state.load(dir, rn.TOOL).day.actions, 18);
   rmSync(dir, { recursive: true });
 });
 
@@ -362,19 +386,19 @@ test("a dry run browses but writes only the day's action count", async () => {
   const page = new FakePage(firstVisit());
   const c = crawl(page, dir, { creators: [A], dryRun: true });
   const s = await c.run();
-  assert.equal(s.kept, 2);
+  assert.equal(s.kept, 3);
   assert.ok(page.visited.includes(`click a[href*="${SR}"]`));
   assert.ok(c.lines.some((l) => l.includes("would keep")));
   assert.equal(existsSync(join(dir, A)), false);
   assert.equal(s.files.size, 0);
   // Its page actions count against the daily cap; nothing else is kept
   const st = state.load(dir, rn.TOOL);
-  assert.equal(st.day.actions, 11);
+  assert.equal(st.day.actions, 16);
   assert.deepEqual(st.seen, {});
   assert.deepEqual(st.accounts, {});
   // A real run after it carries the count on
   await crawl(new FakePage(firstVisit()), dir, { creators: [A] }).run();
-  assert.equal(state.load(dir, rn.TOOL).day.actions, 22);
+  assert.equal(state.load(dir, rn.TOOL).day.actions, 32);
   rmSync(dir, { recursive: true });
 });
 
@@ -391,7 +415,7 @@ test("a tile the list no longer draws is scrolled toward, else the note is opene
   const c = crawl(page, dir, { creators: [A] });
   const s = await c.run();
   assert.equal(s.stopped, undefined, c.lines.join("\n"));
-  assert.equal(s.kept, 2);
+  assert.equal(s.kept, 3);
   assert.deepEqual(page.visited.slice(2, 6), [
     "scroll",
     "scroll up",
@@ -421,14 +445,126 @@ test("a tile the list no longer draws is scrolled toward, else the note is opene
   rmSync(dir2, { recursive: true });
 });
 
-test("detail matching opens every new note and keeps the relevant ones", async () => {
+/** Creator A with `ids` listed on one page, each note's tile opening a
+ * note read off the page */
+function manyNotes(ids) {
+  const script = {
+    [SITE]: { responses: [me(false)] },
+    [PROFILE_A]: {
+      responses: [
+        list(
+          ids.map((id) => [id, "Salmon Run"]),
+          false,
+        ),
+      ],
+      clicks: {},
+    },
+  };
+  for (const id of ids) {
+    script[PROFILE_A].clicks[`a[href*="${id}"]`] = { location: NOTE(id) };
+    script[NOTE(id)] = {
+      dom: {
+        title: `note ${id}`,
+        desc: "",
+        author: "",
+        date: "",
+        comments: [],
+      },
+      escapeTo: PROFILE_A,
+    };
+  }
+  return script;
+}
+
+const ids = (n) =>
+  Array.from({ length: n }, (_, i) => `66bb0000000000000000000${i}`);
+const opened = (page) =>
+  page.visited
+    .filter((v) => v.startsWith("click a[href"))
+    .map((v) => v.slice(15, -2));
+
+test("a visit reads a random share of the unread notes, at most --per-creator; later visits finish the rest", async () => {
   const dir = scratch();
-  const page = new FakePage(firstVisit());
-  const s = await crawl(page, dir, { creators: [A], match: "detail" }).run();
-  assert.deepEqual([s.kept, s.offTopic], [2, 1]);
-  assert.ok(page.visited.includes(`click a[href*="${CAT}"]`));
-  assert.equal(state.load(dir, rn.TOOL).seen[CAT], "off-topic");
+  const all = ids(5);
+  // A random source of 0: the smallest share, 60% of 5 unread is 3
+  const zero = () => 0;
+  const page = new FakePage(manyNotes(all));
+  const s = await crawl(page, dir, { creators: [A] }, undefined, zero).run();
+  assert.equal(s.kept, 3);
+  assert.equal(s.left, 2);
+  const first = opened(page);
+  assert.equal(new Set(first).size, 3);
+  let st = state.load(dir, rn.TOOL);
+  assert.deepEqual(st.accounts[A].notes, all);
+  const left = all.filter((id) => !first.includes(id));
+  assert.deepEqual(unread(st.accounts[A], st.seen), left);
+  // The notes left keep their tokens, for their address
+  assert.deepEqual(Object.keys(st.accounts[A].tokens).sort(), left);
+
+  // The next visit: the list shows nothing new, so it is not scrolled;
+  // the cap of one note a visit leaves one for later
+  const page2 = new FakePage(manyNotes(all));
+  const s2 = await crawl(page2, dir, { creators: [A], perCreator: 1 }).run();
+  assert.equal(s2.kept, 1);
+  assert.deepEqual(page2.visited.slice(0, 2), [SITE, PROFILE_A]);
+  assert.ok(left.includes(opened(page2)[0]));
+  st = state.load(dir, rn.TOOL);
+  assert.equal(unread(st.accounts[A], st.seen).length, 1);
+
+  // A note that appeared since is read before the ones left over
+  const more = [`66bb00000000000000000009`, ...all];
+  const page3 = new FakePage(manyNotes(more));
+  const s3 = await crawl(page3, dir, { creators: [A], perCreator: 1 }).run();
+  assert.deepEqual([s3.fresh, s3.kept, s3.left], [1, 1, 1]);
+  assert.deepEqual(opened(page3), [more[0]]);
+  assert.deepEqual(state.load(dir, rn.TOOL).accounts[A].notes, more);
   rmSync(dir, { recursive: true });
+});
+
+test("the notes chosen: the share, the cap, new ones first, a random order", () => {
+  const u = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+  const opts = { share: [0.6, 0.95], cap: 12 };
+  assert.equal(choose(u, [], opts, () => 0).length, 6);
+  assert.equal(choose(u, [], opts, () => 0.999).length, 9);
+  assert.equal(choose(u, [], { ...opts, cap: 4 }, () => 0.999).length, 4);
+  assert.deepEqual(
+    choose(["a"], [], opts, () => 0),
+    ["a"],
+  );
+  assert.deepEqual(
+    choose([], [], opts, () => 0),
+    [],
+  );
+  // The new ones fill the visit first; the order is shuffled
+  const picked = choose(u, ["i", "j"], { ...opts, cap: 3 }, () => 0);
+  assert.equal(picked.length, 3);
+  assert.ok(picked.includes("i") && picked.includes("j"));
+  assert.deepEqual(
+    shuffle([1, 2, 3, 4], () => 0),
+    [2, 3, 4, 1],
+  );
+  assert.deepEqual(
+    shuffle([1, 2, 3, 4], () => 0.999),
+    [1, 2, 3, 4],
+  );
+});
+
+test("creators never visited first, then those with notes left, the oldest visit first", () => {
+  const dir = scratch();
+  const st = state.fresh(rn.TOOL);
+  const visit = (id, at, notes) =>
+    Object.assign(state.account(st, id), { visited_at: at, notes });
+  st.seen = { n1: "kept", n2: "kept", n3: "off-topic" };
+  visit("done-old", "2026-09-01T00:00:00Z", ["n1"]);
+  visit("left-new", "2026-09-20T00:00:00Z", ["n2", "n3"]);
+  visit("left-old", "2026-09-10T00:00:00Z", ["n4"]);
+  const c = crawl(new FakePage({}), dir, {}, st);
+  assert.deepEqual(c.order(["done-old", "left-new", "never", "left-old"]), [
+    "never",
+    "left-old",
+    "left-new",
+    "done-old",
+  ]);
 });
 
 test("a challenge stops at once; nothing is written", async () => {
@@ -570,7 +706,8 @@ test("the page state lists notes and holds a note's detail", async () => {
     [NOTE(id)]: { state: stateFixture(), escapeTo: PROFILE_A },
   };
   const s = await crawl(new FakePage(script), dir, { creators: [A] }).run();
-  assert.deepEqual([s.kept, s.offTopic], [1, 1]);
+  // The cat's tile opens nothing and its address shows no note
+  assert.deepEqual([s.kept, s.failed], [1, 1]);
   const line = JSON.parse(
     readFileSync(join(dir, A, "notes.jsonl"), "utf8").trim(),
   );

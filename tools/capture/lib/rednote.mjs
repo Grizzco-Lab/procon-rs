@@ -422,7 +422,8 @@ export function folderOf(id) {
 }
 
 /** One note as a record of the file: the note with its comments, the
- * Salmon Run terms matched, and when it was captured */
+ * Salmon Run terms the glossary matched (maybe none: every note read is
+ * saved), `on_topic` when there are some, and when it was captured */
 export function record(note, matched, capturedAt = new Date()) {
   const comment = (c) => ({
     id: c.id,
@@ -457,6 +458,7 @@ export function record(note, matched, capturedAt = new Date()) {
     comments: (note.comments ?? []).map(comment),
     comments_complete: note.comments_complete === true,
     matched,
+    on_topic: matched.length > 0,
     captured_at: capturedAt.toISOString(),
   };
 }

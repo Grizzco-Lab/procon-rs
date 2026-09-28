@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// rncap: a slow, browser-driven capture of the Salmon Run notes (笔记) of
-// the creators one follows on Xiaohongshu (RedNote), with their comments
+// rncap: a slow, browser-driven capture of the notes (笔记) of the Salmon
+// Run creators one follows on Xiaohongshu (RedNote), with their comments
 // and replies, into Cuttlefish's inbox
 // (`<knowledge>/inbox/rednote/<user id>/notes.jsonl`), for `cuttlefish
 // ingest inbox`. It drives a real, logged-in Chrome over the DevTools
@@ -25,29 +25,29 @@ import * as cdp from "./lib/cdp.mjs";
 import { knowledgeFolder } from "./lib/config.mjs";
 import { Pace, estimateSeconds, parseRange } from "./lib/pace.mjs";
 import * as rn from "./lib/rednote.mjs";
-import { Crawl, DEFAULTS as CRAWL } from "./lib/rednote-crawl.mjs";
+import { Crawl, DEFAULTS as CRAWL, unread } from "./lib/rednote-crawl.mjs";
 import * as state from "./lib/state.mjs";
 
 /** The profile and port xcap uses too: one login for both sites */
 const DEFAULT_PROFILE = join(homedir(), ".config", "procon", "browser-profile");
 const DEFAULT_PORT = 9251;
 
-/** The pace of a person reading, on a site with strict risk control: 8 to
- * 20 s between actions, a pause of 2 to 8 minutes every 10 to 25, at most
- * 150 actions a run and 450 a day */
+/** The pace of a person reading, on a site with strict risk control: 6 to
+ * 12 s between actions, a pause of 1 to 4 minutes every 15 to 30, at most
+ * 750 actions a run and 750 a day */
 const PACE = Object.freeze({
-  delay: [8, 20],
-  pauseEvery: [10, 25],
-  pause: [120, 480],
-  maxActions: 150,
-  dailyCap: 450,
+  delay: [6, 12],
+  pauseEvery: [15, 30],
+  pause: [60, 240],
+  maxActions: 750,
+  dailyCap: 750,
   maxMinutes: null,
 });
 
 const USAGE = `usage: rednote.mjs <login | run | status> [options]
 
   login                    open Chrome on the capture's profile for you to log in, then close it
-  run                      visit the following list, the creators' notes, the Salmon Run notes' comments
+  run                      visit the following list, the creators' notes, a random share of each one's unread notes with comments
   status                   what the state file says
 
 Where (run, status):
@@ -67,9 +67,10 @@ What to read (run):
   --site <origin>          where the account logs in (default ${rn.SITE}; https://www.rednote.com outside China)
   --creators <a,b,...>     only these creators (profile links or ids; @<file> with one per line), instead of the following list
   --refresh-following      read the following list again now
-  --match <title|detail>   what decides that a note is about Salmon Run: its title in the list (default), or the whole note (every new note is opened)
-  --max-notes <n>          notes kept this run (default ${CRAWL.maxNotes})
+  --per-creator <n>        notes read per creator per visit, at most, after a random ${CRAWL.share.map((x) => x * 100).join("-")}% of its unread ones (default ${CRAWL.perCreator})
+  --max-notes <n>          notes read this run (default: no limit but the action caps)
   --max-comments <n>       comments (with replies) loaded per note (default ${CRAWL.maxComments})
+  --comment-scrolls <n>    scrolls down a note's comments (default ${CRAWL.commentScrolls})
   --max-replies <n>        reply threads unfolded per note (default ${CRAWL.maxReplies})
   --list-scrolls <n>       scrolls down a creator's list, at most (default ${CRAWL.listScrolls})
   --tile-scrolls <n>       scrolls of the list toward a note's tile before its address is used instead (default ${CRAWL.tileScrolls})
@@ -102,9 +103,10 @@ const { values: o, positionals } = parseArgs({
     site: { type: "string", default: rn.SITE },
     creators: { type: "string", multiple: true },
     "refresh-following": { type: "boolean", default: false },
-    match: { type: "string", default: "title" },
+    "per-creator": { type: "string" },
     "max-notes": { type: "string" },
     "max-comments": { type: "string" },
+    "comment-scrolls": { type: "string" },
     "max-replies": { type: "string" },
     "list-scrolls": { type: "string" },
     "tile-scrolls": { type: "string" },
@@ -123,10 +125,6 @@ const command = positionals[0];
 if (o.help || !["login", "run", "status"].includes(command)) {
   console.error(USAGE);
   process.exit(command ? 2 : 0);
-}
-if (!["title", "detail"].includes(o.match)) {
-  console.error("--match: title or detail");
-  process.exit(2);
 }
 
 /** A whole number option, or its default */
@@ -294,9 +292,10 @@ async function run() {
     me: o.me,
     creators: creatorsOf(o.creators),
     refreshFollowing: o["refresh-following"],
-    match: o.match,
-    maxNotes: integer("max-notes", CRAWL.maxNotes),
+    perCreator: integer("per-creator", CRAWL.perCreator),
+    maxNotes: integer("max-notes", 0) || null,
     maxComments: integer("max-comments", CRAWL.maxComments),
+    commentScrolls: integer("comment-scrolls", CRAWL.commentScrolls),
     maxReplies: integer("max-replies", CRAWL.maxReplies),
     listScrolls: integer("list-scrolls", CRAWL.listScrolls),
     tileScrolls: integer("tile-scrolls", CRAWL.tileScrolls),
@@ -329,7 +328,7 @@ async function run() {
     `pace: ${paceOptions.delay.join("-")} s between actions, a ${paceOptions.pause.join("-")} s pause every ${paceOptions.pauseEvery.join("-")}; at most ${paceOptions.maxActions ?? "any"} actions this run, ${paceOptions.dailyCap ?? "any"} today (${st.day.actions} used${st.day.day ? ` on ${st.day.day}` : ""}); about ${(estimateSeconds(6, paceOptions) / 60).toFixed(1)} min a note, ${(estimateSeconds(600, paceOptions) / 3600).toFixed(1)} h per 100 notes`,
   );
   log(
-    `creators: ${options.creators.length ? `${options.creators.length} given` : "the accounts you follow"}; a note is about Salmon Run by its ${options.match === "title" ? "title" : "whole text"}; up to ${options.maxNotes} notes this run, ${options.maxComments} comments and ${options.maxReplies} reply threads a note`,
+    `creators: ${options.creators.length ? `${options.creators.length} given` : "the accounts you follow"}; ${CRAWL.share.map((x) => x * 100).join("-")}% of each one's unread notes, at most ${options.perCreator} a visit${options.maxNotes ? `, ${options.maxNotes} this run` : ""}; up to ${options.maxComments} comments, ${options.commentScrolls} scrolls and ${options.maxReplies} reply threads a note`,
   );
   const b = await browser();
   const page = await openPage();
@@ -343,7 +342,7 @@ async function run() {
   }
   const s = summary;
   log(
-    `${options.dryRun ? "would have kept" : "kept"} ${s.kept} notes (${s.comments} comments) of ${s.creators} creators; ${s.listed} notes listed, ${s.fresh} new, ${s.offTopic} not about Salmon Run, ${s.failed} unreadable; ${pace.actions} page actions this run, ${st.day.actions} today`,
+    `${options.dryRun ? "would have kept" : "kept"} ${s.kept} notes (${s.offTopic} without a Salmon Run term; ${s.comments} comments) of ${s.creators} creators; ${s.listed} notes listed, ${s.fresh} new, ${s.failed} unreadable, ${s.left} unread left with them; ${pace.actions} page actions this run, ${st.day.actions} today`,
   );
   for (const f of s.files) log(`  ${f}`);
   if (s.stopped) log(`stopped: ${s.stopped.message}`);
@@ -376,7 +375,12 @@ function status() {
   const seen = Object.values(st.seen);
   const n = (kind) => seen.filter((s) => s === kind).length;
   console.log(
-    `notes looked at: ${seen.length} (${n("kept")} kept, ${n("off-topic")} not about Salmon Run, ${n("failed")} unreadable)`,
+    `notes read: ${n("kept")} kept, ${n("failed")} unreadable${n("off-topic") ? ` (${n("off-topic")} skipped by title by an older run, unread again)` : ""}`,
+  );
+  const visited = Object.values(st.accounts).filter((a) => a.visited_at);
+  const pending = visited.filter((a) => unread(a, st.seen).length);
+  console.log(
+    `creators: ${visited.length} visited, ${f.handles.filter((h) => !st.accounts[h]?.visited_at).length} of the following list never; ${pending.length} with unread notes (${pending.reduce((t, a) => t + unread(a, st.seen).length, 0)} notes)`,
   );
   for (const [id, a] of Object.entries(st.accounts).sort(([x], [y]) =>
     x.localeCompare(y),
@@ -388,7 +392,7 @@ function status() {
       // No file yet
     }
     console.log(
-      `  ${id} ${(a.nickname ?? "").padEnd(20)} ${String(a.kept).padStart(4)} kept ${String(a.off_topic).padStart(4)} off topic  visited ${a.visited_at?.slice(0, 16).replace("T", " ") ?? "never"}${a.listed_to_end ? "" : " (list not finished)"}${size}`,
+      `  ${id} ${(a.nickname ?? "").padEnd(20)} ${String(a.kept).padStart(4)} kept ${String(a.off_topic).padStart(4)} no term ${String(unread(a, st.seen).length).padStart(4)} unread  visited ${a.visited_at?.slice(0, 16).replace("T", " ") ?? "never"}${a.listed_to_end ? "" : " (list not finished)"}${size}`,
     );
   }
   if (existsSync(dir)) {
