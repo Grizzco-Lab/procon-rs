@@ -130,45 +130,33 @@ impl ObjectBox {
     }
 }
 
-/// Whether a person has labeled a frame: it holds a box that is not a
-/// model's, or none at all (the same rule as
-/// `gameplay_vision::labels::is_reviewed`)
-pub fn is_reviewed(frame: &FrameObjects) -> bool {
-    frame.boxes.is_empty() || frame.boxes.iter().any(|b| !b.by_model())
-}
-
-/// How many frames after `start` Follow may write, going forward (towards
-/// frame `total - 1`) or backward (towards 0): at most `count`, and never
-/// up to a frame a person has labeled
-pub fn follow_span(
-    frames: &BTreeMap<u64, FrameObjects>,
-    start: u64,
-    count: u64,
-    forward: bool,
-    total: u64,
-) -> u64 {
+/// How many frames after `start` Follow covers, going forward (towards
+/// frame `total - 1`) or backward (towards 0): at most `count`, up to the
+/// end of the segment. Labeled frames do not stop it ([`apply_followed`]
+/// decides per object).
+pub fn follow_span(start: u64, count: u64, forward: bool, total: u64) -> u64 {
     let room = if forward {
         total.saturating_sub(start + 1)
     } else {
         start
     };
-    let limit = count.min(room);
-    if limit == 0 {
-        return 0;
+    count.min(room)
+}
+
+/// Overlap above which a person's box of the same class stands for the
+/// followed object on a frame ([`apply_followed`])
+pub const COVERED_IOU: f64 = 0.3;
+
+/// Intersection over union of two boxes
+pub fn iou(a: &ObjectBox, b: &ObjectBox) -> f64 {
+    let w = (a.x + a.w).min(b.x + b.w) - a.x.max(b.x);
+    let h = (a.y + a.h).min(b.y + b.h) - a.y.max(b.y);
+    if w <= 0.0 || h <= 0.0 {
+        return 0.0;
     }
-    let labeled = if forward {
-        frames
-            .range(start + 1..=start + limit)
-            .find(|(_, f)| is_reviewed(f))
-            .map(|(&n, _)| n - start - 1)
-    } else {
-        frames
-            .range(start - limit..start)
-            .rev()
-            .find(|(_, f)| is_reviewed(f))
-            .map(|(&n, _)| start - n - 1)
-    };
-    labeled.unwrap_or(limit)
+    let inter = w * h;
+    let union = a.w * a.h + b.w * b.h - inter;
+    if union > 0.0 { inter / union } else { 0.0 }
 }
 
 /// What [`apply_followed`] did
@@ -176,17 +164,21 @@ pub fn follow_span(
 pub struct FollowWrite {
     /// Frames written
     pub written: usize,
-    /// Frames left alone because a person labeled them meanwhile
-    pub kept: usize,
+    /// Followed boxes left out because a person's box already stands for
+    /// the object there
+    pub covered: usize,
 }
 
 /// Write Follow's boxes into a segment's frames: `followed` holds, per
 /// frame, the boxes of the objects still followed there, whose ids are
-/// among `ids`. A frame a person has labeled ([`is_reviewed`]) is never
-/// changed. On any other frame the model boxes of those ids (an earlier
-/// Follow, or an object lost since) give way to the new boxes; other boxes
-/// stay. A frame left without boxes loses its line, since an empty line
-/// would mean "looked at, nothing here".
+/// among `ids`. Per object: on every frame the model boxes of those ids (an
+/// earlier Follow, or an object lost since) give way to the new boxes, and
+/// a new box is added unless a person's box of the same class overlaps it
+/// by more than [`COVERED_IOU`] (that box is the object's already). A line
+/// a person left empty ("looked at, nothing here") is not changed. Boxes of
+/// people are never changed; other model boxes stay. A frame left without
+/// boxes loses its line, since an empty line would mean "looked at,
+/// nothing here".
 pub fn apply_followed(
     frames: &mut BTreeMap<u64, FrameObjects>,
     followed: &[(u64, Vec<ObjectBox>)],
@@ -194,8 +186,8 @@ pub fn apply_followed(
 ) -> FollowWrite {
     let mut done = FollowWrite::default();
     for (frame, boxes) in followed {
-        if frames.get(frame).is_some_and(is_reviewed) {
-            done.kept += 1;
+        if frames.get(frame).is_some_and(|f| f.boxes.is_empty()) {
+            done.covered += boxes.len();
             continue;
         }
         let line = frames.entry(*frame).or_insert_with(|| FrameObjects {
@@ -205,7 +197,17 @@ pub fn apply_followed(
         });
         line.boxes
             .retain(|b| !(b.by_model() && b.track_id().is_some_and(|id| ids.contains(&id))));
-        line.boxes.extend(boxes.iter().cloned());
+        for new in boxes {
+            let covered = line
+                .boxes
+                .iter()
+                .any(|b| !b.by_model() && b.class == new.class && iou(b, new) > COVERED_IOU);
+            if covered {
+                done.covered += 1;
+            } else {
+                line.boxes.push(new.clone());
+            }
+        }
         if line.boxes.is_empty() {
             frames.remove(frame);
         }
@@ -302,26 +304,26 @@ impl Annotations {
         boxes: Vec<ObjectBox>,
         base: &[ObjectBox],
     ) -> Result<FrameObjects> {
+        let mut saved = self.save_frames(session, segment, vec![(frame, boxes, base.to_vec())])?;
+        Ok(saved.remove(0))
+    }
+
+    /// Save several frames as [`Annotations::save_frame`] saves one, each
+    /// `(frame, boxes, base)`, in one write of the file (Accept up to here).
+    /// Answers with the frames as saved, in the order given.
+    pub fn save_frames(
+        &self,
+        session: &str,
+        segment: &str,
+        changes: Vec<(u64, Vec<ObjectBox>, Vec<ObjectBox>)>,
+    ) -> Result<Vec<FrameObjects>> {
         let path = self.path(session, segment)?;
         let _writing = self.writing.lock().unwrap();
         let mut frames = read_objects(&path)?;
-        let old = frames.remove(&frame);
-        let mut saved = FrameObjects {
-            frame,
-            boxes,
-            extra: Map::new(),
-        };
-        if let Some(old) = old {
-            let unseen = old
-                .boxes
-                .into_iter()
-                .filter(|b| b.by_model() && !base.contains(b) && !saved.boxes.contains(b));
-            saved.boxes.extend(unseen.collect::<Vec<_>>());
-            saved.extra = old.extra;
-        }
-        if !saved.boxes.is_empty() {
-            frames.insert(frame, saved.clone());
-        }
+        let saved = changes
+            .into_iter()
+            .map(|(frame, boxes, base)| replace_frame(&mut frames, frame, boxes, &base))
+            .collect();
         write_objects(&path, &frames)?;
         Ok(saved)
     }
@@ -416,6 +418,34 @@ impl Annotations {
         write_atomic(&path, text.as_bytes())?;
         Ok((path, stats))
     }
+}
+
+/// Replace the boxes of `frame` in `frames` by the rule of
+/// [`Annotations::save_frame`]; answers with the frame as saved
+fn replace_frame(
+    frames: &mut BTreeMap<u64, FrameObjects>,
+    frame: u64,
+    boxes: Vec<ObjectBox>,
+    base: &[ObjectBox],
+) -> FrameObjects {
+    let old = frames.remove(&frame);
+    let mut saved = FrameObjects {
+        frame,
+        boxes,
+        extra: Map::new(),
+    };
+    if let Some(old) = old {
+        let unseen = old
+            .boxes
+            .into_iter()
+            .filter(|b| b.by_model() && !base.contains(b) && !saved.boxes.contains(b));
+        saved.boxes.extend(unseen.collect::<Vec<_>>());
+        saved.extra = old.extra;
+    }
+    if !saved.boxes.is_empty() {
+        frames.insert(frame, saved.clone());
+    }
+    saved
 }
 
 /// The lines of a labels file by frame; a missing file has none
@@ -560,6 +590,43 @@ mod tests {
     }
 
     #[test]
+    fn save_frames_accepts_several_frames_in_one_write() {
+        let annotations = Annotations::new(scratch("save-frames"));
+        let (s, seg) = ("2026-09-25_11-26-22", "video-01.mkv");
+        let seen = a_box("chum", 0.1, "model");
+        let unseen = a_box("maws", 0.5, "model");
+        annotations
+            .save_frame(s, seg, 4, vec![seen.clone(), unseen.clone()], &[])
+            .unwrap();
+        annotations
+            .save_frame(s, seg, 5, vec![seen.clone()], &[])
+            .unwrap();
+
+        // The page saw only `seen` on frames 4 and 5 and accepts both
+        let mut accepted = seen.clone();
+        accepted.by = "user".to_string();
+        accepted.score = None;
+        let saved = annotations
+            .save_frames(
+                s,
+                seg,
+                vec![
+                    (5, vec![accepted.clone()], vec![seen.clone()]),
+                    (4, vec![accepted.clone()], vec![seen.clone()]),
+                ],
+            )
+            .unwrap();
+        assert_eq!(saved[0].frame, 5);
+        assert_eq!(saved[0].boxes, vec![accepted.clone()]);
+        assert_eq!(saved[1].boxes, vec![accepted.clone(), unseen.clone()]);
+        let frames = annotations.read(s, seg).unwrap();
+        assert_eq!(frames[&4].boxes, vec![accepted.clone(), unseen]);
+        assert_eq!(frames[&5].boxes, vec![accepted]);
+        assert!(frames.values().all(|f| f.boxes[0].by == "user"));
+        let _ = std::fs::remove_dir_all(annotations.dir());
+    }
+
+    #[test]
     fn classes_start_with_the_starter_list() {
         let annotations = Annotations::new(scratch("classes"));
         let classes = annotations.classes().unwrap();
@@ -600,43 +667,43 @@ mod tests {
     }
 
     #[test]
-    fn follow_stops_before_labeled_frames() {
-        let frames: BTreeMap<u64, FrameObjects> = [
-            line(10, vec![a_box("chum", 0.1, "user")]),
-            line(14, vec![followed(1, 0.2)]),
-            line(
-                20,
-                vec![a_box("maws", 0.1, "model"), a_box("chum", 0.3, "user")],
-            ),
-            line(4, vec![]),
-        ]
-        .into_iter()
-        .collect();
-        // Forward from 10: model-only frame 14 is fine, user frame 20 stops
-        assert_eq!(follow_span(&frames, 10, 60, true, 100), 9);
-        assert_eq!(follow_span(&frames, 10, 5, true, 100), 5);
-        // Backward from 10: frame 4 was looked at and holds nothing
-        assert_eq!(follow_span(&frames, 10, 60, false, 100), 5);
-        // The ends of the video
-        assert_eq!(follow_span(&frames, 95, 60, true, 100), 4);
-        assert_eq!(follow_span(&frames, 2, 60, false, 100), 2);
-        assert_eq!(follow_span(&frames, 99, 60, true, 100), 0);
-        // Right next to a labeled frame there is nothing to do
-        assert_eq!(follow_span(&frames, 19, 60, true, 100), 0);
+    fn follow_covers_count_frames_up_to_the_ends() {
+        assert_eq!(follow_span(10, 60, true, 100), 60);
+        assert_eq!(follow_span(10, 60, false, 100), 10);
+        assert_eq!(follow_span(95, 60, true, 100), 4);
+        assert_eq!(follow_span(99, 60, true, 100), 0);
+        assert_eq!(follow_span(0, 60, false, 100), 0);
     }
 
     #[test]
-    fn followed_boxes_never_touch_labeled_frames() {
+    fn overlap() {
+        let a = a_box("chum", 0.1, "user");
+        assert!((iou(&a, &a) - 1.0).abs() < 1e-9);
+        // Half as wide apart: a third of the union
+        assert!((iou(&a, &a_box("chum", 0.15, "user")) - 1.0 / 3.0).abs() < 1e-9);
+        assert_eq!(iou(&a, &a_box("chum", 0.5, "user")), 0.0);
+    }
+
+    #[test]
+    fn followed_boxes_are_placed_per_object() {
         let other = a_box("maws", 0.6, "model");
+        let others_user = a_box("maws", 0.6, "user");
+        let same_user = a_box("chum", 0.21, "user");
+        let far_user = a_box("chum", 0.8, "user");
         let mut frames: BTreeMap<u64, FrameObjects> = [
             // Model only: the old box of track 1 gives way, track 7 stays
             line(11, vec![followed(1, 0.1), followed(7, 0.5), other.clone()]),
-            // A person labeled it meanwhile
-            line(12, vec![a_box("chum", 0.1, "user")]),
+            // A person labeled other objects: the followed box joins them
+            line(12, vec![others_user.clone()]),
             // Looked at, nothing there
             line(13, vec![]),
+            // A person's chum box over the followed one stands for it; the
+            // old box of track 1 goes all the same
+            line(14, vec![same_user.clone(), followed(1, 0.1)]),
+            // A chum box elsewhere is another chum
+            line(16, vec![far_user.clone()]),
             // Track 1 was lost here: its old box goes, the line with it
-            line(15, vec![followed(1, 0.1)]),
+            line(17, vec![followed(1, 0.1)]),
         ]
         .into_iter()
         .collect();
@@ -645,24 +712,28 @@ mod tests {
             (12, vec![followed(1, 0.2)]),
             (13, vec![followed(1, 0.2)]),
             (14, vec![followed(1, 0.2)]),
-            (15, vec![]),
+            (15, vec![followed(1, 0.2)]),
+            (16, vec![followed(1, 0.2)]),
+            (17, vec![]),
         ];
         let done = apply_followed(&mut frames, &result, &[1]);
         assert_eq!(
             done,
             FollowWrite {
-                written: 3,
-                kept: 2
+                written: 6,
+                covered: 2
             }
         );
         assert_eq!(
             frames[&11].boxes,
             [followed(7, 0.5), other, followed(1, 0.2)]
         );
-        assert_eq!(frames[&12].boxes, [a_box("chum", 0.1, "user")]);
+        assert_eq!(frames[&12].boxes, [others_user, followed(1, 0.2)]);
         assert!(frames[&13].boxes.is_empty());
-        assert_eq!(frames[&14].boxes, [followed(1, 0.2)]);
-        assert!(!frames.contains_key(&15));
+        assert_eq!(frames[&14].boxes, [same_user]);
+        assert_eq!(frames[&15].boxes, [followed(1, 0.2)]);
+        assert_eq!(frames[&16].boxes, [far_user, followed(1, 0.2)]);
+        assert!(!frames.contains_key(&17));
     }
 
     #[test]

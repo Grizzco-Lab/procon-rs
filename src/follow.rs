@@ -8,9 +8,12 @@
 //!
 //! The rules:
 //!
-//! - a frame a person has labeled is never written: a Follow stops before
-//!   the first one in its way ([`follow_span`]), and a frame labeled while
-//!   it runs is skipped ([`apply_followed`]);
+//! - labeled frames do not stop a Follow ([`follow_span`]); the rule is per
+//!   object ([`apply_followed`]): a followed object's box is added to a
+//!   frame unless a person's box of the same class overlaps it (IoU above
+//!   [`COVERED_IOU`](crate::objects::COVERED_IOU)), which stands for it
+//!   there, and the object is followed on; a line a person left empty is
+//!   not changed, and boxes of people are never changed or removed;
 //! - an object the tracker loses (low score, empty mask, sudden jump) is
 //!   not followed any further;
 //! - on the frames a Follow covers, the model boxes of the same track ids
@@ -248,11 +251,12 @@ pub struct Job {
     pub load_ms: Option<f64>,
     /// Mean time per frame so far
     pub ms_per_frame: Option<f64>,
-    /// Frames written, and frames left alone because someone labeled them
+    /// Frames written, and followed boxes left out because a person's box
+    /// already stands for the object there
     pub written: usize,
-    pub kept: usize,
+    pub covered: usize,
     pub lost: Vec<Lost>,
-    /// Why passes stopped short, such as "frame 120 is labeled"
+    /// Why passes stopped short, such as "the segment ends"
     pub notes: Vec<String>,
     pub error: Option<String>,
     pub started_ms: u64,
@@ -502,7 +506,7 @@ impl Follow {
             load_ms: None,
             ms_per_frame: None,
             written: 0,
-            kept: 0,
+            covered: 0,
             lost: Vec::new(),
             notes: Vec::new(),
             error: None,
@@ -548,34 +552,27 @@ impl Follow {
             .zip(&request.boxes)
             .map(|(&id, b)| (id, b.class.clone()))
             .collect();
-        // Every pass stops before the first frame someone labeled
-        let frames = annotations.read(&request.s, &file)?;
         let spans: Vec<(bool, u64)> = request
             .direction
             .passes()
             .iter()
             .map(|&forward| {
-                let span = follow_span(&frames, request.frame, request.count, forward, total);
+                let span = follow_span(request.frame, request.count, forward, total);
                 (forward, span)
             })
             .collect();
-        let mut notes = Vec::new();
-        for &(forward, span) in &spans {
-            if span < request.count {
-                let next = if forward {
-                    request.frame + span + 1
+        let notes = spans
+            .iter()
+            .filter(|&&(_, span)| span < request.count)
+            .map(|&(forward, _)| {
+                if forward {
+                    "the segment ends"
                 } else {
-                    request.frame.wrapping_sub(span + 1)
-                };
-                notes.push(if next < total {
-                    format!("frame {next} is labeled")
-                } else if forward {
-                    "the segment ends".to_string()
-                } else {
-                    "the segment starts".to_string()
-                });
-            }
-        }
+                    "the segment starts"
+                }
+                .to_string()
+            })
+            .collect();
         self.update(|job| {
             job.seg = file.clone();
             job.planned = spans.iter().map(|(_, span)| span).sum();
@@ -650,12 +647,12 @@ impl Follow {
             if pending.is_empty() {
                 return Ok(());
             }
-            let FollowWrite { written, kept } =
+            let FollowWrite { written, covered } =
                 annotations.write_followed(&request.s, file, pending, ids)?;
             pending.clear();
             self.update(|job| {
                 job.written += written;
-                job.kept += kept;
+                job.covered += covered;
             });
             Ok(())
         };

@@ -268,9 +268,12 @@ frame; the scrubber marks labeled frames on one canvas (`drawMarks`). Follow
 (`src/follow.rs`) sends a frame's boxes and the video path to the tracker
 (`agentzero-track-serve` in AgentZero: SAM 2.1 tiny through transformers,
 streaming, JSON lines per frame) from a thread and writes its boxes every ten
-frames under the labeling lock. `follow_span` stops a Follow before the first
-frame a person labeled; `apply_followed` skips frames labeled meanwhile and
-replaces the model boxes of the followed track ids; `follow_ids` gives boxes
+frames under the labeling lock. `follow_span` is the count up to the ends of
+the segment; `apply_followed` decides per object: it replaces the model boxes
+of the followed track ids and adds a followed box unless a person's box of
+the same class overlaps it (`COVERED_IOU`), never touching people's boxes or a
+line a person left empty; Accept up to here (Shift+A) saves several frames in
+one write (`save_frames`, `frames` in `POST /api/inspect/objects`); `follow_ids` gives boxes
 without an id a new one and writes it on the start frame. The page polls
 `GET follow/job`; `POST follow/start` runs `[inspect] tracker_command` in its
 own process group, stopped with the studio.

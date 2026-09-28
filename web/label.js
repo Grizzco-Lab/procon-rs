@@ -79,6 +79,9 @@
 
   const classOf = (name) => labels.classes.find((c) => c.name === name);
   const round = (v) => Math.round(v * 1e5) / 1e5;
+  const byModel = (box) => box.by === "model";
+  const plural = (n, word, many = `${word}s`) =>
+    `${n} ${n === 1 ? word : many}`;
 
   /** A box as a shape on the drawing layer */
   function shapeOf(box) {
@@ -314,14 +317,19 @@
       .join("");
     const here = labels.frames.get(inspector.frame) ?? [];
     const models = here.filter((b) => b.by === "model").length;
+    const span = acceptSpan();
+    const spanTitle = span.frames.length
+      ? `Accept ${plural(span.boxes, "model box", "model boxes")} on ${plural(span.frames.length, "frame")}, from ${span.after < 0 ? "the start of the segment" : `after reviewed frame ${span.after}`} up to this one (Shift+A)`
+      : "No model boxes between the last reviewed frame and this one (Shift+A)";
     actionsEl.innerHTML = `
       <button type="button" class="btn" data-act="prev" title="Previous labeled frame (P)">‹ Labeled</button>
       <button type="button" class="btn" data-act="next" title="Next labeled frame (N)">Labeled ›</button>
       <button type="button" class="btn" data-act="copy" title="Copy the boxes of the previous labeled frame (C)">Copy previous</button>
       <button type="button" class="btn" data-act="accept" title="Accept the selected model box, or all of this frame's (A)" ${models ? "" : "disabled"}>Accept model${models ? ` (${models})` : ""}</button>
+      <button type="button" class="btn" data-act="accept-span" title="${escapeHtml(spanTitle)}" ${span.frames.length ? "" : "disabled"}>Accept up to here${span.frames.length ? ` (${span.frames.length})` : ""}</button>
       <button type="button" class="btn" data-act="delete" title="Delete the selected box (Del)" ${sketch.selected < 0 ? "disabled" : ""}>Delete box</button>
       <span class="label-status num">${labels.frames.size} frames · ${boxes} boxes${labels.status ? ` · <span class="${labels.error ? "level-critical" : ""}">${escapeHtml(labels.status)}</span>` : ""}</span>`;
-    noteEl.innerHTML = `Drag on the frame to box an object of the chosen class; drag a box to move it, its corners to resize it. Dashed boxes are the model's. <b>Follow</b> (F) carries the selected box, or all of the frame's, over the next frames as model boxes: step through with →, accept with A, fix a box that drifted and Follow again from there. Type / to find a class. Saved to <span class="path">${escapeHtml(labels.dir)}</span>.`;
+    noteEl.innerHTML = `Drag on the frame to box an object of the chosen class; drag a box to move it, its corners to resize it. Dashed boxes are the model's. <b>Follow</b> (F) carries the selected box, or all of the frame's, over the next frames as model boxes: step through with →, accept with A, fix a box that drifted and Follow again from there. It goes on over frames you labeled, adding a box wherever none of yours of the same class covers the object. Shift+A accepts every model box from after the last frame you fully reviewed (your boxes only) up to this one. Type / to find a class. Saved to <span class="path">${escapeHtml(labels.dir)}</span>.`;
     drawFollow();
   }
 
@@ -375,6 +383,66 @@
     changed(sketch.shapes);
   }
 
+  /** What Accept up to here takes: the frames with model boxes after the
+   * last frame before this one that a person fully reviewed (boxes of
+   * people only; Follow adds model boxes to labeled frames too), up to
+   * this one */
+  function acceptSpan() {
+    const here = labels.frame;
+    let after = -1;
+    for (const [frame, boxes] of labels.frames) {
+      const reviewed = boxes.length && !boxes.some(byModel);
+      if (frame < here && frame > after && reviewed) after = frame;
+    }
+    const frames = [...labels.frames.keys()]
+      .filter(
+        (frame) =>
+          frame > after &&
+          frame <= here &&
+          labels.frames.get(frame).some(byModel),
+      )
+      .sort((a, b) => a - b);
+    const boxes = frames.reduce(
+      (n, frame) => n + labels.frames.get(frame).filter(byModel).length,
+      0,
+    );
+    return { after, frames, boxes };
+  }
+
+  /** Accept every model box from after the last labeled frame up to this
+   * one (Shift+A), saved in one write */
+  function acceptUpToHere() {
+    const { frames, boxes } = acceptSpan();
+    if (!frames.length) return setStatus("no model boxes to accept", true);
+    const changes = frames.map((frame) => {
+      const accepted = labels.frames
+        .get(frame)
+        .map((box) => (byModel(box) ? mine({ ...box }) : box));
+      labels.frames.set(frame, accepted);
+      return { frame, boxes: accepted, base: labels.base.get(frame) ?? [] };
+    });
+    updateMarks();
+    render();
+    const { info } = inspector;
+    const body = { s: info.session, seg: info.segment, frames: changes };
+    const key = labels.key;
+    const done = `Accepted ${plural(boxes, "box", "boxes")} on ${plural(frames.length, "frame")}`;
+    setStatus("saving…");
+    labels.saving = labels.saving.then(async () => {
+      try {
+        const saved = await fetchJson("/api/inspect/objects", body);
+        if (labels.key !== key) return;
+        // Model boxes written meanwhile come back with them
+        for (const line of saved.frames) setFrame(line.frame, line.boxes);
+        updateMarks();
+        setStatus(done);
+        if (!sketch.drag) render();
+      } catch (error) {
+        setStatus(`not saved: ${error.message}`, true);
+      }
+    });
+  }
+
   /** Nearest labeled frame before (-1) or after (+1) this one */
   function labeled(direction) {
     const frames = [...labels.frames.keys()].filter((k) =>
@@ -400,6 +468,7 @@
       if (frame != null) go(frame);
     } else if (name === "copy") copyPrevious();
     else if (name === "accept") accept();
+    else if (name === "accept-span") acceptUpToHere();
     else if (name === "delete") sketch.removeSelected();
   }
 
@@ -412,7 +481,6 @@
     job.s === inspector.info.session &&
     job.seg === inspector.info.segment;
   const deviceName = (device) => (device === "cuda" ? "GPU" : "CPU");
-  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
   /** Show a message (HTML) next to the Follow button, `title` as its tooltip */
   function setFollow(html, error = false, title = "") {
@@ -462,7 +530,7 @@
         ? `${deviceName(job.device)}${job.ms_per_frame != null ? `, ${job.ms_per_frame} ms/frame` : ""}`
         : "",
       `${plural(job.written, "frame")} written`,
-      job.kept ? `${job.kept} labeled meanwhile, kept` : "",
+      job.covered ? `${plural(job.covered, "box", "boxes")} left to yours` : "",
       lostText,
       job.notes.length ? `stopped: ${job.notes.join("; ")}` : "",
     ];
@@ -680,7 +748,7 @@
     } else if (key === "n") act("next");
     else if (key === "p") act("prev");
     else if (key === "c") act("copy");
-    else if (key === "a") act("accept");
+    else if (key === "a") act(event.shiftKey ? "accept-span" : "accept");
     else if (key === "f") follow();
     else if (key === "/") find.focus();
     else if (key === "delete" || key === "backspace") act("delete");

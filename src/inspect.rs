@@ -567,27 +567,36 @@ impl Inspector {
     }
 
     /// Replace the boxes of a frame from `{"s", "seg", "frame", "boxes",
-    /// "base"}`; answers with the frame as saved
+    /// "base"}`; answers with the frame as saved. With `"frames": [{"frame",
+    /// "boxes", "base"}, ...]` instead, saves those frames in one write
+    /// (Accept up to here) and answers `{"frames": [...]}` as saved.
     pub fn save_objects(&self, body: &Value) -> Result<Value> {
         let session = body["s"].as_str().context("no session given")?;
         let segment = self.segment(session, body["seg"].as_str().filter(|s| !s.is_empty()))?;
-        let frame = body["frame"].as_u64().context("no frame given")?;
-        ensure!((frame as usize) < segment.frames, "no frame {frame}");
-        let boxes = |key: &str| -> Result<Vec<ObjectBox>> {
-            match &body[key] {
-                Value::Null => Ok(Vec::new()),
-                value => {
-                    serde_json::from_value(value.clone()).with_context(|| format!("bad {key}"))
+        let change = |item: &Value| -> Result<(u64, Vec<ObjectBox>, Vec<ObjectBox>)> {
+            let frame = item["frame"].as_u64().context("no frame given")?;
+            ensure!((frame as usize) < segment.frames, "no frame {frame}");
+            let boxes = |key: &str| -> Result<Vec<ObjectBox>> {
+                match &item[key] {
+                    Value::Null => Ok(Vec::new()),
+                    value => {
+                        serde_json::from_value(value.clone()).with_context(|| format!("bad {key}"))
+                    }
                 }
-            }
+            };
+            Ok((frame, boxes("boxes")?, boxes("base")?))
         };
-        let saved = self.annotations.save_frame(
-            session,
-            &segment.file,
-            frame,
-            boxes("boxes")?,
-            &boxes("base")?,
-        )?;
+        if let Some(items) = body["frames"].as_array() {
+            let changes = items.iter().map(change).collect::<Result<Vec<_>>>()?;
+            let saved = self
+                .annotations
+                .save_frames(session, &segment.file, changes)?;
+            return Ok(json!({ "frames": saved }));
+        }
+        let (frame, boxes, base) = change(body)?;
+        let saved = self
+            .annotations
+            .save_frame(session, &segment.file, frame, boxes, &base)?;
         Ok(json!(saved))
     }
 

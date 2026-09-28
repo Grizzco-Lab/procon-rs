@@ -218,8 +218,13 @@ with the picture, and a model's predictions against them.
   and written as dashed model boxes with a score and one track id per
   object. Step through with →, accept with A, fix a box that drifted and
   Follow again from there: the new boxes replace that object's model boxes.
-  Frames you labeled are never overwritten (a Follow stops before the first
-  one), and an object the tracker loses is not followed further. The tracker
+  **Accept up to here** (Shift+A) accepts every model box from after the
+  last frame you fully reviewed (your boxes only) up to the frame shown, so
+  ten good frames and a fixed eleventh take one key. A Follow goes on over
+  frames you labeled: your boxes are never changed, and the followed box is
+  added unless one of yours of the same class already covers the object
+  there (IoU above 0.3). An object the tracker loses is not followed
+  further. The tracker
   is AgentZero's local service: start it with `cd ../AgentZero && uv run
   agentzero-track-serve` (port 7340, `[inspect] tracker`), or with **Start
   tracker** on the page. It uses the GPU when it has room, else the CPU,
