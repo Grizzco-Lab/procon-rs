@@ -319,17 +319,17 @@
     const models = here.filter((b) => b.by === "model").length;
     const span = acceptSpan();
     const spanTitle = span.frames.length
-      ? `Accept ${plural(span.boxes, "model box", "model boxes")} on ${plural(span.frames.length, "frame")}, from ${span.after < 0 ? "the start of the segment" : `after reviewed frame ${span.after}`} up to this one (Shift+A)`
-      : "No model boxes between the last reviewed frame and this one (Shift+A)";
+      ? `Accept ${plural(span.boxes, "suggestion")} on ${plural(span.frames.length, "frame")}, from ${span.after < 0 ? "the start of the segment" : `after reviewed frame ${span.after}`} up to this one (Shift+A)`
+      : "No suggestions between the last reviewed frame and this one (Shift+A)";
     actionsEl.innerHTML = `
       <button type="button" class="btn" data-act="prev" title="Previous labeled frame (P)">‹ Labeled</button>
       <button type="button" class="btn" data-act="next" title="Next labeled frame (N)">Labeled ›</button>
       <button type="button" class="btn" data-act="copy" title="Copy the boxes of the previous labeled frame (C)">Copy previous</button>
-      <button type="button" class="btn" data-act="accept" title="Accept the selected model box, or all of this frame's (A)" ${models ? "" : "disabled"}>Accept model${models ? ` (${models})` : ""}</button>
+      <button type="button" class="btn" data-act="accept" title="Accept the selected suggestion (dashed box), or all of this frame's (A)" ${models ? "" : "disabled"}>Accept suggestions${models ? ` (${models})` : ""}</button>
       <button type="button" class="btn" data-act="accept-span" title="${escapeHtml(spanTitle)}" ${span.frames.length ? "" : "disabled"}>Accept up to here${span.frames.length ? ` (${span.frames.length})` : ""}</button>
       <button type="button" class="btn" data-act="delete" title="Delete the selected box (Del)" ${sketch.selected < 0 ? "disabled" : ""}>Delete box</button>
       <span class="label-status num">${labels.frames.size} frames · ${boxes} boxes${labels.status ? ` · <span class="${labels.error ? "level-critical" : ""}">${escapeHtml(labels.status)}</span>` : ""}</span>`;
-    noteEl.innerHTML = `Drag on the frame to box an object of the chosen class; drag a box to move it, its corners to resize it. Dashed boxes are the model's. <b>Follow</b> (F) carries the selected box, or all of the frame's, over the next frames as model boxes: step through with →, accept with A, fix a box that drifted and Follow again from there. It goes on over frames you labeled, adding a box wherever none of yours of the same class covers the object. Shift+A accepts every model box from after the last frame you fully reviewed (your boxes only) up to this one. Type / to find a class. Saved to <span class="path">${escapeHtml(labels.dir)}</span>.`;
+    noteEl.innerHTML = `Drag on the frame to box an object of the chosen class; drag a box to move it, its corners to resize it. Dashed boxes are suggestions (from Follow or a detector). <b>Follow</b> (F) carries the selected box, or all of the frame's, over the next frames as suggestions: step through with →, accept with A, fix a box that drifted and Follow again from there. It goes on over frames you labeled, adding a box wherever none of yours of the same class covers the object. Shift+A accepts every suggestion from after the last frame you fully reviewed (your boxes only) up to this one. Type / to find a class. Saved to <span class="path">${escapeHtml(labels.dir)}</span>.`;
     drawFollow();
   }
 
@@ -413,7 +413,7 @@
    * one (Shift+A), saved in one write */
   function acceptUpToHere() {
     const { frames, boxes } = acceptSpan();
-    if (!frames.length) return setStatus("no model boxes to accept", true);
+    if (!frames.length) return setStatus("no suggestions to accept", true);
     const changes = frames.map((frame) => {
       const accepted = labels.frames
         .get(frame)
