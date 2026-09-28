@@ -29,6 +29,7 @@ use crate::expert::ExpertComment;
 use crate::glossary::{AliasSource, Glossary, RelationKind, Term};
 use crate::notes::Note;
 use crate::slang::UserGlossary;
+use crate::stats::{self, Facts, Named, Summary};
 use crate::tables::Table;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
@@ -551,6 +552,10 @@ pub struct FactCard {
     pub text: String,
     pub url: Option<String>,
     pub attribution: Option<String>,
+    /// What players read of its game data, when the card keeps it
+    /// ([`crate::stats`]), with the glossary's names for what it names
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<Summary>,
 }
 
 /// The fields of a stored document the cards need; the source kind as
@@ -565,6 +570,49 @@ struct CardDoc {
     url: Option<String>,
     #[serde(default)]
     attribution: Option<String>,
+    #[serde(default)]
+    facts: Option<Facts>,
+}
+
+/// The term of a game key (`SakelienLarge`) in Lean's name table, or of an
+/// English name (`Chum`, `Rush`, `The Griller` as `Griller`)
+fn term_of<'a>(g: &'a Glossary, name: &str) -> Option<&'a Term> {
+    let suffix = alloc::format!("/{name}");
+    g.terms
+        .iter()
+        .find(|t| {
+            t.from
+                .iter()
+                .any(|f| f.starts_with(crate::leanny::NAMES_SOURCE) && f.ends_with(suffix.as_str()))
+        })
+        .or_else(|| g.lookup(name))
+        .or_else(|| g.lookup(name.strip_prefix("The ")?))
+}
+
+/// A card's summary with the glossary's names for what it names
+fn summary_of(facts: &Facts, g: &Glossary) -> Summary {
+    let mut s = stats::summary(facts);
+    let named: Vec<(String, Named)> = s
+        .named()
+        .into_iter()
+        .filter_map(|name| {
+            let t = term_of(g, name)?;
+            let names = t
+                .forms
+                .iter()
+                .filter_map(|(lang, f)| Some((lang.clone(), f.first()?.clone())))
+                .collect();
+            Some((
+                String::from(name),
+                Named {
+                    id: t.id.clone(),
+                    names,
+                },
+            ))
+        })
+        .collect();
+    s.names.extend(named);
+    s
 }
 
 /// The fact cards among the stored documents (`<root>/docs/*.json`), each
@@ -606,6 +654,7 @@ pub fn fact_cards(root: &Path, g: &Glossary) -> Vec<FactCard> {
         if let Some(term) = term {
             out.push(FactCard {
                 term: term.id.clone(),
+                summary: doc.facts.as_ref().map(|f| summary_of(f, g)),
                 title: doc.title,
                 text: doc.text,
                 url: doc.url,
@@ -850,6 +899,8 @@ mod tests {
             "source": "game-data",
             "title": "Salmon Run hazard level 40% (difficulty 200): wave and occurrence parameters (game data)",
             "text": "Rush speed",
+            "facts": {"kind": "level", "key": "200", "version": "11.3.0",
+                "params": {"EventRush": {"ZakoSpeedCoef": 2.0}, "EventDozer": {"DozerSpeedCoef": 1.5}}},
         });
         std::fs::write(
             docs.join("00112233445566ff.json"),
@@ -859,7 +910,13 @@ mod tests {
         let cards = fact_cards(&root, &Glossary::seed());
         assert_eq!(cards.len(), 2, "{cards:?}");
         assert_eq!(cards[0].term, "hazard-level");
+        // Its summary names the occurrences with the glossary's terms
+        let summary = cards[0].summary.as_ref().unwrap();
+        assert_eq!(summary.names["Rush"].id, "rush");
+        assert_eq!(summary.names["The Griller"].id, "griller");
+        assert_eq!(summary.names["Rush"].names["ja"], "ラッシュ");
         let cards: Vec<FactCard> = cards.into_iter().skip(1).collect();
+        assert!(cards[0].summary.is_none());
         assert_eq!(cards[0].term, "steelhead");
         assert_eq!(cards[0].title, "Steelhead (Salmonid, game data)");
         assert_eq!(cards[0].attribution.as_deref(), Some("Lean"));

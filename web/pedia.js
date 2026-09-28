@@ -678,14 +678,15 @@
     </li>`;
   }
 
-  /** A fact card's text (Markdown as the importer writes it) as HTML:
-   * its `# ` title left out (the card shows the title), `- ` lines as
+  /** A fact card's text (Markdown as the importer writes it) as HTML, for
+   * cards imported before they kept their game data: its `# ` title and
+   * the internal key left out (the card shows the title), `- ` lines as
    * lists, other lines as paragraphs, and each `## ` section (a weapon's
    * or special's parameters) folded under its heading */
   function factTextHtml(text) {
     const sections = [{ heading: "", lines: [] }];
     for (const line of text.split("\n")) {
-      if (line.startsWith("# ")) continue;
+      if (line.startsWith("# ") || line.startsWith("Internal key:")) continue;
       if (line.startsWith("## "))
         sections.push({ heading: line.slice(3), lines: [] });
       else sections.at(-1).lines.push(line);
@@ -717,13 +718,215 @@
       .join("");
   }
 
+  /** A number in the page's language, at most `digits` decimals */
+  const decimal = (x, digits = 2) =>
+    Number(x).toLocaleString(i18nLocale(), { maximumFractionDigits: digits });
+
+  /** A value of a summary in its unit (cuttlefish::stats::Unit): damage
+   * and HP as players see them, ink in percent of the tank, frames with
+   * their seconds at 60 per second, distances in game units */
+  function unitHtml(x, unit) {
+    const n = escapeHtml(decimal(x, 3));
+    const small = (key, values) =>
+      `<span class="pd-unit">${escapeHtml(t(key, values))}</span>`;
+    switch (unit) {
+      case "percent":
+        return `${n}${small("pedia.unit.percent")}`;
+      case "percent_per_frame":
+        return `${n}${small("pedia.unit.percentPerFrame")}`;
+      case "frames":
+        return `${n} ${small("pedia.unit.frames", { s: decimal(x / 60) })}`;
+      case "units":
+        return `${n} ${small("pedia.unit.units")}`;
+      default:
+        return n;
+    }
+  }
+
+  /** A game key or English name of a summary in the page's language:
+   * the glossary's name when the server found the term, else the key with
+   * spaces between its words (`ZakoSpeedCoef` reads "Zako speed coef") */
+  function summaryName(s, key) {
+    const named = s.names?.[key];
+    const names = named?.names ?? {};
+    const name = (i18nLang() === "zh" && names.zh) || names.en;
+    if (name) return name;
+    const words = key
+      .replace(/_/g, " ")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .trim();
+    return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase();
+  }
+
+  /** A statistic's label: its name and what part it is of */
+  function statLabel(s, row) {
+    const level = s.kind === "level";
+    const king = row.stat.endsWith("HPCoef") && row.stat.slice(0, -6);
+    const stat = !level
+      ? t(`pedia.stat.${row.stat}`)
+      : king && s.names?.[king]
+        ? t("pedia.stat.hpCoef", { name: summaryName(s, king) })
+        : summaryName(s, row.stat);
+    if (!row.group || level) return stat;
+    const group =
+      row.stat === "hp"
+        ? t(`pedia.part.${row.group}`)
+        : t(`pedia.group.${row.group}`);
+    return t("pedia.stat.of", { stat, group });
+  }
+
+  /** A row's value: its text (a Salmonid's category, yes or no) or its
+   * numbers, the largest and the smallest */
+  function rowValueHtml(row) {
+    if (row.text != null) {
+      const key =
+        row.stat === "category" ? `pedia.cat.${row.text}` : `pedia.${row.text}`;
+      return escapeHtml(t(key));
+    }
+    const [max, min] = row.values.map((x) => unitHtml(x, row.unit));
+    return min === undefined
+      ? max
+      : `${max}<span class="pd-unit pd-to">${escapeHtml(t("pedia.stat.downTo"))}</span>${min}`;
+  }
+
+  function statRowHtml(s, row) {
+    return `<div class="pd-stat" title="${escapeHtml(row.from.join("\n"))}">
+      <dt>${escapeHtml(statLabel(s, row))}</dt>
+      <dd>${rowValueHtml(row)}</dd>
+    </div>`;
+  }
+
+  /** A summary's statistics; a hazard level's under the occurrence (or
+   * table) each sets */
+  function statsHtml(s) {
+    if (!s.rows.length) return "";
+    if (s.kind !== "level")
+      return `<dl class="pd-stats">${s.rows.map((r) => statRowHtml(s, r)).join("")}</dl>`;
+    const groups = [...new Set(s.rows.map((r) => r.group ?? ""))];
+    return groups
+      .map((g) => {
+        const rows = s.rows.filter((r) => (r.group ?? "") === g);
+        return `<div class="pd-stat-group">
+          ${g ? `<h3>${escapeHtml(summaryName(s, g))}</h3>` : ""}
+          <dl class="pd-stats">${rows.map((r) => statRowHtml(s, r)).join("")}</dl>
+        </div>`;
+      })
+      .join("");
+  }
+
+  /** Damage by distance, or a King Salmonid's HP by hazard level */
+  function statTableHtml(table) {
+    const falloff = table.stat === "falloff";
+    const caption = falloff
+      ? table.group
+        ? t("pedia.stat.of", {
+            stat: t("pedia.table.falloff"),
+            group: t(`pedia.group.${table.group}`),
+          })
+        : t("pedia.table.falloff")
+      : t("pedia.table.hpCoef");
+    const [a, b] = falloff
+      ? [t("pedia.table.upTo"), t("pedia.stat.damage")]
+      : [t("pedia.table.hazard"), t("pedia.table.coef")];
+    const rows = table.rows
+      .map(
+        ([x, y]) =>
+          `<tr><td>${escapeHtml(falloff ? decimal(x) : `${decimal(x)}%`)}</td><td>${escapeHtml(decimal(y))}</td></tr>`,
+      )
+      .join("");
+    return `<table class="pd-stat-table" title="${escapeHtml(table.from)}">
+      <caption>${escapeHtml(caption)}</caption>
+      <thead><tr><th>${escapeHtml(a)}</th><th>${escapeHtml(b)}</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  /** Hits taken at the most damage per hit */
+  const HITS_SHOWN = 20;
+
+  /** How many hits the Salmonids take, as links to their entries: those
+   * one hit defeats, then the others up to HITS_SHOWN hits */
+  function hitsHtml(s) {
+    if (!s.hits?.length) return "";
+    const chip = (h) => {
+      const named = s.names?.[h.name];
+      const name = summaryName(s, h.name);
+      const label = h.part ? t(`pedia.hit.${h.part}`, { name }) : name;
+      const count =
+        h.hits > 1
+          ? `<span class="num">×${escapeHtml(decimal(h.hits))}</span>`
+          : "";
+      const title = t("pedia.hit.hp", { hp: decimal(h.hp) });
+      return named
+        ? `<a class="pd-hit" href="${entryUrl(named.id)}" title="${escapeHtml(title)}">${escapeHtml(label)}${count}</a>`
+        : `<span class="pd-hit" title="${escapeHtml(title)}">${escapeHtml(label)}${count}</span>`;
+    };
+    const one = s.hits.filter((h) => h.hits === 1);
+    const more = s.hits.filter((h) => h.hits > 1 && h.hits <= HITS_SHOWN);
+    const line = (key, list) =>
+      list.length
+        ? `<p class="pd-hits"><span class="pd-hits-label">${escapeHtml(t(key))}</span> ${list.map(chip).join("")}</p>`
+        : "";
+    return `<div class="pd-hits-box">
+      ${line("pedia.hit.one", one)}
+      ${line(one.length ? "pedia.hit.more" : "pedia.hit.hits", more)}
+      <p class="panel-note">${t("pedia.hit.note", {
+        source: `<a href="${escapeHtml(s.hp_url)}" target="_blank" rel="noopener">Inkipedia</a>`,
+      })}</p>
+    </div>`;
+  }
+
+  /** Every parameter as the game has it, with the internal key */
+  function rawHtml(s) {
+    // A hazard level's key is its difficulty, among its parameters
+    const keys = [
+      ...(s.kind === "level" ? [] : [[t("pedia.raw.key"), s.key]]),
+      ...(s.versus ? [[t("pedia.raw.versus"), s.versus]] : []),
+    ];
+    return `<details class="pd-fact-more pd-raw">
+      <summary>${escapeHtml(t("pedia.raw", { n: s.raw.length }))}</summary>
+      ${["weapon", "special"].includes(s.kind) ? `<p class="panel-note">${escapeHtml(t("pedia.raw.note"))}</p>` : ""}
+      <table class="pd-raw-table"><tbody>
+        ${[...keys, ...s.raw].map(([k, v]) => `<tr><th scope="row">${escapeHtml(k)}</th><td>${escapeHtml(v)}</td></tr>`).join("")}
+      </tbody></table>
+    </details>`;
+  }
+
+  /** A card's title: from its summary in the page's language, else the
+   * importer's */
+  function factTitle(c) {
+    const s = c.summary;
+    if (!s) return c.title;
+    return s.kind === "level"
+      ? t("pedia.fact.level", { hazard: decimal(Number(s.key) / 5) })
+      : t(`pedia.fact.${s.kind}`);
+  }
+
+  /** A card read from its game data: what matters in Salmon Run in
+   * players' units, the Eggstra Work events, and the raw parameters
+   * folded */
+  function summaryHtml(s) {
+    const tags = [
+      s.grizzco ? t("pedia.fact.grizzco") : "",
+      t("pedia.fact.version", { version: s.version }),
+    ].filter(Boolean);
+    return `<p class="pd-fact-tags">${tags.map((x) => `<span class="pd-kind">${escapeHtml(x)}</span>`).join("")}</p>
+      ${statsHtml(s)}
+      ${s.tables?.length ? `<div class="pd-stat-tables">${s.tables.map(statTableHtml).join("")}</div>` : ""}
+      ${hitsHtml(s)}
+      ${s.hp_url && !s.hits?.length ? `<p class="panel-note">${t("pedia.hpFrom", { source: `<a href="${escapeHtml(s.hp_url)}" target="_blank" rel="noopener">Inkipedia</a>` })}</p>` : ""}
+      ${s.events?.length ? `<p class="pd-fact-events">${escapeHtml(t("pedia.fact.events", { list: s.events.join(", ") }))}</p>` : ""}
+      ${s.raw.length || s.key ? rawHtml(s) : ""}`;
+  }
+
   /** A fact card; `folded`, only its title until opened */
   function cardFactHtml(c, folded) {
-    const inner = `${factTextHtml(c.text)}
+    const title = factTitle(c);
+    const inner = `${c.summary ? summaryHtml(c.summary) : factTextHtml(c.text)}
       ${c.attribution ? `<p class="panel-note">${c.url ? `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.attribution)}</a>` : escapeHtml(c.attribution)}</p>` : ""}`;
     return folded
-      ? `<li class="pd-fact"><details><summary><b>${escapeHtml(c.title)}</b></summary>${inner}</details></li>`
-      : `<li class="pd-fact"><b>${escapeHtml(c.title)}</b>${inner}</li>`;
+      ? `<li class="pd-fact"><details><summary><b>${escapeHtml(title)}</b></summary>${inner}</details></li>`
+      : `<li class="pd-fact"><b>${escapeHtml(title)}</b>${inner}</li>`;
   }
 
   function questionHtml(q) {
@@ -743,7 +946,11 @@
   function factsHtml(e) {
     if (!e.cards.length) return "";
     const folded = e.cards.length > FACTS_OPEN;
-    const shown = pd.allFacts ? e.cards : e.cards.slice(0, FACTS_SHOWN);
+    // Hazard levels in their order (the server sorts by title: 0%, 100%, 20%)
+    const level = (c) =>
+      c.summary?.kind === "level" ? Number(c.summary.key) : -1;
+    const cards = [...e.cards].sort((a, b) => level(a) - level(b));
+    const shown = pd.allFacts ? cards : cards.slice(0, FACTS_SHOWN);
     return `<section class="panel pd-part" aria-labelledby="pd-h-facts">
       <header class="panel-head pd-part-head"><h2 id="pd-h-facts">${escapeHtml(t("pedia.facts"))}</h2>
         <span class="panel-note">${escapeHtml(t("pedia.factsNote"))}</span></header>

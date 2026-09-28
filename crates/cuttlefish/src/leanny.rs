@@ -24,7 +24,9 @@ use crate::eggstra::{self, Event, Events, Scenario, Shift};
 use crate::game::Game;
 use crate::glossary::Term;
 use crate::ingest::{self, Meta, Sink};
+use crate::stats::{self, FactKind, Facts};
 use crate::tables::{Table, slug};
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -195,7 +197,15 @@ pub fn content_hash(bytes: &[u8]) -> String {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct State {
     pub files: BTreeMap<String, FileState>,
+    /// The [`CARD_FORMAT`] of the cards stored last (0 before it existed)
+    #[serde(default)]
+    pub format: u32,
 }
+
+/// What the cards hold, raised when they change so that the next run
+/// rebuilds them though no file changed: 1 text only, 2 with their
+/// [`Facts`] and the numbers in players' units
+pub const CARD_FORMAT: u32 = 2;
 
 impl State {
     fn path(dir: &Path) -> PathBuf {
@@ -516,7 +526,7 @@ fn events_with(scenarios: &[Scenario], events: &[Event], key: &str, specials: bo
 
 /// The Salmonid cards, one per `CoopEnemyInfo` row
 pub fn enemy_cards(data: &Data) -> Vec<Document> {
-    let king_coefs = |key: &str| -> Vec<String> {
+    let king_coefs = |key: &str| -> Vec<(u32, f64)> {
         data.levels["Levels"]
             .as_array()
             .into_iter()
@@ -524,7 +534,7 @@ pub fn enemy_cards(data: &Data) -> Vec<Document> {
             .filter_map(|l| {
                 let coef = l[key].as_f64()?;
                 let hazard = eggstra::hazard_percent(l["Difficulty"].as_u64().unwrap_or(0) as u32);
-                Some(alloc::format!("{hazard}%: {coef}"))
+                Some((hazard, coef))
             })
             .collect()
     };
@@ -569,19 +579,50 @@ pub fn enemy_cards(data: &Data) -> Vec<Document> {
         }
         let coefs = king_coefs(&alloc::format!("{key}HPCoef"));
         if !coefs.is_empty() {
+            let coefs: Vec<String> = coefs
+                .iter()
+                .map(|(hazard, coef)| alloc::format!("{hazard}%: {coef}"))
+                .collect();
             text.push_str(&alloc::format!(
                 "- King Salmonid HP coefficient by hazard level (CoopLevelsConfig): {}\n",
                 coefs.join(", ")
             ));
         }
-        text.push_str("\nHit points are not in this table; do not guess them.\n");
-        out.push(card(
+        let hp: Vec<String> = stats::SALMONID_HP
+            .iter()
+            .filter(|h| h.key == key)
+            .map(|h| match h.part {
+                Some(part) => alloc::format!("{} (its {part})", h.hp),
+                None => alloc::format!("{}", h.hp),
+            })
+            .collect();
+        if hp.is_empty() {
+            text.push_str("\nHit points are not in this table; do not guess them.\n");
+        } else {
+            text.push_str(&alloc::format!(
+                "- HP (not in Lean's data; from {}, in the damage units players see): {}\n",
+                stats::HP_SOURCE,
+                hp.join(", ")
+            ));
+        }
+        let mut doc = card(
             &alloc::format!("leanny:enemy/{key}"),
             COOP_PAGE,
             title,
             text,
             &data.version,
-        ));
+        );
+        doc.facts = Some(Box::new(Facts {
+            kind: FactKind::Salmonid,
+            key: String::from(key),
+            versus: None,
+            version: data.version.clone(),
+            grizzco: None,
+            events: Vec::new(),
+            hp_coef: coefs,
+            params: row.clone(),
+        }));
+        out.push(doc);
     }
     out
 }
@@ -626,24 +667,43 @@ pub fn stage_cards(data: &Data, scenarios: &[Scenario], events: &[Event]) -> Vec
                 here.join(", ")
             ));
         }
-        out.push(card(
+        let mut doc = card(
             &alloc::format!("leanny:stage/{key}"),
             COOP_PAGE,
             title,
             text,
             &data.version,
-        ));
+        );
+        doc.facts = Some(Box::new(Facts {
+            kind: FactKind::Stage,
+            key: String::from(row_id(row)),
+            versus: None,
+            version: data.version.clone(),
+            grizzco: None,
+            events: here,
+            hp_coef: Vec::new(),
+            params: row.clone(),
+        }));
+        out.push(doc);
     }
     out
 }
 
 /// The Parameters section of a Salmon Run weapon's or special's card, when
-/// its parameter table was fetched: a special's holds its damage to
-/// Salmonids (`spl__BulletBlastParam.DistanceDamage`, in the game's units)
-fn parameters_section(data: &Data, key: &str, text: &mut String) {
-    let Some(params) = data.parameters.get(key) else {
+/// its parameter table was fetched, after what they mean in players' units
+/// ([`stats::lines`]): a special's hold its damage to Salmonids
+/// (`spl__BulletBlastParam.DistanceDamage`, ×10 in the data)
+fn parameters_section(data: &Data, facts: &Facts, text: &mut String) {
+    let Some(params) = data.parameters.get(&facts.key) else {
         return;
     };
+    let readable = stats::lines(&stats::summary(facts));
+    if !readable.is_empty() {
+        text.push_str(&alloc::format!(
+            "\n## In players' units (damage as the game shows it, a tenth of the data's; ink in percent of the tank; frames at 60 per second; distances in game units)\n\n{}\n",
+            readable.join("\n")
+        ));
+    }
     let mut lines = Vec::new();
     parameter_lines(&params["GameParameters"], "", &mut lines);
     if !lines.is_empty() {
@@ -652,6 +712,15 @@ fn parameters_section(data: &Data, key: &str, text: &mut String) {
             lines.join("\n")
         ));
     }
+}
+
+/// A Salmon Run weapon's or special's `GameParameters`, `null` when its
+/// parameter table was not fetched
+fn parameters_of(data: &Data, key: &str) -> Value {
+    data.parameters
+        .get(key)
+        .map(|p| p["GameParameters"].clone())
+        .unwrap_or_default()
 }
 
 /// The special cards, one per Salmon Run special (`WeaponInfoSpecial` rows
@@ -677,14 +746,26 @@ pub fn special_cards(data: &Data, scenarios: &[Scenario], events: &[Event]) -> V
                 used.join(", ")
             ));
         }
-        parameters_section(data, key, &mut text);
-        out.push(card(
+        let facts = Facts {
+            kind: FactKind::Special,
+            key: String::from(key),
+            versus: (base != key).then(|| String::from(base)),
+            version: data.version.clone(),
+            grizzco: None,
+            events: used,
+            hp_coef: Vec::new(),
+            params: parameters_of(data, key),
+        };
+        parameters_section(data, &facts, &mut text);
+        let mut doc = card(
             &alloc::format!("leanny:special/{key}"),
             COOP_PAGE,
             title,
             text,
             &data.version,
-        ));
+        );
+        doc.facts = Some(Box::new(facts));
+        out.push(doc);
     }
     out
 }
@@ -734,14 +815,26 @@ pub fn weapon_cards(data: &Data, scenarios: &[Scenario], events: &[Event]) -> Ve
                 used.join(", ")
             ));
         }
-        parameters_section(data, key, &mut text);
-        out.push(card(
+        let facts = Facts {
+            kind: FactKind::Weapon,
+            key: String::from(key),
+            versus: versus.map(String::from),
+            version: data.version.clone(),
+            grizzco: Some(grizzco),
+            events: used,
+            hp_coef: Vec::new(),
+            params: parameters_of(data, key),
+        };
+        parameters_section(data, &facts, &mut text);
+        let mut doc = card(
             &alloc::format!("leanny:weapon/{key}"),
             COOP_PAGE,
             title,
             text,
             &data.version,
-        ));
+        );
+        doc.facts = Some(Box::new(facts));
+        out.push(doc);
     }
     out
 }
@@ -768,13 +861,24 @@ pub fn level_cards(data: &Data) -> Vec<Document> {
         parameter_lines(level, "", &mut lines);
         text.push_str(&lines.join("\n"));
         text.push('\n');
-        out.push(card(
+        let mut doc = card(
             &alloc::format!("leanny:level/{difficulty}"),
             COOP_PAGE,
             title,
             text,
             &data.version,
-        ));
+        );
+        doc.facts = Some(Box::new(Facts {
+            kind: FactKind::Level,
+            key: alloc::format!("{difficulty}"),
+            versus: None,
+            version: data.version.clone(),
+            grizzco: None,
+            events: Vec::new(),
+            hp_coef: Vec::new(),
+            params: level.clone(),
+        }));
+        out.push(doc);
     }
     out
 }
@@ -1097,7 +1201,7 @@ pub fn ingest(
             .count(),
         path.display()
     ));
-    let changed = summary.fetched > 0;
+    let changed = summary.fetched > 0 || site.state.format < CARD_FORMAT;
     let all_stored = built.cards.iter().all(|c| sink.has_id(&c.id));
     if !changed && all_stored && !options.refresh && sink.has_table(NAMES_SOURCE) {
         summary.kept = built.cards.len();
@@ -1119,6 +1223,8 @@ pub fn ingest(
         "{} names in the glossary's table {NAMES_SOURCE}",
         built.names.terms.len()
     ));
+    site.state.format = CARD_FORMAT;
+    site.save()?;
     Ok(summary)
 }
 
@@ -1390,7 +1496,17 @@ mod tests {
                 .text
                 .contains("- Power eggs per hit (HitIkuraNum): 25")
         );
-        assert!(steelhead.text.contains("Hit points are not in this table"));
+        // HP from Inkipedia where it has one plain number, else a warning
+        assert!(
+            steelhead
+                .text
+                .contains("- HP (not in Lean's data; from Inkipedia"),
+            "{}",
+            steelhead.text
+        );
+        let facts = steelhead.facts.as_ref().unwrap();
+        assert_eq!(facts.kind, FactKind::Salmonid);
+        assert_eq!(facts.params["HitIkuraNum"], json!(25));
         assert_eq!(steelhead.license.as_deref(), Some(LICENSE));
         assert_eq!(steelhead.url.as_deref(), Some(COOP_PAGE));
         let king = &sink.docs[&doc_id("leanny:enemy/SakelienGiant")];
@@ -1398,6 +1514,8 @@ mod tests {
             king.text
                 .contains("HP coefficient by hazard level (CoopLevelsConfig): 0%: 0.7")
         );
+        assert!(king.text.contains("Hit points are not in this table"));
+        assert_eq!(king.facts.as_ref().unwrap().hp_coef[0], (0, 0.7));
         let stage = &sink.docs[&doc_id("leanny:stage/Shakerail")];
         assert!(
             stage
@@ -1425,6 +1543,18 @@ mod tests {
         assert!(weapon.text.contains("- DamageParam.ValueMin: 250"));
         assert!(weapon.text.contains("- WeaponParam.InkConsume: 0.0092"));
         assert!(!weapon.text.contains("$type"));
+        // And in players' units, before the raw parameters
+        assert!(
+            weapon.text.contains("- damage: 36, down to 25"),
+            "{}",
+            weapon.text
+        );
+        assert!(weapon.text.find("## In players' units") < weapon.text.find("## Parameters"));
+        let facts = weapon.facts.as_ref().unwrap();
+        assert_eq!(facts.versus.as_deref(), Some("Shooter_Normal_00"));
+        assert_eq!(facts.grizzco, Some(false));
+        assert_eq!(facts.events.len(), 2);
+        assert_eq!(facts.params["DamageParam"]["ValueMax"], json!(360));
         // A special's parameters: its Salmon Run damage over the battle one
         let special = &sink.docs[&doc_id("leanny:special/SpNiceBall_Coop")];
         assert!(
@@ -1559,6 +1689,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(refreshed.cards, summary.cards);
+        // Cards of an older format are rebuilt though nothing changed
+        let dir = root.join("raw").join(RAW);
+        let mut state = State::load(&dir);
+        assert_eq!(state.format, CARD_FORMAT);
+        state.format = 1;
+        state.save(&dir).unwrap();
+        let rebuilt = ingest(&mut sink, &root, &mut fetcher(&seen), &options, &meta).unwrap();
+        assert_eq!(rebuilt.fetched, 0);
+        assert_eq!(rebuilt.cards, summary.cards);
+        assert_eq!(State::load(&dir).format, CARD_FORMAT);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

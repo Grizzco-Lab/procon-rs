@@ -25,8 +25,9 @@
 //! a unit of retrieval of its own ([`expert`]), found for a moment through
 //! a text summary of it ([`situation`]: controller input, HUD, objects).
 //! Lean's Splatoon 3 datamine becomes fact cards of exact game numbers
-//! ([`leanny`]) and the Eggstra Work events table ([`eggstra`]), which tags
-//! the VODs played in them.
+//! ([`leanny`]), read by players in their units ([`stats`]), and the
+//! Eggstra Work events table ([`eggstra`]), which tags the VODs played in
+//! them.
 //! [`review::Reviewer`] retrieves what is relevant to a moment or question
 //! and asks the model through the Anthropic Messages API or the Claude Code
 //! CLI ([`llm`], [`claude_cli`]), with the video frames [`sampling`] picks. The player's own corrections are expert
@@ -78,6 +79,7 @@ pub mod review;
 pub mod sampling;
 pub mod situation;
 pub mod slang;
+pub mod stats;
 pub mod store;
 pub mod tables;
 pub mod wiki;

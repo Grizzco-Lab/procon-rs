@@ -755,7 +755,9 @@ Lean's credit in every card:
 - `CoopEnemyInfo`: one card per Salmonid (26): category (`Rare` is a Boss
   Salmonid, `Boss` a King, `Zako` a lesser), the most on the field at once,
   power eggs per hit and on a kill, the Kings' HP coefficient per hazard
-  level. Hit points are not in the published data, and the card says so.
+  level. Hit points are not in the published data: the card gives
+  Inkipedia's where it has one plain number (`stats::SALMONID_HP`), else
+  says so.
 - `CoopSceneInfo`: one card per stage (14, the Big Run stages included),
   with the Eggstra Work events held there.
 - `WeaponInfoMain` (the `_Coop` rows, 71) and `WeaponInfoSpecial` (11
@@ -779,6 +781,21 @@ Lean's credit in every card:
   (`EUen`, `JPja`, `CNzh`), so every card names its things in English,
   Japanese and Simplified Chinese next to the internal key
   (`SakelienBomber`, `Shooter_Normal_Coop`).
+
+Every card but the Eggstra Work ones also keeps the data it was made from
+as `facts` (`stats::Facts`: kind, key, version, events, the parameters as
+the game has them), which `stats::summary` reads for players and the
+Pedia shows: damage, ink, times and sizes of a weapon or special (its
+falloff by distance as a table), how many hits each Salmonid takes at its
+most damage per hit (Salmonid HP from Inkipedia's "Salmon Run Next Wave
+data"), a Salmonid's eggs and HP, a hazard level's numbers by occurrence;
+every raw parameter stays folded under it. Only conversions checked
+against Inkipedia pages in the store are applied: damage is stored ×10,
+ink as a fraction of the tank (shown in percent), times in frames at 60
+per second; distances stay in the game's units. Weapon and special cards
+carry the same summary in English in their text, ahead of the raw
+parameters, for the model. `CARD_FORMAT` in `raw/leanny/state.json` makes
+the next run rebuild cards of an older format though nothing changed.
 
 Lean's scenarios carry no dates. Those come from Inkipedia's
 [List of Eggstra Work shifts in Splatoon 3](https://splatoonwiki.org/wiki/List_of_Eggstra_Work_shifts_in_Splatoon_3)

@@ -115,6 +115,11 @@ pub struct Document {
     /// its own instead of the text's chunks ([`crate::expert`])
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub expert_comments: Vec<ExpertComment>,
+    /// The game data a fact card was made from ([`crate::leanny`]), which
+    /// [`crate::stats::summary`] reads in players' units (boxed: most
+    /// documents have none)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facts: Option<alloc::boxed::Box<crate::stats::Facts>>,
 }
 
 impl Document {
@@ -138,6 +143,7 @@ impl Document {
             moments: Vec::new(),
             messages: Vec::new(),
             expert_comments: Vec::new(),
+            facts: None,
         }
     }
 }

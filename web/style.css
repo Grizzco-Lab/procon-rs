@@ -8225,6 +8225,160 @@ body {
   font-weight: 600;
 }
 
+/* A fact card read from its game data: statistics as label and value,
+   small tables, the Salmonids a hit defeats, the raw parameters folded */
+.pd-fact-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pd-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr));
+  gap: 6px 16px;
+  margin: 8px 0;
+}
+
+.pd-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.pd-stat dt {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.pd-stat dd {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-num);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.pd-unit {
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.pd-to {
+  margin: 0 5px;
+}
+
+:lang(zh) .pd-to {
+  margin-left: 0;
+}
+
+.pd-stat-group h3 {
+  margin: 10px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.pd-stat-tables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 8px 0;
+}
+
+.pd-stat-table,
+.pd-raw-table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pd-stat-table caption {
+  padding-bottom: 4px;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-weight: 600;
+  text-align: left;
+}
+
+.pd-stat-table th,
+.pd-stat-table td,
+.pd-raw-table th,
+.pd-raw-table td {
+  padding: 3px 12px 3px 0;
+  border-bottom: 1px solid var(--inset-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.pd-stat-table th {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.pd-stat-table td {
+  font-family: var(--font-num);
+}
+
+.pd-hits-box {
+  margin: 8px 0;
+}
+
+.pd-hits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.pd-hits-label {
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pd-hit {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--inset-border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+
+a.pd-hit:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pd-hit .num {
+  color: var(--text-3);
+  font-family: var(--font-num);
+}
+
+.pd-raw-table {
+  display: block;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.pd-raw-table th {
+  color: var(--text-2);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.pd-raw-table td {
+  font-family: var(--font-num);
+  overflow-wrap: anywhere;
+}
+
 .pd-note-body,
 .pd-fact p {
   margin: 4px 0;

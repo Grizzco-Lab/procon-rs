@@ -275,6 +275,31 @@ pub enum Occurrence {
 }
 
 impl Occurrence {
+    /// Every occurrence
+    pub const ALL: [Occurrence; 9] = [
+        Occurrence::Normal,
+        Occurrence::Rush,
+        Occurrence::Geyser,
+        Occurrence::Dozer,
+        Occurrence::Hakobiya,
+        Occurrence::Fog,
+        Occurrence::Missile,
+        Occurrence::Relay,
+        Occurrence::Tamaire,
+    ];
+
+    /// The occurrence of a game key (`Rush`, `Hakobiya`, as in
+    /// `CoopLevelsConfig`'s `EventRush`, `EventHakobiya`); `None` names
+    /// the standard wave there
+    pub fn from_key(key: &str) -> Option<Occurrence> {
+        if key == "None" {
+            return Some(Occurrence::Normal);
+        }
+        Occurrence::ALL
+            .into_iter()
+            .find(|o| alloc::format!("{o:?}") == key)
+    }
+
     /// The English name of the known occurrence (a standard wave has none)
     pub fn name(self) -> &'static str {
         match self {
