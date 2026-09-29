@@ -72,10 +72,11 @@ impl Inner {
     }
 }
 
-/// Folder a session starting now would get with `prefix`
-fn session_dir(prefix: &str) -> PathBuf {
+/// Folder a session starting now would get with `prefix`, with `infix`
+/// between it and the stamp (`""` for the usual sessions)
+fn session_dir(prefix: &str, infix: &str) -> PathBuf {
     let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
-    PathBuf::from(format!("{prefix}{stamp}"))
+    PathBuf::from(format!("{prefix}{infix}{stamp}"))
 }
 
 /// Clean up a typed prefix: expand `~` to the home folder, and treat an
@@ -134,8 +135,9 @@ impl Recorder {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Create a session folder and start writing frames; returns the folder
-    pub fn start(&self) -> Result<PathBuf> {
+    /// Create a session folder (`<prefix><infix><stamp>/`) and start
+    /// writing frames; returns the folder
+    pub fn start(&self, infix: &str) -> Result<PathBuf> {
         let prefix = {
             let inner = self.lock();
             ensure!(inner.writer.is_none(), "already recording");
@@ -150,7 +152,7 @@ impl Recorder {
             "folder does not exist: {}",
             parent.display()
         );
-        let dir = session_dir(&prefix);
+        let dir = session_dir(&prefix, infix);
         std::fs::create_dir(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
         let writer = FileDumper::new(dir.join(CONTROLLER_FILE))?;
         log::info!("Recording to {}", dir.display());
@@ -252,7 +254,7 @@ impl Recorder {
         RecorderStatus {
             state,
             prefix: inner.prefix.clone(),
-            next: session_dir(&inner.prefix).display().to_string(),
+            next: session_dir(&inner.prefix, "").display().to_string(),
             session: inner.session.as_ref().map(|p| p.display().to_string()),
             bytes: inner.frames * FRAME_SIZE as u64,
             frames: inner.frames,

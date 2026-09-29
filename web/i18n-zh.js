@@ -1064,8 +1064,14 @@ I18N.zh = {
   "po.play.stop": "停止机器人（Esc）",
   "po.play.off": "关闭：AgentZero 只观看，不会向 Switch 发送任何操作。",
   "po.play.left":
-    "正在操作 Switch，与你的手柄混合：剩余 {left}，已发送 {sent} 个操作。",
+    "正在操作 Switch，与你的手柄混合：剩余 {left}，已发送 {sent} 个操作，你接管了 {takeovers} 次。",
   "po.play.ended": "已停止操作：{why}。",
+  "po.record": "录制机器人的每次操作",
+  "po.recordNote":
+    "每次让 AgentZero 操作时，都像工作室的录制那样录下一个会话，放在你自己的会话旁，名为 bot-<时间>：带声音的视频、controller.bin 里真正到达 Switch 的输入、agentzero.jsonl 里策略模型自己的操作，以及 session.json 里的检查点、限制和你每次接管的时刻。若工作室正在录制，则记入正在录制的会话。",
+  "po.record.recording": "本次操作正录制到 {session}。",
+  "po.record.recorded": "已录制到 {session}。",
+  "po.record.open": "在 Inkspector 中打开",
   "po.limits.title": "AgentZero 可以按什么",
   "po.limits.dpad": "屏蔽十字键（信号）",
   "po.limits.dpadNote":
@@ -1101,6 +1107,7 @@ I18N.zh = {
   "po.ended.stall": "策略模型没有回应",
   "po.ended.stopped": "AgentZero 已停止",
   "po.ended.proxy": "代理关闭了回放连接",
+  "po.ended.recording": "无法开始录制",
   "po.badge.watching": "AgentZero 观看中",
   "po.badge.playing": "AgentZero 操作中",
   "po.loop.title": "回路",

@@ -348,7 +348,7 @@ fn unix_to_mono(seconds: f64) -> u64 {
 }
 
 /// A `CLOCK_MONOTONIC` time (ns) as Unix time in µs, the recordings' clock
-fn mono_to_unix_us(ns: u64) -> u64 {
+pub fn mono_to_unix_us(ns: u64) -> u64 {
     unix_ns().saturating_sub(mono_ns().saturating_sub(ns)) / 1000
 }
 

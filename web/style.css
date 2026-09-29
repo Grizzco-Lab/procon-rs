@@ -7186,8 +7186,33 @@ body {
   display: contents;
 }
 
-/* AgentZero on the live capture: its controls (Stop, Let AgentZero play)
- * and its loop come right after the picture */
+/* AgentZero on the live capture: the side column (the run with its
+ * controls, the loop, the predicted controller) is taller than most windows
+ * and the page beside it short, so it flows with the page, which scrolls
+ * anywhere; the picture keeps to the window instead, over the two rows
+ * (the stored predictions go under the column) */
+@media (min-width: 1101px) {
+  :root:not([data-layout="phone"]) #predictor-layout.is-live {
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "video side"
+      "video runs";
+  }
+
+  :root:not([data-layout="phone"]) #predictor-layout.is-live .p-p-video {
+    position: sticky;
+    top: var(--gap);
+  }
+
+  :root:not([data-layout="phone"]) #predictor-layout.is-live .p-p-side {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+/* Narrow windows and phones: its controls (Stop, Let AgentZero play) and
+ * its loop come right after the picture */
 @media (max-width: 1100px) {
   :root[data-theme] #predictor-layout.is-live {
     grid-template-areas: "video" "run" "loop" "predicted" "frames" "timeline" "agree" "runs";

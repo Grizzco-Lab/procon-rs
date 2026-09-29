@@ -121,7 +121,11 @@ fn main() -> anyhow::Result<()> {
         .bot_limits
         .filter(|limits| limits.validate().is_ok())
         .unwrap_or_default();
-    let bot = Bot::new(config.proxy.replay_address.clone(), limits);
+    let bot = Bot::new(
+        config.proxy.replay_address.clone(),
+        limits,
+        Arc::clone(&link),
+    );
     let player = Player::new(
         config.proxy.replay_address,
         saved.replay_mix.unwrap_or(false),
@@ -149,6 +153,7 @@ fn main() -> anyhow::Result<()> {
         state_path,
         saved.game_settings.unwrap_or_default(),
         saved.techniques.unwrap_or_default(),
+        saved.record_bot_runs.unwrap_or(true),
     ));
     // The last replay file may sit on a slow network mount: the dashboard
     // does not wait for it

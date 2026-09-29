@@ -82,7 +82,7 @@ fn main() -> anyhow::Result<()> {
     // Optional local backup: one session from launch until exit
     if config.dump.autostart {
         let recorder = Recorder::new(config.dump.prefix.as_str());
-        recorder.start()?;
+        recorder.start("")?;
         multi_dumper.add_dumper(Box::new(recorder));
     }
 

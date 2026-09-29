@@ -53,6 +53,27 @@
 //! frames stop reaching the studio (what reaches the Switch could not be
 //! seen; it does not start without them either).
 //!
+//! **Every run is recorded** while "Record bot runs" is on (the default,
+//! `record_bot_runs` in the studio's state file): letting it play starts a
+//! session as the Studio's Record does (`<prefix>bot-<stamp>/`: the video
+//! with sound, and in `controller.bin` what reached the Switch, the mix),
+//! which stops when the play ends; a session the Studio is recording
+//! already (`allow_recording`) takes the run instead. `session.json` marks
+//! it with `bot` ([`crate::studio::BotRecord`]: each play's checkpoint,
+//! limits, start, end and why, and every **takeover**), and
+//! `agentzero.jsonl` keeps the policy's actions, one line each: what it
+//! wanted (`send`, its `button_probs`), what was `sent` after the limits
+//! (null while not playing), `t_ms` and the frame's `captured_ms`, so a
+//! timeline can show the bot's wish, the line sent and the person's
+//! corrections. A takeover ([`Takeover`]) is seen in the proxy's frames,
+//! which the bot reads as a [`Dumper`]: a frame with buttons no line sent
+//! lately pressed, or a stick or the gyro equal to no such line's (the
+//! proxy writes a line's values as they are, so a different value is the
+//! controller's: pushed past the deadzone, or turning), starts one at the
+//! frame's time; frames without a person's input end it after
+//! [`TAKEOVER_GAP`]. Times are host Unix ms like the session's markers.
+//! A run whose recording cannot start is not played ([`Ended::Recording`]).
+//!
 //! The bot also measures a person's fastest tapping of ZR from the proxy's
 //! frames ([`limits::Tapping`]), for the page to set the cap from.
 //!
@@ -88,6 +109,8 @@
 //! - `POST release`: stop sending, the controller is back
 //! - `POST limits` with [`Limits`]: what the bot may press, kept in the
 //!   studio's state file
+//! - `POST record` `{"enabled": bool}`: record the runs, kept there too;
+//!   `status` also answers with `record` (whether, and the session)
 //! - `POST measure`: measure a person tapping ZR (`{"cancel": true}` stops
 //!   it); its progress and result are in the bot's status
 //!
@@ -104,14 +127,15 @@ use super::{
     checkpoints_in, gpu_memory, help_has, now_ms, signal_group,
 };
 use crate::detector::recording_in_progress;
-use crate::dump::{Dumper, Frame};
+use crate::dump::{Dumper, Frame, unix_ms};
 use crate::objects::write_atomic;
 use crate::recorder::RecorderState;
 use crate::replay::Action;
-use crate::studio::Studio;
+use crate::stream::LinkStats;
+use crate::studio::{BotStart, Studio};
 use crate::v4l2::YUYV;
-use crate::video::{self, POLICY_MAX_BYTES, PolicySink, PolicyTimes, mono_ns};
-use alloc::collections::{BTreeMap, VecDeque};
+use crate::video::{self, POLICY_MAX_BYTES, PolicySink, PolicyTimes, mono_ns, mono_to_unix_us};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -190,10 +214,21 @@ pub const STALL: Duration = Duration::from_millis(500);
 /// How often the watchdog looks at the rules above
 const WATCH_EVERY: Duration = Duration::from_millis(100);
 
+/// A frame may show any line sent this long before it reached the studio:
+/// the proxy's frames come a little after it read them, in bursts, and a
+/// line takes a moment to get there
+const RECENT: Duration = Duration::from_millis(300);
+
+/// A person's input seen again within this long (ms of the frames' clock)
+/// continues a takeover rather than starting another: taps come 100 ms or
+/// more apart
+pub const TAKEOVER_GAP: u64 = 250;
+
 /// Keys of an action line that stay in a stored prediction
 const KEPT_EXTRA: [&str; 4] = ["button_probs", "camera_turn", "seen", "model_ms"];
 
-/// Keys of an action line the page's `agent` messages leave out
+/// Keys of an action line the page's `agent` messages and the recorded
+/// `agentzero.jsonl` leave out
 const TICK_DROPPED: [&str; 6] = [
     "event",
     "arrived_ms",
@@ -978,6 +1013,22 @@ impl Online {
             ) {
                 sample = Sample::live(&frame, taken, placed, ready, done);
             }
+            // The recorded run's log: what the policy wanted, what was sent
+            self.studio.bot_action(|| {
+                let mut line = value.clone();
+                if let Some(fields) = line.as_object_mut() {
+                    for key in TICK_DROPPED {
+                        fields.remove(key);
+                    }
+                    fields.insert("t_ms".into(), json!(unix_ms()));
+                    fields.insert(
+                        "captured_ms".into(),
+                        json!(frame.map(|f| mono_to_unix_us(f.times.captured) / 1000)),
+                    );
+                    fields.insert("sent".into(), json!(sent.as_ref().map(|(_, line)| line)));
+                }
+                line
+            });
         } else if let (Some(arrived), Some(ready)) = (number("arrived_ms"), number("ready_ms")) {
             sample.age = Some(ready - arrived);
         }
@@ -1086,6 +1137,7 @@ impl Online {
         self.stop.store(true, Ordering::Relaxed);
         self.studio.video.set_policy_sink(None);
         self.studio.bot.release(Ended::Stopped);
+        self.end_bot_play();
         self.update(|run| run.status.stopping = run.status.state == JobState::Running);
         let pid = {
             let child = self.child.lock().unwrap();
@@ -1143,7 +1195,38 @@ impl Online {
             "the proxy's frames do not reach the studio, so what reaches the Switch \
              could not be seen; connect the proxy first"
         );
-        self.studio.bot.play(seconds)
+        self.studio.bot.play(seconds)?;
+        if self.studio.record_bot_runs() {
+            let start = BotStart {
+                checkpoint: status.checkpoint,
+                cpu: status.cpu,
+                seconds,
+                limits: self.studio.bot.limits(),
+            };
+            if let Err(e) = self.studio.bot_play_started(start) {
+                self.studio.bot.release(Ended::Recording);
+                return Err(e.context(
+                    "the run could not be recorded (untick \"Record bot runs\" to play unrecorded)",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The bot's play ended: its end, why, and the takeovers seen go to the
+    /// session recording it, which stops when it was the bot's own
+    fn end_bot_play(&self) {
+        if !self.studio.bot_play_open() {
+            return;
+        }
+        let status = self.studio.bot.status();
+        let takeovers = self.studio.bot.take_takeovers();
+        if let Err(e) = self
+            .studio
+            .bot_play_ended(status.ended, status.sent, takeovers)
+        {
+            log::warn!("Cannot finish the bot run's record: {:#}", e);
+        }
     }
 
     /// Measure a person tapping [`TAPPED`] as fast as they can, from the
@@ -1183,7 +1266,12 @@ impl Online {
                 Some(reason) => self.studio.bot.release(reason),
                 None => self.studio.bot.check(),
             }
-            let recording = self.studio.recorder.status().state != RecorderState::Idle;
+            if !self.studio.bot.status().playing {
+                self.end_bot_play();
+            }
+            // Its own recording of the run is no reason to stop
+            let recording = self.studio.recorder.status().state != RecorderState::Idle
+                && !self.studio.recording_bot_run();
             let forbidden = self.run.lock().unwrap().as_ref().is_some_and(|run| {
                 let status = &run.status;
                 status.state == JobState::Running && !status.allow_recording && !status.stopping
@@ -1247,6 +1335,8 @@ pub struct Bot(Arc<BotInner>);
 struct BotInner {
     /// `host:port` of the proxy's replay port
     address: String,
+    /// The proxy link: its clock offset puts the frames on the host's clock
+    link: Arc<LinkStats>,
     state: Mutex<BotState>,
 }
 
@@ -1268,6 +1358,75 @@ struct BotState {
     limiter: Limiter,
     /// A person's tapping, measured
     tapping: Option<Tapping>,
+    /// The lines sent within [`RECENT`] (when, the line), which the proxy's
+    /// frames are compared with for a person's input
+    recent: VecDeque<(Instant, Action)>,
+    /// A person's input over the bot's, being seen
+    open: Option<Takeover>,
+    /// The takeovers seen since it was let play, until taken
+    takeovers: Vec<Takeover>,
+}
+
+/// A stretch of the proxy's frames in which a person's input showed over
+/// the bot's while it played (see the module docs): buttons the bot did not
+/// press, a stick pushed past the proxy's deadzone, the controller turned.
+/// Times in host Unix ms, as the session's markers; frames without a
+/// person's input end it after [`TAKEOVER_GAP`]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Takeover {
+    /// The first frame with the person's input
+    pub t_start_ms: u64,
+    /// The last one
+    pub t_end_ms: u64,
+    /// `buttons`, `left_stick`, `right_stick`, `gyro`: what was the person's
+    pub channels: BTreeSet<String>,
+    /// The buttons the person pressed
+    pub buttons: BTreeSet<String>,
+}
+
+/// What of `report` (a frame of the proxy) is a person's rather than any of
+/// the `lines` sent lately, by the proxy's mix (see [`crate::replay`]):
+/// buttons no line pressed, and a stick or the gyro equal to no line's,
+/// since a line's values are written as they are (a line without a stick
+/// or gyro leaves it to the controller: not a takeover). Nothing before the
+/// first line
+fn persons_input<'a>(
+    report: &Action,
+    lines: impl Iterator<Item = &'a Action>,
+) -> (BTreeSet<String>, BTreeSet<String>) {
+    let mut buttons: BTreeSet<String> = report.buttons.iter().flatten().cloned().collect();
+    // Differs from every line's, so far
+    let mut left = report.left_stick.is_some();
+    let mut right = report.right_stick.is_some();
+    let mut gyro = report.gyro.is_some();
+    let mut any = false;
+    for line in lines {
+        any = true;
+        for pressed in line.buttons.iter().flatten() {
+            buttons.remove(pressed);
+        }
+        left &= line.left_stick.is_some() && line.left_stick != report.left_stick;
+        right &= line.right_stick.is_some() && line.right_stick != report.right_stick;
+        gyro &= line.gyro.is_some() && line.gyro != report.gyro;
+    }
+    if !any {
+        return (BTreeSet::new(), BTreeSet::new());
+    }
+    let mut channels = BTreeSet::new();
+    for (name, taken) in [
+        ("buttons", !buttons.is_empty()),
+        ("left_stick", left),
+        ("right_stick", right),
+        ("gyro", gyro),
+    ] {
+        if taken {
+            channels.insert(name.to_string());
+        }
+    }
+    if !channels.contains("buttons") {
+        buttons.clear();
+    }
+    (channels, buttons)
 }
 
 /// Why AgentZero stopped playing the Switch
@@ -1291,6 +1450,8 @@ pub enum Ended {
     Stopped,
     /// A write to the replay port failed
     Proxy,
+    /// The recording of the run could not start
+    Recording,
 }
 
 /// What the page shows of the bot
@@ -1309,9 +1470,58 @@ pub struct BotStatus {
     pub limits: Limits,
     /// The last measurement of a person's tapping
     pub tapping: Option<TappingStatus>,
+    /// Takeovers seen since it was let play
+    pub takeovers: usize,
 }
 
 impl BotState {
+    /// A frame of the proxy at `at_ms` (host clock) while it plays: a
+    /// person's input over the lines sent lately opens or continues a
+    /// takeover, a frame without one ends it after [`TAKEOVER_GAP`]
+    fn note_frame(&mut self, report: &Action, at_ms: u64) {
+        let now = Instant::now();
+        while self.recent.len() > 1
+            && self
+                .recent
+                .front()
+                .is_some_and(|(sent, _)| now.duration_since(*sent) > RECENT)
+        {
+            self.recent.pop_front();
+        }
+        if self
+            .open
+            .as_ref()
+            .is_some_and(|open| at_ms.saturating_sub(open.t_end_ms) > TAKEOVER_GAP)
+        {
+            self.close_takeover();
+        }
+        let (channels, buttons) = persons_input(report, self.recent.iter().map(|(_, line)| line));
+        if channels.is_empty() {
+            return;
+        }
+        match self.open.as_mut() {
+            Some(open) => {
+                open.t_end_ms = open.t_end_ms.max(at_ms);
+                open.channels.extend(channels);
+                open.buttons.extend(buttons);
+            }
+            None => {
+                self.open = Some(Takeover {
+                    t_start_ms: at_ms,
+                    t_end_ms: at_ms,
+                    channels,
+                    buttons,
+                })
+            }
+        }
+    }
+
+    fn close_takeover(&mut self) {
+        if let Some(open) = self.open.take() {
+            self.takeovers.push(open);
+        }
+    }
+
     /// Write one line; a failed write ends sending
     fn write(&mut self, action: &Action) -> bool {
         let Some(stream) = self.stream.as_mut() else {
@@ -1347,10 +1557,12 @@ fn neutral() -> Action {
 
 impl Bot {
     /// A bot for the proxy's replay port at `address` (`host:port`), which
-    /// may press what `limits` allow
-    pub fn new(address: String, limits: Limits) -> Self {
+    /// may press what `limits` allow; `link` is the proxy's stream, whose
+    /// clock offset dates the takeovers
+    pub fn new(address: String, limits: Limits, link: Arc<LinkStats>) -> Self {
         Self(Arc::new(BotInner {
             address,
+            link,
             state: Mutex::new(BotState {
                 limits,
                 ..Default::default()
@@ -1404,6 +1616,9 @@ impl Bot {
         state.sent = 0;
         state.ended = None;
         state.limiter = Limiter::default();
+        state.recent.clear();
+        state.open = None;
+        state.takeovers.clear();
         log::info!("AgentZero plays through {address} for {seconds} s");
         Ok(())
     }
@@ -1428,6 +1643,7 @@ impl Bot {
         }
         state.sent += 1;
         state.last_sent = Some(now);
+        state.recent.push_back((now, line.clone()));
         Some((mono_ns(), line))
     }
 
@@ -1442,7 +1658,15 @@ impl Bot {
         state.stream = None;
         state.until = None;
         state.ended = Some(reason);
+        state.recent.clear();
+        state.close_takeover();
         log::info!("AgentZero stopped playing ({reason:?})");
+    }
+
+    /// The takeovers seen since it was let play, for the session's record;
+    /// one still open (while it plays) stays
+    pub fn take_takeovers(&self) -> Vec<Takeover> {
+        core::mem::take(&mut self.lock().takeovers)
     }
 
     /// End sending when its time is up or the policy stalled
@@ -1493,18 +1717,28 @@ impl Bot {
             address: self.0.address.clone(),
             limits: state.limits,
             tapping: state.tapping.as_ref().map(Tapping::status),
+            takeovers: state.takeovers.len() + usize::from(state.open.is_some()),
         }
     }
 }
 
-/// The proxy's frames: a person's presses while their tapping is measured
+/// The proxy's frames: a person's input over the bot's while it plays, and
+/// their presses while their tapping is measured
 impl Dumper for Bot {
     fn dump(&mut self, frame: &Frame) -> Result<()> {
         let mut state = self.lock();
-        let Some(tapping) = state.tapping.as_mut().filter(|t| t.active()) else {
+        if state.stream.is_none() && !state.measuring() {
+            return Ok(());
+        }
+        let Some(report) = Action::from_report(frame.payload()) else {
             return Ok(());
         };
-        let Some(report) = Action::from_report(frame.payload()) else {
+        if state.stream.is_some() {
+            let offset = self.0.link.clock_offset_ms.load(Ordering::Relaxed);
+            let at_ms = frame.timestamp_ms.saturating_add_signed(offset);
+            state.note_frame(&report, at_ms);
+        }
+        let Some(tapping) = state.tapping.as_mut().filter(|t| t.active()) else {
             return Ok(());
         };
         let pressed = report
@@ -1533,6 +1767,7 @@ impl Online {
             "status" => Ok(json!({
                 "run": self.status(),
                 "bot": self.studio.bot.status(),
+                "record": self.studio.bot_record_status(),
             })),
             "checkpoints" => Ok(self.info(text("refresh") == "1")),
             "labels" => Ok(self.labels(number("start")?, number("stop")?)?),
@@ -1577,6 +1812,14 @@ impl Online {
                     serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("bad limits: {e}"))?;
                 self.studio.set_bot_limits(limits)?;
                 Ok(json!(self.studio.bot.status()))
+            }
+            "record" => {
+                let enabled = serde_json::from_slice::<Value>(body)
+                    .ok()
+                    .and_then(|v| v["enabled"].as_bool())
+                    .context("give enabled")?;
+                self.studio.set_record_bot_runs(enabled)?;
+                Ok(self.studio.bot_record_status())
             }
             "measure" => {
                 let cancel = serde_json::from_slice::<Value>(body)
@@ -1795,7 +2038,7 @@ mod tests {
     #[test]
     fn the_bot_sends_mixed_within_its_limits_and_stops_at_once() {
         let (address, proxy) = replay_port();
-        let mut bot = Bot::new(address, Limits::default());
+        let mut bot = Bot::new(address, Limits::default(), Arc::default());
         let wants = |buttons: &str| {
             action(&format!(
                 r#"{{"buttons": {buttons}, "left_stick": [2100, 3360], "right_stick": [2048, 2048], "gyro": [0, 0, 0]}}"#
@@ -1855,9 +2098,109 @@ mod tests {
         assert!(last.left_stick.is_none() && last.gyro.is_none());
     }
 
+    /// A frame of the proxy: `state` as the mix left it, read at `at_ms`
+    fn mixed(state: &str, at_ms: u64) -> Frame {
+        let mut report = [0u8; 64];
+        report[0] = 0x30;
+        action(state).apply(&mut report);
+        Frame::new(at_ms, 0, &report)
+    }
+
+    #[test]
+    fn a_persons_input_over_the_bots_is_a_takeover() {
+        let (address, _proxy) = replay_port();
+        let link = Arc::new(LinkStats::default());
+        link.clock_offset_ms.store(1_000_000, Ordering::Relaxed);
+        let mut bot = Bot::new(address, Limits::default(), Arc::clone(&link));
+        let wants = |buttons: &str, x: u16| {
+            action(&format!(
+                r#"{{"buttons": {buttons}, "left_stick": [{x}, 1847], "right_stick": [2100, 2100], "gyro": [19, -90, 31]}}"#
+            ))
+        };
+        // Before it plays, frames are the person's alone: not takeovers
+        bot.dump(&mixed(r#"{"buttons": ["a"]}"#, 1_000)).unwrap();
+        bot.play(30.0).unwrap();
+        // Nothing sent yet: nothing to compare with
+        bot.dump(&mixed(r#"{"buttons": ["a"]}"#, 1_010)).unwrap();
+        bot.send(&wants(r#"["y"]"#, 2100)).unwrap();
+        bot.send(&wants(r#"["y"]"#, 2120)).unwrap();
+        // The bot's own line as the proxy applied it (the frame may show
+        // the line before the last): not a takeover
+        for (n, x) in [(0, 2120), (1, 2100), (2, 2120)] {
+            bot.dump(
+                &mixed(
+                    &format!(
+                        r#"{{"buttons": ["y"], "left_stick": [{x}, 1847], "right_stick": [2100, 2100], "gyro": [19, -90, 31]}}"#
+                    ),
+                    2_000 + n,
+                ),
+            )
+            .unwrap();
+        }
+        assert_eq!(bot.status().takeovers, 0);
+        // The person presses A over Y, then pushes the left stick; a lull
+        // under TAKEOVER_GAP joins the two; the right stick and gyro left
+        // as the line's are the bot's
+        for (state, at) in [
+            (
+                r#"{"buttons": ["y", "a"], "left_stick": [2120, 1847], "right_stick": [2100, 2100], "gyro": [19, -90, 31]}"#,
+                2_100,
+            ),
+            (
+                r#"{"buttons": ["y", "a"], "left_stick": [2120, 1847], "right_stick": [2100, 2100], "gyro": [19, -90, 31]}"#,
+                2_116,
+            ),
+            (
+                r#"{"buttons": ["y"], "left_stick": [2120, 1847], "right_stick": [2100, 2100], "gyro": [19, -90, 31]}"#,
+                2_132,
+            ),
+            (
+                r#"{"buttons": ["y"], "left_stick": [3900, 1000], "right_stick": [2100, 2100], "gyro": [19, -90, 31]}"#,
+                2_300,
+            ),
+            (
+                r#"{"buttons": ["y"], "left_stick": [3900, 1000], "right_stick": [2100, 2100], "gyro": [19, -90, 31]}"#,
+                2_316,
+            ),
+        ] {
+            bot.dump(&mixed(state, at)).unwrap();
+        }
+        assert_eq!(bot.status().takeovers, 1);
+        // Turning the controller, TAKEOVER_GAP after the last: another
+        bot.dump(&mixed(r#"{"buttons": ["y"], "left_stick": [2120, 1847], "right_stick": [2100, 2100], "gyro": [19, -90, 31]}"#, 2_400)).unwrap();
+        bot.dump(&mixed(r#"{"buttons": ["y"], "left_stick": [2120, 1847], "right_stick": [2100, 2100], "gyro": [900, -90, 31]}"#, 2_600)).unwrap();
+        bot.dump(&mixed(r#"{"buttons": ["y"], "left_stick": [2120, 1847], "right_stick": [2100, 2100], "gyro": [19, -90, 31]}"#, 2_616)).unwrap();
+        assert_eq!(bot.status().takeovers, 2);
+        // The stop closes the open one; times on the host's clock
+        bot.release(Ended::You);
+        let takeovers = bot.take_takeovers();
+        let set = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<BTreeSet<_>>();
+        assert_eq!(
+            takeovers,
+            vec![
+                Takeover {
+                    t_start_ms: 1_002_100,
+                    t_end_ms: 1_002_316,
+                    channels: set(&["buttons", "left_stick"]),
+                    buttons: set(&["a"]),
+                },
+                Takeover {
+                    t_start_ms: 1_002_600,
+                    t_end_ms: 1_002_600,
+                    channels: set(&["gyro"]),
+                    buttons: BTreeSet::new(),
+                },
+            ]
+        );
+        assert!(bot.take_takeovers().is_empty());
+        // Frames after the stop are the person's alone again
+        bot.dump(&mixed(r#"{"buttons": ["a"]}"#, 3_000)).unwrap();
+        assert_eq!(bot.status().takeovers, 0);
+    }
+
     #[test]
     fn a_persons_tapping_is_measured_from_the_proxys_frames() {
-        let mut bot = Bot::new("127.0.0.1:9".to_string(), Limits::default());
+        let mut bot = Bot::new("127.0.0.1:9".to_string(), Limits::default(), Arc::default());
         bot.measure(TAPPED).unwrap();
         // Every 16 ms, ZR pressed for 48 ms every 112 (8.9 a second)
         for k in 0..800u64 {

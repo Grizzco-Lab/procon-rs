@@ -17,24 +17,40 @@
 //! seconds. They go to `session.json` as `markers` (see
 //! [`gameplay_data::session::Marker`]), which the Inkspector can edit too, so
 //! the file holds the list and each change here reads it first.
+//!
+//! A run of the bot is recorded too (see [`crate::predictor::online`]): a
+//! session of its own, `<prefix>bot-<stamp>/`, from the play to its end, or
+//! the session being recorded, which takes it. Either gets `bot` in
+//! `session.json` ([`BotRecord`]: each play, and where a person took over)
+//! and the policy's actions in `agentzero.jsonl` ([`BOT_LOG_FILE`]).
 
 use crate::audio;
 use crate::dump::unix_ms;
 use crate::player::Player;
-use crate::predictor::online::Bot;
 use crate::predictor::online::limits::Limits;
+use crate::predictor::online::{Bot, Ended, Takeover};
 use crate::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
 use crate::stream::LinkStats;
 use crate::video::Video;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
 use gameplay_data::session::{MARKER_TECHNIQUE, Marker, SessionInfo, write_atomic, write_markers};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
+
+/// The policy's actions of a bot run, one JSON line each, in the session
+/// folder (see [`BotRecord`])
+pub const BOT_LOG_FILE: &str = "agentzero.jsonl";
+
+/// Between the prefix and the stamp of a session the bot's run starts:
+/// `<prefix>bot-2026-09-28_21-00-00/`, easy to tell from one's own
+pub const BOT_INFIX: &str = "bot-";
 
 /// The game's controller settings, as set in Splatoon 3's options (TV mode)
 ///
@@ -102,6 +118,55 @@ pub struct SavedState {
     pub techniques: Option<Vec<Technique>>,
     /// What the Predictor's bot may press
     pub bot_limits: Option<Limits>,
+    /// Record the bot's runs as sessions (on unless turned off)
+    pub record_bot_runs: Option<bool>,
+}
+
+/// A play of the Predictor's bot about to start, for its record
+#[derive(Debug, Clone)]
+pub struct BotStart {
+    pub checkpoint: String,
+    pub cpu: bool,
+    /// Seconds confirmed on the page
+    pub seconds: f64,
+    pub limits: Limits,
+}
+
+/// One time the bot played the Switch during the session
+#[derive(Debug, Clone, Serialize)]
+pub struct Play {
+    /// The policy checkpoint, `runs/policy/<checkpoint>` in AgentZero
+    pub checkpoint: String,
+    /// The policy ran on the CPU
+    pub cpu: bool,
+    /// What it might press: the masks and the press-rate cap
+    pub limits: Limits,
+    /// Seconds confirmed on the page
+    pub seconds: f64,
+    /// Host Unix ms, like the session's markers
+    pub start_ms: u64,
+    pub end_ms: Option<u64>,
+    /// Why it ended
+    pub ended: Option<Ended>,
+    /// Actions sent to the proxy
+    pub sent: u64,
+}
+
+/// The Predictor's bot in a session, `bot` in `session.json`: the frames of
+/// `controller.bin` and the video hold what reached the Switch (the bot's
+/// actions mixed with the person's), [`BOT_LOG_FILE`] what the policy
+/// wanted, action by action, and this what played when and where a person
+/// took over
+#[derive(Debug, Clone, Serialize)]
+pub struct BotRecord {
+    /// The session was started for the bot's run and stops with it; else
+    /// the bot played during a session recorded from the Studio
+    pub own_session: bool,
+    /// The policy's actions, one JSON line each: [`BOT_LOG_FILE`]
+    pub log: String,
+    pub plays: Vec<Play>,
+    /// Where a person's input showed over the bot's
+    pub takeovers: Vec<Takeover>,
 }
 
 /// A technique added to the Techniques panel's list
@@ -222,9 +287,47 @@ struct Session {
     markers: Vec<Marker>,
     /// The technique span being marked
     open_span: Option<OpenSpan>,
+    /// The bot's plays, once it played during the session
+    bot: Option<BotRecord>,
+    /// [`BOT_LOG_FILE`], open from the bot's first play to the session's end
+    bot_log: Option<BufWriter<File>>,
 }
 
 impl Session {
+    /// A session recording into `dir` from now
+    fn new(studio: &Studio, dir: PathBuf, bot: Option<BotRecord>) -> Self {
+        Self {
+            dir,
+            started_at_ms: unix_ms(),
+            stopped_at_ms: None,
+            video_input: studio.video.input(),
+            segments: Vec::new(),
+            game_settings: studio.game_settings(),
+            dropped_before: studio.link.dropped.load(Ordering::Relaxed),
+            markers: Vec::new(),
+            open_span: None,
+            bot,
+            bot_log: None,
+        }
+    }
+
+    /// The folder's name, as the Inkspector lists it
+    fn name(&self) -> String {
+        self.dir
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// The bot's play under way, if any
+    fn open_play(&mut self) -> Option<&mut Play> {
+        self.bot
+            .as_mut()?
+            .plays
+            .last_mut()
+            .filter(|play| play.end_ms.is_none())
+    }
+
     /// Take the markers from `session.json`, where the Inkspector may have
     /// changed them; keep the known ones when it cannot be read
     fn reload_markers(&mut self) {
@@ -274,6 +377,8 @@ pub struct Studio {
     game_settings: Mutex<GameSettings>,
     /// Techniques added to the Techniques panel's list
     techniques: Mutex<Vec<Technique>>,
+    /// The bot's runs are recorded
+    record_bot_runs: AtomicBool,
 }
 
 impl Studio {
@@ -288,6 +393,7 @@ impl Studio {
         state_path: PathBuf,
         game_settings: GameSettings,
         techniques: Vec<Technique>,
+        record_bot_runs: bool,
     ) -> Self {
         Self {
             recorder,
@@ -300,30 +406,56 @@ impl Studio {
             session: Mutex::new(None),
             game_settings: Mutex::new(game_settings),
             techniques: Mutex::new(techniques),
+            record_bot_runs: AtomicBool::new(record_bot_runs),
         }
+    }
+
+    fn lock_session(&self) -> MutexGuard<'_, Option<Session>> {
+        self.session.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Start recording a session (`infix` names it, see
+    /// [`Recorder::start`]) with its first video file
+    fn start_session(
+        &self,
+        session: &mut Option<Session>,
+        infix: &str,
+        bot: Option<BotRecord>,
+    ) -> Result<()> {
+        let dir = self.recorder.start(infix)?;
+        let mut new = Session::new(self, dir, bot);
+        self.start_segment(&mut new);
+        self.write_session(&new)?;
+        *session = Some(new);
+        Ok(())
+    }
+
+    /// Stop the recording: the video file, the controller data, and
+    /// `session.json` with the end time
+    fn stop_session(&self, session: &mut Option<Session>) -> Result<()> {
+        let stopped_at = unix_ms();
+        self.recorder.stop()?;
+        if let Some(current) = session.as_mut() {
+            // Stamped before ffmpeg spends a moment finishing the file
+            current.stopped_at_ms = Some(stopped_at);
+            current.reload_markers();
+            current.close_span(stopped_at);
+            self.finish_segment(current);
+            if let Some(mut log) = current.bot_log.take()
+                && let Err(e) = log.flush()
+            {
+                log::warn!("Cannot finish {BOT_LOG_FILE}: {e}");
+            }
+            self.write_session(current)?;
+        }
+        Ok(())
     }
 
     /// Apply a dashboard command
     pub fn run(&self, command: Command) -> Result<()> {
-        let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let mut session = self.lock_session();
         match command {
-            Command::Start => {
-                let dir = self.recorder.start()?;
-                let mut new = Session {
-                    dir,
-                    started_at_ms: unix_ms(),
-                    stopped_at_ms: None,
-                    video_input: self.video.input(),
-                    segments: Vec::new(),
-                    game_settings: self.game_settings(),
-                    dropped_before: self.link.dropped.load(Ordering::Relaxed),
-                    markers: Vec::new(),
-                    open_span: None,
-                };
-                self.start_segment(&mut new);
-                self.write_session(&new)?;
-                *session = Some(new);
-            }
+            Command::Start => self.start_session(&mut session, "", None)?,
             Command::Pause => {
                 let paused_at = unix_ms();
                 self.recorder.pause()?;
@@ -343,18 +475,7 @@ impl Studio {
                     self.write_session(current)?;
                 }
             }
-            Command::Stop => {
-                let stopped_at = unix_ms();
-                self.recorder.stop()?;
-                if let Some(current) = session.as_mut() {
-                    // Stamped before ffmpeg spends a moment finishing the file
-                    current.stopped_at_ms = Some(stopped_at);
-                    current.reload_markers();
-                    current.close_span(stopped_at);
-                    self.finish_segment(current);
-                    self.write_session(current)?;
-                }
-            }
+            Command::Stop => self.stop_session(&mut session)?,
             Command::MarkStart { label, term } => {
                 let (label, term) = technique(&label, term)?;
                 ensure!(
@@ -497,9 +618,151 @@ impl Studio {
     pub fn set_bot_limits(&self, limits: Limits) -> Result<()> {
         limits.validate()?;
         // One save at a time, as the dashboard's commands do
-        let _session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let _session = self.lock_session();
         self.bot.set_limits(limits);
         self.save_state()
+    }
+
+    /// The bot's runs are recorded (see the module docs)
+    pub fn record_bot_runs(&self) -> bool {
+        self.record_bot_runs.load(Ordering::Relaxed)
+    }
+
+    /// Record the bot's runs from the next play on; saved
+    pub fn set_record_bot_runs(&self, enabled: bool) -> Result<()> {
+        let _session = self.lock_session();
+        self.record_bot_runs.store(enabled, Ordering::Relaxed);
+        self.save_state()
+    }
+
+    /// The bot starts to play: record it in the session being recorded, or
+    /// in a session of its own (`<prefix>bot-<stamp>/`), and open the log
+    /// of its actions; answers with the session's folder
+    pub fn bot_play_started(&self, start: BotStart) -> Result<PathBuf> {
+        let mut session = self.lock_session();
+        let recording = self.recorder.status().state != RecorderState::Idle;
+        if !recording {
+            let record = BotRecord {
+                own_session: true,
+                log: BOT_LOG_FILE.to_string(),
+                plays: Vec::new(),
+                takeovers: Vec::new(),
+            };
+            self.start_session(&mut session, BOT_INFIX, Some(record))?;
+        }
+        let current = session.as_mut().context("no session is open")?;
+        let record = current.bot.get_or_insert_with(|| BotRecord {
+            own_session: false,
+            log: BOT_LOG_FILE.to_string(),
+            plays: Vec::new(),
+            takeovers: Vec::new(),
+        });
+        record.plays.push(Play {
+            checkpoint: start.checkpoint,
+            cpu: start.cpu,
+            limits: start.limits,
+            seconds: start.seconds,
+            start_ms: unix_ms(),
+            end_ms: None,
+            ended: None,
+            sent: 0,
+        });
+        if current.bot_log.is_none() {
+            let path = current.dir.join(BOT_LOG_FILE);
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .with_context(|| format!("cannot open {}", path.display()))?;
+            current.bot_log = Some(BufWriter::new(file));
+        }
+        self.write_session(current)?;
+        log::info!("Recording the bot's run in {}", current.dir.display());
+        Ok(current.dir.clone())
+    }
+
+    /// The bot's play ended: its end, why, what it sent and the takeovers
+    /// seen go to `session.json`; a session of its own stops
+    pub fn bot_play_ended(
+        &self,
+        ended: Option<Ended>,
+        sent: u64,
+        takeovers: Vec<Takeover>,
+    ) -> Result<()> {
+        let mut session = self.lock_session();
+        let own = {
+            let Some(current) = session.as_mut().filter(|s| s.bot.is_some()) else {
+                return Ok(());
+            };
+            let now = unix_ms();
+            if let Some(play) = current.open_play() {
+                play.end_ms = Some(now);
+                play.ended = ended;
+                play.sent = sent;
+            }
+            let record = current.bot.as_mut().context("no bot record")?;
+            record.takeovers.extend(takeovers);
+            let own = record.own_session
+                && current.stopped_at_ms.is_none()
+                && self.recorder.status().state != RecorderState::Idle;
+            if let Some(log) = current.bot_log.as_mut() {
+                log.flush()?;
+            }
+            if !own {
+                self.write_session(current)?;
+            }
+            own
+        };
+        if own {
+            self.stop_session(&mut session)?;
+        }
+        Ok(())
+    }
+
+    /// A play of the bot is being recorded
+    pub fn bot_play_open(&self) -> bool {
+        self.lock_session()
+            .as_mut()
+            .is_some_and(|s| s.open_play().is_some())
+    }
+
+    /// The session being recorded is the bot's own
+    pub fn recording_bot_run(&self) -> bool {
+        self.lock_session().as_ref().is_some_and(|s| {
+            s.stopped_at_ms.is_none() && s.bot.as_ref().is_some_and(|bot| bot.own_session)
+        })
+    }
+
+    /// One of the policy's actions, for the log of the session recording
+    /// the bot (`line` is made only then); a failed write ends the log
+    pub fn bot_action(&self, line: impl FnOnce() -> Value) {
+        let mut session = self.lock_session();
+        let Some(current) = session.as_mut() else {
+            return;
+        };
+        let Some(log) = current.bot_log.as_mut() else {
+            return;
+        };
+        let written = serde_json::to_writer(&mut *log, &line())
+            .map_err(std::io::Error::other)
+            .and_then(|()| log.write_all(b"\n"));
+        if let Err(e) = written {
+            log::warn!("Stopped writing {BOT_LOG_FILE}: {e}");
+            current.bot_log = None;
+        }
+    }
+
+    /// For the page: whether runs are recorded, the session recording the
+    /// bot (the current or last one with a record) and whether a play is
+    /// being recorded in it
+    pub fn bot_record_status(&self) -> Value {
+        let mut session = self.lock_session();
+        let with_bot = session.as_mut().filter(|s| s.bot.is_some());
+        json!({
+            "enabled": self.record_bot_runs(),
+            "session": with_bot.as_ref().map(|s| s.name()),
+            "open": with_bot.is_some_and(|s| s.open_play().is_some()),
+        })
     }
 
     /// The Techniques panel's state: the techniques added to the list, the
@@ -628,6 +891,10 @@ impl Studio {
             // Technique spans marked by hand, in host Unix ms like the frames
             description["markers"] = json!(session.markers);
         }
+        if let Some(bot) = &session.bot {
+            // The Predictor's bot played: its plays and the takeovers
+            description["bot"] = json!(bot);
+        }
         write_atomic(
             &session.dir.join("session.json"),
             &serde_json::to_string_pretty(&description)?,
@@ -649,6 +916,7 @@ impl Studio {
             replay_mix: Some(self.player.mix()),
             techniques: Some(self.techniques.lock().unwrap().clone()),
             bot_limits: Some(self.bot.limits()),
+            record_bot_runs: Some(self.record_bot_runs()),
         };
         // Write then rename, so a crash never leaves a half-written file
         let temp = self.state_path.with_extension("tmp");

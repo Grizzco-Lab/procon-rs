@@ -3741,6 +3741,17 @@
                   >
                 </button>
                 <p class="po-play-note" id="po-play-note"></p>
+                <!-- Each play recorded as a session (studio.rs, BotRecord):
+                     the video, what reached the Switch, the policy's own
+                     actions and every takeover -->
+                <label
+                  class="check"
+                  title="Each time AgentZero plays, a session is recorded as the Studio's Record does, bot-<time> beside your own: the video with sound, what reached the Switch in controller.bin, the policy's own actions in agentzero.jsonl, and in session.json the checkpoint, the limits and every moment you took over. A session being recorded takes the run instead."
+                  data-i18n-title="po.recordNote"
+                  ><input type="checkbox" id="po-record" checked />
+                  <span data-i18n="po.record">Record bot runs</span></label
+                >
+                <p class="po-play-note" id="po-record-note" hidden></p>
                 <!-- What it may press, held to in every line sent (masks and
                      the press-rate cap, online/limits.rs), and a person's
                      fastest tapping measured to set the cap from -->

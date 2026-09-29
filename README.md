@@ -734,6 +734,16 @@ AgentZero whose `agentzero-play` has `--json`). Its view is
   recording** is ticked, and stops when a recording starts without it. The
   page warns when the GPU has less than 1.5 GiB free; **CPU** runs it
   without the GPU (much slower).
+- **Record bot runs** (ticked by default) records each play as a session,
+  as Record does, named `bot-<time>` beside your own: the video with sound,
+  what reached the Switch in `controller.bin` (its actions mixed with your
+  corrections), the policy's own actions in `agentzero.jsonl` and, in
+  `session.json`, `bot`: each play's checkpoint, limits, start and end and
+  why it ended, and every takeover, the moments your buttons, a stick pushed
+  past the deadzone or a turn showed over its own. A session being recorded
+  takes the run instead. The link under the button opens it in the
+  Inkspector. AgentZero's `agentzero-refresh` tags these sessions `bot` and
+  never trains on them.
 
 ## Recordings
 
@@ -746,7 +756,8 @@ prefix's folder must exist. Before a recording day, go through
 |---|---|
 | `controller.bin` | 80-byte frames, little endian: Unix ms on the Pi (u64), report size (u8, 0 for a heartbeat), sequence number (u32), µs from the proxy reading the report to the Switch taking it (u16, 0 if unknown), 1 padding byte, the 64-byte HID report |
 | `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses: constant-rate H.264 with a keyframe every second, plus an Opus sound track (48 kHz stereo) when "Record sound" is on |
-| `session.json` | Start/stop times, the proxy's address and clock offset, frame and dropped-frame counts, the video input, size and frame rate, each file's first-frame time (`start_unix_ms`, and `audio_start_unix_ms` with sound), `game_settings` and, if any were marked, `markers`: `[{kind: "technique", label, term?, t_start_ms, t_end_ms, created_ms}]` in PC Unix ms (the controller frames' clock) |
+| `session.json` | Start/stop times, the proxy's address and clock offset, frame and dropped-frame counts, the video input, size and frame rate, each file's first-frame time (`start_unix_ms`, and `audio_start_unix_ms` with sound), `game_settings` and, if any were marked, `markers`: `[{kind: "technique", label, term?, t_start_ms, t_end_ms, created_ms}]` in PC Unix ms (the controller frames' clock); after a bot run, `bot`: `{own_session, log, plays: [{checkpoint, cpu, limits, seconds, start_ms, end_ms, ended, sent}], takeovers: [{t_start_ms, t_end_ms, channels, buttons}]}` in the same clock |
+| `agentzero.jsonl` | Bot runs only: one line per action of the policy, with `t_ms` (PC Unix ms), the frame it saw (`seen`, `captured_ms`), `buttons` and `button_probs`, the sticks and gyro it wanted (`send`) and the line `sent` after the limits (null while it only watched) |
 
 To line them up on the PC's clock:
 

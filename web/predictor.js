@@ -619,6 +619,7 @@
       const data = await api("online/status");
       pred.online = data.run;
       pred.bot = data.bot;
+      pred.record = data.record;
     } catch {
       return;
     }
@@ -706,6 +707,7 @@
       note = t("po.play.left", {
         left: clockText(Math.max(0, (bot.until_ms - Date.now()) / 1000)),
         sent: bot.sent,
+        takeovers: bot.takeovers ?? 0,
       });
     } else if (bot?.ended) {
       note = t("po.play.ended", { why: t(`po.ended.${bot.ended}`) });
@@ -713,6 +715,7 @@
       note = t("po.play.off");
     }
     $("po-play-note").textContent = note;
+    renderRecord();
     $("po-live").dataset.state = playing ? "playing" : "watching";
     $("po-badge").textContent = playing
       ? t("po.badge.playing")
@@ -721,6 +724,37 @@
     renderMeasure();
     renderStopBot();
   }
+
+  /** "Record bot runs", and the session recording the run (or the last
+   * one), with a link to it in the Inkspector */
+  function renderRecord() {
+    const record = pred.record;
+    $("po-record").checked = record?.enabled !== false;
+    const note = $("po-record-note");
+    note.hidden = !record?.session;
+    if (!record?.session) return;
+    const link = document.createElement("a");
+    link.href = `/inspect/${encodeURIComponent(record.session)}`;
+    link.textContent = t("po.record.open");
+    note.replaceChildren(
+      t(record.open ? "po.record.recording" : "po.record.recorded", {
+        session: record.session,
+      }),
+      " ",
+      link,
+    );
+  }
+
+  $("po-record").onchange = async () => {
+    try {
+      pred.record = await api("online/record", {
+        enabled: $("po-record").checked,
+      });
+    } catch (error) {
+      showRunError(error.message);
+    }
+    renderRecord();
+  };
 
   // ------------------------------------------------ what it may press
 
