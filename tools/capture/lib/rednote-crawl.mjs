@@ -1,17 +1,21 @@
 // The visit on Xiaohongshu: the account's following list (found once from
 // its own profile, kept in the state), each followed creator's notes list
 // (scrolled until the end, or on later visits until it shows only notes
-// known before), and a random share of the creator's unread notes, each
-// opened from its tile in a random order, its comments scrolled and folded
-// reply threads unfolded, saved (whether the glossary matched it or not),
-// then closed. The state remembers every creator's notes, so later visits
-// finish the ones left. Notes come from the JSON the page loads for itself
-// and from the page's server state; the DOM is the fallback. Every
+// judged before), every listed note judged from its tile alone (a Salmon
+// Run term in its title, else its cover looking like Splatoon: `wanted`,
+// or `skipped` and never opened), and a random share of the creator's
+// wanted notes, each opened from its tile in a random order, its comments
+// scrolled and folded reply threads unfolded, saved, then closed. The
+// state remembers every creator's notes and every judgement, so later
+// visits finish the ones left. Notes come from the JSON the page loads for
+// itself and from the page's server state; the DOM is the fallback. Every
 // navigation, scroll, click and key is one paced action (`Pace`); the run
 // stops at a cap, on a blocked answer, or as soon as a page wants a person
 // (a captcha, a slider, a login prompt), which is never solved. The page
-// is an interface (`Page` of cdp.mjs, or a fake in tests).
+// is an interface (`Page` of cdp.mjs, or a fake in tests), the cover judge
+// a function (`cover.mjs`, or a table in tests).
 
+import { THRESHOLD } from "./cover.mjs";
 import { matches } from "./filter.mjs";
 import { Stop } from "./pace.mjs";
 import * as rn from "./rednote.mjs";
@@ -45,6 +49,8 @@ export const DEFAULTS = Object.freeze({
   tileScrolls: 8,
   /** The following list is read again after this many days */
   followingTtlDays: 7,
+  /** A cover scored at least this is Splatoon's */
+  coverThreshold: THRESHOLD,
 });
 
 /** HTTP statuses the site answers to what it takes for a script */
@@ -61,12 +67,26 @@ const isComments = (r) => /comment/.test(r.url);
 const isReplies = (r) => /comment\/sub/.test(r.url);
 
 /** Whether a note's state says it was read: saved, or opened and found
- * unreadable. `off-topic` (an older run's skip by title) is unread. */
+ * unreadable */
 export const isRead = (status) => status === "kept" || status === "failed";
 
-/** The creator's notes not read yet, top of the list first */
+/** Whether a note's state says it was judged from its tile: read,
+ * `wanted` (about Splatoon by its title or cover, waiting to be read) or
+ * `skipped` (neither: never opened). `off-topic` (an older run's skip by
+ * the title alone, which misses jargon) and nothing are not judged yet. */
+export const isJudged = (status) =>
+  isRead(status) || status === "wanted" || status === "skipped";
+
+/** The creator's notes not read and not skipped, top of the list first:
+ * wanted, or not judged yet */
 export const unread = (record, seen) =>
-  (record.notes ?? []).filter((id) => !isRead(seen[id]));
+  (record.notes ?? []).filter(
+    (id) => !isRead(seen[id]) && seen[id] !== "skipped",
+  );
+
+/** The creator's notes waiting to be read, top of the list first */
+export const wanted = (record, seen) =>
+  (record.notes ?? []).filter((id) => seen[id] === "wanted");
 
 /** `items` shuffled in place (Fisher-Yates) with `random()` in [0, 1) */
 export function shuffle(items, random) {
@@ -107,7 +127,9 @@ export class Crawl {
    * @param {object} page the browser page (cdp.mjs `Page`)
    * @param {object} deps `pace` (a `Pace`), `state` (the loaded state),
    *   `dir` (the inbox's `rednote` folder), `log(line)`, `options`, `now()`,
-   *   `random()` in [0, 1) for the notes chosen and their order
+   *   `random()` in [0, 1) for the notes chosen and their order, `cover`
+   *   (`async (url) => score` in [0, 1], or null when the picture could not
+   *   be judged; without it a note whose title has no term stays unjudged)
    */
   constructor(page, deps) {
     this.page = page;
@@ -115,6 +137,7 @@ export class Crawl {
     this.state = deps.state;
     this.dir = deps.dir;
     this.log = deps.log ?? (() => {});
+    this.cover = deps.cover ?? null;
     this.options = { ...DEFAULTS, ...deps.options };
     /** The site's origin the home page landed on */
     this.origin = this.options.site ?? rn.SITE;
@@ -124,7 +147,18 @@ export class Crawl {
       creators: 0,
       listed: 0,
       fresh: 0,
+      /** Notes judged from their tiles this run, and of them the ones
+       * skipped as not Splatoon's, and the ones wanted for their cover
+       * alone */
+      judged: 0,
+      skipped: 0,
+      byCover: 0,
+      /** Listed notes left unjudged: no cover, or none the check could
+       * score */
+      unjudged: 0,
       kept: 0,
+      /** Notes kept without a term in their title, text or tags (opened
+       * for their cover) */
       offTopic: 0,
       failed: 0,
       comments: 0,
@@ -343,6 +377,7 @@ export class Crawl {
       const have = into.get(l.id);
       if (have) {
         have.title ||= l.title;
+        have.cover ??= l.cover ?? null;
         have.xsec_token ??= l.xsec_token;
       } else {
         into.set(l.id, l);
@@ -352,14 +387,65 @@ export class Crawl {
     return added;
   }
 
-  /** One creator: the list, merged into the creator's known notes, then
-   * a random share of the unread ones (`choose`) */
+  /** Judges the listed notes not judged yet, from their tiles: a Salmon
+   * Run term in the title makes a note wanted; else its cover, scored by
+   * the judge, makes it wanted at the threshold or skipped below it. A
+   * note without a cover, or whose cover could not be scored, stays
+   * unjudged for a later visit. A skipped note's token is dropped; a
+   * wanted cover's score is kept for the record. */
+  async judge(record, listed) {
+    let unjudged = 0;
+    for (const l of listed.values()) {
+      if (isJudged(this.state.seen[l.id])) continue;
+      const terms = matches(l.title);
+      let score = null;
+      if (!terms.length) {
+        if (!this.cover || !l.cover) {
+          unjudged++;
+          continue;
+        }
+        score = await this.cover(l.cover);
+        if (score == null) {
+          unjudged++;
+          continue;
+        }
+      }
+      this.summary.judged++;
+      if (terms.length || score >= this.options.coverThreshold) {
+        this.state.seen[l.id] = "wanted";
+        if (score != null) {
+          record.covers ??= {};
+          record.covers[l.id] = score;
+          this.summary.byCover++;
+        }
+      } else {
+        this.state.seen[l.id] = "skipped";
+        delete record.tokens[l.id];
+        record.skipped = (record.skipped ?? 0) + 1;
+        this.summary.skipped++;
+        this.log(
+          `  skipped ${rn.noteUrl(l.id)}: no term in the title, cover ${score.toFixed(2)}`,
+        );
+      }
+    }
+    this.summary.unjudged += unjudged;
+    if (unjudged)
+      this.log(
+        `  ${unjudged} notes without a term in the title left unjudged: ${this.cover ? "no cover to judge" : "no cover check"}`,
+      );
+  }
+
+  /** One creator: the list, merged into the creator's known notes, its
+   * notes judged, then a random share of the wanted ones (`choose`) */
   async creator(id) {
     const record = state.account(this.state, id);
     record.notes ??= [];
     record.tokens ??= {};
     const profile = `${this.origin}/user/profile/${id}`;
     const known = new Set(record.notes);
+    const judgedBefore = new Set(
+      record.notes.filter((n) => isJudged(this.state.seen[n])),
+    );
     const listed = new Map();
     const hasMore = { value: null };
     this.log(`creator ${record.nickname ? `${record.nickname} ` : ""}${id}`);
@@ -369,12 +455,12 @@ export class Crawl {
     let idle = 0;
     let reachedEnd = hasMore.value === false;
     for (let i = 0; i < this.options.listScrolls && !reachedEnd; i++) {
-      // Later visits stop once the page shows only notes known before:
+      // Later visits stop once the page shows only notes judged before:
       // new notes are on top
       if (
         record.listed_to_end &&
         listed.size &&
-        [...listed.keys()].every((n) => known.has(n))
+        [...listed.keys()].every((n) => judgedBefore.has(n))
       )
         break;
       await this.action(() => this.page.scroll());
@@ -390,14 +476,19 @@ export class Crawl {
       ...listed.keys(),
       ...record.notes.filter((n) => !listed.has(n)),
     ];
+    await this.judge(record, listed);
     for (const l of listed.values())
-      if (l.xsec_token && !isRead(this.state.seen[l.id]))
+      if (
+        l.xsec_token &&
+        !isRead(this.state.seen[l.id]) &&
+        this.state.seen[l.id] !== "skipped"
+      )
         record.tokens[l.id] = l.xsec_token;
     record.visited_at = this.now().toISOString();
     const fresh = [...listed.keys()].filter((n) => !known.has(n));
     const left = unread(record, this.state.seen);
     const chosen = choose(
-      left,
+      wanted(record, this.state.seen),
       fresh,
       { share: this.options.share, cap: this.options.perCreator },
       this.random,
@@ -406,7 +497,7 @@ export class Crawl {
     this.summary.listed += listed.size;
     this.summary.fresh += fresh.length;
     this.log(
-      `  ${listed.size} notes listed, ${fresh.length} new${reachedEnd ? "" : " (list not finished)"}; ${left.length} unread, reading ${chosen.length}`,
+      `  ${listed.size} notes listed, ${fresh.length} new${reachedEnd ? "" : " (list not finished)"}; ${left.length} unread (${wanted(record, this.state.seen).length} wanted), reading ${chosen.length}`,
     );
     this.save();
     try {
@@ -479,7 +570,8 @@ export class Crawl {
   /** One note: opened from its tile on the creator's page (else by its
    * address), read from the page state, the feed answer or the DOM, its
    * comments scrolled and reply threads unfolded within the caps, saved
-   * with the glossary terms it matches (maybe none), then closed */
+   * with the glossary terms it matches (maybe none: a note wanted for its
+   * cover) and its cover's score, then closed */
   async note(creator, record, l, profile, order = [l.id]) {
     const id = l.id;
     let opened = false;
@@ -506,6 +598,8 @@ export class Crawl {
         nickname: record.nickname ?? "",
       });
     delete record.tokens?.[id];
+    const score = record.covers?.[id];
+    delete record.covers?.[id];
     if (!note) {
       this.state.seen[id] = "failed";
       this.summary.failed++;
@@ -557,7 +651,11 @@ export class Crawl {
       [l.title, note.title, note.text, ...note.tags].join("\n"),
     );
     const title = (note.title || note.text).replace(/\s+/g, " ").slice(0, 60);
-    const line = rn.record(note, matched, this.now());
+    const cover =
+      score == null
+        ? null
+        : { score, ok: score >= this.options.coverThreshold };
+    const line = rn.record(note, matched, this.now(), cover);
     this.state.seen[id] = "kept";
     record.kept++;
     this.summary.kept++;
@@ -567,7 +665,7 @@ export class Crawl {
     }
     this.summary.comments += total();
     this.log(
-      `  ${this.options.dryRun ? "would keep" : "kept"} ${rn.noteUrl(id)} (${total()} comments${note.comments_complete ? "" : ", more not loaded"}${matched.length ? "" : ", no Salmon Run term"}): ${title}`,
+      `  ${this.options.dryRun ? "would keep" : "kept"} ${rn.noteUrl(id)} (${total()} comments${note.comments_complete ? "" : ", more not loaded"}${matched.length ? "" : ", no Salmon Run term"}${cover ? `, cover ${cover.score.toFixed(2)}` : ""}): ${title}`,
     );
     if (!this.options.dryRun) {
       this.summary.files.add(rn.append(this.dir, creator, [line]));

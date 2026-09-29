@@ -233,9 +233,28 @@ export function commentFrom(v) {
   };
 }
 
+/** The address of a card's cover picture: the preview, else the default,
+ * else the first of its info list; null without one */
+function coverOf(card) {
+  const cover = field(card, ["cover"]);
+  const direct = text(cover, [
+    "url_pre",
+    "urlPre",
+    "url_default",
+    "urlDefault",
+    "url",
+  ]);
+  if (direct) return direct;
+  const info = (field(cover, ["info_list", "infoList"]) ?? []).find((x) =>
+    text(x, ["url"]),
+  );
+  return info ? text(info, ["url"]) : null;
+}
+
 /** A note as a creator's list shows it (`user_posted`, or the page
- * state's `notes`, which wraps each in `noteCard`): id, title, the token
- * its link needs, and its author's id when given */
+ * state's `notes`, which wraps each in `noteCard`): id, title, its cover
+ * picture's address, the token its link needs, and its author's id when
+ * given */
 export function listedFrom(v) {
   const card = field(v, ["noteCard", "note_card"]) ?? v;
   const id = text(card, ["note_id", "noteId", "id"]);
@@ -243,6 +262,7 @@ export function listedFrom(v) {
   return {
     id,
     title: text(card, ["display_title", "displayTitle", "title"]),
+    cover: coverOf(card),
     xsec_token: text(card, ["xsec_token", "xsecToken"]) || null,
     author_id:
       text(field(card, ["user", "user_info", "userInfo"]), [
@@ -367,11 +387,11 @@ export function listedFromState(state) {
 }
 
 /** The note ids in the links of a page (`/explore/<id>`,
- * `/discovery/item/<id>`, `/user/profile/<user>/<id>`), with their tokens
- * and the link's first line as the title */
+ * `/discovery/item/<id>`, `/user/profile/<user>/<id>`), with their tokens,
+ * the link's first line as the title and its picture as the cover */
 export function listedFromLinks(links) {
   const seen = new Map();
-  for (const [href, label] of links ?? []) {
+  for (const [href, label, picture] of links ?? []) {
     let path;
     let params;
     try {
@@ -390,11 +410,13 @@ export function listedFromLinks(links) {
     const entry = seen.get(id) ?? {
       id,
       title: "",
+      cover: null,
       xsec_token: null,
       author_id: author,
     };
     const first = (label ?? "").trim().split("\n")[0].trim();
     if (!entry.title && first) entry.title = first;
+    if (typeof picture === "string" && picture) entry.cover ??= picture;
     entry.xsec_token ??= params.get("xsec_token");
     seen.set(id, entry);
   }
@@ -422,9 +444,11 @@ export function folderOf(id) {
 }
 
 /** One note as a record of the file: the note with its comments, the
- * Salmon Run terms the glossary matched (maybe none: every note read is
- * saved), `on_topic` when there are some, and when it was captured */
-export function record(note, matched, capturedAt = new Date()) {
+ * Salmon Run terms the glossary matched in its title, text and tags, the
+ * cover's Splatoon score when the crawl judged it by its cover
+ * (`{score, ok}`), `on_topic` when there are terms or the cover passed,
+ * and when it was captured */
+export function record(note, matched, capturedAt = new Date(), cover = null) {
   const comment = (c) => ({
     id: c.id,
     author: c.author,
@@ -458,7 +482,8 @@ export function record(note, matched, capturedAt = new Date()) {
     comments: (note.comments ?? []).map(comment),
     comments_complete: note.comments_complete === true,
     matched,
-    on_topic: matched.length > 0,
+    ...(cover ? { cover_score: cover.score } : {}),
+    on_topic: matched.length > 0 || cover?.ok === true,
     captured_at: capturedAt.toISOString(),
   };
 }
@@ -504,8 +529,13 @@ export const JS_STATE = `/* rncap:state */ (() => {
   return { note, user };
 })()`;
 
-/** Every link of the page: `[address, text]` */
-export const JS_LINKS = `/* rncap:links */ [...document.querySelectorAll("a[href]")].map((a) => [a.href, (a.innerText || "").trim().slice(0, 200)])`;
+/** Every link of the page: `[address, text, picture]`, the picture the
+ * link's own image or its tile's (a note tile is a `section` with the
+ * cover link and the title link side by side) */
+export const JS_LINKS = `/* rncap:links */ [...document.querySelectorAll("a[href]")].map((a) => {
+  const img = a.querySelector("img") || (a.closest("section") || a).querySelector("img");
+  return [a.href, (a.innerText || "").trim().slice(0, 200), img ? img.currentSrc || img.src || "" : ""];
+})`;
 
 /** The note the page shows, read off the DOM when no answer gave it: the
  * site's detail page has the title in \`#detail-title\`, the text in

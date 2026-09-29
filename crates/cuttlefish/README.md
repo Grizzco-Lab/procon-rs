@@ -1050,7 +1050,7 @@ guides, clears, and discussion in the comments. `tools/capture/rednote.mjs`
 logged-in Chrome as `xcap.mjs`, on the same profile folder
 (`~/.config/procon/browser-profile`, one login for both sites): it reads
 your following list once (from a comment box's @ picker; nothing is sent), each creator's notes list (笔记), and a random
-60 to 95% of each creator's unread notes (at most 12 a visit, new ones
+60 to 95% of each creator's Splatoon notes (at most 12 a visit, new ones
 first, in a random order; later visits finish the rest) for their comments
 and replies, scrolling and clicking like a reader, and keeps the JSON the page loaded for itself (the site's signed
 headers, `x-s`/`x-t`, are never made or replayed; the page's server state
@@ -1062,13 +1062,21 @@ accepted it for this private knowledge base. The tool makes no requests of
 its own, writes nothing to the site, downloads no media, and never sees or
 stores credentials.
 
-What it keeps: every note it opens (titles are jargon a filter misses);
-the record's `matched` lists the terms of the same three-language
-glossary as `xcap` found in its title, text and tags, and `on_topic` says
-whether there were any (`lib/filter.mjs`: 打工, 鲑鱼跑, 熊先生,
-金鲑鱼卵, the bosses, the Kings, the stages and their short names (生筋子,
-破船, 发电所), the players' jargon (熊商会, 搬蛋), サーモンラン, バクダン,
-Salmon Run, Grizzco, ...); the importer takes every record. Each note is one JSON line in
+What it opens: only notes judged Splatoon's from their tiles, before
+any is opened, since the creators post their lives too. A note is
+wanted when the same three-language glossary as `xcap` finds a term in
+the tile's title (`lib/filter.mjs`: 打工, 鲑鱼跑, 熊先生, 金鲑鱼卵, the
+bosses, the Kings, the stages and their short names (生筋子, 破船,
+发电所), the players' jargon (熊商会, 搬蛋), サーモンラン, バクダン,
+Salmon Run, Grizzco, ...) or, titles being jargon a filter misses, when
+its cover thumbnail looks like the game to a small local model
+(`lib/cover.py`: SigLIP 2 zero-shot on the CPU, in AgentZero's
+environment; its own probability of a match, 0.05 and above); a note with
+neither is skipped, never
+opened, its content never seen. What it keeps: every note it opens; the
+record's `matched` lists the glossary's terms in its title, text and
+tags, `cover_score` the cover's score when that decided, and `on_topic`
+says whether either did; the importer takes every record. Each note is one JSON line in
 `<knowledge>/inbox/rednote/<user id>/notes.jsonl`: id, author, date,
 title, text, tags, image and video addresses (nothing downloaded), likes,
 collects, shares, the comment count, and the comments with their replies

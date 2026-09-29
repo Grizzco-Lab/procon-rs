@@ -141,12 +141,15 @@ No test touches X or a login; the fixtures are synthetic. The CDP layer
 
 ## rncap: Salmon Run notes from Xiaohongshu
 
-`rednote.mjs` captures the notes (笔记) of the Salmon Run creators you
-follow on Xiaohongshu (RedNote, 小红书), each with its comments and their
-replies, into Cuttlefish's inbox (`<knowledge>/inbox/rednote/<user
-id>/notes.jsonl`), where `cuttlefish ingest inbox` (or **Import inbox** on
-the Knowledge page) turns each note into a community document (source kind
-`rednote`, `crates/cuttlefish/src/rednote.rs`).
+`rednote.mjs` captures the Splatoon notes (笔记) of the Salmon Run
+creators you follow on Xiaohongshu (RedNote, 小红书), each with its
+comments and their replies, into Cuttlefish's inbox
+(`<knowledge>/inbox/rednote/<user id>/notes.jsonl`), where `cuttlefish
+ingest inbox` (or **Import inbox** on the Knowledge page) turns each note
+into a community document (source kind `rednote`,
+`crates/cuttlefish/src/rednote.rs`). A creator's other notes (their
+everyday life) are never opened: each note is judged from its tile alone,
+[below](#only-splatoon-notes-are-opened).
 
 ### The risk, first
 
@@ -180,9 +183,10 @@ a captcha**: anything that wants a person stops the run at once.
   kept in the state for a week, `--refresh-following` reads it
   again, `--creators` gives creators yourself as profile links, ids or
   `@<file>`), each creator's profile, scrolling the notes list until it
-  ends or, on later visits, until it shows only notes known before, and
-  then a random 60 to 95% of the creator's unread notes (drawn anew each
-  visit), at most `--per-creator` (12) a visit, notes never listed before
+  ends or, on later visits, until it shows only notes judged before, each
+  listed note judged from its tile (below), and then a random 60 to 95%
+  of the creator's wanted notes (drawn anew each visit), at most
+  `--per-creator` (12) a visit, notes never listed before
   first, read in a random order: its tile is clicked (the list draws only
   the tiles near the viewport, so the page is scrolled toward the tile
   first; a tile not reached within `--tile-scrolls` (8) gives way to the
@@ -194,11 +198,35 @@ a captcha**: anything that wants a person stops the run at once.
   later visits.
 - **Which creators first:** those never visited, then those with unread
   notes left, then the rest, the longest unvisited first within each.
-- **No title filter:** titles are jargon a filter misses, so every note
-  chosen is opened and saved. The same three-language glossary as xcap
-  (`lib/filter.mjs`) runs on the list's title, the note's title, text and
-  tags: the record's `matched` lists the terms it found and `on_topic`
-  says whether there were any. The importer takes every record.
+- **Only Splatoon notes are opened** (`judge` in `lib/rednote-crawl.mjs`).
+  The creators post their lives too, and a crawler opening those is not
+  what anyone wants; titles alone are jargon a filter misses. So a note
+  is judged from what its tile shows, before it is opened: the same
+  three-language glossary as xcap (`lib/filter.mjs`) on the tile's title,
+  and, when that finds nothing, its cover picture scored by a small local
+  model (`lib/cover.mjs` + `lib/cover.py`: SigLIP 2 base zero-shot, the
+  model AgentZero's vtext uses, run on the CPU in AgentZero's environment
+  (`uv run python`, `--agentzero`, default `../AgentZero`), against
+  prompts for the game's screenshots, Salmon Run, its results screens and
+  its art; the score is the model's own probability that the picture
+  matches one of them, small in absolute terms; the thumbnail is fetched
+  from the site's image CDN as the browser does for every tile it draws,
+  by the listed address or, once that signed address expired, by its file
+  id, and never stored). A term in the title or a cover scoring
+  `--cover-threshold` (0.05) or more makes the note `wanted`; neither
+  makes it `skipped`: never opened, its content never seen, only its id
+  and score in the log. A note with no cover, or one the check could not
+  fetch or score, waits unjudged for a later visit. On the 193 notes
+  captured before this rule, 88 without a Salmon Run term in their text,
+  the game pictures among their covers (screenshots, results, art) scored
+  0.07 to 0.9 and the everyday ones (chats, text cards, photos) 0.03 and
+  below, with one photo at 0.33: the check missed none and would have
+  opened one; `--no-cover-check` runs the title rule alone and leaves the
+  rest unjudged and unopened. On a note
+  opened, the glossary runs again on its title, text and tags: the
+  record's `matched` lists the terms it found, `cover_score` its cover's
+  score when the cover decided, and `on_topic` says whether either did.
+  The importer takes every record.
 - **Where the notes come from** (`lib/rednote.mjs`): the JSON the page
   receives (`user_posted` for a creator's list, `/feed` for a note,
   `comment/page` and `comment/sub/page` for comments and replies, the
@@ -223,11 +251,14 @@ a captcha**: anything that wants a person stops the run at once.
   `<inbox>/rednote/state.json` keeps the day's action count, the following
   list (creator ids), a record per creator (nickname, whether the whole
   list was scrolled once, last visit, counts, `notes`: every note of the
-  list known, top first, and `tokens` for the unread ones' addresses) and
-  every note id read (`kept`, or `failed` when the page showed none; an
-  older run's `off-topic`, skipped by title, counts as unread). A note not
-  reached before a cap stays unread, so a later run takes it; `status`
-  counts the creators never visited and the unread notes left.
+  list known, top first, `tokens` for the unread ones' addresses and
+  `covers` for the scores of those wanted for their cover) and every note
+  id judged (`wanted`, waiting to be read; `skipped`, never opened; `kept`
+  once read, or `failed` when the page showed none; an older run's
+  `off-topic`, skipped by the title alone, is judged again, by its cover,
+  when listed). A wanted note not reached before a cap waits, so a later
+  run takes it; `status` counts the creators never visited and the unread
+  notes left.
 
 ### Steps
 
@@ -272,7 +303,9 @@ pace (9 s between actions on average plus the page's settling, a
 2.5-minute pause every 22 actions or so) that is about 1.5 minutes a note:
 **750 actions, the daily cap, take 3 to 4 hours** and read about 120 notes
 of some 40 to 50 creators. `--per-creator` and `--max-replies` trade depth
-for breadth.
+for breadth. Judging a cover is no page action: a thumbnail fetch and
+about 0.35 s of CPU (the model loads in some 10 s at the start, 1.8 GB of
+memory; the GPU is never used).
 
 ### The record
 
@@ -294,7 +327,9 @@ for breadth.
 
 Images and videos are addresses only; nothing is downloaded.
 `comments_complete` is false when a cap cut the comments; `matched` is
-empty and `on_topic` false when the glossary found no Salmon Run term. In the store
+empty when the glossary found no Salmon Run term in the note (then the
+cover decided: `cover_score` holds its score); `on_topic` is true when
+either did. In the store
 (`crates/cuttlefish/src/rednote.rs`) each note is one document titled by
 the note, with a header (`Xiaohongshu note by <creator>, <date>`), the
 text, the tags, and a `## Comments` section of timestamped lines with the
@@ -305,7 +340,7 @@ attribution, the note's language, and the game era from its date; weight
 ### Tests
 
 ```bash
-node --test tools/capture/test/     # both tools: rednote.test.mjs (the site's answers, the page state, links, markers, the record), rednote-crawl.test.mjs (the visit against a scripted page)
+node --test tools/capture/test/     # both tools: rednote.test.mjs (the site's answers, the page state, links, markers, the record), rednote-crawl.test.mjs (the visit against a scripted page, the covers judged by a table), cover.test.mjs (file ids, the thumbnail, the helper's protocol against a fake)
 ```
 
 No test touches the site or a login; the fixtures are synthetic, shaped

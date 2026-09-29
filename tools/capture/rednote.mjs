@@ -23,6 +23,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import * as cdp from "./lib/cdp.mjs";
 import { knowledgeFolder } from "./lib/config.mjs";
+import { CoverCheck, HELPER, THRESHOLD, judge } from "./lib/cover.mjs";
 import { Pace, estimateSeconds, parseRange } from "./lib/pace.mjs";
 import * as rn from "./lib/rednote.mjs";
 import { Crawl, DEFAULTS as CRAWL, unread } from "./lib/rednote-crawl.mjs";
@@ -31,6 +32,11 @@ import * as state from "./lib/state.mjs";
 /** The profile and port xcap uses too: one login for both sites */
 const DEFAULT_PROFILE = join(homedir(), ".config", "procon", "browser-profile");
 const DEFAULT_PORT = 9251;
+
+/** AgentZero's folder, beside the repository the tool is run from (as
+ * the studio's `[predictor] agentzero`): its environment has the cover
+ * check's model */
+const DEFAULT_AGENTZERO = resolve("..", "AgentZero");
 
 /** The pace of a person reading, on a site with strict risk control: 6 to
  * 12 s between actions, a pause of 1 to 4 minutes every 15 to 30, at most
@@ -47,7 +53,7 @@ const PACE = Object.freeze({
 const USAGE = `usage: rednote.mjs <login | run | status> [options]
 
   login                    open Chrome on the capture's profile for you to log in, then close it
-  run                      visit the following list, the creators' notes, a random share of each one's unread notes with comments
+  run                      visit the following list, the creators' notes lists, judge each note from its tile (a Salmon Run term in the title, else a cover that looks like Splatoon), read a random share of the wanted ones with comments
   status                   what the state file says
 
 Where (run, status):
@@ -74,6 +80,9 @@ What to read (run):
   --max-replies <n>        reply threads unfolded per note (default ${CRAWL.maxReplies})
   --list-scrolls <n>       scrolls down a creator's list, at most (default ${CRAWL.listScrolls})
   --tile-scrolls <n>       scrolls of the list toward a note's tile before its address is used instead (default ${CRAWL.tileScrolls})
+  --agentzero <folder>     AgentZero's folder, whose environment runs the cover check (SigLIP 2 on the CPU; default ${DEFAULT_AGENTZERO})
+  --cover-threshold <p>    a cover scored at least this, 0 to 1, looks like Splatoon (default ${THRESHOLD})
+  --no-cover-check         judge by the title alone: a note without a term in its title waits, unjudged and unopened, for a run with the check
   --dry-run                browse and print; write nothing but the day's action count
 
 Pace (run):
@@ -110,6 +119,9 @@ const { values: o, positionals } = parseArgs({
     "max-replies": { type: "string" },
     "list-scrolls": { type: "string" },
     "tile-scrolls": { type: "string" },
+    agentzero: { type: "string", default: DEFAULT_AGENTZERO },
+    "cover-threshold": { type: "string" },
+    "no-cover-check": { type: "boolean", default: false },
     "dry-run": { type: "boolean", default: false },
     delay: { type: "string" },
     "pause-every": { type: "string" },
@@ -299,8 +311,14 @@ async function run() {
     maxReplies: integer("max-replies", CRAWL.maxReplies),
     listScrolls: integer("list-scrolls", CRAWL.listScrolls),
     tileScrolls: integer("tile-scrolls", CRAWL.tileScrolls),
+    coverThreshold:
+      o["cover-threshold"] == null ? THRESHOLD : Number(o["cover-threshold"]),
     dryRun: o["dry-run"],
   };
+  if (!(options.coverThreshold >= 0 && options.coverThreshold <= 1)) {
+    console.error("--cover-threshold: expected a number from 0 to 1");
+    process.exit(2);
+  }
   // Ctrl+C: the action under way finishes, the state is saved
   let interrupted = false;
   const sleep = (ms) =>
@@ -330,19 +348,49 @@ async function run() {
   log(
     `creators: ${options.creators.length ? `${options.creators.length} given` : "the accounts you follow"}; ${CRAWL.share.map((x) => x * 100).join("-")}% of each one's unread notes, at most ${options.perCreator} a visit${options.maxNotes ? `, ${options.maxNotes} this run` : ""}; up to ${options.maxComments} comments, ${options.commentScrolls} scrolls and ${options.maxReplies} reply threads a note`,
   );
+  // A note is opened only when its title has a Salmon Run term or its
+  // cover looks like the game: the check is loaded before the browser, so
+  // a run without it never starts by accident
+  let check = null;
+  if (o["no-cover-check"]) {
+    log(
+      "covers not judged (--no-cover-check): a note without a Salmon Run term in its title waits, unopened",
+    );
+  } else {
+    log(
+      `covers judged by SigLIP 2 in ${resolve(o.agentzero)} on the CPU: a note is opened only when its title has a Salmon Run term or its cover scores ${options.coverThreshold} or more`,
+    );
+    check = new CoverCheck({ cwd: resolve(o.agentzero), log });
+    try {
+      await check.start();
+    } catch (error) {
+      check.stop();
+      throw new Error(
+        `${error.message}; \`uv run python ${HELPER}\` must work in AgentZero's folder (--agentzero), or give --no-cover-check`,
+      );
+    }
+  }
   const b = await browser();
   const page = await openPage();
   let summary;
   try {
-    const crawl = new Crawl(page, { pace, state: st, dir, log, options });
+    const crawl = new Crawl(page, {
+      pace,
+      state: st,
+      dir,
+      log,
+      options,
+      cover: check && judge(check, { log }),
+    });
     summary = await crawl.run();
   } finally {
+    check?.stop();
     await page.close().catch(() => {});
     await b.stop();
   }
   const s = summary;
   log(
-    `${options.dryRun ? "would have kept" : "kept"} ${s.kept} notes (${s.offTopic} without a Salmon Run term; ${s.comments} comments) of ${s.creators} creators; ${s.listed} notes listed, ${s.fresh} new, ${s.failed} unreadable, ${s.left} unread left with them; ${pace.actions} page actions this run, ${st.day.actions} today`,
+    `${options.dryRun ? "would have kept" : "kept"} ${s.kept} notes (${s.offTopic} for their cover alone; ${s.comments} comments) of ${s.creators} creators; ${s.listed} notes listed, ${s.fresh} new; ${s.judged} judged from their tiles (${s.skipped} skipped as not Splatoon's, ${s.byCover} wanted for their cover), ${s.unjudged} left unjudged; ${s.failed} unreadable, ${s.left} unread left with them; ${pace.actions} page actions this run, ${st.day.actions} today`,
   );
   for (const f of s.files) log(`  ${f}`);
   if (s.stopped) log(`stopped: ${s.stopped.message}`);
@@ -375,7 +423,7 @@ function status() {
   const seen = Object.values(st.seen);
   const n = (kind) => seen.filter((s) => s === kind).length;
   console.log(
-    `notes read: ${n("kept")} kept, ${n("failed")} unreadable${n("off-topic") ? ` (${n("off-topic")} skipped by title by an older run, unread again)` : ""}`,
+    `notes read: ${n("kept")} kept, ${n("failed")} unreadable; judged from their tiles: ${n("wanted")} wanted (waiting to be read), ${n("skipped")} skipped as not Splatoon's${n("off-topic") ? `, ${n("off-topic")} skipped by title by an older run (judged again, by their cover, when listed)` : ""}`,
   );
   const visited = Object.values(st.accounts).filter((a) => a.visited_at);
   const pending = visited.filter((a) => unread(a, st.seen).length);
@@ -392,7 +440,7 @@ function status() {
       // No file yet
     }
     console.log(
-      `  ${id} ${(a.nickname ?? "").padEnd(20)} ${String(a.kept).padStart(4)} kept ${String(a.off_topic).padStart(4)} no term ${String(unread(a, st.seen).length).padStart(4)} unread  visited ${a.visited_at?.slice(0, 16).replace("T", " ") ?? "never"}${a.listed_to_end ? "" : " (list not finished)"}${size}`,
+      `  ${id} ${(a.nickname ?? "").padEnd(20)} ${String(a.kept).padStart(4)} kept ${String(a.off_topic).padStart(4)} no term ${String(a.skipped ?? 0).padStart(4)} skipped ${String(unread(a, st.seen).length).padStart(4)} unread  visited ${a.visited_at?.slice(0, 16).replace("T", " ") ?? "never"}${a.listed_to_end ? "" : " (list not finished)"}${size}`,
     );
   }
   if (existsSync(dir)) {

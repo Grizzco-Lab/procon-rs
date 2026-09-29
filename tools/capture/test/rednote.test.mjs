@@ -174,6 +174,10 @@ export function stateFixture() {
             noteCard: {
               noteId: id,
               displayTitle: "サーモンラン tips",
+              cover: {
+                urlPre: "https://sns-webpic/2!pre",
+                urlDefault: "https://sns-webpic/2",
+              },
               xsecToken: "tok2",
               user: { userId: CREATOR },
             },
@@ -286,10 +290,12 @@ test("the page state holds notes with comments and the creator's list", () => {
   assert.deepEqual(listed[0], {
     id: "66aa00000000000000000002",
     title: "サーモンラン tips",
+    cover: "https://sns-webpic/2!pre",
     xsec_token: "tok2",
     author_id: CREATOR,
   });
   assert.equal(listed[1].title, "My cat");
+  assert.equal(listed[1].cover, null);
   assert.equal(listed[1].author_id, null);
   assert.deepEqual(rn.notesFromState(null), []);
   assert.deepEqual(rn.listedFromState({ user: { notes: "x" } }), []);
@@ -311,6 +317,10 @@ test("lists, followings, the account and refusals are recognised", () => {
           note_id: "66aa00000000000000000004",
           type: "normal",
           display_title: "鲑鱼跑 W3",
+          cover: {
+            url_pre: "https://sns-webpic/4!pre",
+            url_default: "https://sns-webpic/4",
+          },
           xsec_token: "t4",
           user: { user_id: CREATOR, nickname: "Grizzco Coach" },
         },
@@ -328,6 +338,7 @@ test("lists, followings, the account and refusals are recognised", () => {
     {
       id: "66aa00000000000000000004",
       title: "鲑鱼跑 W3",
+      cover: "https://sns-webpic/4!pre",
       xsec_token: "t4",
       author_id: CREATOR,
     },
@@ -391,10 +402,12 @@ test("note ids come out of the page's links, with tokens and titles", () => {
     [
       `https://www.xiaohongshu.com/user/profile/${CREATOR}/66aa00000000000000000005?xsec_token=T5&xsec_source=pc_user`,
       "Eggstra Work 500\nlikes 12",
+      "",
     ],
     [
       "https://www.xiaohongshu.com/explore/66aa00000000000000000005?xsec_token=T5",
       "",
+      "https://sns-webpic/5",
     ],
     ["/explore/66aa00000000000000000006", "Cat"],
     [`https://www.xiaohongshu.com/user/profile/${CREATOR}`, "profile"],
@@ -405,12 +418,14 @@ test("note ids come out of the page's links, with tokens and titles", () => {
     {
       id: "66aa00000000000000000005",
       title: "Eggstra Work 500",
+      cover: "https://sns-webpic/5",
       xsec_token: "T5",
       author_id: CREATOR,
     },
     {
       id: "66aa00000000000000000006",
       title: "Cat",
+      cover: null,
       xsec_token: null,
       author_id: null,
     },
@@ -505,6 +520,14 @@ test("notes are appended as JSON lines per creator", () => {
   assert.equal(line.comments[0].replies[0].reply_to, "c1");
   assert.equal(line.comments_complete, true);
   assert.equal(line.captured_at, "2026-09-27T00:00:00.000Z");
+  assert.equal("cover_score" in line, false);
+  assert.equal(line.on_topic, true);
+  // A note wanted for its cover: the score is kept, and it is on topic
+  // although the glossary found no term
+  const byCover = rn.record(note, [], new Date(), { score: 0.91, ok: true });
+  assert.equal(byCover.cover_score, 0.91);
+  assert.equal(byCover.on_topic, true);
+  assert.equal(rn.record(note, [], new Date()).on_topic, false);
   const path = rn.append(dir, CREATOR, [line]);
   rn.append(dir, CREATOR, [{ ...line, id: "66aa00000000000000000009" }]);
   assert.equal(path, join(dir, CREATOR, "notes.jsonl"));
