@@ -5,14 +5,15 @@ report, timestamped, next to the console's video and sound.
 
 A Raspberry Pi 4 sits between the Pro Controller and the Switch as a USB proxy
 and streams the controller's reports over the network. A Linux PC with a
-capture card records them with the video, and its web dashboard has five apps:
+capture card records them with the video, and its web dashboard has six apps:
 **Studio**, to watch and record; **Inkspector**, to check recorded sessions
 frame by frame and label objects on them; **Cuttlefish**, to review videos with
 comments, drawings and an AI coach, and to manage its knowledge; **Vision**,
-to detect and track objects in recorded sessions; and **Predictor**, to see
+to detect and track objects in recorded sessions; **Predictor**, to see
 what the inverse dynamics model reads off any video, and to run AgentZero's
 policy online, on a video or on the live capture, where it can play the
-Switch.
+Switch; and **Pipeline**, to follow the GPU and the experiment queue that
+trains the models: what runs, what waits and why, and what came out.
 
 > [!TIP]
 > **[See the setup guide and dashboard tour →](https://htmlpreview.github.io/?https://github.com/Grizzco-Lab/procon-rs/blob/main/doc/index.html)**
@@ -94,9 +95,10 @@ can be a video file, played in a loop as if live.
 
 ## The dashboard
 
-One page with five apps, switched without reloading: **Studio** (`/studio`,
+One page with six apps, switched without reloading: **Studio** (`/studio`,
 also `/`), **Inkspector** (`/inspect`), **Cuttlefish** (`/cuttlefish`),
-**Vision** (`/vision`) and **Predictor** (`/predictor`). Each app keeps what is
+**Vision** (`/vision`), **Predictor** (`/predictor`) and **Pipeline**
+(`/pipeline`). Each app keeps what is
 open in the URL, so a link opens it again, a reload stays where it was, and the
 browser's back and forward move between views; an app keeps its place while
 another is shown. Links from before (`#inspect/...`) still open. The URLs:
@@ -108,13 +110,15 @@ another is shown. Links from before (`#inspect/...`) still open. The URLs:
 | Cuttlefish | `/cuttlefish` (reviews), `/cuttlefish/translate`, `/cuttlefish/knowledge`, `/cuttlefish/review/<id>?t=<s>`, `/cuttlefish/video?kind=&ref=&start_s=&end_s=&t=` (a video not reviewed yet) |
 | Vision | `/vision`, `/vision/<session>?seg=<file>&n=<frame>` |
 | Predictor | `/predictor`, `/predictor/<video>/<checkpoint>?t=<s>`, `/predictor/online` (AgentZero running online) |
+| Pipeline | `/pipeline` |
 
 The apps form one pipeline: the Studio captures data (recordings), the
 Inkspector inspects and labels them frame by frame (labels), Cuttlefish
 reviews videos, translates slang across languages and keeps the Overfishing
 Pedia (reviews and knowledge), Vision detects objects toward 3D
-reconstruction (detections), and the Predictor predicts controller actions
-(IDM predictions, which go back to the Inkspector next to the labels). The
+reconstruction (detections), the Pipeline follows the models' training on
+the GPU (checkpoints), and the Predictor predicts controller actions (IDM
+predictions, which go back to the Inkspector next to the labels). The
 guide **How it fits together** draws this pipeline with a link to each app;
 it opens by itself on a first visit and again from the **?** button or the
 View menu.
@@ -130,8 +134,8 @@ for details). The **View** menu picks the theme (Studio, Joy, Telemetry or
 Salmon Run), the layout (Auto, or Phone, which narrow screens also use),
 where the app links go (Side rail or Top bar), the rail's width (Compact or
 Expanded) and the language (English or
-Simplified Chinese, by default the browser's; so far the app names, status and View menu, and Cuttlefish with its
-Translate, Knowledge and Pedia views, are translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
+Simplified Chinese, by default the browser's; so far the app names, status and View menu, Cuttlefish with its
+Translate, Knowledge and Pedia views, and the Pipeline are translated); the choices are remembered per browser. Capture and recording carry on while another app is shown; only the
 Studio's preview pauses, and each app stops its own work while hidden.
 
 ### Studio
@@ -745,6 +749,41 @@ AgentZero whose `agentzero-play` has `--json`). Its view is
   Inkspector. AgentZero's `agentzero-refresh` tags these sessions `bot` and
   never trains on them.
 
+### Pipeline
+
+A live board of this machine and the experiment queue that trains the models,
+for following it from anywhere (see [Remote access](#remote-access)): what
+runs now, what waits and why, and what came out.
+
+- **The queue** is a file the agents keep, not code: AgentZero's
+  `runs/queue.json` (`[pipeline] queue`), written with `agentzero-queue`
+  (AgentZero's README has the format and the helper). Each entry is one step
+  of an experiment: what runs, the question it answers, its status (queued,
+  running, done, failed or paused), its processes, run folder and log, and
+  once it is over a one-line result and the next step.
+- **Running**: a card per running entry with its progress and ETA (from its
+  run folder's `metrics.jsonl` and `args.json`, else the last `N/M` in its
+  log), its loss curves (train, validation, held-out) drawn across the steps
+  still to run, its latest validation scores, its processes' GPU memory, CPU
+  and RAM, and its log. The studio finds an entry's processes by its process
+  group, its process or a piece of its command line, so it also shows an
+  entry that runs while the file still says queued, and warns about one the
+  file says runs when none of its processes is left.
+- **Machine**: the GPU (busy, memory with the queue's share, temperature,
+  power), CPU and memory, each with its last half hour, and the GPU's
+  processes with the entries they belong to.
+- **GPU timeline**: busy %, memory (the queue's jobs against the rest) and
+  what ran when, over the last 1 to 12 hours. The studio samples every 5 s
+  from its start and keeps 12 hours in memory.
+- **Queue**: the waiting entries in the order they run. Drag one by its
+  handle, or focus the handle and press ↑ ↓, to change what runs next: the
+  order goes into the file as priorities, and agents take the top one
+  (`agentzero-queue next`). An entry whose run folder shows it already ran
+  moves to Results, marked as not yet updated in the file.
+- **Results** and **History**: what came out, newest first, each with its
+  conclusion and next step; open a result for its question, loss curve and
+  log.
+
 ## Recordings
 
 A session is a folder named from the path prefix and the start time: prefix
@@ -810,13 +849,14 @@ Both programs take `--config <path>`.
 | Section | Sets |
 |---|---|
 | `[proxy]` | `address` (the Pi's stream port) and `replay_address` (its replay port) |
-| `[web]` | Dashboard `port` |
+| `[web]` | Dashboard `port`, and `allowed_hosts`: host names besides `localhost` and IP addresses it answers to (see [Remote access](#remote-access)) |
 | `[recording]` | Default path `prefix` until one is set on the dashboard |
 | `[video]` | First `input` (`"screen"`, `/dev/video0`, a video file played in a loop as if live, or `""`), capture `fps`, `v4l2_args`, recorded size and rate, ffmpeg `encoder` and `preview_encoder` options, `audio_input` (a PulseAudio source, `pactl list short sources`) and `audio_offset_ms` |
 | `[inspect]` | Optional: the Inkspector's `root` (folder of session folders), `calibration` (default `../AgentZero/calibration.json`; AgentZero's `sessions.json` beside it gives the camera turn fits) `annotations` (object labels, default `Annotations` next to the root), `tracker` (Follow's tracker, default `http://127.0.0.1:7340`), `tracker_command` and `tracker_dir` (what Start tracker runs, default `uv run agentzero-track-serve --port <port>` in `../AgentZero`); relative paths start at the config's folder |
 | `[cuttlefish]` | Optional: `reviews` (one folder per review with its video, and the translator's `translations.jsonl`; default `Reviews` next to the root), `knowledge` (the knowledge store with its `inbox/`, default `Knowledge` next to the root), `backend` (`auto`, `api` or `claude-cli`), `model` and `translate_model` |
 | `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model), `confidence` (0.25), `detector` (the Salmon Run detector, default `http://127.0.0.1:7341`), `detector_command` and `detector_dir` (what Start detector runs, default `uv run agentzero-detect-serve --port <port>` in `../AgentZero`) |
 | `[predictor]` | Optional: `agentzero` (the AgentZero folder, default `../AgentZero`) and `results` (stored predictions, default `Predictions` next to the root) |
+| `[pipeline]` | Optional: `queue` (the experiment queue agents keep, default `runs/queue.json` in `[predictor] agentzero`) |
 | `[logging]` | `level`: error, warn, info, debug or trace |
 
 `proxy.toml` (USB proxy, on the Pi):
@@ -829,6 +869,17 @@ Both programs take `--config <path>`.
 | `[replay]` | `port` for JSON-line actions (7332) |
 | `[performance]` | `enable_cpu_affinity`: pin the proxy to one CPU core |
 | `[logging]` | `level` |
+
+## Remote access
+
+The dashboard listens on every interface of the PC. To follow it from
+elsewhere, reach the PC over a private network such as Tailscale:
+`http://<the PC's Tailscale IP>:8090` works as it is, since IP addresses are
+always accepted; a name (a MagicDNS name such as `my-pc` or
+`my-pc.<tailnet>.ts.net`) must be listed in `[web] allowed_hosts`, which
+refuses other names to stop DNS rebinding. The dashboard has no login: keep it
+on your own network, never forwarded to the internet or shared publicly (such
+as with Tailscale Funnel).
 
 ## Troubleshooting
 

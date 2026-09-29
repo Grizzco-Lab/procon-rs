@@ -3519,7 +3519,7 @@ input:focus-visible {
 }
 
 .guide:popover-open {
-  --flow-gap: 34px;
+  --flow-gap: 28px;
   --flow-line: color-mix(in oklab, var(--accent) 60%, transparent);
   position: fixed;
   inset: 0;
@@ -3527,7 +3527,7 @@ input:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  width: min(1080px, calc(100vw - 32px));
+  width: min(1200px, calc(100vw - 32px));
   height: fit-content;
   max-height: calc(100dvh - 32px);
   margin: auto;
@@ -3610,10 +3610,10 @@ input:focus-visible {
   stroke-linecap: round;
 }
 
-/* The steps, and the loop under them on the same five columns */
+/* The steps, and the loop under them on the same six columns */
 .flow {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   column-gap: var(--flow-gap);
   margin: 0;
   padding: 0;
@@ -3735,8 +3735,8 @@ input:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin: -2px calc((100% - 4 * var(--flow-gap)) / 10) 0
-    calc((100% - 4 * var(--flow-gap)) * 3 / 10 + var(--flow-gap));
+  margin: -2px calc((100% - 5 * var(--flow-gap)) / 12) 0
+    calc((100% - 5 * var(--flow-gap)) / 4 + var(--flow-gap));
   padding-top: 24px;
   color: var(--text-2);
   font-size: 12.5px;
@@ -9125,4 +9125,1547 @@ button.cf-cite {
   font-family: inherit;
   line-height: inherit;
   cursor: pointer;
+}
+
+/* ============================================================ pipeline
+ * The Pipeline app (pipeline.js): what runs, the machine, the GPU over the
+ * last hours, the queue in the order it runs, results and history. Charts
+ * use the series tokens (--s1 to --s3); experiments (an entry's group)
+ * take the categorical slots --pl-c1 to --pl-c8, in the order of their
+ * names, always beside their name; states wear the status colours, always
+ * with an icon and a word.
+ */
+
+:root:not([data-app="pipeline"]) [data-app-only="pipeline"] {
+  display: none !important;
+}
+
+#pipeline-layout {
+  /* The dataviz palette's dark steps (Joy has the light ones) */
+  --pl-c1: #3987e5;
+  --pl-c2: #d95926;
+  --pl-c3: #199e70;
+  --pl-c4: #c98500;
+  --pl-c5: #d55181;
+  --pl-c6: #008300;
+  --pl-c7: #9085e9;
+  --pl-c8: #e66767;
+  --pl-jobs: var(--s1);
+  --pl-other: color-mix(in oklab, var(--text-3) 42%, transparent);
+  width: 100%;
+  max-width: 1760px;
+  margin: 0 auto;
+  align-items: start;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-areas:
+    "now now now now now now now machine machine machine machine machine"
+    "timeline timeline timeline timeline timeline timeline timeline timeline timeline timeline timeline timeline"
+    "queue queue queue queue queue queue results results results results results results"
+    "history history history history history history history history history history history history";
+}
+
+[data-theme="joy"] #pipeline-layout {
+  --pl-c1: #2a78d6;
+  --pl-c2: #eb6834;
+  --pl-c3: #1baf7a;
+  --pl-c4: #eda100;
+  --pl-c5: #e87ba4;
+  --pl-c6: #008300;
+  --pl-c7: #4a3aa7;
+  --pl-c8: #e34948;
+  --pl-other: color-mix(in oklab, var(--text-3) 34%, transparent);
+  max-width: 1360px;
+}
+
+.p-pl-now {
+  grid-area: now;
+}
+.p-pl-machine {
+  grid-area: machine;
+}
+.p-pl-timeline {
+  grid-area: timeline;
+}
+.p-pl-queue {
+  grid-area: queue;
+}
+.p-pl-results {
+  grid-area: results;
+}
+.p-pl-history {
+  grid-area: history;
+}
+
+[data-theme="telemetry"] .p-pl-now {
+  --panel-no: "01";
+}
+[data-theme="telemetry"] .p-pl-machine {
+  --panel-no: "02";
+}
+[data-theme="telemetry"] .p-pl-timeline {
+  --panel-no: "03";
+}
+[data-theme="telemetry"] .p-pl-queue {
+  --panel-no: "04";
+}
+[data-theme="telemetry"] .p-pl-results {
+  --panel-no: "05";
+}
+[data-theme="telemetry"] .p-pl-history {
+  --panel-no: "06";
+}
+
+#pipeline-layout .panel-head {
+  flex-wrap: wrap;
+}
+
+#pipeline-layout code {
+  font-family: var(--font-num);
+}
+
+.pl-dim {
+  color: var(--text-3);
+}
+
+.pl-empty {
+  padding: 18px 12px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.pl-sub {
+  margin: 4px 0 0;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ---------------------------------------------- states and experiments */
+
+.pl-state {
+  --st: var(--text-3);
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* The icon: a mark of its own per state, in the state's colour */
+.pl-state i {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  color: var(--st);
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.pl-state i::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pl-state[data-state="running"],
+.pl-state[data-state="detected"] {
+  --st: var(--good);
+  color: var(--text);
+}
+
+.pl-state[data-state="running"] i::before {
+  animation: pl-ring 1.8s ease-out infinite;
+}
+
+/* Running, not marked: the same light, hollow */
+.pl-state[data-state="detected"] i::before {
+  background: none;
+  box-shadow: inset 0 0 0 2px currentColor;
+}
+
+.pl-state[data-state="gone"],
+.pl-state[data-state="paused"] {
+  --st: var(--warning);
+  color: var(--text);
+}
+
+.pl-state[data-state="gone"] i::before {
+  content: "!";
+  width: auto;
+  height: auto;
+  background: none;
+  font-weight: 800;
+}
+
+.pl-state[data-state="paused"] i::before {
+  width: 7px;
+  height: 8px;
+  border-radius: 0;
+  background: none;
+  box-shadow:
+    inset 2.5px 0 currentColor,
+    inset -2.5px 0 currentColor;
+}
+
+.pl-state[data-state="queued"] i::before {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+.pl-state[data-state="done"] {
+  --st: var(--good);
+}
+
+.pl-state[data-state="finished"],
+.pl-state[data-state="stopped"] {
+  --st: var(--text-3);
+}
+
+.pl-state[data-state="stopped"] i::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 1.5px;
+}
+
+.pl-state[data-state="done"] i::before,
+.pl-state[data-state="finished"] i::before {
+  content: "✓";
+  width: auto;
+  height: auto;
+  background: none;
+  font-weight: 800;
+}
+
+.pl-state[data-state="failed"] {
+  --st: var(--critical);
+  color: var(--text);
+}
+
+.pl-state[data-state="failed"] i::before {
+  content: "✕";
+  width: auto;
+  height: auto;
+  background: none;
+  font-weight: 800;
+}
+
+@keyframes pl-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--good) 55%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+/* An experiment: its name beside its colour's mark */
+.pl-group {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px 0 6px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--g) 16%, transparent);
+  color: var(--text);
+  font:
+    700 11px/1 var(--font-num),
+    var(--font-cjk);
+  white-space: nowrap;
+}
+
+.pl-group::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--g);
+}
+
+.pl-id {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+/* The question an entry answers */
+.pl-why {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 2px solid
+    color-mix(in oklab, var(--g, var(--accent)) 55%, transparent);
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------ running */
+
+.pl-running {
+  display: grid;
+  gap: 12px;
+}
+
+.pl-idle {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 26px 12px 22px;
+  color: var(--text-2);
+  text-align: center;
+}
+
+.pl-idle .pl-idle-icon {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 6px;
+  opacity: 0.55;
+  filter: grayscale(0.6);
+}
+
+.pl-idle p {
+  margin: 0;
+}
+
+.pl-idle-text {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pl-idle-next {
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.pl-run {
+  --pl-bar: var(--s1);
+  position: relative;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px 14px 18px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  overflow: hidden;
+}
+
+/* The state's rule along the card's edge */
+.pl-run::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--good);
+}
+
+.pl-run[data-state="gone"]::before {
+  background: var(--warning);
+}
+
+.pl-run[data-state="finished"]::before {
+  background: var(--text-3);
+}
+
+.pl-run[data-state="gone"],
+.pl-run[data-state="finished"] {
+  --pl-bar: var(--text-3);
+}
+
+.pl-run-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.pl-meta {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.pl-elapsed {
+  margin-left: auto;
+  color: var(--text-2);
+  font:
+    500 13px var(--font-num),
+    var(--font-cjk);
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-run-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+}
+
+.pl-run-warn {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--warning) 12%, transparent);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.pl-run-warn[data-level="note"] {
+  background: color-mix(in oklab, var(--text) 6%, transparent);
+  color: var(--text-2);
+}
+
+/* Progress: the bar, then the numbers under it */
+.pl-progress {
+  display: grid;
+  gap: 7px;
+}
+
+.pl-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--pl-bar) 16%, var(--panel));
+  overflow: hidden;
+}
+
+.pl-fill {
+  position: relative;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--pl-bar);
+  transition: width 0.9s cubic-bezier(0.2, 0.7, 0.2, 1);
+  overflow: hidden;
+}
+
+/* A sheen travelling along a live bar */
+.pl-bar[data-live] .pl-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.32),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: pl-sheen 2.6s ease-in-out infinite;
+}
+
+/* No steps to count: a band that keeps going */
+.pl-bar[data-unknown] .pl-fill {
+  width: 28%;
+  animation: pl-sweep 1.8s ease-in-out infinite;
+}
+
+.pl-bar[data-unknown]:not([data-live]) .pl-fill {
+  width: 0;
+  animation: none;
+}
+
+@keyframes pl-sheen {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes pl-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(360%);
+  }
+}
+
+.pl-progress-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-pct {
+  color: var(--text);
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.pl-eta {
+  margin-left: auto;
+  color: var(--text-2);
+}
+
+.pl-eta b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Its processes */
+.pl-run-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+.pl-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.pl-stat-label {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.pl-stat b {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pl-last-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+}
+
+.pl-last-line .pl-stat-label {
+  flex: none;
+}
+
+.pl-last-line code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The log, the recipe, notes and files, folded */
+.pl-run-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+}
+
+.pl-run-more details {
+  min-width: 0;
+}
+
+.pl-run-more details[open] {
+  flex-basis: 100%;
+}
+
+.pl-run-more summary {
+  color: var(--text-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.pl-run-more summary:hover {
+  color: var(--text);
+}
+
+.pl-log {
+  max-height: 280px;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--screen);
+  color: var(--text-2);
+  font:
+    11.5px/1.55 var(--font-num),
+    var(--font-cjk);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pl-args {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 14px;
+  margin: 8px 0 0;
+  font:
+    12px/1.45 var(--font-num),
+    var(--font-cjk);
+}
+
+.pl-args dt {
+  color: var(--text-3);
+}
+
+.pl-args dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pl-notes {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+
+.pl-notes li {
+  display: flex;
+  gap: 10px;
+}
+
+.pl-notes time {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-num);
+}
+
+/* --------------------------------------------------- charts: shared */
+
+.pl-svg {
+  display: block;
+  overflow: visible;
+  touch-action: pan-y;
+}
+
+.pl-svg .grid {
+  stroke: var(--grid);
+  stroke-width: 1;
+}
+
+.pl-svg .grid.baseline {
+  stroke: var(--axis);
+}
+
+.pl-svg .tick {
+  fill: var(--text-3);
+  font:
+    10.5px var(--font-num),
+    var(--font-cjk);
+  text-anchor: end;
+  dominant-baseline: middle;
+}
+
+.pl-svg .tick-x {
+  text-anchor: middle;
+}
+
+.pl-svg .series {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.pl-svg .series.s1 {
+  stroke: var(--s1);
+}
+.pl-svg .series.s2 {
+  stroke: var(--s2);
+}
+.pl-svg .series.s3 {
+  stroke: var(--s3);
+}
+
+.pl-svg .dot {
+  stroke: var(--inset);
+  stroke-width: 2;
+}
+
+.pl-svg .dot.s1 {
+  fill: var(--s1);
+}
+.pl-svg .dot.s2 {
+  fill: var(--s2);
+}
+.pl-svg .dot.s3 {
+  fill: var(--s3);
+}
+
+.pl-svg .crosshair {
+  stroke: var(--text-3);
+  stroke-width: 1;
+}
+
+/* The newest point: a ripple going out from it */
+.pl-svg .pl-now {
+  stroke-width: 0;
+  animation: pl-ripple 2s ease-out infinite;
+}
+
+.pl-svg .pl-now.s1 {
+  fill: var(--s1);
+  stroke: var(--s1);
+}
+
+@keyframes pl-ripple {
+  0% {
+    stroke-width: 0;
+    stroke-opacity: 0.55;
+  }
+  80%,
+  100% {
+    stroke-width: 16;
+    stroke-opacity: 0;
+  }
+}
+
+/* A line tracing itself in, the first time it is drawn */
+.pl-svg .pl-draw-in {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: pl-draw 1.1s cubic-bezier(0.3, 0.6, 0.3, 1) forwards;
+}
+
+@keyframes pl-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.pl-tip {
+  z-index: 5;
+  top: 4px;
+  min-width: 120px;
+}
+
+.pl-tip .tip-note {
+  white-space: nowrap;
+}
+
+.pl-tip-entry {
+  color: var(--text-2);
+  font-family: var(--font-num);
+}
+
+/* ---------------------------------------------------------- the curve */
+
+.pl-curve {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.pl-legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.pl-legend-row .key b {
+  min-width: 0;
+}
+
+.pl-curve-plot {
+  position: relative;
+  min-height: 150px;
+}
+
+.pl-curve-empty {
+  display: grid;
+  place-items: center;
+  height: 150px;
+  margin: 0;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--text) 3%, transparent);
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+/* The steps still to run */
+.pl-svg .pl-future {
+  fill: color-mix(in oklab, var(--text) 3.5%, transparent);
+}
+
+/* The latest validation scores, each with its course */
+.pl-scores {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 8px;
+}
+
+.pl-score {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0 8px;
+  padding: 8px 10px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--text) 4%, transparent);
+}
+
+.pl-score-label {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.pl-score-value {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.pl-score .pl-spark {
+  grid-column: 1 / -1;
+}
+
+.pl-score-note {
+  grid-column: 1 / -1;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+/* Sparklines: a thin line with a faint area, the last point marked */
+.pl-spark {
+  display: block;
+  width: 100%;
+  height: 26px;
+  overflow: visible;
+}
+
+.pl-spark-line {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.pl-spark-area {
+  stroke: none;
+}
+
+.pl-spark-end,
+.pl-spark-best {
+  fill: none;
+  stroke-linecap: round;
+  stroke-width: 5;
+  vector-effect: non-scaling-stroke;
+}
+
+.pl-spark-best {
+  stroke: var(--text-3);
+  stroke-width: 4;
+}
+
+.pl-spark-line.s1,
+.pl-spark-end.s1 {
+  stroke: var(--s1);
+}
+.pl-spark-line.s2,
+.pl-spark-end.s2 {
+  stroke: var(--s2);
+}
+.pl-spark-line.s3,
+.pl-spark-end.s3 {
+  stroke: var(--s3);
+}
+
+.pl-spark-area.s1 {
+  fill: color-mix(in oklab, var(--s1) 14%, transparent);
+}
+.pl-spark-area.s2 {
+  fill: color-mix(in oklab, var(--s2) 14%, transparent);
+}
+.pl-spark-area.s3 {
+  fill: color-mix(in oklab, var(--s3) 14%, transparent);
+}
+
+/* ------------------------------------------------------------ machine */
+
+.pl-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.pl-tile {
+  container-type: inline-size;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.pl-tile[data-level="warning"] {
+  border-color: color-mix(in oklab, var(--warning) 55%, transparent);
+}
+
+.pl-tile[data-level="critical"] {
+  border-color: color-mix(in oklab, var(--critical) 60%, transparent);
+}
+
+.pl-tile-label {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+/* As large as the tile lets "22.4 / 31.3 GiB" be */
+.pl-tile-value {
+  font-size: min(20px, 12cqi);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.pl-tile-note {
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+/* A meter of parts, a hairline of surface between them */
+.pl-meter {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  margin: 4px 0 2px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--text) 8%, transparent);
+  overflow: hidden;
+}
+
+.pl-meter i {
+  display: block;
+  flex: none;
+  height: 100%;
+  transition: width 0.8s ease;
+}
+
+.pl-m-jobs {
+  background: var(--pl-jobs);
+}
+
+.pl-m-other {
+  background: var(--pl-other);
+}
+
+.pl-m-power {
+  background: var(--s2);
+}
+
+.pl-m-ram {
+  background: var(--s3);
+}
+
+/* The GPU's processes */
+.pl-proc-list {
+  display: grid;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pl-proc {
+  display: grid;
+  grid-template-columns: 64px 64px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 12.5px;
+}
+
+.pl-proc-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--text) 8%, transparent);
+  overflow: hidden;
+}
+
+.pl-proc-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--pl-other);
+}
+
+.pl-proc[data-entry] .pl-proc-bar i {
+  background: var(--pl-jobs);
+}
+
+.pl-proc-mem {
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pl-proc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pl-proc-entry {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--pl-jobs) 16%, transparent);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.pl-proc-detail {
+  color: var(--text-3);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------- timeline */
+
+.pl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-inline-end: auto;
+}
+
+.key.pl-k-jobs i,
+.tip-row.pl-k-jobs i {
+  height: 8px;
+  background: var(--pl-jobs);
+}
+
+.key.pl-k-other i,
+.tip-row.pl-k-other i {
+  height: 8px;
+  background: var(--pl-other);
+}
+
+.pl-chart {
+  position: relative;
+  min-height: 200px;
+}
+
+.pl-svg .pl-area.s1 {
+  fill: color-mix(in oklab, var(--s1) 14%, transparent);
+}
+
+.pl-svg .pl-thin {
+  stroke-width: 1.5;
+}
+
+.pl-svg .pl-mem-other {
+  fill: var(--pl-other);
+  opacity: 0.8;
+}
+
+.pl-svg .pl-mem-jobs {
+  fill: color-mix(in oklab, var(--pl-jobs) 72%, transparent);
+}
+
+.pl-svg .pl-mem-line {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 1;
+}
+
+.pl-svg .pl-cap {
+  stroke: var(--axis);
+  stroke-dasharray: none;
+}
+
+.pl-svg .pl-vgrid {
+  stroke: color-mix(in oklab, var(--grid) 70%, transparent);
+}
+
+/* Before the studio started sampling */
+.pl-svg .pl-nodata {
+  fill: color-mix(in oklab, var(--text) 3%, transparent);
+}
+
+.pl-svg .pl-row-label {
+  font-size: 10px;
+}
+
+/* A row's latest value, at its end */
+.pl-svg .pl-end {
+  fill: var(--text);
+  font:
+    600 11px var(--font-num),
+    var(--font-cjk);
+  dominant-baseline: middle;
+}
+
+/* What ran when: a bar per span, its id inside when it fits */
+.pl-lane rect {
+  fill: color-mix(in oklab, var(--s1) 36%, var(--panel));
+}
+
+.pl-lane[data-state="running"] rect,
+.pl-lane[data-state="detected"] rect {
+  fill: var(--s1);
+}
+
+.pl-lane[data-state="failed"] rect {
+  fill: color-mix(in oklab, var(--critical) 55%, var(--panel));
+}
+
+.pl-lane[data-state="gone"] rect,
+.pl-lane[data-state="finished"] rect {
+  fill: color-mix(in oklab, var(--text-3) 40%, var(--panel));
+}
+
+.pl-lane-label {
+  fill: var(--text);
+  font:
+    600 10.5px var(--font-num),
+    var(--font-cjk);
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+.pl-lane[data-state="running"] .pl-lane-label,
+.pl-lane[data-state="detected"] .pl-lane-label {
+  fill: #ffffff;
+}
+
+.pl-svg .pl-lanes-empty {
+  text-anchor: start;
+}
+
+/* ---------------------------------------------------------------- queue */
+
+.pl-queue,
+.pl-results {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pl-q {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 4px 8px;
+  padding: 8px 12px 9px 4px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+/* The experiment's colour down the left edge, joined across the gap to
+   its neighbours of the same experiment */
+.pl-q::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: -1px;
+  width: 3px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: var(--g, transparent);
+}
+
+.pl-q[data-joined-up]::before {
+  border-top-left-radius: 0;
+}
+
+.pl-q[data-joined-down]::before {
+  border-bottom-left-radius: 0;
+}
+
+.pl-q[data-joined-down]::after {
+  content: "";
+  position: absolute;
+  bottom: -8px;
+  left: -1px;
+  width: 3px;
+  height: 8px;
+  background: var(--g);
+}
+
+.pl-queue.is-sorting .pl-q {
+  transition: transform 0.18s ease;
+}
+
+.pl-queue.is-sorting .pl-q::after {
+  display: none;
+}
+
+.pl-q.is-dragged {
+  z-index: 3;
+  scale: 1.015;
+  background: var(--panel);
+  box-shadow:
+    0 12px 32px rgb(0 0 0 / 0.35),
+    0 0 0 1px var(--accent);
+  transition: none !important;
+}
+
+.pl-grip {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-3);
+  cursor: grab;
+  touch-action: none;
+}
+
+.pl-grip span {
+  width: 8px;
+  height: 14px;
+  background: radial-gradient(circle, currentColor 1.1px, transparent 1.5px) 0
+    0 / 4px 4px;
+}
+
+.pl-grip:hover {
+  background: var(--btn-hover);
+  color: var(--text);
+}
+
+.pl-grip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.pl-q.is-dragged .pl-grip {
+  cursor: grabbing;
+}
+
+.pl-rank {
+  min-width: 1.5em;
+  padding-top: 7px;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.pl-q-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+/* A title flows on beside its experiment's chip */
+.pl-q-head,
+.pl-r-head {
+  display: block;
+}
+
+.pl-q-head .pl-group,
+.pl-r-head .pl-group {
+  margin-right: 8px;
+  vertical-align: 1px;
+}
+
+.pl-q-title {
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.pl-q-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.pl-q .pl-why {
+  margin-top: 3px;
+}
+
+.pl-next {
+  align-self: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pl-q > .pl-state {
+  align-self: center;
+}
+
+.pl-hint {
+  margin: 0;
+}
+
+/* -------------------------------------------------------------- results */
+
+.pl-r {
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+}
+
+.pl-r-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pl-r-toggle:hover {
+  background: color-mix(in oklab, var(--text) 4%, transparent);
+}
+
+.pl-r-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The state's mark: a check, a cross, or a check in grey */
+.pl-r-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--st) 18%, transparent);
+  color: var(--st);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pl-r {
+  --st: var(--good);
+}
+
+.pl-r[data-state="failed"] {
+  --st: var(--critical);
+}
+
+.pl-r[data-state="finished"],
+.pl-r[data-state="stopped"] {
+  --st: var(--text-3);
+}
+
+.pl-r[data-state="stopped"] .pl-r-icon::before {
+  content: "■";
+  font-size: 9px;
+}
+
+.pl-r .pl-r-icon::before {
+  content: "✓";
+}
+
+.pl-r[data-state="failed"] .pl-r-icon::before {
+  content: "✕";
+}
+
+.pl-r-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pl-r-title {
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.pl-r-summary {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pl-r:is([data-state="finished"], [data-state="stopped"]) .pl-r-summary {
+  color: var(--text-3);
+}
+
+.pl-r-next {
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.pl-r-next b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.pl-r-when {
+  display: grid;
+  justify-items: end;
+  align-content: start;
+  gap: 2px;
+  color: var(--text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pl-r-when time {
+  color: var(--text-2);
+  font-family: var(--font-num);
+}
+
+.pl-r-detail {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px 46px;
+}
+
+/* -------------------------------------------------------------- history */
+
+.pl-history-table tbody tr {
+  cursor: default;
+}
+
+.pl-history-table td {
+  vertical-align: middle;
+}
+
+.pl-h-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 640px;
+}
+
+.pl-h-title {
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pl-more-row td {
+  padding-top: 10px;
+  text-align: center;
+}
+
+/* ------------------------------------------------------ narrower windows */
+
+@media (max-width: 1100px) {
+  :root[data-theme] #pipeline-layout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      "now now"
+      "machine machine"
+      "timeline timeline"
+      "queue results"
+      "history history";
+  }
+}
+
+@media (max-width: 860px) {
+  :root[data-theme] #pipeline-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "now" "machine" "queue" "results" "timeline" "history";
+  }
+}
+
+:root[data-layout="phone"][data-theme] #pipeline-layout {
+  max-width: 480px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "now" "machine" "queue" "results" "timeline" "history";
+}
+
+@container page (max-width: 560px) {
+  .pl-proc {
+    grid-template-columns: 44px 58px minmax(0, 1fr) auto;
+  }
+
+  .pl-proc-detail {
+    display: none;
+  }
+
+  .pl-r-toggle {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pl-r-when {
+    grid-column: 2;
+    justify-items: start;
+    grid-auto-flow: column;
+    justify-content: start;
+    gap: 10px;
+  }
+
+  .pl-r-detail {
+    padding-left: 12px;
+  }
+
+  .pl-eta {
+    margin-left: 0;
+  }
+
+  .pl-h-entry {
+    max-width: 260px;
+  }
+
+  /* The history's states as their icons alone, entries by their ids, and
+     no owner column, so a row fits */
+  .pl-history-table .pl-state {
+    gap: 0;
+    font-size: 0;
+  }
+
+  .pl-history-table :is(th, td):last-child,
+  .pl-h-title {
+    display: none;
+  }
+
+  .pl-history-table :is(th, td) {
+    padding-inline: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pl-state[data-state="running"] i::before,
+  .pl-bar[data-live] .pl-fill::after,
+  .pl-bar[data-unknown] .pl-fill,
+  .pl-svg .pl-now {
+    animation: none;
+  }
+
+  .pl-fill,
+  .pl-meter i,
+  .pl-queue.is-sorting .pl-q {
+    transition: none;
+  }
 }

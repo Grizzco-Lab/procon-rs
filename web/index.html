@@ -116,6 +116,17 @@
             ></span
           >
         </a>
+        <a href="/pipeline" data-app="pipeline">
+          <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <use href="/icons/app-pipeline.svg#i" />
+          </svg>
+          <span class="app-name"
+            ><span class="app-title" data-i18n="app.pipeline">Pipeline</span>
+            <span class="app-sub" data-i18n="app.pipeline.sub"
+              >the GPU and the experiment queue</span
+            ></span
+          >
+        </a>
       </nav>
       <!-- Status: passive indicators (a dot and a word, details on hover),
            the open app's first, then the studio's own -->
@@ -146,6 +157,12 @@
         <!-- Predictor only: the current or last run -->
         <span class="chip-group" data-app-only="predictor">
           <span class="chip" id="p-chip" data-level="off" hidden>
+            <span class="chip-dot"></span><span class="chip-text"></span>
+          </span>
+        </span>
+        <!-- Pipeline only: what the GPU and the queue are doing -->
+        <span class="chip-group" data-app-only="pipeline">
+          <span class="chip" id="pl-chip" data-level="off" hidden>
             <span class="chip-dot"></span><span class="chip-text"></span>
           </span>
         </span>
@@ -346,9 +363,9 @@
               How it fits together
             </h2>
             <p class="guide-lede" data-i18n="guide.lede">
-              Five apps, one pipeline: record your play with the controller's
-              input, check it frame by frame, learn from it, then teach models
-              to see the game and to play it.
+              Six apps, one pipeline: record your play with the controller's
+              input, check it frame by frame, learn from it, teach models to see
+              the game and to play it, and follow their training as it runs.
             </p>
           </div>
           <button
@@ -418,6 +435,20 @@
             </a>
             <span class="flow-out" data-i18n="guide.out.vision"
               >detections</span
+            >
+          </li>
+          <li class="flow-step" data-step="pipeline">
+            <a href="/pipeline">
+              <svg class="app-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <use href="/icons/app-pipeline.svg#i" />
+              </svg>
+              <b data-i18n="app.pipeline">Pipeline</b>
+              <span class="flow-role" data-i18n="app.pipeline.sub"
+                >the GPU and the experiment queue</span
+              >
+            </a>
+            <span class="flow-out" data-i18n="guide.out.pipeline"
+              >checkpoints</span
             >
           </li>
           <li class="flow-step" data-step="predictor">
@@ -4033,6 +4064,123 @@
       </dialog>
     </div>
 
+    <!-- Pipeline app: the GPU and the experiment queue agents keep in
+         AgentZero's runs/queue.json, live: what runs with its progress and
+         loss, the machine, the GPU over the last hours with what ran when,
+         what waits in the order it runs (drag by the handle to reorder,
+         written back as priorities), what came out and the history.
+         pipeline.js draws it all from /api/pipeline (src/pipeline.rs). -->
+    <div data-app-section="pipeline" hidden>
+      <main class="layout" id="pipeline-layout">
+        <section class="panel p-pl-now" aria-labelledby="h-pl-now">
+          <header class="panel-head">
+            <h2 id="h-pl-now" data-i18n="pl.now.title">Running</h2>
+            <span class="panel-note" id="pl-now-note"></span>
+          </header>
+          <div class="pl-running" id="pl-running"></div>
+        </section>
+
+        <section class="panel p-pl-machine" aria-labelledby="h-pl-machine">
+          <header class="panel-head">
+            <h2 id="h-pl-machine" data-i18n="pl.machine.title">Machine</h2>
+            <span class="panel-note" id="pl-gpu-name"></span>
+          </header>
+          <div class="pl-tiles" id="pl-tiles"></div>
+          <div class="pl-procs" id="pl-procs"></div>
+        </section>
+
+        <section class="panel p-pl-timeline" aria-labelledby="h-pl-timeline">
+          <header class="panel-head">
+            <h2 id="h-pl-timeline" data-i18n="pl.timeline.title">
+              GPU timeline
+            </h2>
+            <span class="panel-note pl-legend" id="pl-legend"></span>
+            <div
+              class="seg-switch"
+              role="group"
+              id="pl-range"
+              aria-label="Hours shown"
+              data-i18n-aria-label="pl.timeline.range"
+            >
+              <button
+                type="button"
+                class="mode-toggle"
+                data-minutes="60"
+                data-i18n="pl.range.60"
+              >
+                1 h
+              </button>
+              <button
+                type="button"
+                class="mode-toggle"
+                data-minutes="180"
+                data-i18n="pl.range.180"
+              >
+                3 h
+              </button>
+              <button
+                type="button"
+                class="mode-toggle"
+                data-minutes="360"
+                data-i18n="pl.range.360"
+              >
+                6 h
+              </button>
+              <button
+                type="button"
+                class="mode-toggle"
+                data-minutes="720"
+                data-i18n="pl.range.720"
+              >
+                12 h
+              </button>
+            </div>
+          </header>
+          <div class="pl-chart" id="pl-timeline"></div>
+          <p class="panel-note" id="pl-timeline-note"></p>
+        </section>
+
+        <section class="panel p-pl-queue" aria-labelledby="h-pl-queue">
+          <header class="panel-head">
+            <h2 id="h-pl-queue" data-i18n="pl.queue.title">Queue</h2>
+            <span class="panel-note" id="pl-queue-note"></span>
+          </header>
+          <p class="notice" id="pl-queue-error" hidden></p>
+          <ol class="pl-queue" id="pl-queue"></ol>
+          <p class="panel-note pl-hint" id="pl-queue-hint"></p>
+        </section>
+
+        <section class="panel p-pl-results" aria-labelledby="h-pl-results">
+          <header class="panel-head">
+            <h2 id="h-pl-results" data-i18n="pl.results.title">Results</h2>
+            <span class="panel-note" id="pl-results-note"></span>
+          </header>
+          <ol class="pl-results" id="pl-results"></ol>
+        </section>
+
+        <section class="panel p-pl-history" aria-labelledby="h-pl-history">
+          <header class="panel-head">
+            <h2 id="h-pl-history" data-i18n="pl.history.title">History</h2>
+            <span class="panel-note" id="pl-history-note"></span>
+          </header>
+          <div class="table-wrap">
+            <table class="data-table pl-history-table">
+              <thead>
+                <tr>
+                  <th data-i18n="pl.history.ended">Ended</th>
+                  <th data-i18n="pl.history.status">Status</th>
+                  <th data-i18n="pl.history.entry">Entry</th>
+                  <th data-i18n="pl.history.took">Took</th>
+                  <th data-i18n="pl.history.owner">Owner</th>
+                </tr>
+              </thead>
+              <tbody id="pl-history"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
     <!-- AgentZero playing the Switch: Stop bot over every app, as long as
          it plays (Esc too, anywhere on the page; predictor.js) -->
     <button
@@ -4067,5 +4215,6 @@
     <script src="/pedia.js"></script>
     <script src="/vision.js"></script>
     <script src="/predictor.js"></script>
+    <script src="/pipeline.js"></script>
   </body>
 </html>

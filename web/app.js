@@ -113,12 +113,19 @@ markView();
 // ------------------------------------------------------------------ apps
 
 // One page, several apps, each at its own path (see appUrl): /studio (also
-// /), /inspect, /cuttlefish, /vision and /predictor, with the app's state
-// after it. Switching only shows another section, so the socket, preview and
+// /), /inspect, /cuttlefish, /vision, /predictor and /pipeline, with the
+// app's state after it. Switching only shows another section, so the socket, preview and
 // capture keep running; the History API keeps the address, and back and
 // forward move between app states. The server answers every app path with
 // this page.
-const APPS = ["studio", "inspect", "cuttlefish", "vision", "predictor"];
+const APPS = [
+  "studio",
+  "inspect",
+  "cuttlefish",
+  "vision",
+  "predictor",
+  "pipeline",
+];
 
 /** Cuttlefish's views besides the reviews, each at /cuttlefish/<view> */
 const CUTTLEFISH_VIEWS = ["translate", "knowledge", "pedia"];
@@ -138,6 +145,7 @@ const CUTTLEFISH_VIEWS = ["translate", "knowledge", "pedia"];
  * - `/vision`, `/vision/<session>?seg=&n=` (`s`)
  * - `/predictor`, `/predictor/<video key>/<checkpoint>?t=` (`key`, `ckpt`),
  *   `/predictor/online` (`view`: AgentZero running online)
+ * - `/pipeline`
  */
 function appUrl(app, state = {}) {
   const query = new URLSearchParams(state);

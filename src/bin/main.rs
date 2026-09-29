@@ -11,6 +11,7 @@ use procon::cuttlefish::Cuttlefish;
 use procon::dump::MultiDumper;
 use procon::follow::{self, Follow};
 use procon::inspect::Inspector;
+use procon::pipeline::{self, Pipeline};
 use procon::player::Player;
 use procon::predictor::online::{Bot, Online};
 use procon::predictor::{self, Predictor};
@@ -253,6 +254,8 @@ fn main() -> anyhow::Result<()> {
         vision::Settings::from_config(config.vision, &config_dir, beside("Vision"))?,
     ));
 
+    // The Pipeline's queue sits in the AgentZero folder by default
+    let agentzero = predictor_settings.agentzero.clone();
     let predictor = Arc::new(Predictor::new(
         Arc::clone(&inspector),
         Arc::clone(&cuttlefish),
@@ -260,11 +263,17 @@ fn main() -> anyhow::Result<()> {
     ));
     let online = Online::new(Arc::clone(&predictor), Arc::clone(&studio));
     let follow = Arc::new(Follow::new(Arc::clone(&inspector), follow_settings));
+    // The GPU and the experiment queue, sampled from now on for the timeline
+    let pipeline = Pipeline::start(pipeline::Settings::from_config(
+        config.pipeline,
+        &config_dir,
+        &agentzero,
+    ));
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         tokio::select! {
-            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, Arc::clone(&vision), Arc::clone(&predictor), Arc::clone(&online), Arc::clone(&follow), &config.web) => {}
+            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, Arc::clone(&vision), Arc::clone(&predictor), Arc::clone(&online), Arc::clone(&follow), pipeline, &config.web) => {}
             _ = tokio::signal::ctrl_c() => {
                 // AgentZero may be playing the Switch: the controller first
                 tokio::task::block_in_place(|| online.shutdown());

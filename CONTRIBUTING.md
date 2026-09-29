@@ -101,11 +101,12 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
 | `src/pedia.rs` | Cuttlefish's Overfishing Pedia: the terms in scope with sections, games and facets (`cuttlefish::pedia`), their #vod-review mentions searched once and cached until the corpus or the names change, entries with quotes, fact cards, notes and deep questions; `GET source`, the context of a cited source or a quote for the page's source popover (`web/source.js`) |
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results through our classes, dataset overview, send to labels |
 | `src/predictor.rs` | Predictor app backend: `agentzero-predict` runs as a child process, stored predictions, windows of predictions and truth, agreement numbers |
+| `src/pipeline.rs` | Pipeline app backend: the experiment queue file (read, reordered under its lock), the GPU and the machine sampled on a thread, each entry's processes and progress, the timeline |
 | `src/predictor/online.rs` | The Predictor's online mode: `agentzero-play --json` on a paced video or the live capture's piped frames, the loop's latency, and the bot (`Bot`) that plays the Switch through the replay port with a person's input taking over |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration, the camera turn from AgentZero's fits; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
 | `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, inbox, name tables, assets, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
-| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `translate.js`, `vision.js`, `predictor.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
+| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `translate.js`, `vision.js`, `predictor.js`, `pipeline.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
 | `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy (or one at rest, `--still`) and applies replayed actions |
 | `doc/` | Setup and dashboard write-up with screenshots (`index.html`), and the project's story (`story.html`; its videos rendered from the page's canvas scenes by `story/render.mjs`), published to GitHub Pages |
 
@@ -187,7 +188,8 @@ the smallest `host_now - proxy_timestamp` over 10 s as the clock offset.
 fragments as binary), `POST /api/command` (a `studio::Command` such as
 `{"action":"start"}`) and `/api/inspect/...` (see `src/inspect.rs`), `/api/cuttlefish/...` (see
 `src/cuttlefish.rs` and `src/knowledge.rs`), `/api/vision/...` (see
-`src/vision.rs`) and `/api/predictor/...` (see `src/predictor.rs`). Everything
+`src/vision.rs`), `/api/predictor/...` (see `src/predictor.rs`) and
+`/api/pipeline/...` (see `src/pipeline.rs`). Everything
 that reads files, runs ffmpeg or a model is kept off the async workers
 (`spawn_blocking`, or a thread of its own for jobs).
 
@@ -203,8 +205,8 @@ lowers to debug (`is_client_abort` in `src/bin/main.rs`). `scripts/run.sh`
 builds first (15–45 s after a code update, over a minute after a dependency
 change) and then runs the binary.
 
-The page holds five apps, each at its own path (`/studio`, `/inspect/...`,
-`/cuttlefish/...`, `/vision/...`, `/predictor/...`), switched without
+The page holds six apps, each at its own path (`/studio`, `/inspect/...`,
+`/cuttlefish/...`, `/vision/...`, `/predictor/...`, `/pipeline`), switched without
 reloading. `web/app.js` routes with the History API: `appUrl(app, state)`
 builds a path from the keys an app reads (what is open goes in the path, a
 frame, a time or an option in the query), `routeOf` reads it back and
@@ -511,6 +513,34 @@ watchdog thread ends sending at the time's end, when the policy stalls
 panel plays and when the proxy's frames stop; the studio's exit and Ctrl-C
 stop it first. The bot's status goes out with every `status` message on
 `/ws`, so every app shows Stop bot while it plays and Esc stops it anywhere.
+
+### Pipeline
+
+`src/pipeline.rs` follows the machine and the experiment queue, and writes
+nothing but the queue's order. The queue is a JSON file the agents keep
+(AgentZero's `runs/queue.json`, `[pipeline] queue`), written by AgentZero's
+`agentzero-queue`: each entry one step of an experiment with its status,
+`priority`, processes (`pgid`, `pid` or `match`, a piece of its command
+line), run folder, log, times, result and next step. It is read again when
+its size or time changes, each entry on its own, so an entry that does not
+read is reported and kept, never lost. A thread samples every 5 s: the GPU
+with `nvidia-smi` (one query for the GPU, one for its compute processes),
+the CPU, memory and every process from `/proc`, which processes belong to
+which entry (running entries claim theirs first), each live entry's CPU,
+RSS and GPU memory, and when each was seen running; it keeps 12 hours of
+samples in memory for the timeline, averaged down to 720 points for a
+window. Progress comes from the run folder's `metrics.jsonl`, read as it
+grows (whole lines only, from the start again when the file shrinks), with
+the total from `args.json`, else from the last `N/M` in the log of a live
+entry; the ETA comes from the steps the sampler saw over the last ten
+minutes, else from `s_per_step`. `POST order` rewrites the waiting entries'
+priorities (their count down to 1, top first) under the lock the helper
+takes (`<queue>.lock`, an exclusive `flock`) and replaces the file
+atomically, with the fields in the helper's order, so the two write the same
+bytes. `web/pipeline.js` polls `state` (with the samples since the last)
+while the app is shown, redraws only what changed (a focused handle, an open
+log and a chart keep their place), and reorders by pointer events, so a
+touch drags as a mouse does.
 
 ### gameplay-data
 

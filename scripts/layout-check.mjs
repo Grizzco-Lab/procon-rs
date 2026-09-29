@@ -44,7 +44,14 @@ const VIEWPORTS = [
   { name: "desktop-rail", width: 1440, height: 900, nav: "side" },
   { name: "phone", width: 390, height: 844, nav: "side", mobile: true },
 ];
-const APPS = ["studio", "inspect", "cuttlefish", "vision", "predictor"];
+const APPS = [
+  "studio",
+  "inspect",
+  "cuttlefish",
+  "vision",
+  "predictor",
+  "pipeline",
+];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

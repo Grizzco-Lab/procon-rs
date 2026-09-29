@@ -3,11 +3,11 @@
 //! - `GET /favicon.ico`: the app icon (`web/icons/app-studio.svg`); unknown
 //!   paths answer 404, known ones asked with another method 405
 //! - `GET /` and every app path (`/studio`, `/inspect/...`, `/cuttlefish/...`,
-//!   `/vision/...`, `/predictor/...`, see [`APPS`]): the page, which shows
-//!   the app its path names; `/style.css`, `/app.js`, `/controller3d.js`,
+//!   `/vision/...`, `/predictor/...`, `/pipeline`, see [`APPS`]): the page,
+//!   which shows the app its path names; `/style.css`, `/app.js`, `/controller3d.js`,
 //!   `/inspect.js`, `/techniques.js`, `/sketch.js`, `/label.js`, `/cuttlefish.js`, `/knowledge.js`,
 //!   `/translate.js`, `/source.js`, `/pedia.js`, `/stages.js`, `/vision.js`,
-//!   `/predictor.js`, `/i18n.js`, `/i18n-zh.js`:
+//!   `/predictor.js`, `/pipeline.js`, `/i18n.js`, `/i18n-zh.js`:
 //!   the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
 //!   report, `{"type":"status"}` text twice a second, and the video preview
@@ -26,6 +26,8 @@
 //!   [`crate::predictor`]; `/api/predictor/online/...`: its online mode,
 //!   AgentZero's policy frame by frame, see [`crate::predictor::online`],
 //!   whose actions also go to `/ws` as `{"type":"agent"}` text
+//! - `/api/pipeline/...`: the Pipeline app's GPU samples and experiment
+//!   queue, see [`crate::pipeline`]
 
 use crate::config::WebConfig;
 use crate::cuttlefish::{self, Cuttlefish};
@@ -34,6 +36,7 @@ use crate::follow::{self, Follow};
 use crate::inspect::Inspector;
 use crate::motion::Orientation;
 use crate::parser::ProConParser;
+use crate::pipeline::{self, Pipeline};
 use crate::predictor::online::{self, Online};
 use crate::predictor::{self, Predictor};
 use crate::studio::{Command, Studio};
@@ -110,6 +113,7 @@ pub async fn serve(
     predictor: Arc<Predictor>,
     online: Arc<Online>,
     follow: Arc<Follow>,
+    pipeline: Arc<Pipeline>,
     web: &WebConfig,
 ) {
     let port = web.port;
@@ -161,7 +165,7 @@ pub async fn serve(
     // The technique markers, the drawing layer, the shared video player, the
     // stage map links, the Inkspector's labeling mode, the Cuttlefish app with its knowledge,
     // translate and Pedia views and its source popover, the Vision app, the
-    // Predictor and the page's dictionaries
+    // Predictor, the Pipeline and the page's dictionaries
     let scripts = warp::path!(String).and_then(|name: String| async move {
         let body = match name.as_str() {
             "techniques.js" => include_str!("../web/techniques.js"),
@@ -176,6 +180,7 @@ pub async fn serve(
             "pedia.js" => include_str!("../web/pedia.js"),
             "vision.js" => include_str!("../web/vision.js"),
             "predictor.js" => include_str!("../web/predictor.js"),
+            "pipeline.js" => include_str!("../web/pipeline.js"),
             "i18n.js" => include_str!("../web/i18n.js"),
             "i18n-zh.js" => include_str!("../web/i18n-zh.js"),
             "demo-questions.js" => include_str!("../web/demo-questions.js"),
@@ -377,7 +382,8 @@ pub async fn serve(
         .or(under("api/cuttlefish").and(cuttlefish::routes(cuttlefish)))
         .or(under("api/vision").and(vision::routes(vision)))
         .or(under("api/predictor/online").and(online::routes(online)))
-        .or(under("api/predictor").and(predictor::routes(predictor)));
+        .or(under("api/predictor").and(predictor::routes(predictor)))
+        .or(under("api/pipeline").and(pipeline::routes(pipeline)));
     let routes = same_origin(web.allowed_hosts.clone())
         .and(routes)
         .recover(forbidden);
@@ -505,7 +511,14 @@ fn embedded_dir(
 
 /// The apps the page holds, each at `/<app>` with its state after it (see
 /// `appUrl` in `web/app.js`)
-const APPS: [&str; 5] = ["studio", "inspect", "cuttlefish", "vision", "predictor"];
+const APPS: [&str; 6] = [
+    "studio",
+    "inspect",
+    "cuttlefish",
+    "vision",
+    "predictor",
+    "pipeline",
+];
 
 /// The dashboard page
 fn page() -> warp::reply::Html<&'static str> {

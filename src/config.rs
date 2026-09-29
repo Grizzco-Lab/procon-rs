@@ -126,6 +126,9 @@ pub struct StudioConfig {
     /// The Predictor app
     #[serde(default)]
     pub predictor: PredictorConfig,
+    /// The Pipeline app
+    #[serde(default)]
+    pub pipeline: PipelineConfig,
     /// Logging configuration
     pub logging: LoggingConfig,
 }
@@ -231,6 +234,15 @@ pub struct PredictorConfig {
     /// `run.json`), relative to this config file; by default `Predictions`
     /// next to the Inkspector's root
     pub results: Option<String>,
+}
+
+/// The Pipeline app: the GPU and the experiment queue agents keep
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct PipelineConfig {
+    /// The queue file (AgentZero's `agentzero-queue` writes it), relative
+    /// to this config file; by default `runs/queue.json` in the AgentZero
+    /// folder (`[predictor] agentzero`)
+    pub queue: Option<String>,
 }
 
 /// The machine running `procon-proxy`

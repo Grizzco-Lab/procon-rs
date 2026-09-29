@@ -34,6 +34,8 @@ pub mod objects;
 #[cfg(feature = "studio")]
 pub mod pedia;
 #[cfg(feature = "studio")]
+pub mod pipeline;
+#[cfg(feature = "studio")]
 pub mod player;
 #[cfg(feature = "studio")]
 pub mod predictor;
