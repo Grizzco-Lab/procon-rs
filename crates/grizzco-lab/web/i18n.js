@@ -658,8 +658,11 @@ const I18N = {
     "note.version": "Game version (optional)",
     "note.save": "Save as note",
     "note.saving": "Saving and indexing…",
-    "note.failed": "Not saved: {error}",
+    "note.failed": "Not saved: {error}. Your text is kept as a draft.",
     "note.from": "From: {from}",
+    "note.draftRestored": "Your unsaved draft of {time} is back",
+    "note.discardDraft": "Discard draft",
+    "note.savedWarning": "Saved as notes/{id}.md, but {warning}",
     "cf.chat.commentsAdded": ({ n }) =>
       n === 1 ? "1 comment added" : `${n} comments added`,
     "cf.chat.seek": "Go to {time}",
@@ -942,6 +945,13 @@ const I18N = {
     "k.notes.by": "{author}, {date}",
     "k.notes.answers": "answers {id}",
     "k.notes.from": "from {from}",
+    "k.notes.drafts": ({ n }) =>
+      n === 1 ? "1 unsaved draft" : `${n} unsaved drafts`,
+    "k.notes.draft": "unsaved draft, {time}",
+    "k.notes.untitled": "(no question yet)",
+    "k.notes.continue": "Continue",
+    "k.notes.discard": "Discard",
+    "k.notes.discardAsk": "Discard this unsaved draft? Its text is gone then.",
 
     // Knowledge: the deep questions and their eval
     "k.deep.title": "Deep questions",
@@ -968,7 +978,20 @@ const I18N = {
     "k.deep.good": "Good",
     "k.deep.wrong": "Wrong",
     "k.deep.toNote": "Correct → note",
+    "k.deep.editNote": "Edit note",
+    "k.deep.continueDraft": "Continue the draft",
     "k.deep.noteMade": "note {id}",
+    "k.deep.noteHead": "Your note: the answer",
+    "k.deep.modelAnswer": "Cuttlefish's answer",
+    "k.deep.markedWrong": "marked wrong",
+    "k.deep.firstAnswer": "First answer",
+    "k.deep.againAnswer": ({ n }) =>
+      n === 1 ? "Asked again" : `Asked again (${n} times)`,
+    "k.deep.askAgain": "Ask again",
+    "k.deep.askAgainTitle":
+      "Ask this question again over what the store holds now, your notes first; the answer goes beside the first",
+    "k.deep.asking": "Asking… (a minute or so)",
+    "k.deep.effort": "{effort} effort",
     "k.deep.failed": "failed: {error}",
     "k.deep.sources": ({ n }) => (n === 1 ? "1 source" : `${n} sources`),
     "k.deep.cat.macro": "Macro and strategy",

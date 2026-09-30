@@ -209,8 +209,7 @@ enum Slang {
 
 #[derive(Args)]
 struct ModelArgs {
-    /// Model name; by default the backend's (claude-opus-5-5 on the API,
-    /// the CLI's own on the CLI)
+    /// Model name; by default claude-opus-5-5, on either backend
     #[arg(long, env = "CUTTLEFISH_MODEL")]
     model: Option<String>,
     /// Effort: low, medium, high, xhigh, max
@@ -1232,11 +1231,12 @@ fn eval_deep(data: &Path, settings: Settings, opts: &deep_eval::Options) -> Resu
         &|| stop.load(Ordering::Relaxed),
         &mut |done, total, entry| {
             println!("[{done}/{total}] {} ({})", entry.question, entry.id);
-            match &entry.error {
+            let answered = &entry.answered;
+            match &answered.error {
                 Some(e) => println!("     failed: {e}"),
                 None => {
-                    println!("     {}", entry.answer.replace('\n', "\n     "));
-                    for s in &entry.sources {
+                    println!("     {}", answered.answer.replace('\n', "\n     "));
+                    for s in &answered.sources {
                         println!(
                             "     [{}] {} > {}{}",
                             s.id,

@@ -42,7 +42,7 @@ use crate::doc::SourceKind;
 use crate::embed::Embedder;
 use crate::expert::Expert;
 use crate::glossary::{Glossary, Term};
-use crate::llm::{Block, Client, Prompt, Role, Settings, Turn};
+use crate::llm::{AnsweredBy, Block, Client, Prompt, Role, Settings, Turn};
 use crate::sampling::KEY_MOMENTS;
 use crate::situation::Situation;
 use crate::store::{Hit, Store};
@@ -178,6 +178,9 @@ pub struct Answer {
     pub text: String,
     /// The cited sources
     pub sources: Vec<SourceRef>,
+    /// The backend and model that answered
+    #[serde(flatten)]
+    pub by: AnsweredBy,
 }
 
 /// The video a chat message is about: the moment or range the player is at
@@ -236,6 +239,9 @@ pub struct ChatReply {
     /// Every expert comment the model was given, cited or not
     #[serde(default)]
     pub experts: Vec<SourceRef>,
+    /// The backend and model that answered
+    #[serde(flatten)]
+    pub by: AnsweredBy,
 }
 
 /// Earlier user turns whose text joins the retrieval query of a chat
@@ -915,6 +921,7 @@ pub fn ask(
     let reply = client.send(&prompt)?;
     Ok(Answer {
         sources: cited(&reply.text, &hits),
+        by: client.answered_by(&reply),
         text: reply.text,
     })
 }
@@ -1220,6 +1227,7 @@ pub fn parse_chat(text: &str, req: &ChatRequest, hits: &[Hit]) -> Result<ChatRep
             .into_iter()
             .filter(|r| r.expert.is_some())
             .collect(),
+        by: AnsweredBy::default(),
     })
 }
 
@@ -1281,7 +1289,9 @@ pub fn chat(
     let system = system_prompt(store.digest().as_deref());
     let prompt = chat_prompt(&system, req, &hits, &terms);
     let reply = client.send(&prompt)?;
-    parse_chat(&reply.text, req, &hits)
+    let mut answer = parse_chat(&reply.text, req, &hits)?;
+    answer.by = client.answered_by(&reply);
+    Ok(answer)
 }
 
 #[cfg(test)]

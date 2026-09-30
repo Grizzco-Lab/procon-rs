@@ -66,7 +66,9 @@ The first command that embeds downloads the embedding model (about 470 MB)
 into `~/.cache/procon-cuttlefish/models/` (`$CUTTLEFISH_CACHE`, else
 `$XDG_CACHE_HOME/procon-cuttlefish`), on this machine rather than in a synced
 data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
-(default `claude-opus-5-5`), `--effort` its effort (default `high`).
+(default `claude-opus-5-5`, on either backend), `--effort` its effort
+(default `medium`). Every answer kept (eval rows, the lab's chat messages)
+records the backend, the model that answered and the effort.
 `RUST_LOG=debug` shows more.
 
 ## Data folder
@@ -1131,9 +1133,16 @@ view.
 [--only <id>]`, or **Run the deep eval** in the Knowledge view) asks the
 model the questions that need no video, a few at a time, through the
 configured backend (`deep_eval.rs`), and writes one line per answer, with
-the sources cited, to `<data>/eval/deep-<date>.jsonl` after every batch.
-The Knowledge view lists the runs; for each answer you mark **Good** or
-**Wrong**, and **Correct → note** opens the answer in the note editor.
+the sources cited and the backend, model and effort that answered, to
+`<data>/eval/deep-<date>.jsonl` after every batch. It is a benchmark: it
+runs only when you start it. The Knowledge view lists the runs; for each
+answer you mark **Good** or **Wrong**, and **Correct → note** opens the
+answer in the note editor. Once saved, the card shows your note as the
+answer, with Cuttlefish's folded under it and marked wrong, and the file
+records the mark and the note's id. **Ask again** asks that one question
+again over the store as it is now, your notes first, and keeps the new
+answer beside the first (`again` in the file, each answer with its own
+verdict and its model).
 
 **Expert notes** are the memory: an answer you edited into the correct
 explanation, or anything you wrote from scratch, saved as
@@ -1516,8 +1525,10 @@ is one `stream-json` message on stdin, so the CLI needs no tools and runs
 with none (`--tools ""`, `--restricted`, `--strict-mcp-config`, no settings
 files, no session saved) in an empty temporary folder. Earlier turns are
 rendered into the message; a JSON schema is asked for in words and the answer
-parsed leniently. `--model` is passed only when one is configured, `--effort`
-always. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the
+parsed leniently. `--model` is always passed (the configured model, else
+`claude-opus-5-5`), so an answer never depends on the CLI's own default, and
+`--effort` too; the model that answered is read back from the result's
+`modelUsage` (the one that wrote the most). `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the
 CLI's environment, so it uses the account it is logged in with: this backend
 runs on your Claude subscription and counts against its usage limits, and is
 meant for personal testing. At most eight runs at once; a run is stopped after

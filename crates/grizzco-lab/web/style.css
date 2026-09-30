@@ -8060,11 +8060,11 @@ body.bot-playing {
   background: var(--panel);
 }
 
-.k-deep-entry[data-verdict="good"] {
+.k-deep-entry[data-mark="good"] {
   border-left-color: var(--s3);
 }
 
-.k-deep-entry[data-verdict="wrong"] {
+.k-deep-entry[data-mark="wrong"] {
   border-left-color: var(--accent);
 }
 
@@ -8075,10 +8075,86 @@ body.bot-playing {
   overflow-wrap: anywhere;
 }
 
+/* A pressed verdict: outlined, its word in the accent (on the toggle's
+   filled accent the word would vanish) */
 .k-deep-entry [data-verdict][aria-pressed="true"] {
   border-color: var(--accent);
+  background: transparent;
   color: var(--accent);
   font-weight: 600;
+}
+
+/* A card corrected by a note: the note is the answer, the model's folded */
+.k-deep-entry[data-mark="noted"] {
+  border-left-color: var(--good);
+}
+
+.k-deep-note {
+  padding: 6px 10px;
+  border: 1px solid var(--inset-border);
+  border-left: 3px solid var(--good);
+  border-radius: var(--radius-sm);
+}
+
+.k-deep-note .k-note-body {
+  margin: 4px 0 0;
+}
+
+.k-deep-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+  font-size: 12.5px;
+}
+
+.k-deep-reply {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.k-deep-model summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.k-deep-model[open] summary {
+  margin-bottom: 6px;
+}
+
+.k-deep-reply[data-mark="wrong"] .k-deep-answer {
+  color: var(--text-2);
+}
+
+/* The first answer and the one asked again, side by side where they fit */
+.k-deep-compare {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+}
+
+.k-deep-compare .k-deep-reply {
+  align-content: start;
+  padding: 6px 8px;
+  border: 1px solid var(--inset-border);
+  border-radius: var(--radius-sm);
+}
+
+.k-deep-entry [data-note][data-drafted="true"] {
+  border-style: dashed;
+}
+
+/* A note typed but not saved yet */
+.k-note-draft-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 6px 10px;
+  border: 1px dashed var(--inset-border);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
 }
 
 /* The term form: definition over the row of relation and its term */

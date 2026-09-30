@@ -958,7 +958,11 @@
   // see cuttlefish::notes): written from any answer of Cuttlefish with
   // "Correct / add to memory" (cuttlefish.js), from a deep eval answer
   // below, or from scratch; listed, edited and deleted here. The editor is
-  // one dialog, shared through window.cuttlefishNotes.edit(...).
+  // one dialog, shared through window.cuttlefishNotes.edit(...). What is
+  // typed in it stays a draft in localStorage (procon-knowledge-note-drafts)
+  // until the note is saved, so a failed save, a closed dialog or a reload
+  // never loses it: opening the editor for the same note or answer brings
+  // the draft back, and the Notes panel lists the drafts left.
 
   const notes = {
     list: [],
@@ -966,88 +970,223 @@
     open: null,
   };
 
-  /** The editor's state: the note edited (or none), where it came from, and
-   * what to do with the saved note */
-  const editor = { id: "", from: "", questionId: "", onSaved: null };
+  /** The editor's state: what it was opened with (the note edited, or the
+   * question and answer a new note starts from, where it came from, the
+   * bank question it answers, the eval answer it corrects), its draft's
+   * key, and what to do with the saved note */
+  const editor = { args: {}, key: "", onSaved: null };
 
   const dialog = $("cf-note-dialog");
+  const noteForm = $("cf-note-editor");
 
   /** The date of a note as shown */
   const noteDate = (note) => note.date;
 
+  /** The unsaved notes by draft key: `{args, fields, saved_ms}` */
+  function noteDrafts() {
+    try {
+      return JSON.parse(remembered("note-drafts", "{}")) ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** Keeps a draft, or drops it with `null` */
+  function putDraft(key, draft) {
+    const drafts = noteDrafts();
+    if (draft) drafts[key] = draft;
+    else delete drafts[key];
+    remember("note-drafts", JSON.stringify(drafts));
+  }
+
+  /** A draft's key: the note edited, else what the new note answers */
+  const draftKey = ({ id = "", questionId = "", from = "", question = "" }) =>
+    id ? `note:${id}` : `new:${questionId}|${from}|${question}`;
+
+  /** The editor's fields as typed */
+  function noteFields() {
+    return {
+      question: $("cf-note-question").value,
+      body: $("cf-note-body").value,
+      tags: $("cf-note-tags").value,
+      terms: $("cf-note-terms").value,
+      era: $("cf-note-era").value,
+      version: $("cf-note-version").value,
+    };
+  }
+
+  function setNoteFields(fields) {
+    $("cf-note-question").value = fields.question;
+    $("cf-note-body").value = fields.body;
+    $("cf-note-tags").value = fields.tags;
+    $("cf-note-terms").value = fields.terms;
+    $("cf-note-era").value = fields.era === "S2" ? "S2" : "S3";
+    $("cf-note-version").value = fields.version ?? "";
+  }
+
+  /** The fields as the editor was opened */
+  function openedFields() {
+    const a = editor.args;
+    return {
+      question: a.question ?? "",
+      body: a.body ?? "",
+      tags: (a.tags ?? []).join(", "),
+      terms: (a.terms ?? []).join(", "),
+      era: a.era === "S2" ? "S2" : "S3",
+      version: a.version ?? "",
+    };
+  }
+
+  /** The editor's status line, in the error colour for a failure */
+  function noteStatus(text, failed = false) {
+    const status = $("cf-note-status");
+    status.textContent = text;
+    status.classList.toggle("level-critical", failed);
+  }
+
   /** Opens the editor: `id` for an existing note, else the question and
    * body it starts from (an answer to correct); `from` says where it came
-   * from, `questionId` the bank question it answers; `onSaved(note)` runs
-   * after a save */
-  function editNote({
-    id = "",
-    question = "",
-    body = "",
-    tags = [],
-    terms = [],
-    era = "S3",
-    version = "",
-    questionId = "",
-    from = "",
-    onSaved = null,
-  } = {}) {
-    Object.assign(editor, { id, from, questionId, onSaved });
-    $("cf-note-title").textContent = id
-      ? t("note.editTitle", { id })
+   * from, `questionId` the bank question it answers, `eval` (`{file, id}`)
+   * the eval answer it corrects, which the save marks wrong; `onSaved(note)`
+   * runs after a save. A draft kept for the same note or answer comes
+   * back in place of the text given. */
+  function editNote({ onSaved = null, ...args } = {}) {
+    editor.args = args;
+    editor.key = draftKey(args);
+    editor.onSaved = onSaved;
+    $("cf-note-title").textContent = args.id
+      ? t("note.editTitle", { id: args.id })
       : t("note.title");
-    $("cf-note-question").value = question;
-    $("cf-note-body").value = body;
-    $("cf-note-tags").value = tags.join(", ");
-    $("cf-note-terms").value = terms.join(", ");
-    $("cf-note-era").value = era === "S2" ? "S2" : "S3";
-    $("cf-note-version").value = version ?? "";
-    $("cf-note-from").textContent = from ? t("note.from", { from }) : "";
-    $("cf-note-status").textContent = "";
+    const draft = noteDrafts()[editor.key];
+    setNoteFields(draft?.fields ?? openedFields());
+    $("cf-note-from").textContent = args.from
+      ? t("note.from", { from: args.from })
+      : "";
+    noteStatus(
+      draft
+        ? t("note.draftRestored", {
+            time: new Date(draft.saved_ms).toLocaleString(i18nLocale()),
+          })
+        : "",
+    );
+    $("cf-note-discard").hidden = !draft;
     $("cf-note-save").disabled = false;
     dialog.showModal();
-    $(body ? "cf-note-body" : "cf-note-question").focus();
+    $(args.body || draft ? "cf-note-body" : "cf-note-question").focus();
   }
 
   /** The words of a comma-separated field */
-  const words = (id) =>
-    $(id)
-      .value.split(/[,，]/)
+  const words = (text) =>
+    text
+      .split(/[,，]/)
       .map((s) => s.trim())
       .filter(Boolean);
 
-  $("cf-note-form").addEventListener("submit", async (event) => {
+  // Every change is kept as a draft until the note is saved
+  noteForm.addEventListener("input", () => {
+    const fields = noteFields();
+    const opened = openedFields();
+    const same = Object.keys(fields).every((k) => fields[k] === opened[k]);
+    putDraft(
+      editor.key,
+      same ? null : { args: editor.args, fields, saved_ms: Date.now() },
+    );
+    $("cf-note-discard").hidden = same;
+  });
+
+  $("cf-note-discard").onclick = () => {
+    putDraft(editor.key, null);
+    setNoteFields(openedFields());
+    $("cf-note-discard").hidden = true;
+    noteStatus("");
+    drawNotes();
+    drawEntries();
+  };
+
+  noteForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const status = $("cf-note-status");
-    status.textContent = t("note.saving");
+    noteStatus(t("note.saving"));
     $("cf-note-save").disabled = true;
+    const fields = noteFields();
+    const { args, key, onSaved } = editor;
+    // Kept as typed until the note is saved, however the save ends
+    putDraft(key, { args, fields, saved_ms: Date.now() });
     const body = {
-      id: editor.id,
-      question: $("cf-note-question").value,
-      body: $("cf-note-body").value,
-      tags: words("cf-note-tags"),
-      terms: words("cf-note-terms"),
-      era: $("cf-note-era").value,
-      version: $("cf-note-version").value.trim(),
+      id: args.id ?? "",
+      question: fields.question,
+      body: fields.body,
+      tags: words(fields.tags),
+      terms: words(fields.terms),
+      era: fields.era,
+      version: fields.version.trim(),
     };
-    if (editor.questionId) body.question_id = editor.questionId;
-    if (editor.from) body.from = editor.from;
+    if (args.questionId) body.question_id = args.questionId;
+    if (args.from) body.from = args.from;
+    if (args.eval) body.eval = args.eval;
+    let note;
     try {
-      const note = await api("notes/save", body);
-      dialog.close();
-      if (editor.onSaved) editor.onSaved(note);
-      if (k.shown) {
-        loadNotes();
-        loadQuestions();
-        loadStats();
-      }
+      note = await api("notes/save", body);
     } catch (error) {
-      status.textContent = t("note.failed", { error: error.message });
-      $("cf-note-save").disabled = false;
+      if (editor.key === key) {
+        noteStatus(t("note.failed", { error: error.message }), true);
+        $("cf-note-save").disabled = false;
+      }
+      drawNotes();
+      drawEntries();
+      return;
+    }
+    putDraft(key, null);
+    noteSaved(note, args.eval);
+    if (onSaved) onSaved(note);
+    if (editor.key === key) {
+      if (note.warning) {
+        // Saved, a later step not: say so, and edit the saved note from here
+        editNote({
+          ...args,
+          id: note.id,
+          question: note.question,
+          body: note.body,
+          tags: note.tags,
+          terms: note.terms,
+          era: note.era,
+          version: note.version,
+          onSaved,
+        });
+        noteStatus(
+          t("note.savedWarning", { id: note.id, warning: note.warning }),
+          true,
+        );
+      } else {
+        dialog.close();
+      }
+    }
+    if (k.shown) {
+      loadNotes();
+      loadQuestions();
+      loadStats();
     }
   });
   $("cf-note-cancel").onclick = () => dialog.close();
+  // A draft left in the dialog shows in the lists at once
+  dialog.addEventListener("close", () => {
+    drawNotes();
+    drawEntries();
+  });
 
   window.cuttlefishNotes = { edit: editNote };
+
+  /** A saved note joins the list, and the eval answer it corrects shows it,
+   * at once */
+  function noteSaved(note, target) {
+    notes.list = [note, ...notes.list.filter((n) => n.id !== note.id)];
+    if (note.entry && target?.file === deep.file) {
+      deep.entries = deep.entries.map((e) =>
+        e.id === note.entry.id ? note.entry : e,
+      );
+    }
+    drawNotes();
+    drawEntries();
+  }
 
   async function loadNotes() {
     try {
@@ -1057,6 +1196,7 @@
       return;
     }
     drawNotes();
+    drawEntries();
   }
 
   /** The reference of a bank question as a link to its note */
@@ -1064,12 +1204,39 @@
     return `<a class="k-note-link" href="/cuttlefish/knowledge?note=${encodeURIComponent(id)}">${escapeHtml(text)}</a>`;
   }
 
+  /** The drafts not saved yet, newest first */
+  function draftItems() {
+    return Object.entries(noteDrafts())
+      .sort(([, a], [, b]) => b.saved_ms - a.saved_ms)
+      .map(([key, draft]) => {
+        const li = document.createElement("li");
+        li.className = "k-note k-note-draft";
+        li.dataset.draft = key;
+        const time = new Date(draft.saved_ms).toLocaleString(i18nLocale());
+        li.innerHTML = `
+          <div class="k-note-draft-row">
+            <b>${escapeHtml(draft.fields.question || t("k.notes.untitled"))}</b>
+            <span class="panel-note">${escapeHtml(t("k.notes.draft", { time }))}</span>
+            <span class="cf-alias-actions">
+              <button type="button" class="mode-toggle" data-draft-open>${escapeHtml(t("k.notes.continue"))}</button>
+              <button type="button" class="mode-toggle" data-draft-discard>${escapeHtml(t("k.notes.discard"))}</button>
+            </span>
+          </div>`;
+        return li;
+      });
+  }
+
   function drawNotes() {
     const list = notes.list;
-    $("k-notes-count").textContent = list.length
-      ? t("k.notes.count", { n: list.length })
-      : t("k.notes.none");
+    const drafts = draftItems();
+    $("k-notes-count").textContent = [
+      list.length ? t("k.notes.count", { n: list.length }) : t("k.notes.none"),
+      drafts.length && t("k.notes.drafts", { n: drafts.length }),
+    ]
+      .filter(Boolean)
+      .join(" · ");
     $("k-notes").replaceChildren(
+      ...drafts,
       ...list.map((note) => {
         const li = document.createElement("li");
         li.className = "k-note";
@@ -1107,23 +1274,39 @@
     }
   }
 
+  /** The editor's arguments for a saved note */
+  const noteArgs = (note) => ({
+    id: note.id,
+    question: note.question,
+    body: note.body,
+    tags: note.tags,
+    terms: note.terms,
+    era: note.era,
+    version: note.version,
+    questionId: note.question_id ?? "",
+    from: note.from ?? "",
+  });
+
   $("k-notes").addEventListener("click", async (event) => {
+    const draftLi = event.target.closest(".k-note-draft");
+    if (draftLi) {
+      const draft = noteDrafts()[draftLi.dataset.draft];
+      if (!draft) return drawNotes();
+      if (event.target.closest("[data-draft-open]")) editNote(draft.args);
+      else if (event.target.closest("[data-draft-discard]")) {
+        if (!confirm(t("k.notes.discardAsk"))) return;
+        putDraft(draftLi.dataset.draft, null);
+        drawNotes();
+        drawEntries();
+      }
+      return;
+    }
     const li = event.target.closest(".k-note");
     if (!li) return;
     const note = notes.list.find((n) => n.id === li.dataset.id);
     if (!note) return;
     if (event.target.closest("[data-edit]")) {
-      editNote({
-        id: note.id,
-        question: note.question,
-        body: note.body,
-        tags: note.tags,
-        terms: note.terms,
-        era: note.era,
-        version: note.version,
-        questionId: note.question_id ?? "",
-        from: note.from ?? "",
-      });
+      editNote(noteArgs(note));
     } else if (event.target.closest("[data-delete]")) {
       if (!confirm(t("k.notes.deleteAsk", { id: note.id }))) return;
       try {
@@ -1142,7 +1325,10 @@
   //
   // The bank (cuttlefish::questions), the eval runs (cuttlefish::deep_eval,
   // a knowledge job; also `cuttlefish eval deep`) and the review of their
-  // answers: good / wrong, and a wrong one corrected into a note.
+  // answers: good / wrong per answer, a wrong one corrected into a note
+  // (which then shows as the answer, the model's folded under it), and a
+  // question asked again over the store as it is now, the new answer beside
+  // the first.
 
   const deep = {
     bank: null,
@@ -1150,6 +1336,10 @@
     /** The eval file shown */
     file: remembered("deep-file", ""),
     entries: [],
+    /** Questions being asked again, by id */
+    asking: new Set(),
+    /** Why asking again failed, by question id */
+    askErrors: {},
   };
 
   /** A question in the page's language */
@@ -1247,40 +1437,123 @@
     drawEntries();
   }
 
+  /** The note an entry was corrected into: the one it names, else one
+   * written for its question from this eval file */
+  const entryNote = (entry) =>
+    notes.list.find((n) => n.id === entry.note) ??
+    notes.list.find(
+      (n) => n.question_id === entry.id && n.from === `eval ${deep.file}`,
+    );
+
+  /** The editor's arguments for correcting an entry into a new note: its
+   * latest answer as the start, marked wrong once saved */
+  const correctArgs = (entry) => ({
+    question: entry.question,
+    body: (entry.again?.at(-1) ?? entry).answer,
+    tags: [entry.category],
+    questionId: entry.id,
+    from: `eval ${deep.file}`,
+    eval: { file: deep.file, id: entry.id },
+  });
+
+  /** The sources an answer cites, folded */
+  function sourcesList(sources) {
+    return sources?.length
+      ? `<details class="cf-sources"><summary>${escapeHtml(t("k.deep.sources", { n: sources.length }))}</summary><ol class="k-sources">${sources
+          .map(
+            (s) =>
+              `<li><b>${escapeHtml(s.id)}</b> ${titleLink(s.title, s.url)}${s.heading ? ` › ${escapeHtml(s.heading)}` : ""} <span class="cf-kind">${escapeHtml(sourceName(s.source))}</span></li>`,
+          )
+          .join("")}</ol></details>`
+      : "";
+  }
+
+  /** One answer: who gave it and when, the text, its sources and its
+   * verdict buttons; `again` is its index among the answers asked again */
+  function answerBlock(a, again, heading) {
+    const pressed = (v) => `aria-pressed="${a.verdict === v}"`;
+    const by = [a.model, a.effort && t("k.deep.effort", { effort: a.effort })]
+      .filter(Boolean)
+      .join(" · ");
+    const meta = [
+      new Date(a.asked_at).toLocaleString(i18nLocale()),
+      `${(a.ms / 1000).toFixed(0)} s`,
+      by,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const text = a.error
+      ? `<p class="panel-note level-critical">${escapeHtml(t("k.deep.failed", { error: a.error }))}</p>`
+      : `<div class="k-deep-answer">${escapeHtml(a.answer)}</div>`;
+    return `
+      <div class="k-deep-reply" ${again == null ? "" : `data-again="${again}"`} ${a.verdict ? `data-mark="${a.verdict}"` : ""}>
+        <div class="k-deep-meta"><b>${escapeHtml(heading)}</b> <span class="panel-note" title="${escapeHtml(a.backend ?? "")}">${escapeHtml(meta)}</span></div>
+        ${text}
+        ${sourcesList(a.sources)}
+        <div class="cf-alias-actions">
+          <button type="button" class="mode-toggle" data-verdict="good" ${pressed("good")}>${escapeHtml(t("k.deep.good"))}</button>
+          <button type="button" class="mode-toggle" data-verdict="wrong" ${pressed("wrong")}>${escapeHtml(t("k.deep.wrong"))}</button>
+        </div>
+      </div>`;
+  }
+
   function drawEntries() {
+    const drafts = noteDrafts();
     $("k-deep-entries").replaceChildren(
       ...deep.entries.map((entry) => {
         const li = document.createElement("li");
         li.className = "k-deep-entry";
         li.dataset.id = entry.id;
-        if (entry.verdict) li.dataset.verdict = entry.verdict;
-        const pressed = (v) => `aria-pressed="${entry.verdict === v}"`;
-        const sources = entry.sources?.length
-          ? `<details class="cf-sources"><summary>${escapeHtml(t("k.deep.sources", { n: entry.sources.length }))}</summary><ol class="k-sources">${entry.sources
-              .map(
-                (s) =>
-                  `<li><b>${escapeHtml(s.id)}</b> ${titleLink(s.title, s.url)}${s.heading ? ` › ${escapeHtml(s.heading)}` : ""} <span class="cf-kind">${escapeHtml(sourceName(s.source))}</span></li>`,
-              )
-              .join("")}</ol></details>`
-          : "";
-        const answer = entry.error
-          ? `<p class="panel-note level-critical">${escapeHtml(t("k.deep.failed", { error: entry.error }))}</p>`
-          : `<div class="k-deep-answer">${escapeHtml(entry.answer)}</div>`;
-        const made = entry.note
-          ? noteLink(entry.note, t("k.deep.noteMade", { id: entry.note }))
-          : `<button type="button" class="mode-toggle" data-note>${escapeHtml(t("k.deep.toNote"))}</button>`;
+        const note = entryNote(entry);
+        const latest = entry.again?.length ? entry.again.at(-1) : null;
+        const mark = note ? "noted" : (latest ?? entry).verdict;
+        if (mark) li.dataset.mark = mark;
+        const first = answerBlock(
+          entry,
+          null,
+          latest ? t("k.deep.firstAnswer") : t("k.deep.modelAnswer"),
+        );
+        let answers;
+        if (latest) {
+          answers = `<div class="k-deep-compare">${first}${answerBlock(
+            latest,
+            entry.again.length - 1,
+            t("k.deep.againAnswer", { n: entry.again.length }),
+          )}</div>`;
+        } else if (note) {
+          const marked =
+            entry.verdict === "wrong" ? ` · ${t("k.deep.markedWrong")}` : "";
+          answers = `<details class="k-deep-model"><summary>${escapeHtml(t("k.deep.modelAnswer") + marked)}</summary>${first}</details>`;
+        } else {
+          answers = first;
+        }
+        const noteBlock = note
+          ? `<section class="k-deep-note">
+              <div class="k-deep-meta"><b>${escapeHtml(t("k.deep.noteHead"))}</b> <span class="panel-note">${escapeHtml(t("k.notes.by", { author: note.author, date: noteDate(note) }))} · ${noteLink(note.id, `notes/${note.id}.md`)}</span></div>
+              <div class="k-note-body">${escapeHtml(note.body)}</div>
+            </section>`
+          : entry.note
+            ? `<p class="panel-note">${noteLink(entry.note, t("k.deep.noteMade", { id: entry.note }))}</p>`
+            : "";
+        const drafted = !note && drafts[draftKey(correctArgs(entry))];
+        const correct = note
+          ? t("k.deep.editNote")
+          : drafted
+            ? t("k.deep.continueDraft")
+            : t("k.deep.toNote");
+        const asking = deep.asking.has(entry.id);
+        const askError = deep.askErrors[entry.id];
         li.innerHTML = `
           <div class="k-hit-head">
             <span class="cf-kind">${escapeHtml(categoryName(entry.category))}</span>
             <b>${escapeHtml(entry.question)}</b>
-            <span class="panel-note num">${(entry.ms / 1000).toFixed(0)} s</span>
           </div>
-          ${answer}
-          ${sources}
+          ${noteBlock}
+          ${answers}
           <div class="cf-alias-actions">
-            <button type="button" class="mode-toggle" data-verdict="good" ${pressed("good")}>${escapeHtml(t("k.deep.good"))}</button>
-            <button type="button" class="mode-toggle" data-verdict="wrong" ${pressed("wrong")}>${escapeHtml(t("k.deep.wrong"))}</button>
-            ${made}
+            <button type="button" class="mode-toggle" data-note ${drafted ? 'data-drafted="true"' : ""}>${escapeHtml(correct)}</button>
+            <button type="button" class="mode-toggle" data-ask title="${escapeHtml(t("k.deep.askAgainTitle"))}" ${asking ? "disabled" : ""}>${escapeHtml(asking ? t("k.deep.asking") : t("k.deep.askAgain"))}</button>
+            ${askError ? `<span class="panel-note level-critical">${escapeHtml(askError)}</span>` : ""}
           </div>`;
         return li;
       }),
@@ -1293,14 +1566,38 @@
     loadEntries();
   };
 
-  /** Records a verdict (or the note made) on an entry of the shown file */
+  /** Records a verdict on an answer of an entry of the shown file */
   async function markEntry(id, body) {
+    const file = deep.file;
+    let entry;
     try {
-      await api("eval/mark", { file: deep.file, id, ...body });
+      entry = await api("eval/mark", { file, id, ...body });
     } catch (error) {
       $("k-deep-file-note").textContent = error.message;
+      return;
+    }
+    if (file === deep.file) {
+      deep.entries = deep.entries.map((e) => (e.id === id ? entry : e));
+      drawEntries();
     }
     loadEvalFiles();
+  }
+
+  /** Asks an entry's question again; the answer joins it when it comes */
+  async function askAgain(entry) {
+    const file = deep.file;
+    deep.asking.add(entry.id);
+    delete deep.askErrors[entry.id];
+    drawEntries();
+    try {
+      const asked = await api("eval/ask", { file, id: entry.id });
+      if (file === deep.file)
+        deep.entries = deep.entries.map((e) => (e.id === asked.id ? asked : e));
+    } catch (error) {
+      deep.askErrors[entry.id] = error.message;
+    }
+    deep.asking.delete(entry.id);
+    drawEntries();
   }
 
   $("k-deep-entries").addEventListener("click", (event) => {
@@ -1308,26 +1605,30 @@
     if (!li) return;
     const entry = deep.entries.find((e) => e.id === li.dataset.id);
     if (!entry) return;
-    const verdict = event.target.closest("[data-verdict]");
+    const verdict = event.target.closest("button[data-verdict]");
     if (verdict) {
+      const reply = verdict.closest(".k-deep-reply");
+      const again = reply?.dataset.again;
+      const answered = again == null ? entry : entry.again[Number(again)];
       const v = verdict.dataset.verdict;
       // Pressing the verdict again takes it back
-      markEntry(entry.id, { verdict: entry.verdict === v ? null : v });
+      markEntry(entry.id, {
+        verdict: answered.verdict === v ? null : v,
+        ...(again != null && { again: Number(again) }),
+      });
+      return;
+    }
+    if (event.target.closest("[data-ask]")) {
+      askAgain(entry);
       return;
     }
     if (event.target.closest("[data-note]")) {
-      const file = deep.file;
-      editNote({
-        question: entry.question,
-        body: entry.answer,
-        tags: [entry.category],
-        questionId: entry.id,
-        from: `eval ${file}`,
-        onSaved: (note) => {
-          deep.file = file;
-          markEntry(entry.id, { verdict: "wrong", note: note.id });
-        },
-      });
+      const note = entryNote(entry);
+      editNote(
+        note
+          ? { ...noteArgs(note), eval: { file: deep.file, id: entry.id } }
+          : correctArgs(entry),
+      );
     }
   });
 

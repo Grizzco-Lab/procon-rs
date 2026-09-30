@@ -69,18 +69,28 @@
 //! - `GET notes`: the expert notes (`<knowledge>/notes/<id>.md`, see
 //!   `cuttlefish::notes`), newest first; `GET note?id=` one; `POST
 //!   notes/save` with `{"id"?, "question", "body", "tags"?, "terms"?,
-//!   "era"?, "version"?, "question_id"?, "from"?}` writes one (a new id
-//!   from the date and the question when none) and indexes it at once;
-//!   `POST notes/delete` with `{"id"}` removes it and its document
+//!   "era"?, "version"?, "question_id"?, "from"?, "eval"?: {"file", "id"}}`
+//!   writes one (a new id from the date and the question when none),
+//!   indexes it at once and, with `eval`, marks the answer it corrects
+//!   wrong with its id ([`Knowledge::save_note`]: the note is kept once its
+//!   file is written, a later step failing only warns); `POST
+//!   notes/delete` with `{"id"}` removes it and its document. While a job
+//!   of the lab holds the store's lock, notes are written through the same
+//!   loaded store instead of waiting for it
 //! - `GET questions`: the deep question bank (`cuttlefish::questions`),
 //!   each question with the note that answers it as `reference`
 //! - `POST eval/deep` with `{"lang"?, "parallel"?, "max"?, "only"?}` starts
 //!   the deep eval as a job (`cuttlefish::deep_eval`: the bank's questions
 //!   that need no video through the chat's backend, a few at a time, into
-//!   `<knowledge>/eval/deep-<date>.jsonl`); `GET eval` lists the eval
-//!   files, `GET eval?file=` one file's entries; `POST eval/mark` with
-//!   `{"file", "id", "verdict": "good" | "wrong" | null, "note"?}` records
-//!   the player's verdict and the note made from an answer
+//!   `<knowledge>/eval/deep-<date>.jsonl`, each answer with the backend and
+//!   model that gave it); only the player starts it. `GET eval` lists the
+//!   eval files, `GET eval?file=` one file's entries; `POST eval/mark` with
+//!   `{"file", "id", "verdict": "good" | "wrong" | null, "again"?, "note"?}`
+//!   records the player's verdict on the first answer or the one asked
+//!   again at index `again`, and the note made from the entry; `POST
+//!   eval/ask` with `{"file", "id"}` asks that question again over the
+//!   store as it is now (the notes written since first) and keeps the
+//!   answer beside the first
 //! - `GET assets?q=&folder=`: images and icons of the catalogue, with the
 //!   names of their glossary terms; `GET thumb?id=` one's thumbnail
 //! - `GET inbox`: files waiting in the inbox; `POST upload?path=` with the
@@ -581,6 +591,9 @@ pub struct Knowledge {
     /// Held while the user glossary (`glossary-user.toml`) is read and
     /// written back
     slang: Mutex<()>,
+    /// Held while an eval file is read and written back (a mark, a note's
+    /// mark, an answer asked again), so one change never drops another
+    eval: Mutex<()>,
     /// Whether slang suggestions are approved at once by default
     auto_apply: AutoApply,
 }
@@ -626,6 +639,7 @@ impl Knowledge {
             cancel: AtomicBool::new(false),
             catalogue: Mutex::default(),
             slang: Mutex::default(),
+            eval: Mutex::default(),
             auto_apply: AutoApply::default(),
         }
     }
@@ -1639,15 +1653,49 @@ struct EvalRequest {
     only: Vec<String>,
 }
 
+/// Whether an error is the store's lock held by this very process: an
+/// import or other job of this lab, whose writes go through the same loaded
+/// store as the page's, one at a time
+fn held_here(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<lock::Busy>()
+        .and_then(|busy| busy.holder.as_ref())
+        .is_some_and(|h| h.pid == std::process::id() && h.host == lock::host_name())
+}
+
 impl Knowledge {
+    /// The store's write lock for a small write the page asks for (a note):
+    /// taken, or none needed while a job of this lab holds it (see
+    /// [`held_here`]), so a note is saved during a long import; another
+    /// writer holding it is an error that names it
+    fn page_write_lock(&self, program: &str) -> Result<Option<lock::WriteLock>> {
+        match lock::acquire(&self.root, program) {
+            Ok(held) => Ok(Some(held)),
+            Err(e) if held_here(&e) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// The expert notes, newest first
     pub fn notes(&self) -> Result<Value> {
         Ok(json!({ "dir": notes::dir(&self.root), "notes": notes::list(&self.root)? }))
     }
 
+    /// Indexes a note's document at once and writes the index
+    fn index_note(&self, note: &Note) -> Result<()> {
+        let loaded = self.loaded()?;
+        let mut store = loaded.store.write().unwrap();
+        store.add(&note.document(), &loaded.embedder)?;
+        store.save()
+    }
+
     /// Writes a note (`POST notes/save`): a new one from the body, or the
-    /// note `id` changed, its date today; then indexes it at once, under
-    /// the store's write lock. Answers with the note.
+    /// note `id` changed, its date today. The file is written first and is
+    /// the note from then on; its document is then indexed at once, and with
+    /// `"eval": {"file", "id"}` the eval answer it corrects is marked wrong
+    /// with the note's id. Answers with the note, whether it was `indexed`,
+    /// the eval `entry` as marked, and a `warning` when a step after the
+    /// file failed (the note stays saved: `notes::sync` indexes it when the
+    /// store loads next).
     pub fn save_note(&self, body: &Value) -> Result<Value> {
         let text = |key: &str| body[key].as_str().unwrap_or_default().trim();
         let list = |key: &str| -> Vec<String> {
@@ -1693,22 +1741,46 @@ impl Knowledge {
                 *field = Some(text(key).to_string()).filter(|v| !v.is_empty());
             }
         }
+        let target = body.get("eval").filter(|t| !t.is_null());
+        let _lock = self.page_write_lock("grizzco-lab note")?;
         if note.id.is_empty() {
             note.id = notes::new_id(&self.root, &note.question, note.date);
         }
-        let _lock = lock::acquire(&self.root, "grizzco-lab note")?;
         notes::save(&self.root, &note)?;
-        let loaded = self.loaded()?;
-        let mut store = loaded.store.write().unwrap();
-        store.add(&note.document(), &loaded.embedder)?;
-        store.save()?;
-        log::info!("Expert note {} saved and indexed", note.id);
-        Ok(json!(note))
+        log::info!("Expert note {} saved", note.id);
+        let mut answer = json!(note);
+        let mut warnings = Vec::new();
+        match self.index_note(&note) {
+            Ok(()) => answer["indexed"] = json!(true),
+            Err(e) => {
+                log::warn!("Expert note {} not indexed: {e:#}", note.id);
+                answer["indexed"] = json!(false);
+                warnings.push(format!(
+                    "not indexed yet ({e:#}); it is indexed when the store loads next"
+                ));
+            }
+        }
+        if let Some(target) = target {
+            let text = |key: &str| target[key].as_str().unwrap_or_default();
+            let marked = self.mark_eval(text("file"), text("id"), |entry| {
+                entry.answered.verdict = Some(deep_eval::Verdict::Wrong);
+                entry.note = Some(note.id.clone());
+                Ok(())
+            });
+            match marked {
+                Ok(entry) => answer["entry"] = json!(entry),
+                Err(e) => warnings.push(format!("the answer was not marked ({e:#})")),
+            }
+        }
+        if !warnings.is_empty() {
+            answer["warning"] = json!(warnings.join("; "));
+        }
+        Ok(answer)
     }
 
     /// Removes a note and its document (`POST notes/delete`)
     pub fn delete_note(&self, id: &str) -> Result<Value> {
-        let _lock = lock::acquire(&self.root, "grizzco-lab note")?;
+        let _lock = self.page_write_lock("grizzco-lab note")?;
         ensure!(notes::remove(&self.root, id)?, "no note {id}");
         let loaded = self.loaded()?;
         let mut store = loaded.store.write().unwrap();
@@ -1774,17 +1846,18 @@ impl Knowledge {
                 &out,
                 &|| knowledge.cancelled(),
                 &mut |done, _, entry| {
-                    let line = match &entry.error {
+                    let answered = &entry.answered;
+                    let line = match &answered.error {
                         Some(e) => format!("{}: failed: {e}", entry.id),
                         None => format!(
                             "{}: {}",
                             entry.id,
-                            entry.answer.chars().take(160).collect::<String>()
+                            answered.answer.chars().take(160).collect::<String>()
                         ),
                     };
                     knowledge.update(id, |job| {
                         job.done = done;
-                        job.added += entry.error.is_none() as usize;
+                        job.added += answered.error.is_none() as usize;
                         job.lines.push(line);
                     });
                 },
@@ -1811,7 +1884,20 @@ impl Knowledge {
         Ok(json!({ "file": file, "entries": entries }))
     }
 
-    /// Records a verdict on an eval answer (`POST eval/mark`)
+    /// Changes an entry of an eval file under the eval lock
+    /// (`deep_eval::update`)
+    fn mark_eval(
+        &self,
+        file: &str,
+        id: &str,
+        change: impl FnOnce(&mut deep_eval::Entry) -> Result<()>,
+    ) -> Result<deep_eval::Entry> {
+        let _held = self.eval.lock().unwrap();
+        deep_eval::update(&self.root, file, id, change)
+    }
+
+    /// Records a verdict on an eval answer (`POST eval/mark`): the first
+    /// answer, or with `again` the answer asked again at that index
     pub fn eval_mark(&self, body: &Value) -> Result<Value> {
         let text = |key: &str| body[key].as_str().unwrap_or_default();
         let verdict = match body.get("verdict") {
@@ -1820,13 +1906,45 @@ impl Knowledge {
             }
             _ => None,
         };
+        let again = body["again"].as_u64().map(|i| i as usize);
+        let _held = self.eval.lock().unwrap();
         let entry = deep_eval::mark(
             &self.root,
             text("file"),
             text("id"),
             verdict,
+            again,
             body["note"].as_str(),
         )?;
+        Ok(json!(entry))
+    }
+
+    /// Asks an eval question again (`POST eval/ask` with `{"file", "id"}`),
+    /// as it was asked, over the store as it is now, the expert notes first;
+    /// the answer joins the entry's `again` and the entry is answered. The
+    /// model is asked outside the eval lock.
+    pub fn eval_ask(&self, body: &Value) -> Result<Value, Status> {
+        let text = |key: &str| body[key].as_str().unwrap_or_default();
+        let (file, id) = (text("file"), text("id"));
+        let entry = deep_eval::entry(&self.root, file, id)?;
+        let client = self.client()?;
+        let loaded = self.loaded()?;
+        let again = {
+            let store = loaded.store.read().unwrap();
+            let asker = deep_eval::Asker {
+                store: &store,
+                embedder: &loaded.embedder,
+                client: &client,
+            };
+            deep_eval::ask_again(asker, K, &entry)
+        };
+        if let Some(e) = &again.error {
+            log::warn!("Asking {id} again failed: {e}");
+        }
+        let entry = self.mark_eval(file, id, |entry| {
+            entry.again.push(again);
+            Ok(())
+        })?;
         Ok(json!(entry))
     }
 }
@@ -1895,6 +2013,7 @@ impl Knowledge {
             }
             "eval/deep" => self.eval_deep(body),
             "eval/mark" => Ok(self.eval_mark(&json_body()?)?),
+            "eval/ask" => self.eval_ask(&json_body()?),
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
                 anyhow::anyhow!("no endpoint POST knowledge/{path}"),
@@ -2331,7 +2450,31 @@ mod tests {
         // Deleting waits the same
         let e = knowledge.delete(&["x".to_string()]).unwrap_err();
         assert!(e.to_string().contains("being written by"), "{e}");
+        // A note does not wait for a job of this lab: the lock is held
+        // here, and the note goes through the same loaded store
+        assert!(held_here(&lock::acquire(&root, "x").unwrap_err()));
+        assert!(
+            knowledge
+                .page_write_lock("grizzco-lab note")
+                .unwrap()
+                .is_none()
+        );
+        // Another machine's writer it waits for, and says who
         drop(held);
+        std::fs::write(
+            root.join(lock::FILE),
+            serde_json::to_vec(&lock::Holder {
+                pid: 1,
+                program: "cuttlefish ingest".into(),
+                host: "laptop-elsewhere".into(),
+                since: chrono::Utc::now(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let e = knowledge.page_write_lock("grizzco-lab note").unwrap_err();
+        assert!(!held_here(&e));
+        assert!(e.to_string().contains("on laptop-elsewhere"), "{e}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

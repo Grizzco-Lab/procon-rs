@@ -182,9 +182,10 @@ impl Cli {
 
 /// The arguments: headless, `stream-json` both ways, no tools, no MCP
 /// servers, no settings files, no session kept, the system prompt replacing
-/// Claude Code's own, the effort, and the model when one is configured
+/// Claude Code's own, the effort, and the model: the configured one, else
+/// [`crate::llm::DEFAULT_MODEL`], never the CLI's own default
 pub fn args(settings: &Settings, system: &str) -> Vec<String> {
-    let mut args: Vec<String> = [
+    [
         "-p",
         "--input-format",
         "stream-json",
@@ -201,17 +202,17 @@ pub fn args(settings: &Settings, system: &str) -> Vec<String> {
         "none",
         "--effort",
         &settings.effort,
+        "--model",
+        settings
+            .model
+            .as_deref()
+            .unwrap_or(crate::llm::DEFAULT_MODEL),
         "--system-prompt",
         system,
     ]
     .iter()
     .map(|s| String::from(*s))
-    .collect();
-    if let Some(model) = &settings.model {
-        args.push(String::from("--model"));
-        args.push(model.clone());
-    }
-    args
+    .collect()
 }
 
 /// The `stream-json` user message for a prompt, one line: the opening
@@ -294,11 +295,6 @@ pub fn parse_output(out: &Output) -> Result<Reply> {
         }
         bail!("the claude CLI failed: {said}");
     }
-    // The CLI chose the model when none was configured; the result says which
-    if let Some(models) = v["modelUsage"].as_object() {
-        let names: Vec<&str> = models.keys().map(String::as_str).collect();
-        log::debug!("claude CLI answered with {}", names.join(", "));
-    }
     let u = &v["usage"];
     let n = |k: &str| u[k].as_u64().unwrap_or(0);
     Ok(Reply {
@@ -310,7 +306,23 @@ pub fn parse_output(out: &Output) -> Result<Reply> {
             cache_read: n("cache_read_input_tokens"),
             cache_write: n("cache_creation_input_tokens"),
         },
+        model: main_model(&v["modelUsage"]),
     })
+}
+
+/// The model that wrote the answer, from a result's `modelUsage` (the CLI
+/// chooses one when none is configured, and may use a small one on the
+/// side): the one with the most output tokens
+fn main_model(usage: &Value) -> Option<String> {
+    let models = usage.as_object()?;
+    log::debug!(
+        "claude CLI answered with {}",
+        models.keys().cloned().collect::<Vec<_>>().join(", ")
+    );
+    models
+        .iter()
+        .max_by_key(|(_, u)| u["outputTokens"].as_u64().unwrap_or(0))
+        .map(|(name, _)| name.clone())
 }
 
 /// Whether an error is about the account rather than the request
@@ -521,10 +533,13 @@ mod tests {
         );
         assert!(seen.cwd_existed);
         assert!(!cwd.exists());
-        // No model configured: the CLI's own default
+        // No model configured: ours, at the default effort, never the
+        // CLI's own choice
         let (client, seen) = make(success("ok"), Settings::default());
         client.send(&prompt()).unwrap();
-        assert!(!seen.lock().unwrap().args.iter().any(|x| x == "--model"));
+        let a = &seen.lock().unwrap().args;
+        assert_eq!(after(a, "--model"), Some("claude-opus-5-5"));
+        assert_eq!(after(a, "--effort"), Some("medium"));
     }
 
     #[test]
@@ -608,10 +623,46 @@ mod tests {
                 cache_write: 4
             }
         );
+        // A result naming no model names none; the client then says which
+        // it asked for
+        assert_eq!(reply.model, None);
         // The sent client logs and passes it through
         let (client, _) = make(success("fine"), Settings::default());
         assert_eq!(client.send(&prompt()).unwrap().text, "fine");
         assert!(alloc::format!("{client:?}").contains("ClaudeCli"));
+        // The model the CLI chose: the one that wrote the most, not the
+        // small one it used on the side
+        let mut chose = success("The answer.");
+        chose.stdout = chose.stdout.replace(
+            "\"type\":\"result\"",
+            "\"modelUsage\":{\"claude-haiku-4-5\":{\"outputTokens\":3},\
+             \"claude-opus-4-8\":{\"outputTokens\":900}},\"type\":\"result\"",
+        );
+        let (client, _) = make(chose, Settings::default());
+        let reply = client.send(&prompt()).unwrap();
+        assert_eq!(
+            client.answered_by(&reply),
+            crate::llm::AnsweredBy {
+                backend: Some(Backend::ClaudeCli),
+                model: Some(String::from("claude-opus-4-8")),
+                effort: Some(String::from("medium")),
+            }
+        );
+        // Else the one the CLI was told to run
+        let told = Settings {
+            model: Some(String::from("sonnet")),
+            ..Settings::default()
+        };
+        let (client, _) = make(success("ok"), told);
+        assert_eq!(
+            client.send(&prompt()).unwrap().model.as_deref(),
+            Some("sonnet")
+        );
+        let (client, _) = make(success("ok"), Settings::default());
+        assert_eq!(
+            client.send(&prompt()).unwrap().model.as_deref(),
+            Some("claude-opus-5-5")
+        );
     }
 
     #[test]

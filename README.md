@@ -346,8 +346,13 @@ over every other source from then on (notes are retrieved first and
 labelled "Expert note (user), <date>" under **Sources**). The Knowledge
 view lists the notes (**Expert notes**: edit, delete) and the bank (**Deep
 questions**), and runs the **deep eval**: the model answers the questions
-that need no video, a few at a time; you mark each answer **Good** or
-**Wrong** and turn a wrong one into a note with **Correct → note**. That is
+that need no video, a few at a time, when you start it; you mark each
+answer **Good** or **Wrong** and turn a wrong one into a note with
+**Correct → note**, after which the card shows your note as the answer (the
+model's folded under it), and **Ask again** puts a new answer, over what
+the store holds now, beside the first. What you type in the note editor is
+kept as a draft in the browser until it is saved: a failed save says why
+and keeps the text, and the Notes panel lists drafts not saved yet. That is
 how the memory grows. When a chat is about a video without a controller
 recording, the input it reasons from is the Predictor's estimate, and the
 prompt says so with the model's measured reliability, so Cuttlefish does

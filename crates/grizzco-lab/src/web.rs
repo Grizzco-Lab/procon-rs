@@ -823,4 +823,19 @@ mod tests {
         assert!(!ok("localhost:8090", Some("null")));
         assert!(check_origin(None, None, &allowed).is_err());
     }
+
+    /// The scripts find elements by id (`$(id)`, the first with it), so an
+    /// id used twice binds a handler to the wrong element: the note editor's
+    /// form once shared its id with a review's notes form, and its Save
+    /// sent nothing
+    #[test]
+    fn page_ids_are_unique() {
+        let page = include_str!("../web/index.html");
+        let mut seen = std::collections::BTreeSet::new();
+        for part in page.split(" id=\"").skip(1) {
+            let id = &part[..part.find('"').unwrap()];
+            assert!(seen.insert(id), "id \"{id}\" is used twice in index.html");
+        }
+        assert!(seen.contains("cf-note-editor"));
+    }
 }

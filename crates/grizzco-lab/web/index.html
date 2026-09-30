@@ -3164,9 +3164,10 @@
       </main>
 
       <!-- The expert note editor, shared by the chat ("Correct / add to
-           memory"), the deep questions and the Notes panel (knowledge.js) -->
+           memory"), the deep questions and the Notes panel (knowledge.js);
+           what is typed stays a draft in localStorage until it is saved -->
       <dialog class="cf-dialog" id="cf-note-dialog">
-        <form class="cf-note-form" id="cf-note-form" method="dialog">
+        <form class="cf-note-form" id="cf-note-editor" method="dialog">
           <header class="panel-head">
             <h2 id="cf-note-title" data-i18n="note.title">Expert note</h2>
             <span class="panel-note" data-i18n="note.hint"
@@ -3240,7 +3241,16 @@
             >
               Cancel
             </button>
-            <span class="panel-note" id="cf-note-status"></span>
+            <button
+              type="button"
+              class="mode-toggle"
+              id="cf-note-discard"
+              data-i18n="note.discardDraft"
+              hidden
+            >
+              Discard draft
+            </button>
+            <span class="panel-note" id="cf-note-status" role="status"></span>
           </div>
         </form>
       </dialog>

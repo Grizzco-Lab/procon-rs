@@ -2109,6 +2109,11 @@
       ...(data.sources?.length && { sources: data.sources }),
       ...(data.experts?.length && { experts: data.experts }),
       ...(added.length && { comments: added }),
+      ...(data.model && {
+        backend: data.backend,
+        model: data.model,
+        effort: data.effort,
+      }),
       created_ms: Date.now(),
     });
     if (cf.review !== review) return putReview(review, id);

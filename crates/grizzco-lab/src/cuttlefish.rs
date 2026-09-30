@@ -40,8 +40,9 @@
 //! chat, oldest first: a user message may carry the moment (`t_s`) or range
 //! (`t_s`, `t_end_s`) of the video it was asked with; an assistant message
 //! carries the knowledge it cited (`sources`), the expert comments it was
-//! given (`experts`) and the ids of the timed comments it added
-//! (`comments`). Older reviews have no `notes` or
+//! given (`experts`), the ids of the timed comments it added (`comments`)
+//! and who wrote it (`backend`, `model`, `effort`, as `POST chat` answers
+//! them). Older reviews have no `notes` or
 //! `messages`; neither is written when empty, and `video` is left out of a
 //! review without one. `stage`, when picked on the page, is the Salmon Run
 //! stage by its glossary id (`"stage": "spawning-grounds"`); the page links
@@ -144,7 +145,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 use cuttlefish::corpus_reviews::{Origin, Unplaced};
 use cuttlefish::game::Game;
-use cuttlefish::llm::{Role, Settings, Turn};
+use cuttlefish::llm::{AnsweredBy, Role, Settings, Turn};
 use cuttlefish::review::{self as ai, ChatRequest, KeyMoment, SourceRef, VideoContext};
 use cuttlefish::sampling::{self, MAX_RANGE_S};
 use cuttlefish::situation::{self, Input, InputSource, SeenObject, Situation};
@@ -403,6 +404,9 @@ pub struct Message {
     /// Ids of the comments an assistant message added
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<String>,
+    /// The backend, model and effort that wrote an assistant message
+    #[serde(flatten)]
+    pub by: AnsweredBy,
     /// When it was written, in Unix ms
     pub created_ms: u64,
 }
@@ -1958,6 +1962,9 @@ impl Cuttlefish {
             "experts": reply.experts,
             "comments": comments,
             "images": {"frames": images.0, "tokens": images.1},
+            "backend": reply.by.backend,
+            "model": reply.by.model,
+            "effort": reply.by.effort,
         }))
     }
 
@@ -3018,6 +3025,7 @@ mod tests {
                 {"id": "m1", "role": "user", "text": "What is a Steelhead?", "created_ms": 1},
                 {"id": "m2", "role": "assistant", "text": "A boss [S1].",
                  "sources": [{"id": "S1", "title": "Bosses", "heading": "", "source": "guide"}],
+                 "backend": "claude-cli", "model": "claude-opus-5-5", "effort": "medium",
                  "created_ms": 2}
             ]
         }))
@@ -3025,6 +3033,11 @@ mod tests {
         assert!(review.video.is_none());
         assert_eq!(review.messages[1].role, Role::Assistant);
         assert_eq!(review.messages[1].sources[0].title, "Bosses");
+        // Who answered is kept with the answer
+        assert_eq!(
+            review.messages[1].by.model.as_deref(),
+            Some("claude-opus-5-5")
+        );
         cuttlefish.save_review("c", &review).unwrap();
         let written: Value = serde_json::from_str(
             &std::fs::read_to_string(dir.join("reviews/c/review.json")).unwrap(),
@@ -3032,6 +3045,9 @@ mod tests {
         .unwrap();
         assert!(written.get("video").is_none());
         assert!(written["messages"][0].get("sources").is_none());
+        assert!(written["messages"][0].get("model").is_none());
+        assert_eq!(written["messages"][1]["backend"], "claude-cli");
+        assert_eq!(written["messages"][1]["effort"], "medium");
         assert_eq!(cuttlefish.review("c").unwrap(), review);
         let list = cuttlefish.reviews().unwrap();
         assert_eq!(list["reviews"][0]["video"], Value::Null);
@@ -3059,6 +3075,7 @@ mod tests {
             sources: Vec::new(),
             experts: Vec::new(),
             comments: Vec::new(),
+            by: AnsweredBy::default(),
             created_ms: 3,
         });
         cuttlefish.save_review("c", &review).unwrap();

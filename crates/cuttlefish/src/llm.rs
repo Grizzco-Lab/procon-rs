@@ -23,11 +23,12 @@ use serde_json::{Value, json};
 pub const API_URL: &str = "https://api.anthropic.com/v1/messages";
 /// API version header
 pub const API_VERSION: &str = "2023-06-01";
-/// Default model
+/// Default model, on either backend: the CLI is always told which model to
+/// run, so an answer never depends on the CLI's own default
 pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
-/// Default effort (`low`, `medium`, `high`, `xhigh`, `max`); reviewing
-/// gameplay is judgment work, so above the model's `medium` default
-pub const DEFAULT_EFFORT: &str = "high";
+/// Default effort (`low`, `medium`, `high`, `xhigh`, `max`): the player's
+/// choice for the reviewer (chat, questions, the deep eval)
+pub const DEFAULT_EFFORT: &str = "medium";
 
 /// A piece of the user message
 #[derive(Clone, Debug, PartialEq)]
@@ -122,8 +123,7 @@ impl FromStr for Backend {
 /// Model settings
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
-    /// Model name; `None` for the backend's default ([`DEFAULT_MODEL`] on
-    /// the API, the CLI's own choice on the CLI)
+    /// Model name; `None` for [`DEFAULT_MODEL`]
     pub model: Option<String>,
     /// Effort level
     pub effort: String,
@@ -245,6 +245,26 @@ pub struct Reply {
     pub stop_reason: String,
     /// Token counts
     pub usage: Usage,
+    /// The model that answered, as the backend names it (the API's
+    /// `model`, the CLI's main model in `modelUsage`); [`Client::send`]
+    /// falls back on the configured one
+    pub model: Option<String>,
+}
+
+/// Who answered: the backend, the model it ran and the effort asked for,
+/// kept with every answer (eval rows, chat messages) so an answer can be
+/// judged with its model
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnsweredBy {
+    /// `api` or `claude-cli`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<Backend>,
+    /// The model's name (`claude-opus-5-5`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// The effort asked for (`medium`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// Reads a Messages API response body (success or error)
@@ -289,6 +309,7 @@ pub fn parse_reply(status: u16, body: &str) -> Result<Reply> {
             cache_read: n("cache_read_input_tokens"),
             cache_write: n("cache_creation_input_tokens"),
         },
+        model: v["model"].as_str().map(String::from),
     })
 }
 
@@ -417,17 +438,36 @@ impl Client {
         }
     }
 
+    /// Who answered a reply of this client: its backend, the reply's model
+    /// and the effort asked for
+    pub fn answered_by(&self, reply: &Reply) -> AnsweredBy {
+        AnsweredBy {
+            backend: Some(self.backend()),
+            model: reply.model.clone(),
+            effort: Some(self.settings.effort.clone()),
+        }
+    }
+
+    /// The model asked for: the configured one, else [`DEFAULT_MODEL`]
+    pub fn model(&self) -> &str {
+        self.settings.model.as_deref().unwrap_or(DEFAULT_MODEL)
+    }
+
     /// Sends a prompt. On the API, rate limits, overload and server errors
-    /// are retried twice; the CLI retries on its own.
+    /// are retried twice; the CLI retries on its own. The reply names the
+    /// model that answered: as the backend said, else the one asked for.
     pub fn send(&self, prompt: &Prompt) -> Result<Reply> {
-        let reply = match &self.inner {
+        let mut reply = match &self.inner {
             Inner::Api { transport, api_key } => self.post(transport.as_ref(), api_key, prompt)?,
             Inner::Cli(cli) => cli.send(&self.settings, prompt)?,
         };
+        if reply.model.is_none() {
+            reply.model = Some(String::from(self.model()));
+        }
         let u = reply.usage;
         log::info!(
             "{} ({}): {} input + {} cached + {} cache write, {} output tokens",
-            self.settings.model.as_deref().unwrap_or("default model"),
+            reply.model.as_deref().unwrap_or("default model"),
             self.backend(),
             u.input,
             u.cache_read,
@@ -510,7 +550,7 @@ pub(crate) mod tests {
         assert_eq!(content[0]["text"], "hi");
         assert_eq!(content[1]["source"]["media_type"], "image/jpeg");
         assert_eq!(content[1]["source"]["data"], "AQID");
-        assert_eq!(body["output_config"]["effort"], "high");
+        assert_eq!(body["output_config"]["effort"], "medium");
         assert_eq!(body["output_config"]["format"]["type"], "json_schema");
         assert!(body.get("thinking").is_none());
         assert!(body.get("temperature").is_none());
@@ -569,6 +609,13 @@ pub(crate) mod tests {
         let r = parse_reply(s, &b).unwrap();
         assert_eq!(r.text, "answer");
         assert_eq!(r.usage.cache_read, 100);
+        assert_eq!(r.model, None);
+        // The model that answered, as the API names it
+        let named = r#"{"model":"claude-opus-5-5-20260901","content":[{"type":"text","text":"x"}],"stop_reason":"end_turn","usage":{}}"#;
+        assert_eq!(
+            parse_reply(200, named).unwrap().model.as_deref(),
+            Some("claude-opus-5-5-20260901")
+        );
         let err = parse_reply(
             401,
             r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#,
@@ -596,21 +643,27 @@ pub(crate) mod tests {
             String::from("test-key"),
             Settings::default(),
         );
-        assert_eq!(
-            client
-                .send(&Prompt {
-                    system: String::new(),
-                    opening: Vec::new(),
-                    history: alloc::vec![],
-                    user: alloc::vec![],
-                    schema: None
-                })
-                .unwrap()
-                .text,
-            "fine"
-        );
+        let reply = client
+            .send(&Prompt {
+                system: String::new(),
+                opening: Vec::new(),
+                history: alloc::vec![],
+                user: alloc::vec![],
+                schema: None,
+            })
+            .unwrap();
+        assert_eq!(reply.text, "fine");
         assert_eq!(sent.lock().unwrap().len(), 2);
         assert_eq!(client.backend(), Backend::Api);
+        // No model in the answer: the one the request named
+        assert_eq!(
+            client.answered_by(&reply),
+            AnsweredBy {
+                backend: Some(Backend::Api),
+                model: Some(String::from(DEFAULT_MODEL)),
+                effort: Some(String::from(DEFAULT_EFFORT)),
+            }
+        );
         assert!(!alloc::format!("{client:?}").contains("test-key"));
     }
 

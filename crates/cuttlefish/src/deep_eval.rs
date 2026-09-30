@@ -1,17 +1,20 @@
 //! The deep eval: the bank's questions that need no video
 //! ([`crate::questions::Bank::askable`]) asked through the configured
-//! backend, a few at a time, the answers kept for review.
+//! backend, a few at a time, the answers kept for review. It is a
+//! benchmark the player runs when they choose, never on its own.
 //!
 //! Answers go to `<knowledge>/eval/deep-<date>.jsonl`, one [`Entry`] per
-//! line with the sources the model was given and cited; the file is
-//! rewritten after every batch, so a stopped run keeps what it got. The
-//! lab's Knowledge view lists the files; the player marks each answer
-//! good or wrong ([`mark`]) and turns a wrong one into an expert note
-//! ([`crate::notes`]), whose id the entry then carries. That is how the
-//! memory grows.
+//! line with the sources the model cited and the backend and model that
+//! answered; the file is rewritten after every batch, so a stopped run
+//! keeps what it got. The lab's Knowledge view lists the files; the player
+//! marks each answer good or wrong ([`mark`]) and turns a wrong one into an
+//! expert note ([`crate::notes`]), whose id the entry then carries. That is
+//! how the memory grows. A question can be asked again ([`ask_again`]) with
+//! the store as it is then, the notes written since included; each answer
+//! is kept beside the first in [`Entry::again`], with its own verdict.
 
 use crate::embed::Embedder;
-use crate::llm::Client;
+use crate::llm::{AnsweredBy, Client};
 use crate::questions::{Bank, Question};
 use crate::review::{self, SourceRef};
 use crate::store::{Store, write_atomic};
@@ -39,16 +42,9 @@ pub enum Verdict {
     Wrong,
 }
 
-/// One question asked, with its answer
+/// One answer to a question, with the player's verdict on it
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Entry {
-    /// The question's id in the bank
-    pub id: String,
-    pub category: String,
-    /// The language it was asked in (`en`, `zh`)
-    pub lang: String,
-    /// The question as asked
-    pub question: String,
+pub struct Answered {
     /// The model's answer; empty when it failed
     #[serde(default)]
     pub answer: String,
@@ -61,12 +57,36 @@ pub struct Entry {
     pub asked_at: DateTime<Utc>,
     /// How long the model took
     pub ms: u64,
+    /// The backend and model that answered; absent in files written before
+    /// they were recorded
+    #[serde(flatten)]
+    pub by: AnsweredBy,
     /// The player's verdict, once given
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<Verdict>,
+}
+
+/// One question asked, with its answer, and the answers of each time it
+/// was asked again
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Entry {
+    /// The question's id in the bank
+    pub id: String,
+    pub category: String,
+    /// The language it was asked in (`en`, `zh`)
+    pub lang: String,
+    /// The question as asked
+    pub question: String,
+    /// The first answer
+    #[serde(flatten)]
+    pub answered: Answered,
     /// The expert note made from it, by id
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// The answers of each time it was asked again ([`ask_again`]), oldest
+    /// first
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub again: Vec<Answered>,
 }
 
 /// What to ask
@@ -169,39 +189,53 @@ pub struct Asker<'a> {
     pub client: &'a Client,
 }
 
-/// Asks one question
-fn ask_one(asker: Asker<'_>, k: usize, q: &Question, lang: &str) -> Entry {
+/// Asks a question with `k` excerpts: the answer, or why there is none
+fn answer(asker: Asker<'_>, k: usize, question: &str) -> Answered {
     let started = std::time::Instant::now();
-    let asked_at = Utc::now();
-    let question = String::from(q.text(lang));
-    let mut entry = Entry {
-        id: q.id.clone(),
-        category: q.category.clone(),
-        lang: String::from(lang),
-        question,
+    let mut answered = Answered {
         answer: String::new(),
         sources: Vec::new(),
         error: None,
-        asked_at,
+        asked_at: Utc::now(),
         ms: 0,
+        by: AnsweredBy {
+            backend: Some(asker.client.backend()),
+            model: Some(String::from(asker.client.model())),
+            effort: Some(asker.client.settings.effort.clone()),
+        },
         verdict: None,
-        note: None,
     };
-    match review::ask(
-        asker.store,
-        asker.embedder,
-        asker.client,
-        k,
-        &entry.question,
-    ) {
+    match review::ask(asker.store, asker.embedder, asker.client, k, question) {
         Ok(answer) => {
-            entry.answer = answer.text;
-            entry.sources = answer.sources;
+            answered.answer = answer.text;
+            answered.sources = answer.sources;
+            answered.by = answer.by;
         }
-        Err(e) => entry.error = Some(alloc::format!("{e:#}")),
+        Err(e) => answered.error = Some(alloc::format!("{e:#}")),
     }
-    entry.ms = started.elapsed().as_millis() as u64;
-    entry
+    answered.ms = started.elapsed().as_millis() as u64;
+    answered
+}
+
+/// Asks one question of the bank
+fn ask_one(asker: Asker<'_>, k: usize, q: &Question, lang: &str) -> Entry {
+    let question = String::from(q.text(lang));
+    Entry {
+        id: q.id.clone(),
+        category: q.category.clone(),
+        lang: String::from(lang),
+        answered: answer(asker, k, &question),
+        question,
+        note: None,
+        again: Vec::new(),
+    }
+}
+
+/// Asks an entry's question again, as it was asked, with `k` excerpts of
+/// the store as it is now (the expert notes written since come first): the
+/// answer to keep in [`Entry::again`] (see [`update`])
+pub fn ask_again(asker: Asker<'_>, k: usize, entry: &Entry) -> Answered {
+    answer(asker, k, &entry.question)
 }
 
 /// Asks the picked questions, `parallel` at a time, writing `out` after
@@ -235,7 +269,7 @@ pub fn run(
                 .collect()
         });
         for entry in got {
-            if entry.error.is_some() {
+            if entry.answered.error.is_some() {
                 summary.failed += 1;
             } else {
                 summary.answered += 1;
@@ -296,16 +330,19 @@ pub fn list(root: &Path) -> Vec<Listed> {
             let name = e.file_name().to_str()?.to_string();
             check_file(&name).ok()?;
             let entries = read(&e.path()).ok()?;
+            let first = |verdict| {
+                entries
+                    .iter()
+                    .filter(|x| x.answered.verdict == Some(verdict))
+                    .count()
+            };
             Some(Listed {
-                good: entries
+                good: first(Verdict::Good),
+                wrong: first(Verdict::Wrong),
+                failed: entries
                     .iter()
-                    .filter(|x| x.verdict == Some(Verdict::Good))
+                    .filter(|x| x.answered.error.is_some())
                     .count(),
-                wrong: entries
-                    .iter()
-                    .filter(|x| x.verdict == Some(Verdict::Wrong))
-                    .count(),
-                failed: entries.iter().filter(|x| x.error.is_some()).count(),
                 entries: entries.len(),
                 file: name,
             })
@@ -315,14 +352,23 @@ pub fn list(root: &Path) -> Vec<Listed> {
     out
 }
 
-/// Sets (or clears) the verdict on an entry, and the note made from it;
-/// answers with the entry as written
-pub fn mark(
+/// One entry of an eval file, by question id
+pub fn entry(root: &Path, file: &str, id: &str) -> Result<Entry> {
+    check_file(file)?;
+    read(&dir(root).join(file))?
+        .into_iter()
+        .find(|e| e.id == id)
+        .with_context(|| alloc::format!("no question {id} in {file}"))
+}
+
+/// Changes one entry of an eval file with `change` and writes the file
+/// back whole; answers with the entry as written. Reads and writes the
+/// whole file, so callers that may overlap hold a lock around it.
+pub fn update(
     root: &Path,
     file: &str,
     id: &str,
-    verdict: Option<Verdict>,
-    note: Option<&str>,
+    change: impl FnOnce(&mut Entry) -> Result<()>,
 ) -> Result<Entry> {
     check_file(file)?;
     let path = dir(root).join(file);
@@ -331,13 +377,37 @@ pub fn mark(
         .iter_mut()
         .find(|e| e.id == id)
         .with_context(|| alloc::format!("no question {id} in {file}"))?;
-    entry.verdict = verdict;
-    if let Some(note) = note {
-        entry.note = Some(String::from(note));
-    }
-    let marked = entry.clone();
+    change(entry)?;
+    let changed = entry.clone();
     write(&path, &entries)?;
-    Ok(marked)
+    Ok(changed)
+}
+
+/// Sets (or clears) the verdict on an answer of an entry, the first, or
+/// with `again` the one asked again at that index; and the note made from
+/// the entry, when given. Answers with the entry as written.
+pub fn mark(
+    root: &Path,
+    file: &str,
+    id: &str,
+    verdict: Option<Verdict>,
+    again: Option<usize>,
+    note: Option<&str>,
+) -> Result<Entry> {
+    update(root, file, id, |entry| {
+        let answered = match again {
+            None => &mut entry.answered,
+            Some(i) => entry
+                .again
+                .get_mut(i)
+                .with_context(|| alloc::format!("{id} was not asked again {} times", i + 1))?,
+        };
+        answered.verdict = verdict;
+        if let Some(note) = note {
+            entry.note = Some(String::from(note));
+        }
+        Ok(())
+    })
 }
 
 #[cfg(test)]
@@ -367,12 +437,13 @@ mod tests {
         store.add(&doc, &e).unwrap();
         let sent = Arc::new(Mutex::new(Vec::new()));
         // Three questions: two answers, one error from the API (a 400 is
-        // not retried)
+        // not retried); then one asked again
         let fake = Fake {
             replies: Mutex::new(alloc::vec![
                 ok("Away from the shooter [S1]."),
                 ok("Aggressive kills keep the basket fed."),
                 (400, String::from("{\"error\": {\"message\": \"bad\"}}")),
+                ok("The note says: away from the shooter [S1]."),
             ]),
             sent: sent.clone(),
         };
@@ -432,9 +503,23 @@ mod tests {
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].lang, "zh");
         assert_eq!(entries[0].question, bank.questions[0].zh);
-        assert_eq!(entries[0].sources.len(), 1);
-        assert_eq!(entries[0].sources[0].title, "Drizzlers");
-        assert!(entries[2].error.is_some());
+        assert_eq!(entries[0].answered.sources.len(), 1);
+        assert_eq!(entries[0].answered.sources[0].title, "Drizzlers");
+        assert!(entries[2].answered.error.is_some());
+        // Who answered, on every row, failed ones too
+        let by = AnsweredBy {
+            backend: Some(crate::llm::Backend::Api),
+            model: Some(String::from(crate::llm::DEFAULT_MODEL)),
+            effort: Some(String::from(crate::llm::DEFAULT_EFFORT)),
+        };
+        assert_eq!(entries[0].answered.by, by);
+        assert_eq!(entries[2].answered.by, by);
+        let line = std::fs::read_to_string(&out).unwrap();
+        assert!(
+            line.contains(
+                "\"backend\":\"api\",\"model\":\"claude-opus-5-5\",\"effort\":\"medium\""
+            )
+        );
         // The day's file exists now: the next run gets a timed name
         assert_ne!(new_file(&root, Utc::now()), out);
         let listed = list(&root);
@@ -446,17 +531,43 @@ mod tests {
             &file,
             &entries[1].id,
             Some(Verdict::Wrong),
+            None,
             Some("n-1"),
         )
         .unwrap();
-        assert_eq!(marked.verdict, Some(Verdict::Wrong));
+        assert_eq!(marked.answered.verdict, Some(Verdict::Wrong));
         assert_eq!(marked.note.as_deref(), Some("n-1"));
         assert_eq!(list(&root)[0].wrong, 1);
-        let cleared = mark(&root, &file, &entries[1].id, None, None).unwrap();
-        assert_eq!(cleared.verdict, None);
+        let cleared = mark(&root, &file, &entries[1].id, None, None, None).unwrap();
+        assert_eq!(cleared.answered.verdict, None);
         assert_eq!(cleared.note.as_deref(), Some("n-1"));
-        assert!(mark(&root, "../x.jsonl", "a", None, None).is_err());
-        assert!(mark(&root, &file, "nope", None, None).is_err());
+        assert!(mark(&root, "../x.jsonl", "a", None, None, None).is_err());
+        assert!(mark(&root, &file, "nope", None, None, None).is_err());
+        // Asked again: the answer kept beside the first, with its own verdict
+        assert!(mark(&root, &file, &entries[1].id, None, Some(0), None).is_err());
+        let first = entry(&root, &file, &entries[1].id).unwrap();
+        let again = ask_again(asker, 8, &first);
+        assert_eq!(again.answer, "The note says: away from the shooter [S1].");
+        assert_eq!(again.by, by);
+        let kept = update(&root, &file, &first.id, |e| {
+            e.again.push(again.clone());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(kept.again, alloc::vec![again]);
+        assert_eq!(kept.answered, first.answered);
+        let good = mark(&root, &file, &first.id, Some(Verdict::Good), Some(0), None).unwrap();
+        assert_eq!(good.again[0].verdict, Some(Verdict::Good));
+        assert_eq!(good.answered.verdict, None);
+        assert_eq!(read(&out).unwrap()[1], good);
+        // A line written before answers were asked again or named their
+        // model still reads
+        let old = r#"{"id":"q","category":"macro","lang":"en","question":"Q?","answer":"A","sources":[],"asked_at":"2026-09-27T10:00:00Z","ms":5,"verdict":"good","note":"n"}"#;
+        let old: Entry = serde_json::from_str(old).unwrap();
+        assert_eq!(old.answered.verdict, Some(Verdict::Good));
+        assert_eq!(old.answered.by, AnsweredBy::default());
+        assert!(old.again.is_empty());
+        assert!(!serde_json::to_string(&old).unwrap().contains("again"));
         // Stopped before the first batch: nothing asked
         let stopped = run(
             asker,
@@ -468,7 +579,7 @@ mod tests {
         )
         .unwrap();
         assert!(stopped.stopped);
-        assert_eq!(sent.lock().unwrap().len(), 3);
+        assert_eq!(sent.lock().unwrap().len(), 4);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
