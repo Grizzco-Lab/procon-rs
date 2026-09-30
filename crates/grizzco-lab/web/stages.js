@@ -3,7 +3,7 @@
 // every stage and a 3D one for some. The maps are Gungee's work, which the
 // community uses as its shared reference: we link to them (in a new tab)
 // and may show a stage's top-down map for reference, always credited to him
-// with a link and thanks; the studio fetches such a map once into its local
+// with a link and thanks; the lab fetches such a map once into its local
 // cache, and none is ever kept in this repository.
 //
 // The stage keys come from Gungee's lists (/maplist/ and /maplist3d/, read
@@ -115,7 +115,7 @@ function stageMapLinks(id, tide = "Mid") {
 /** A stage picker and its map links; `onPick(id)` hears the user's choice
  * (no picker without it: the links alone). With `picture`, also Gungee's
  * top-down map of the stage at a tide, credited to him under it: fetched
- * once by the studio into its cache (`/api/cuttlefish/stage-map`), for
+ * once by the lab into its cache (`/api/cuttlefish/stage-map`), for
  * reference only */
 class StageMap {
   constructor(el, onPick, { picture = false } = {}) {

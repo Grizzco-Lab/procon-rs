@@ -13,14 +13,14 @@
 //!   are kept as a run of the Predictor (`<results>/<video key>/policy-<checkpoint>/`,
 //!   frames at 30 fps from the start of the range), with the truth beside
 //!   them for sessions recorded at 30 fps;
-//! - **the live capture**: the studio holds the capture card (it opens only
+//! - **the live capture**: the lab holds the capture card (it opens only
 //!   once), and its grabber makes the policy's frames on an output of their
 //!   own ([`video::PolicySink`]): 640 x 360 RGB at 30 fps, split off before
 //!   the recording's constant rate. Each is written into shared memory
 //!   ([`SharedFrames`]: a memfd `agentzero-play` gets as its fd 3, a ring of
 //!   [`SLOTS`] slots) with a notice on its stdin, and the policy takes the
 //!   newest whenever the model is free: no pipe of pictures, no ffmpeg and
-//!   no reader thread on its side. Frames keep the studio's numbers, which
+//!   no reader thread on its side. Frames keep the lab's numbers, which
 //!   `agentzero-play` reports back with its action.
 //!
 //! ```text
@@ -29,13 +29,13 @@
 //! ```
 //!
 //! One runs at a time, in a process group of its own (Stop sends it SIGTERM,
-//! then SIGKILL after [`KILL_AFTER`]; the studio stops it on exit). It never
+//! then SIGKILL after [`KILL_AFTER`]; the lab stops it on exit). It never
 //! sends anything itself (`--dry-run`): its JSON lines come back here, and
-//! only the studio talks to the proxy.
+//! only the lab talks to the proxy.
 //!
 //! **Letting AgentZero play** (live only, [`Bot`]) is a second step, off by
 //! default: the page asks for confirmation each time, for a set time (at most
-//! [`MAX_PLAY_S`]). The studio then writes each action to the proxy's replay
+//! [`MAX_PLAY_S`]). The lab then writes each action to the proxy's replay
 //! port as a replay line with `mix` (see [`procon::replay`]): the proxy
 //! combines it with the physical controller on every report, so a person
 //! holding it corrects the bot live, without pausing it: their buttons add
@@ -50,11 +50,11 @@
 //! stops, when no dashboard page has been open for [`PAGE_GONE`], when the
 //! policy goes quiet for [`STALL`], when the Replay panel starts playing
 //! (the proxy serves one replay client at a time), and when the proxy's
-//! frames stop reaching the studio (what reaches the Switch could not be
+//! frames stop reaching the lab (what reaches the Switch could not be
 //! seen; it does not start without them either).
 //!
 //! **Every run is recorded** while "Record bot runs" is on (the default,
-//! `record_bot_runs` in the studio's state file): letting it play starts a
+//! `record_bot_runs` in the lab's state file): letting it play starts a
 //! session as the Studio's Record does (`<prefix>bot-<stamp>/`: the video
 //! with sound, and in `controller.bin` what reached the Switch, the mix),
 //! which stops when the play ends; a session the Studio is recording
@@ -82,14 +82,14 @@
 //! card's timestamp of a frame to its action written to the replay port.
 //! The frame's hand-off, until the policy took it: the grabber (until ffmpeg
 //! wrote it: for the capture card the USB transfer, the grabber's decoding,
-//! fitting and scaling), the pipe into the studio, the shared memory (in its
+//! fitting and scaling), the pipe into the lab, the shared memory (in its
 //! slot, announced) and the wait (the model busy with the frame before, the
 //! policy waking up); then the upload onto the model's device, the model,
-//! and the send (the line back to the studio and onto the socket; while not
-//! sending, until the studio has it). The page shows each as median and
+//! and the send (the line back to the lab and onto the socket; while not
+//! sending, until the lab has it). The page shows each as median and
 //! 99th percentile over [`WINDOW`] actions.
 //!
-//! Running while the studio records needs `allow_recording` (the recording
+//! Running while the lab records needs `allow_recording` (the recording
 //! may want the GPU; the bot's own play may be worth recording): a start is
 //! refused while a session records, and a run without it stops when a
 //! recording starts.
@@ -108,7 +108,7 @@
 //! - `POST play` `{"seconds": N}`: let AgentZero play for N seconds
 //! - `POST release`: stop sending, the controller is back
 //! - `POST limits` with [`Limits`]: what the bot may press, kept in the
-//!   studio's state file
+//!   lab's state file
 //! - `POST record` `{"enabled": bool}`: record the runs, kept there too;
 //!   `status` also answers with `record` (whether, and the session)
 //! - `POST measure`: measure a person tapping ZR (`{"cancel": true}` stops
@@ -116,7 +116,7 @@
 //!
 //! Each action also goes to the dashboard's WebSocket as an `agent` message
 //! ([`Online::subscribe`]), for the page's overlay; the bot's status goes
-//! there with the studio's (see [`crate::web`]), so every app shows Stop bot
+//! there with the lab's (see [`crate::web`]), so every app shows Stop bot
 //! while it plays.
 
 pub mod limits;
@@ -216,7 +216,7 @@ pub const STALL: Duration = Duration::from_millis(500);
 /// How often the watchdog looks at the rules above
 const WATCH_EVERY: Duration = Duration::from_millis(100);
 
-/// A frame may show any line sent this long before it reached the studio:
+/// A frame may show any line sent this long before it reached the lab:
 /// the proxy's frames come a little after it read them, in bursts, and a
 /// line takes a moment to get there
 const RECENT: Duration = Duration::from_millis(300);
@@ -257,7 +257,7 @@ pub struct StartRequest {
     /// Run the policy on the CPU
     #[serde(default)]
     pub cpu: bool,
-    /// Run while the studio records
+    /// Run while the lab records
     #[serde(default)]
     pub allow_recording: bool,
 }
@@ -306,7 +306,7 @@ pub struct Status {
     pub skipped: u64,
     /// The last frame the policy saw
     pub seen: Option<u64>,
-    /// The live capture is read by the studio itself (V4L2), not ffmpeg
+    /// The live capture is read by the lab itself (V4L2), not ffmpeg
     pub direct: bool,
     /// Latency over the last actions (see the module docs): `handoff` with
     /// its parts `grabber`, `pipe`, `shared` and `wait`, then `upload`,
@@ -323,11 +323,11 @@ pub struct Status {
 /// One action's times in ms, for [`Status::timings`]
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 struct Sample {
-    /// When the studio had the action ([`mono_ns`] in ms)
+    /// When the lab had the action ([`mono_ns`] in ms)
     #[serde(skip)]
     at: f64,
     /// The frame's hand-off, until the policy took it, and its parts (see
-    /// the module docs): until ffmpeg wrote it (`grabber`), the studio had
+    /// the module docs): until ffmpeg wrote it (`grabber`), the lab had
     /// it (`pipe`), it was in shared memory and announced (`shared`), the
     /// policy took it (`wait`)
     handoff: Option<f64>,
@@ -347,7 +347,7 @@ struct Sample {
 impl Sample {
     /// A live action's stages, from its frame's times and the policy's
     /// moments (all [`mono_ns`]): it took the frame, had it on the model's
-    /// device, had the action; the studio `sent` it (or had it)
+    /// device, had the action; the lab `sent` it (or had it)
     fn live(frame: &Published, taken: u64, placed: u64, ready: u64, sent: u64) -> Self {
         let ms = |from: u64, to: u64| Some((to as f64 - from as f64) / 1e6);
         let times = &frame.times;
@@ -551,16 +551,16 @@ struct Run {
 /// What `agentzero-play --help` offers, read once
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct PlayCapabilities {
-    /// `--json`: lines the studio can follow (without it, nothing runs)
+    /// `--json`: lines the lab can follow (without it, nothing runs)
     pub json: bool,
-    /// `--shared-frames`: the live capture's frames from the studio
+    /// `--shared-frames`: the live capture's frames from the lab
     /// (without it, only videos run)
     pub shared: bool,
     /// Why the help could not be read
     pub error: Option<String>,
 }
 
-/// Runs the policy and follows it; plays through the studio's [`Bot`]
+/// Runs the policy and follows it; plays through the lab's [`Bot`]
 pub struct Online {
     predictor: Arc<Predictor>,
     studio: Arc<Studio>,
@@ -713,7 +713,7 @@ impl Online {
             let other = recording_in_progress(&self.predictor.inspector.root());
             ensure!(
                 !busy && other.is_none(),
-                "the studio is recording{}: tick \"allow while recording\" to run AgentZero anyway",
+                "the Studio is recording{}: tick \"allow while recording\" to run AgentZero anyway",
                 other.map(|s| format!(" ({s})")).unwrap_or_default()
             );
         }
@@ -1166,7 +1166,7 @@ impl Online {
         });
     }
 
-    /// Stop a run at the studio's exit and wait for it to end
+    /// Stop a run at the lab's exit and wait for it to end
     pub fn shutdown(self: &Arc<Self>) {
         if !self.running() {
             return;
@@ -1194,7 +1194,7 @@ impl Online {
         // What reaches the Switch shows in those frames only
         ensure!(
             self.studio.link.connected.load(Ordering::Relaxed),
-            "the proxy's frames do not reach the studio, so what reaches the Switch \
+            "the proxy's frames do not reach the lab, so what reaches the Switch \
              could not be seen; connect the proxy first"
         );
         self.studio.bot.play(seconds)?;
@@ -1241,13 +1241,13 @@ impl Online {
         );
         ensure!(
             self.studio.link.connected.load(Ordering::Relaxed),
-            "the proxy's frames do not reach the studio: connect the proxy first"
+            "the proxy's frames do not reach the lab: connect the proxy first"
         );
         self.studio.bot.measure(TAPPED)
     }
 
     /// End sending on the rules of the module docs, every [`WATCH_EVERY`];
-    /// and stop a run that may not run while the studio records
+    /// and stop a run that may not run while the lab records
     fn watch(self: Arc<Self>) {
         let mut page_seen = Instant::now();
         loop {
@@ -1279,10 +1279,10 @@ impl Online {
                 status.state == JobState::Running && !status.allow_recording && !status.stopping
             });
             if recording && forbidden {
-                log::info!("The studio started recording: stopping AgentZero");
+                log::info!("The Studio started recording: stopping AgentZero");
                 self.update(|run| {
                     run.status.error = Some(
-                        "stopped: the studio started recording (tick \"allow while recording\" \
+                        "stopped: the Studio started recording (tick \"allow while recording\" \
                          to keep AgentZero running)"
                             .to_string(),
                     )
@@ -1447,7 +1447,7 @@ pub enum Ended {
     Page,
     /// The Replay panel started playing to the proxy
     Replay,
-    /// The proxy's frames stopped reaching the studio: what reaches the
+    /// The proxy's frames stopped reaching the lab: what reaches the
     /// Switch could not be seen
     Link,
     /// No action came for [`STALL`]

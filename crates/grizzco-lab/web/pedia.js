@@ -1,7 +1,7 @@
 // Cuttlefish's Overfishing Pedia (/cuttlefish/pedia, one entry at
 // /cuttlefish/pedia/<term id>): the glossary as an encyclopedia of Salmon
 // Run for new players, from GET /api/cuttlefish/pedia and pedia/<id> (see
-// src/pedia.rs). The index groups the terms in sections, with search in any
+// src/cuttlefish/pedia.rs). The index groups the terms in sections, with search in any
 // language (slang included), filters by era and source, and A–Z or "most
 // discussed" (comments of #vod-review mentioning the term). An entry has
 // the official names, the slang, the definition, related terms both ways,

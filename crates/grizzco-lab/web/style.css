@@ -1,5 +1,5 @@
 /*
- * ProCon Studio dashboard
+ * Grizzco Lab's dashboard
  *
  * Shared structure first, then three style proposals selected by
  * <html data-theme>: studio (A), joy (B) and telemetry (C).
@@ -2673,7 +2673,7 @@ input:focus-visible {
  * Session picker, then one segment: the frame with its labels drawn by a
  * copy of the input overlay and its neighbours right under it, with the
  * labels table and the session's details beside it. Ids outrank the
- * studio's .layout rules.
+ * Studio's .layout rules.
  */
 
 #inspect-picker,
@@ -10196,7 +10196,7 @@ button.cf-cite {
   stroke: color-mix(in oklab, var(--grid) 70%, transparent);
 }
 
-/* Before the studio started sampling */
+/* Before the lab started sampling */
 .pl-svg .pl-nodata {
   fill: color-mix(in oklab, var(--text) 3%, transparent);
 }

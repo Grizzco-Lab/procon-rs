@@ -40,7 +40,7 @@ const USAGE = `usage: xcap.mjs <login | run | status> [options]
   status                   what the state file says
 
 Where (run, status):
-  --config <path>          the studio's config.toml (default ./config.toml); the knowledge folder is found as the cuttlefish CLI finds it
+  --config <path>          the lab's config.toml (default ./config.toml); the knowledge folder is found as the cuttlefish CLI finds it
   --data <folder>          the knowledge folder itself
 
 Browser:

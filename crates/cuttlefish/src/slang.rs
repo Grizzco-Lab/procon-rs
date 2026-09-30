@@ -443,7 +443,7 @@ impl UserGlossary {
     /// Writes it whole into `<root>/glossary-user.toml`
     pub fn save(&self, root: &Path) -> Result<()> {
         let text = toml::to_string(self).context("writing the user glossary")?;
-        let head = "# Slang taught and approved in the studio (Cuttlefish's Translate view).\n\
+        let head = "# Slang taught and approved in the lab (Cuttlefish's Translate view).\n\
                     # Kept apart from the generated glossary: imports never change it.\n\n";
         write_atomic(&root.join(FILE), alloc::format!("{head}{text}").as_bytes())
     }

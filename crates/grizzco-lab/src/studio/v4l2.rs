@@ -2,7 +2,7 @@
 //! memory, a few of them, each frame handed on as soon as it is dequeued,
 //! with the kernel's timestamp.
 //!
-//! Only what the studio's capture card needs: YUYV frames of one size at one
+//! Only what the lab's capture card needs: YUYV frames of one size at one
 //! rate, memory-mapped streaming. ffmpeg's v4l2 input does the same with 256
 //! buffers asked for (its `desired_video_buffers`, with no option; uvcvideo
 //! grants 32), so frames it falls behind on wait in the kernel for good, and

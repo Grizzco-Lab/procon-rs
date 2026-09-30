@@ -1,4 +1,4 @@
-//! Configuration of the studio (`config.toml`)
+//! Configuration of the lab (`config.toml`)
 
 use procon::config::LoggingConfig;
 use serde::{Deserialize, Serialize};
@@ -8,9 +8,9 @@ fn yes() -> bool {
     true
 }
 
-/// Studio host configuration (`config.toml`)
+/// Grizzco Lab's configuration (`config.toml`)
 #[derive(Debug, Serialize, Deserialize)]
-pub struct StudioConfig {
+pub struct LabConfig {
     /// Where the proxy streams frames from
     pub proxy: RemoteProxyConfig,
     /// Dashboard server

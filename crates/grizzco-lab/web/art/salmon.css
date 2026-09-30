@@ -95,7 +95,7 @@
 /* The wordmark stands in for the name; the text stays for screen readers */
 [data-theme="salmon"] .brand-name {
   flex: none;
-  width: 170px;
+  width: 141px;
   height: 38px;
   overflow: hidden;
   background: url("/art/wordmark.svg") left center / contain no-repeat;

@@ -1,6 +1,6 @@
 //! The knowledge folder's write lock, `<knowledge>/.lock`.
 //!
-//! Every writer (the studio's import jobs, the CLI's `ingest`, `delete` and
+//! Every writer (the lab's import jobs, the CLI's `ingest`, `delete` and
 //! `reindex`) holds it while writing ([`acquire`]); reading needs no lock.
 //! The lock is an exclusive `flock` on the file, which the kernel releases
 //! when the process ends, however it ends. The holder also writes who it is
@@ -28,7 +28,7 @@ pub const FILE: &str = ".lock";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Holder {
     pub pid: u32,
-    /// What writes (`cuttlefish ingest`, `procon studio import`)
+    /// What writes (`cuttlefish ingest`, `grizzco-lab import`)
     pub program: String,
     pub host: String,
     pub since: DateTime<Utc>,
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(record.host, host_name());
 
         // A second writer (flock is per open file, so this process too)
-        let err = busy(acquire(&root, "procon studio import").unwrap_err());
+        let err = busy(acquire(&root, "grizzco-lab import").unwrap_err());
         assert_eq!(err.holder.as_ref(), Some(&record));
         let text = err.to_string();
         assert!(
@@ -215,7 +215,7 @@ mod tests {
         // Released and cleared when dropped; reading never needed it
         drop(lock);
         assert!(std::fs::read(root.join(FILE)).unwrap().is_empty());
-        let again = acquire(&root, "procon studio import").unwrap();
+        let again = acquire(&root, "grizzco-lab import").unwrap();
         drop(again);
         std::fs::remove_dir_all(&root).unwrap();
     }

@@ -14,7 +14,7 @@
 //!   those only ([`key_times`]) at the chosen height, with the answer.
 //!
 //! Times sit on a grid of [`GRID_FPS`], so identical frames have identical
-//! times (the studio caches them on disk by time and height). Frames are
+//! times (the lab caches them on disk by time and height). Frames are
 //! never upscaled ([`scaled_size`]); an image costs about width × height /
 //! 750 input tokens ([`image_tokens`]).
 

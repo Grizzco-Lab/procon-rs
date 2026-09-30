@@ -2,13 +2,13 @@
 //! local HTTP service with our own trained network, used by the Vision app
 //! next to the COCO models it runs itself
 //!
-//! The studio talks to it as Follow talks to the tracker (see
+//! The lab talks to it as Follow talks to the tracker (see
 //! [`crate::inspect::follow`]): `GET /health` says whether it answers, which
 //! checkpoint it serves and how that was trained; `POST /detect` streams one
 //! JSON line per frame ([`Message`]), and closing the connection stops it.
 //! The service runs one request at a time and answers another with 409.
 //! The page can start it with `[vision] detector_command` in
-//! `detector_dir`; it then ends with the studio.
+//! `detector_dir`; it then ends with the lab.
 //!
 //! A run on the GPU is refused while a session is being recorded (a
 //! `session.json` without `stopped_at_unix_ms` under the sessions' root):
@@ -168,7 +168,7 @@ pub fn recording_in_progress(root: &Path) -> Option<String> {
     })
 }
 
-/// The detector service, and the process the studio started for it
+/// The detector service, and the process the lab started for it
 pub struct Service {
     settings: Settings,
     child: Mutex<Option<Child>>,
@@ -227,7 +227,7 @@ impl Service {
         )
     }
 
-    /// What became of the process the studio started, if it did
+    /// What became of the process the lab started, if it did
     fn started(&self) -> Option<String> {
         let mut child = self.child.lock().unwrap();
         let child = child.as_mut()?;
@@ -274,7 +274,7 @@ impl Service {
         Ok(json!({ "started": "running" }))
     }
 
-    /// Stop the service the studio started, if it did, with its group
+    /// Stop the service the lab started, if it did, with its group
     pub fn stop(&self) {
         if let Some(mut child) = self.child.lock().unwrap().take() {
             if let Ok(None) = child.try_wait() {
@@ -450,7 +450,7 @@ detector_dir = "../AgentZero""#,
             recording_in_progress(&root).as_deref(),
             Some("2026-09-27_10-00-00")
         );
-        // What the studio writes while recording
+        // What the lab writes while recording
         std::fs::remove_dir_all(root.join("2026-09-27_10-00-00")).unwrap();
         session("2026-09-27_11-00-00", r#"{"stopped_at_unix_ms": null}"#);
         assert_eq!(

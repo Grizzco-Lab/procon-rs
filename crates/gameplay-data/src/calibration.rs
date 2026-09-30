@@ -2,7 +2,7 @@
 //!
 //! The file maps session folder names to entries about `video_delay_ms`
 //! (the input-to-video latency). AgentZero's calibrator writes them; the
-//! studio's Inkspector adds delays set by hand. Each entry has a `source`:
+//! lab's Inkspector adds delays set by hand. Each entry has a `source`:
 //!
 //! - `manual`: set by hand; always applied, and never replaced by the
 //!   calibrator (it keeps its own result under `computed`);

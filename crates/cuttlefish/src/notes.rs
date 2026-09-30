@@ -46,7 +46,7 @@ pub const DIR: &str = "notes";
 /// Longest slug in a note id
 const SLUG_CHARS: usize = 48;
 
-/// The author of notes written in the studio
+/// The author of notes written in the lab
 pub const USER: &str = "user";
 
 /// One expert note
@@ -141,7 +141,7 @@ impl Note {
 
     /// The note as a document: source `expert-note`, the question as its
     /// title, the label as the heading over the body, linked to the
-    /// studio's Notes panel
+    /// lab's Notes panel
     pub fn document(&self) -> Document {
         let text = alloc::format!("# {}\n\n{}", self.label(), self.body.trim());
         let mut doc = Document::new(

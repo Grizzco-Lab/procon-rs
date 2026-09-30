@@ -8,7 +8,7 @@
 // app.js, player.js and stages.js and uses their helpers ($, escapeHtml,
 // appUrl, t, StageMap, stageOfVideo). Runs go through /api/vision (see
 // src/vision.rs); the Salmon Run detector is AgentZero's service, which the
-// studio calls and can start (src/detector.rs), with its state, training
+// lab calls and can start (src/vision/detector.rs), with its state, training
 // and how weak it still is in a card under the model choice.
 // State lives in the address: /vision/<session>?seg=<file>&n=<frame>.
 "use strict";
@@ -260,7 +260,7 @@
     modelChanged();
   };
 
-  /** Ask the studio whether the detector answers, and show it */
+  /** Ask the lab whether the detector answers, and show it */
   async function checkDetector() {
     if (!vis.detector) setDetector(t("v.det.checking"), "off");
     try {

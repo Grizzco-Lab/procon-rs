@@ -35,7 +35,7 @@
 //! - **the accelerometer** stays the controller's.
 //!
 //! The proxy listens on its `[replay]` port for one client at a time; the
-//! studio's replay panel is one, and a model can be another. While a client is
+//! Studio's Replay panel is one, and a model can be another. While a client is
 //! connected, the latest line it sent is applied to every input report on its
 //! way to the Switch (and to what is recorded); when it disconnects, the
 //! physical controller takes over again. The physical controller stays plugged

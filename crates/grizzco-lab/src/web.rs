@@ -1,6 +1,7 @@
-//! Studio dashboard server: live controller view, video preview, recording controls
+//! Grizzco Lab's dashboard server: the page with every app, the live
+//! controller view and video preview, and each app's routes
 //!
-//! - `GET /favicon.ico`: the app icon (`web/icons/app-studio.svg`); unknown
+//! - `GET /favicon.ico`: the brand's icon (`web/icons/brand.svg`); unknown
 //!   paths answer 404, known ones asked with another method 405
 //! - `GET /` and every app path (`/studio`, `/inspect/...`, `/cuttlefish/...`,
 //!   `/vision/...`, `/predictor/...`, `/pipeline`, see [`APPS`]): the page,
@@ -142,10 +143,10 @@ pub async fn serve(
             "text/javascript; charset=utf-8",
         )
     });
-    // The app icon, for browsers that ask without reading the page's link
+    // The brand's icon, for browsers that ask without reading the page's link
     let favicon = warp::path!("favicon.ico").and(warp::get()).map(|| {
         let icon = ICONS
-            .get_file("app-studio.svg")
+            .get_file("brand.svg")
             .map_or(&[][..], |f| f.contents());
         warp::reply::with_header(icon, "content-type", "image/svg+xml")
     });

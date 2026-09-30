@@ -52,7 +52,7 @@
     entries: [],
     /** The history file, as the server names it */
     file: "",
-    /** Whether ANTHROPIC_API_KEY is set where the studio runs; null until
+    /** Whether ANTHROPIC_API_KEY is set where the lab runs; null until
      * asked */
     key: null,
     sending: false,
@@ -154,7 +154,7 @@
     note.classList.toggle("is-warning", kind === "warning");
   }
 
-  /** Whether the studio has a model backend (the API key, or the Claude
+  /** Whether the lab has a model backend (the API key, or the Claude
    * Code CLI); asked once. Without one the box says the glossary answers
    * alone. */
   async function checkKey() {
@@ -549,7 +549,7 @@
   // term claims (Move), and runs a suggestion job after a dry run (a few
   // batches, or everything not read yet). All in
   // <knowledge>/glossary-user.toml through the knowledge/slang endpoints
-  // (src/knowledge.rs).
+  // (src/cuttlefish/knowledge.rs).
 
   /** Poll interval of a suggestion run, in ms */
   const RUN_POLL_MS = 1500;

@@ -73,7 +73,7 @@ impl Audio {
         audio
     }
 
-    /// Stop reading for good, before the studio exits: ffmpeg runs in its own
+    /// Stop reading for good, before the lab exits: ffmpeg runs in its own
     /// process group, so a terminal's Ctrl+C does not reach it
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::Relaxed);

@@ -22,7 +22,7 @@
 //!
 //! One Follow runs at a time, on a thread; boxes are written every
 //! [`WRITE_EVERY`] frames so they show up while it runs. The page talks only
-//! to the studio, which calls the tracker (`[inspect] tracker`) and can
+//! to the lab, which calls the tracker (`[inspect] tracker`) and can
 //! start it (`[inspect] tracker_command` in `tracker_dir`).
 //!
 //! Endpoints under `/api/inspect/follow/`:
@@ -331,7 +331,7 @@ pub fn model_box(tracked: &TrackedBox, class: &str) -> ObjectBox {
     }
 }
 
-/// Runs Follows and the tracker the studio started
+/// Runs Follows and the tracker the lab started
 pub struct Follow {
     inspector: Arc<Inspector>,
     settings: Settings,
@@ -407,7 +407,7 @@ impl Follow {
         })
     }
 
-    /// What became of the tracker the studio started, if it did
+    /// What became of the tracker the lab started, if it did
     fn service_state(&self) -> Option<String> {
         let mut service = self.service.lock().unwrap();
         let child = service.as_mut()?;
@@ -455,7 +455,7 @@ impl Follow {
         Ok(json!({ "started": "running" }))
     }
 
-    /// Stop the tracker the studio started, if it did: its whole process
+    /// Stop the tracker the lab started, if it did: its whole process
     /// group, so the Python behind `uv run` goes too
     pub fn stop_service(&self) {
         if let Some(mut child) = self.service.lock().unwrap().take() {

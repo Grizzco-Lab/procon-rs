@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { knowledgeFolder, readToml, studioKnowledge } from "../lib/config.mjs";
+import { knowledgeFolder, readToml, labKnowledge } from "../lib/config.mjs";
 import * as output from "../lib/output.mjs";
 import * as state from "../lib/state.mjs";
 
@@ -91,24 +91,24 @@ test("the knowledge folder is found as the cuttlefish CLI finds it", () => {
     config,
     `[recording]\nprefix = "recordings/"  # sessions\n\n[cuttlefish]\n# knowledge = "/elsewhere"\nmodel = "claude-opus-5-5"\n`,
   );
-  assert.equal(studioKnowledge(config), join(dir, "Knowledge"));
+  assert.equal(labKnowledge(config), join(dir, "Knowledge"));
   // A knowledge folder set in the config, relative to it
   writeFileSync(config, `[cuttlefish]\nknowledge = "data/Knowledge"\n`);
-  assert.equal(studioKnowledge(config), join(dir, "data", "Knowledge"));
+  assert.equal(labKnowledge(config), join(dir, "data", "Knowledge"));
   // The sessions' root
   writeFileSync(config, `[inspect]\nroot = "/data/procon/sessions"\n`);
-  assert.equal(studioKnowledge(config), "/data/procon/Knowledge");
+  assert.equal(labKnowledge(config), "/data/procon/Knowledge");
   // The dashboard's saved prefix wins over the config's
   writeFileSync(config, `[recording]\nprefix = "recordings/"\n`);
   writeFileSync(
     join(dir, "config.state.json"),
     '{"prefix": "/mnt/rec/sessions/run-"}',
   );
-  assert.equal(studioKnowledge(config), "/mnt/rec/Knowledge");
+  assert.equal(labKnowledge(config), "/mnt/rec/Knowledge");
   // Nothing to go on
   writeFileSync(config, `[web]\nport = 8090\n`);
   rmSync(join(dir, "config.state.json"));
-  assert.throws(() => studioKnowledge(config), /no \[recording\] prefix/);
+  assert.throws(() => labKnowledge(config), /no \[recording\] prefix/);
 
   assert.equal(knowledgeFolder({ data: "K" }, {}, dir), join(dir, "K"));
   assert.equal(
@@ -131,7 +131,7 @@ test("the knowledge folder is found as the cuttlefish CLI finds it", () => {
   rmSync(dir, { recursive: true });
 });
 
-test("the TOML reader takes the studio's config", () => {
+test("the TOML reader takes the lab's config", () => {
   const tables = readToml(
     `top = 1\n[a]\nx = "quoted \\"inner\\""  # note\ny = 'single'\nz = ["-c:v", "h264"]\n[b.c]\nn = 8090\n`,
   );

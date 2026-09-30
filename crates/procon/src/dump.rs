@@ -19,7 +19,7 @@ const QUEUE_WARNING_THRESHOLD: f64 = 0.8;
 /// Interval for checking and logging queue size warnings
 const QUEUE_CHECK_INTERVAL: u64 = 100;
 
-/// One controller report as stored in dump files and sent to the studio host;
+/// One controller report as stored in dump files and sent to Grizzco Lab;
 /// the record layout is shared with the readers through `gameplay-data`
 pub use gameplay_data::frame::{FRAME_SIZE, Frame};
 

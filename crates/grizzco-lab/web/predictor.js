@@ -374,7 +374,7 @@
     if (pred.model === "policy") {
       const info = pred.onlineInfo;
       const caps = info?.capabilities;
-      // The live capture needs the studio's shared frames
+      // The live capture needs the lab's shared frames
       const live = $("p-kind").value === "live";
       const ready = Boolean(
         caps?.json && (caps.shared || !live) && info.checkpoints.length,
@@ -767,7 +767,7 @@
 
   // ------------------------------------------------ what it may press
 
-  /** The masks and the cap as the studio holds them; a number being typed
+  /** The masks and the cap as the lab holds them; a number being typed
    * is left alone */
   function renderLimits() {
     const limits = pred.bot?.limits;
@@ -782,7 +782,7 @@
     }
   }
 
-  /** Change what it may press; the studio keeps it, and it holds from the
+  /** Change what it may press; the lab keeps it, and it holds from the
    * next action on, while it plays too */
   async function saveLimits(change) {
     try {
@@ -890,7 +890,7 @@
     pollOnline();
   });
 
-  /** Stop bot: the studio lets go at once (one request at a time; another
+  /** Stop bot: the lab lets go at once (one request at a time; another
    * press tries again if it failed) */
   async function release() {
     if (pred.releasing) return;

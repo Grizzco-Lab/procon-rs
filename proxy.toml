@@ -3,13 +3,13 @@
 hidg_retry_delay_ms = 1000
 
 [dump]
-# Local backup: record one session from launch until exit, besides what the studio records
+# Local backup: record one session from launch until exit, besides what the lab records
 autostart = false
 # Path prefix of that session folder (<prefix>YYYY-MM-DD_HH-MM-SS/controller.bin)
 prefix = "/tmp/procon-"
 
 [stream]
-# TCP port the studio host connects to for live frames
+# TCP port Grizzco Lab connects to for live frames
 port = 7331
 
 [replay]

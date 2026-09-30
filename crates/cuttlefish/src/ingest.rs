@@ -3,7 +3,7 @@
 //! sites are [`crate::wiki`]'s.
 //!
 //! Each importer turns its source into [`Document`]s and hands them to a
-//! [`Sink`], which stores them (the CLI prints, the studio keeps a job log).
+//! [`Sink`], which stores them (the CLI prints, the lab keeps a job log).
 //! Sources already stored are skipped unless [`Meta::refresh`] is set; a
 //! page or video that fails is reported and skipped, so one bad url does
 //! not stop an import. So is a page that is only the shell of a JavaScript

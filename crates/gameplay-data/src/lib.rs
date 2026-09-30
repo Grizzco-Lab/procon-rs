@@ -1,4 +1,4 @@
-//! Recorded gameplay: the session format written by the studio and the
+//! Recorded gameplay: the session format written by Grizzco Lab and the
 //! per-frame alignment of controller input to video.
 //!
 //! One definition shared by the recorder (Rust) and the training code

@@ -485,7 +485,7 @@ impl Vision {
         Ok(job)
     }
 
-    /// Stop the detector service the studio started, if it did
+    /// Stop the detector service the lab started, if it did
     pub fn stop_detector(&self) {
         self.detector.stop();
     }

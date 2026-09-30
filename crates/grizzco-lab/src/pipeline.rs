@@ -165,7 +165,7 @@ pub struct Note {
 }
 
 /// One step of an experiment in the queue file. The fields are written in
-/// this order (the helper writes the same), and fields the studio does not
+/// this order (the helper writes the same), and fields the lab does not
 /// know are kept after them.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Entry {
@@ -391,7 +391,7 @@ pub fn reorder(text: &str, order: &[String], now: &str) -> Result<Option<String>
     Ok(Some(serde_json::to_string_pretty(&out)? + "\n"))
 }
 
-/// The lock the helper and the studio hold while writing `queue`
+/// The lock the helper and the lab hold while writing `queue`
 pub fn lock_path(queue: &Path) -> PathBuf {
     let mut name = queue.file_name().unwrap_or_default().to_os_string();
     name.push(".lock");

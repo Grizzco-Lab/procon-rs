@@ -97,7 +97,7 @@ const SPECIAL: &str = "r_stick";
 /// Never pressed by the bot: Home would suspend the game
 const NEVER: [&str; 2] = ["home", "capture"];
 
-/// What the bot may press; set on the page, kept in the studio's state file
+/// What the bot may press; set on the page, kept in the lab's state file
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Limits {

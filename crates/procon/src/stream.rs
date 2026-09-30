@@ -1,4 +1,4 @@
-//! Frame link between the USB proxy and the studio host
+//! Frame link between the USB proxy and Grizzco Lab
 //!
 //! The proxy listens on TCP. For each connection it sends [`HEADER`] and then raw
 //! [`FRAME_SIZE`]-byte [`Frame`]s, the same bytes a dump file holds. When no
@@ -29,13 +29,13 @@ const CLIENT_QUEUE: usize = 512;
 /// Window for the clock offset estimate
 const OFFSET_WINDOW: Duration = Duration::from_secs(10);
 
-/// Proxy side: dumper that streams every frame to connected studio hosts
+/// Proxy side: dumper that streams every frame to each connected lab
 pub struct FrameStreamer {
     clients: Arc<Mutex<Vec<SyncSender<Frame>>>>,
 }
 
 impl FrameStreamer {
-    /// Accept studio connections on `0.0.0.0:port`
+    /// Accept the lab's connections on `0.0.0.0:port`
     pub fn listen(port: u16) -> Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", port))
             .with_context(|| format!("cannot listen on port {port}"))?;
@@ -51,7 +51,7 @@ impl FrameStreamer {
                         accepted.lock().unwrap().push(tx);
                         thread::spawn(move || send_frames(stream, rx));
                     }
-                    Err(e) => log::warn!("Failed to accept studio connection: {}", e),
+                    Err(e) => log::warn!("Failed to accept a connection from the lab: {}", e),
                 }
             }
         });
@@ -79,7 +79,7 @@ fn send_frames(mut stream: TcpStream, frames: Receiver<Frame>) {
     let peer = stream
         .peer_addr()
         .map_or_else(|_| "unknown".to_string(), |a| a.to_string());
-    log::info!("Studio connected from {}", peer);
+    log::info!("Lab connected from {}", peer);
     // Frames are tiny and latency matters more than packet count
     let _ = stream.set_nodelay(true);
 
@@ -98,7 +98,7 @@ fn send_frames(mut stream: TcpStream, frames: Receiver<Frame>) {
             stream.write_all(&frame.to_bytes())?;
         }
     })();
-    log::info!("Studio {} disconnected: {:?}", peer, result);
+    log::info!("Lab {} disconnected: {:?}", peer, result);
 }
 
 /// Host side: health of the link to the proxy

@@ -4,7 +4,7 @@
 // the expert notes (the player's corrections, Cuttlefish's memory; the
 // editor dialog is shared with the chat as window.cuttlefishNotes.edit) and
 // the deep questions with their eval runs, through
-// /api/cuttlefish/knowledge/... (see src/knowledge.rs). Questions are the
+// /api/cuttlefish/knowledge/... (see src/cuttlefish/knowledge.rs). Questions are the
 // chat's (cuttlefish.js), glossary lookups and translations the
 // translator's (translate.js). Runs after cuttlefish.js, which hides its
 // library and player for this view and marks the tab, and uses the helpers

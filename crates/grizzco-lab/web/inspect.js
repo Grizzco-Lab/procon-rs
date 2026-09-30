@@ -1,6 +1,6 @@
 // Inkspector app: pick a recorded session, then check its controller labels
 // against the video frame by frame in the shared player (player.js: exact
-// frames from the studio, overlays, neighbours, keys, labels table). Runs
+// frames from the lab, overlays, neighbours, keys, labels table). Runs
 // next to app.js and stages.js and uses their helpers ($, root, appUrl,
 // StageMap), and techniques.js's for the session's technique markers (bands
 // on the scrubber, labelled chips under it, a list to jump to and edit them

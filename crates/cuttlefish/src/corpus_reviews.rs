@@ -1,4 +1,4 @@
-//! The corpus's VODs as reviews of the studio's Cuttlefish app: a folder
+//! The corpus's VODs as reviews in the lab's Cuttlefish app: a folder
 //! `<reviews>/discord-<conversation id>/review.json` per VOD whose video
 //! is on disk ([`write`]).
 //!
@@ -15,7 +15,7 @@
 //! comments. Everything written carries an
 //! [`Origin`] (`from: discord` with the message's link) and an id starting
 //! with [`ID_PREFIX`]; a run replaces those and nothing else, so comments
-//! and notes people add in the studio stay, and a run that changes nothing
+//! and notes people add in the lab stay, and a run that changes nothing
 //! writes nothing.
 
 use crate::corpus::{Corpus, CorpusMoment, ReviewMessage, VideoKind, Vod};

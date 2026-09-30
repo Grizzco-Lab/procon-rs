@@ -12,7 +12,7 @@ pub struct Config {
     pub proxy: ProxyConfig,
     /// Dump configuration
     pub dump: DumpConfig,
-    /// Frame streaming to the studio host
+    /// Frame streaming to Grizzco Lab
     pub stream: StreamConfig,
     /// Actions replayed to the Switch
     pub replay: ReplayConfig,
@@ -32,7 +32,7 @@ pub struct ProxyConfig {
 /// Local backup recording on the proxy
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DumpConfig {
-    /// Record a session from launch until exit, next to what the studio records
+    /// Record a session from launch until exit, next to what the lab records
     pub autostart: bool,
     /// Path prefix of that session folder, e.g. "/home/pi/procon-"
     pub prefix: String,
@@ -41,7 +41,7 @@ pub struct DumpConfig {
 /// Frame streaming configuration
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StreamConfig {
-    /// TCP port the studio host connects to
+    /// TCP port Grizzco Lab connects to
     pub port: u16,
 }
 

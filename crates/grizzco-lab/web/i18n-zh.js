@@ -10,7 +10,10 @@ I18N.zh = {
   "view.language": "语言 Language",
   "view.switchTo": "切换到 {lang}",
 
-  // The shell: app names, the status chips and the View menu
+  // The shell: the product's name, app names, the status chips and the
+  // View menu
+  "shell.title": "熊商会实验室",
+  "shell.brand": "熊商会<b>实验室</b>",
   "shell.apps": "应用",
   "shell.status": "状态",
   "app.studio": "工作室",
@@ -30,7 +33,7 @@ I18N.zh = {
   "guide.open": "怎么用",
   "guide.title": "流程",
   "guide.lede":
-    "六个应用，一条流水线：录下你的游戏画面和手柄输入，逐帧检查，从中学习，教模型看懂游戏、学会操作，并随时跟进它们的训练。",
+    "熊商会实验室由六个应用组成一条流水线：录下你的游戏画面和手柄输入，逐帧检查，从中学习，教模型看懂游戏、学会操作，并随时跟进它们的训练。",
   "guide.close": "关闭",
   "guide.out.studio": "录像",
   "guide.out.inspect": "标注",
@@ -160,7 +163,7 @@ I18N.zh = {
   "v.det.check": "重新检查",
   "v.det.starting": "正在启动检测器，正在加载模型…",
   "v.det.exited":
-    "检测器{state}；请查看工作室的日志。它需要一个训练好的检查点：<code>agentzero-detect train</code> 会写出 <code>runs/detect/best</code>。",
+    "检测器{state}；请查看实验室的日志。它需要一个训练好的检查点：<code>agentzero-detect train</code> 会写出 <code>runs/detect/best</code>。",
   "v.det.timeout": "检测器在两分钟内没有响应。",
   "v.det.checkpoint": "检查点",
   "v.det.map50": "mAP50",
@@ -550,7 +553,7 @@ I18N.zh = {
   "cf.chat.keys": "Enter 发送 · Shift+Enter 换行",
   "cf.chat.thinking": "鱼干司令正在思考…（最多一分钟）",
   "cf.chat.noKey":
-    "运行工作室的机器上没有可用的模型后端，鱼干司令暂时无法回答：请在启动工作室前导出 ANTHROPIC_API_KEY，或安装并登录 Claude Code 命令行。你的消息、评论和标注照常保存。",
+    "运行实验室的机器上没有可用的模型后端，鱼干司令暂时无法回答：请在启动实验室前导出 ANTHROPIC_API_KEY，或安装并登录 Claude Code 命令行。你的消息、评论和标注照常保存。",
   "cf.chat.failed": "联系不上鱼干司令：{error}",
   "cf.chat.error": "鱼干司令无法回答：{error}",
   "cf.chat.empty":
@@ -618,9 +621,9 @@ I18N.zh = {
   "tr.working": "翻译中…",
   "tr.failed": "未能翻译：{error}",
   "tr.noKey":
-    "运行工作室的机器上没有可用的模型后端，只有术语表能回答：术语的词条和各语言名称、一句话里用到的术语。要翻译整句，请在启动工作室前导出 ANTHROPIC_API_KEY，或安装并登录 Claude Code 命令行。",
+    "运行实验室的机器上没有可用的模型后端，只有术语表能回答：术语的词条和各语言名称、一句话里用到的术语。要翻译整句，请在启动实验室前导出 ANTHROPIC_API_KEY，或安装并登录 Claude Code 命令行。",
   "tr.noKeyTranslation":
-    "翻译这一条需要运行工作室的机器上有模型后端（ANTHROPIC_API_KEY 或 Claude Code 命令行）。",
+    "翻译这一条需要运行实验室的机器上有模型后端（ANTHROPIC_API_KEY 或 Claude Code 命令行）。",
   "tr.copy": "复制",
   "tr.copied": "已复制",
   "tr.entry": "术语表词条",
@@ -647,7 +650,7 @@ I18N.zh = {
   "slang.done": "完成：{line}",
   "slang.failed": "已停止：{error}",
   "slang.noBackend":
-    "发现黑话需要运行工作室的机器上有模型后端（ANTHROPIC_API_KEY 或 Claude Code 命令行）。",
+    "发现黑话需要运行实验室的机器上有模型后端（ANTHROPIC_API_KEY 或 Claude Code 命令行）。",
   "slang.pending": "待审核",
   "slang.noPending": "没有待审核的建议。",
   "slang.taught": "已添加和采纳",
@@ -743,7 +746,7 @@ I18N.zh = {
   "k.backend.note":
     "回答对话和翻译的是谁：按 ANTHROPIC_API_KEY 计费的 API，或已登录的 Claude Code 命令行、用你的订阅（[cuttlefish] backend）",
   "k.key.discord": "通过 Discord 机器人导入需要它",
-  "k.key.discordNote": "（需要在运行工作室的机器上设置 DISCORD_BOT_TOKEN）",
+  "k.key.discordNote": "（需要在运行实验室的机器上设置 DISCORD_BOT_TOKEN）",
   "k.search": "搜索",
   "k.searchNote": "最相近的片段，任何语言，无需密钥；对话检索的就是这些",
   "k.searchPlaceholder": "干潮时的高塔鱼、バクダンの処理…",
@@ -1061,7 +1064,7 @@ I18N.zh = {
   "po.stopping": "正在停止…",
   "po.stored": "已保存为预测器的一次运行。",
   "po.openStored": "打开",
-  "po.notYet": "工作室启动以来 AgentZero 还没有运行过。",
+  "po.notYet": "实验室启动以来 AgentZero 还没有运行过。",
   "po.log": "命令与输出",
   "po.play.start": "让 AgentZero 操作…",
   "po.play.stop": "停止机器人（Esc）",
@@ -1095,7 +1098,7 @@ I18N.zh = {
   "po.limits.and": "、",
   "po.measure.start": "测我的最快速度…",
   "po.measure.startNote":
-    "用最快的速度连按 ZR 10 秒；工作室从手柄的报告里数你按了几次",
+    "用最快的速度连按 ZR 10 秒；实验室从手柄的报告里数你按了几次",
   "po.measure.cancel": "取消测量",
   "po.measure.waiting": "用最快的速度连按 ZR：从你第一次按下起计 10 秒。",
   "po.measure.counting": "已按 {n} 次，还剩 {s} 秒…",
@@ -1107,7 +1110,7 @@ I18N.zh = {
   "po.ended.you": "你停止了它",
   "po.ended.page": "没有打开的控制台页面",
   "po.ended.replay": "回放面板占用了回放端口",
-  "po.ended.link": "代理的数据流不再传到工作室",
+  "po.ended.link": "代理的数据流不再传到实验室",
   "po.ended.stall": "策略模型半秒内没有给出操作",
   "po.ended.stopped": "AgentZero 已停止",
   "po.ended.proxy": "代理关闭了回放连接",
@@ -1118,12 +1121,12 @@ I18N.zh = {
   "po.loop.median": "中位数 ms",
   "po.loop.handoff": "画面传递",
   "po.loop.handoffNote":
-    "从采集卡给一帧打的时间戳到 AgentZero 取走它：采集进程、进入工作室的管道、共享内存以及等待",
+    "从采集卡给一帧打的时间戳到 AgentZero 取走它：采集进程、进入实验室的管道、共享内存以及等待",
   "po.loop.grabber": "采集卡与采集进程",
   "po.loop.grabberNote":
     "从采集卡的时间戳到采集进程写出这一帧：采集卡的 USB 传输，以及 ffmpeg 的解码、适配和缩放到 640 x 360",
-  "po.loop.pipe": "管道到工作室",
-  "po.loop.pipeNote": "这一帧经采集进程的管道进入工作室",
+  "po.loop.pipe": "管道到实验室",
+  "po.loop.pipeNote": "这一帧经采集进程的管道进入实验室",
   "po.loop.shared": "写入共享内存",
   "po.loop.sharedNote": "这一帧写入共享内存并通知 AgentZero",
   "po.loop.wait": "等待模型",
@@ -1135,9 +1138,9 @@ I18N.zh = {
   "po.loop.model": "模型",
   "po.loop.modelNote": "策略模型处理一帧的时间",
   "po.loop.send": "发送",
-  "po.loop.sendDry": "回到工作室",
+  "po.loop.sendDry": "回到实验室",
   "po.loop.sendNote":
-    "从操作算好到工作室把它写入代理的回放端口（只观看时：到工作室收到它为止）",
+    "从操作算好到实验室把它写入代理的回放端口（只观看时：到实验室收到它为止）",
   "po.loop.total": "采集到回放端口",
   "po.loop.totalNote":
     "从采集卡给一帧打的时间戳到它的操作写入代理的回放端口；之后还有到树莓派的网络和下一个报告",
@@ -1184,7 +1187,7 @@ I18N.zh = {
   "pl.history.count": "{n} 项",
   "pl.history.empty": "还没有结束的条目。",
   "pl.history.more": "显示全部 {n} 项",
-  "pl.offline": "连不上工作室：{error}",
+  "pl.offline": "连不上实验室：{error}",
   "pl.group": "实验 {group}",
   "pl.state.running": "运行中",
   "pl.state.detected": "运行中（未标记）",
@@ -1271,7 +1274,7 @@ I18N.zh = {
   "pl.timeline.other": "其他显存",
   "pl.timeline.noLanes": "这段时间队列里没有任务运行",
   "pl.timeline.since":
-    "工作室从 {clock} 启动起每 {s} 秒采样一次；更早的条带来自队列自己记下的时间。",
+    "实验室从 {clock} 启动起每 {s} 秒采样一次；更早的条带来自队列自己记下的时间。",
   "pl.timeline.empty": "还没有采样。",
   "pl.timeline.aria":
     "最近 {hours} 小时的 GPU：当前占用 {util}%、显存，以及各时段运行的任务",

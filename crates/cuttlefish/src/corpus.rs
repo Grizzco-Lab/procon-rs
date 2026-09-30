@@ -19,7 +19,7 @@
 //!
 //! Building is deterministic: the same archive, media and tables give the
 //! same file. [`crate::corpus_videos`] downloads the YouTube videos,
-//! [`crate::corpus_reviews`] turns the VODs into reviews of the studio.
+//! [`crate::corpus_reviews`] turns the VODs into reviews in the lab.
 
 use crate::discord::{self, Channel, Message, MessageRow, VideoFrom, attachment_id};
 use crate::discord_media::{MEDIA, Manifest};

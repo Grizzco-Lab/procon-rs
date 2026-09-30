@@ -1,4 +1,4 @@
-// ProCon Studio dashboard: live controller view, recording controls, stats
+// Grizzco Lab's dashboard: live controller view, recording controls, stats
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -1492,7 +1492,7 @@ function renderHud(now) {
 }
 
 /**
- * Draw inputs on an input overlay SVG (the studio's, or a copy): sticks as
+ * Draw inputs on an input overlay SVG (the Studio's, or a copy): sticks as
  * [x, y] in -100..100, the set of pressed button names, and yaw and pitch
  * rates in °/s (a full bar is 360 °/s either way)
  */

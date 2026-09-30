@@ -1,4 +1,4 @@
-//! Studio host: dashboard, video capture and session recording
+//! Grizzco Lab: dashboard, video capture and session recording
 //!
 //! Runs on the machine with the capture card. It receives controller frames
 //! from `procon-proxy` (on the Raspberry Pi), captures video with ffmpeg and records both
@@ -6,7 +6,7 @@
 
 use alloc::sync::Arc;
 use clap::Parser;
-use grizzco_lab::config::StudioConfig;
+use grizzco_lab::config::LabConfig;
 use grizzco_lab::cuttlefish::Cuttlefish;
 use grizzco_lab::inspect::Inspector;
 use grizzco_lab::inspect::follow::{self, Follow};
@@ -26,9 +26,9 @@ use std::path::{Path, PathBuf};
 
 extern crate alloc;
 
-/// Nintendo Switch Pro Controller recording studio
+/// Grizzco Lab: records Nintendo Switch gameplay with the Pro Controller's input
 #[derive(Parser)]
-#[command(name = "procon")]
+#[command(name = "grizzco-lab")]
 #[command(about = "Dashboard, video capture and recording for the Pro Controller proxy")]
 struct Args {
     /// Path to configuration file; dashboard settings are saved next to it
@@ -85,7 +85,7 @@ impl log::Log for Logger {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let config: StudioConfig = config::load(&args.config)?;
+    let config: LabConfig = config::load(&args.config)?;
     config.logging.validate()?;
     let logger = env_logger::builder()
         .filter_level(config.logging.level.parse()?)
@@ -289,7 +289,7 @@ fn main() -> anyhow::Result<()> {
         }
     });
     // A tracker, detector, prediction or AgentZero started from the page
-    // ends with the studio
+    // ends with the lab
     online.shutdown();
     follow.stop_service();
     vision.stop_detector();

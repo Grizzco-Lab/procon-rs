@@ -259,7 +259,7 @@ pub struct Facets {
     /// The community's: slang from the seed or suggested from its texts,
     /// a term suggested from them, or player jargon of the seed
     pub community: bool,
-    /// The user's: a term or alias taught in the studio, or a term edited
+    /// The user's: a term or alias taught in the lab, or a term edited
     /// there (an override of a glossary term)
     pub user: bool,
 }

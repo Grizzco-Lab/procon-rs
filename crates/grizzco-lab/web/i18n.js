@@ -25,7 +25,10 @@ const I18N = {
     "view.language": "Language",
     "view.switchTo": "Switch to {lang}",
 
-    // The shell: app names, the status chips and the View menu
+    // The shell: the product's name, app names, the status chips and the
+    // View menu
+    "shell.title": "Grizzco Lab",
+    "shell.brand": "Grizzco <b>Lab</b>",
     "shell.apps": "Apps",
     "shell.status": "Status",
     "app.studio": "Studio",
@@ -46,7 +49,7 @@ const I18N = {
     "guide.open": "How it fits together",
     "guide.title": "How it fits together",
     "guide.lede":
-      "Six apps, one pipeline: record your play with the controller's input, check it frame by frame, learn from it, teach models to see the game and to play it, and follow their training as it runs.",
+      "Grizzco Lab is six apps and one pipeline: record your play with the controller's input, check it frame by frame, learn from it, teach models to see the game and to play it, and follow their training as it runs.",
     "guide.close": "Close",
     "guide.out.studio": "recordings",
     "guide.out.inspect": "labels",
@@ -181,7 +184,7 @@ const I18N = {
     "v.det.check": "Check again",
     "v.det.starting": "Starting the detector; it loads its model…",
     "v.det.exited":
-      "The detector {state}; see the studio's log. It needs a trained checkpoint: <code>agentzero-detect train</code> writes <code>runs/detect/best</code>.",
+      "The detector {state}; see the lab's log. It needs a trained checkpoint: <code>agentzero-detect train</code> writes <code>runs/detect/best</code>.",
     "v.det.timeout": "The detector did not answer within two minutes.",
     "v.det.checkpoint": "Checkpoint",
     "v.det.map50": "mAP50",
@@ -596,7 +599,7 @@ const I18N = {
     "cf.chat.keys": "Enter sends · Shift+Enter for a new line",
     "cf.chat.thinking": "Cuttlefish is thinking… (up to a minute)",
     "cf.chat.noKey":
-      "No model backend where the studio runs, so Cuttlefish cannot answer yet: export ANTHROPIC_API_KEY, or install the Claude Code CLI and log in, before starting the studio. Your messages, comments and drawings are saved as usual.",
+      "No model backend where the lab runs, so Cuttlefish cannot answer yet: export ANTHROPIC_API_KEY, or install the Claude Code CLI and log in, before starting the lab. Your messages, comments and drawings are saved as usual.",
     "cf.chat.failed": "Could not reach Cuttlefish: {error}",
     "cf.chat.error": "Cuttlefish could not answer: {error}",
     "cf.chat.empty":
@@ -671,9 +674,9 @@ const I18N = {
     "tr.working": "Translating…",
     "tr.failed": "Not translated: {error}",
     "tr.noKey":
-      "No model backend where the studio runs, so only the glossary answers: a term's entry and names, the terms a sentence uses. Export ANTHROPIC_API_KEY, or install the Claude Code CLI and log in, before starting the studio to translate sentences.",
+      "No model backend where the lab runs, so only the glossary answers: a term's entry and names, the terms a sentence uses. Export ANTHROPIC_API_KEY, or install the Claude Code CLI and log in, before starting the lab to translate sentences.",
     "tr.noKeyTranslation":
-      "Translating this needs a model backend where the studio runs (ANTHROPIC_API_KEY or the Claude Code CLI).",
+      "Translating this needs a model backend where the lab runs (ANTHROPIC_API_KEY or the Claude Code CLI).",
     "tr.copy": "Copy",
     "tr.copied": "Copied",
     "tr.entry": "Glossary entry",
@@ -704,7 +707,7 @@ const I18N = {
     "slang.done": "Done: {line}",
     "slang.failed": "The run stopped: {error}",
     "slang.noBackend":
-      "Suggestions need a model backend where the studio runs (ANTHROPIC_API_KEY or the Claude Code CLI).",
+      "Suggestions need a model backend where the lab runs (ANTHROPIC_API_KEY or the Claude Code CLI).",
     "slang.pending": "Waiting for review",
     "slang.noPending": "No suggestions waiting.",
     "slang.taught": "Taught and approved",
@@ -806,7 +809,7 @@ const I18N = {
     "k.backend.note":
       "What answers the chat and the translator: the API billed to ANTHROPIC_API_KEY, or the logged-in Claude Code CLI on your subscription ([cuttlefish] backend)",
     "k.key.discord": "Needed to import through a Discord bot",
-    "k.key.discordNote": "(needs DISCORD_BOT_TOKEN where the studio runs)",
+    "k.key.discordNote": "(needs DISCORD_BOT_TOKEN where the lab runs)",
     "k.search": "Search",
     "k.searchNote":
       "nearest chunks, any language, no key; what the chat retrieves",
@@ -1110,7 +1113,7 @@ const I18N = {
     "po.kind.live": "Live capture",
     "po.allowRec": "Allow while recording",
     "po.allowRecNote":
-      "Run AgentZero while the studio records (the recording may want the GPU; AgentZero's own play may be worth recording)",
+      "Run AgentZero while the Studio records (the recording may want the GPU; AgentZero's own play may be worth recording)",
     "po.start": "Start AgentZero",
     "po.running": "AgentZero is running; stop it first",
     "po.checking": "Checking agentzero-play…",
@@ -1138,7 +1141,7 @@ const I18N = {
     "po.stopping": "Stopping…",
     "po.stored": "Kept as a run of the Predictor.",
     "po.openStored": "Open it",
-    "po.notYet": "AgentZero has not run since the studio started.",
+    "po.notYet": "AgentZero has not run since the lab started.",
     "po.log": "Command and output",
     "po.play.start": "Let AgentZero play…",
     "po.play.stop": "Stop bot (Esc)",
@@ -1174,7 +1177,7 @@ const I18N = {
     "po.limits.and": ", ",
     "po.measure.start": "Measure my max…",
     "po.measure.startNote":
-      "Tap ZR as fast as you can for 10 s; the studio counts your presses from the controller's reports",
+      "Tap ZR as fast as you can for 10 s; the lab counts your presses from the controller's reports",
     "po.measure.cancel": "Cancel measuring",
     "po.measure.waiting":
       "Tap ZR as fast as you can: 10 s from your first press.",
@@ -1187,7 +1190,7 @@ const I18N = {
     "po.ended.you": "you stopped it",
     "po.ended.page": "no dashboard page was open",
     "po.ended.replay": "the Replay panel took the replay port",
-    "po.ended.link": "the proxy's frames stopped reaching the studio",
+    "po.ended.link": "the proxy's frames stopped reaching the lab",
     "po.ended.stall": "no action came from the policy for half a second",
     "po.ended.stopped": "AgentZero stopped",
     "po.ended.proxy": "the proxy closed the replay connection",
@@ -1198,12 +1201,12 @@ const I18N = {
     "po.loop.median": "median ms",
     "po.loop.handoff": "Frame hand-off",
     "po.loop.handoffNote":
-      "From the capture card's timestamp of a frame until AgentZero took it: the grabber, the pipe into the studio, shared memory and any wait",
+      "From the capture card's timestamp of a frame until AgentZero took it: the grabber, the pipe into the lab, shared memory and any wait",
     "po.loop.grabber": "capture card and grabber",
     "po.loop.grabberNote":
       "From the capture card's timestamp until the grabber wrote the frame out: the card's USB transfer, then ffmpeg's decoding, fitting and scaling to 640 x 360",
-    "po.loop.pipe": "pipe to the studio",
-    "po.loop.pipeNote": "The frame through the grabber's pipe into the studio",
+    "po.loop.pipe": "pipe to the lab",
+    "po.loop.pipeNote": "The frame through the grabber's pipe into the lab",
     "po.loop.shared": "into shared memory",
     "po.loop.sharedNote":
       "The frame written into shared memory and announced to AgentZero",
@@ -1216,9 +1219,9 @@ const I18N = {
     "po.loop.model": "Model",
     "po.loop.modelNote": "The policy's time for one frame",
     "po.loop.send": "Send",
-    "po.loop.sendDry": "Back to the studio",
+    "po.loop.sendDry": "Back to the lab",
     "po.loop.sendNote":
-      "From the action being ready until the studio wrote it to the proxy's replay port (while AgentZero only watches: until the studio had it)",
+      "From the action being ready until the lab wrote it to the proxy's replay port (while AgentZero only watches: until the lab had it)",
     "po.loop.total": "Capture to replay port",
     "po.loop.totalNote":
       "From the capture card's timestamp of a frame to its action written to the proxy's replay port; the network to the Pi and the next report come after",
@@ -1268,7 +1271,7 @@ const I18N = {
     "pl.history.count": ({ n }) => (n === 1 ? "1 entry" : `${n} entries`),
     "pl.history.empty": "Nothing has finished yet.",
     "pl.history.more": "Show all {n}",
-    "pl.offline": "Cannot reach the studio: {error}",
+    "pl.offline": "Cannot reach the lab: {error}",
     "pl.group": "Experiment {group}",
     "pl.state.running": "Running",
     "pl.state.detected": "Running, not marked",
@@ -1360,7 +1363,7 @@ const I18N = {
     "pl.timeline.other": "other memory",
     "pl.timeline.noLanes": "Nothing from the queue ran in this window",
     "pl.timeline.since":
-      "Sampled every {s} s since the studio started, {clock}; earlier lanes come from the queue's own times.",
+      "Sampled every {s} s since the lab started, {clock}; earlier lanes come from the queue's own times.",
     "pl.timeline.empty": "No samples yet.",
     "pl.timeline.aria":
       "The GPU over the last {hours} h: busy {util}% now, its memory, and what ran when",

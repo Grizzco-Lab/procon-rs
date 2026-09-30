@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Layout regression check: loads a running studio in headless Chrome
+// Layout regression check: loads a running lab in headless Chrome
 // (DevTools protocol over a WebSocket, Node 22+, no packages) in every theme,
 // in English and Chinese, at desktop width (apps in the top bar and in the
 // rail) and phone width, and measures the boxes that broke before:
@@ -11,7 +11,7 @@
 // - the guide (How it fits together) fits the window without sideways
 //   scrolling, its steps in one row where it is wide
 //
-// Usage: node scripts/layout-check.mjs <studio url> [--only theme,...]
+// Usage: node scripts/layout-check.mjs <lab url> [--only theme,...]
 // e.g. node scripts/layout-check.mjs http://127.0.0.1:8073
 // It only reads: the page is loaded, never clicked beyond the app links
 // and the guide it opens.
@@ -24,13 +24,13 @@ import { join } from "node:path";
 const args = process.argv.slice(2);
 const base = args.find((a) => !a.startsWith("--"))?.replace(/\/$/, "");
 if (!base) {
-  console.error("usage: node scripts/layout-check.mjs <studio url>");
+  console.error("usage: node scripts/layout-check.mjs <lab url>");
   process.exit(2);
 }
 try {
   await fetch(`${base}/`);
 } catch {
-  console.error(`No studio at ${base}`);
+  console.error(`No lab at ${base}`);
   process.exit(2);
 }
 const onlyAt = args.indexOf("--only");

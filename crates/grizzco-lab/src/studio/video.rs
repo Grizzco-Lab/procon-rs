@@ -1,6 +1,6 @@
 //! Video capture with ffmpeg: a live preview, plus recording to files
 //!
-//! Three kinds of ffmpeg share the work, joined by the studio:
+//! Three kinds of ffmpeg share the work, joined by the lab:
 //!
 //! - The grabber owns the input for as long as it is selected and turns it
 //!   into raw 1080p frames at the capture rate. Reopening a capture card is
@@ -16,7 +16,7 @@
 //!   so a file begins with the next frame and pausing never touches the input.
 //!
 //! A V4L2 capture card in YUYV (the Elgato 4K X's uncompressed mode) is read
-//! by the studio itself instead ([`crate::studio::v4l2`]): memory-mapped, a few
+//! by the lab itself instead ([`crate::studio::v4l2`]): memory-mapped, a few
 //! buffers, each frame taken as soon as the kernel has it, with the kernel's
 //! timestamp. The reader puts the frames on the constant rate ([`ConstantRate`],
 //! the fps filter's job otherwise) and writes them into a converter ffmpeg,
@@ -40,14 +40,14 @@
 //! the default 64 KiB, a 1080p frame takes 48 hand-offs.
 //!
 //! Besides the screen and V4L2 devices, the input can be a video file, played
-//! in a loop at its own pace as if it were live (for trying the studio
+//! in a loop at its own pace as if it were live (for trying the lab
 //! without a console); its frames are stamped with the time they were read.
 //!
 //! Frames reach recordings at a constant rate: frame `n` of a file was captured
 //! `n / fps` seconds after its first frame, whose Unix time is kept. That time
 //! is when the capture card delivered the frame to the kernel, which ffmpeg
 //! reports for every frame (and our reader reads), not when it reached the
-//! studio: if the grabber
+//! lab: if the grabber
 //! ever falls behind, frames queue in the driver and arrive late for good, so
 //! arrival times would shift a whole recording by however long that queue is.
 //! A queue that builds up while nothing records is cleared by restarting the
@@ -229,10 +229,10 @@ pub struct VideoStatus {
     /// Time from a frame reaching the preview encoder to its fragment coming
     /// out, smoothed; `None` while the preview is not live
     pub preview_encode_ms: Option<f64>,
-    /// Time from the capture card delivering a frame to the studio reading
+    /// Time from the capture card delivering a frame to the lab reading
     /// it, smoothed; `None` while no frames arrive
     pub capture_ms: Option<f64>,
-    /// The capture card is read by the studio itself, not ffmpeg
+    /// The capture card is read by the lab itself, not ffmpeg
     pub direct: bool,
     /// The preview follows the recording size and rate
     pub preview_matches_recording: bool,
@@ -568,7 +568,7 @@ impl Video {
         Ok(())
     }
 
-    /// Whether the studio reads the capture card itself (see the module docs)
+    /// Whether the lab reads the capture card itself (see the module docs)
     pub fn direct(&self) -> bool {
         self.direct.load(Ordering::Relaxed)
     }
@@ -845,7 +845,7 @@ impl Video {
         let mut child = command
             .args(&args)
             .stdin(Stdio::null())
-            // Own process group: a terminal Ctrl+C reaches the studio, which then stops ffmpeg in order
+            // Own process group: a terminal Ctrl+C reaches the lab, which then stops ffmpeg in order
             .process_group(0)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

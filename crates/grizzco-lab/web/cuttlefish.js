@@ -43,7 +43,7 @@
   const DANMAKU_CHARS = 120;
   /** Range reviewed by default: this long up to the current time */
   const RANGE_S = 15;
-  /** What the studio sends with a message about the video, as in
+  /** What the lab sends with a message about the video, as in
    * `cuttlefish::sampling`: 15 frames around a moment at 720p, a range at
    * the chosen rate and height (at most MAX_RANGE_S long, MAX_FRAMES
    * frames), and past TWO_PASS_S an overview at SCOUT_FPS and SCOUT_HEIGHT,
@@ -116,7 +116,7 @@
   const chat = {
     /** A message is on its way */
     sending: false,
-    /** Whether ANTHROPIC_API_KEY is set where the studio runs; null until
+    /** Whether ANTHROPIC_API_KEY is set where the lab runs; null until
      * asked */
     key: null,
     /** Which example the placeholders show */
@@ -821,7 +821,7 @@
     }
   }
 
-  /** A video as the player's source: played and thumbnailed by the studio */
+  /** A video as the player's source: played and thumbnailed by the lab */
   function videoSource(v, id) {
     const query = videoQuery(v, id);
     return {
@@ -1540,7 +1540,7 @@
   /** The chat's example messages: the placeholders and the chips */
   const examples = () => t("cf.chat.examples");
 
-  /** Whether the studio has a model backend (the API key, or the Claude
+  /** Whether the lab has a model backend (the API key, or the Claude
    * Code CLI); asked once, shown in the composers' notes when it does not */
   async function checkKey() {
     if (chat.key == null) {

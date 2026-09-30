@@ -84,7 +84,7 @@ pub struct GameSettings {
 /// The controller proxy
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProxyInfo {
-    /// Address the studio connected to
+    /// Address the lab connected to
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
     /// Smallest `host_now - proxy_timestamp` seen: network latency plus the
@@ -104,7 +104,7 @@ pub struct ControllerInfo {
     /// Records written
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frames: Option<u64>,
-    /// Reports the studio saw missing from the sequence
+    /// Reports the lab saw missing from the sequence
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dropped: Option<u64>,
 }

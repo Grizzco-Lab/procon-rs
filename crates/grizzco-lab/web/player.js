@@ -1,5 +1,5 @@
 // The video player shared by the apps, made from the Inkspector's: a picture
-// (exact frames decoded by the studio, or a <video>), the transport with its
+// (exact frames decoded by the lab, or a <video>), the transport with its
 // keys, a scrubber with marks, the neighbours strip, the input overlays
 // (Full, Minimal, None) with the truth and a prediction, and the labels
 // table. Runs after i18n.js and app.js and uses their helpers (t, $, svgEl,
@@ -246,7 +246,7 @@ class Player {
     this.playing = false;
     /** Whether the keys act: the app sets it while it is shown */
     this.enabled = false;
-    /** Overlay style: full, minimal (the studio's) or none */
+    /** Overlay style: full, minimal (the Studio's) or none */
     this.overlay = this.remembered("overlay", "full");
     /** Play the sound: an exact-frame source's audio sets the frame then */
     this.sound = this.remembered("sound", "true") === "true";
@@ -301,7 +301,7 @@ class Player {
       hidden: true,
     });
     this.audio = el("audio", { preload: "auto" });
-    // The studio's input overlay, copied over the picture
+    // The Studio's input overlay, copied over the picture
     this.hud = $("input-hud").cloneNode(true);
     this.hud.removeAttribute("id");
     this.hud.dataset.keys = "";

@@ -18,14 +18,14 @@ prefix = "recordings/"
 
 [video]
 # Input at first launch: "screen", a device like "/dev/video0", a video file
-# (played in a loop as if live, to try the studio without a console), or ""
+# (played in a loop as if live, to try the lab without a console), or ""
 # for none
 input = "/dev/video0"
 # Capture frame rate
 fps = 60
 # Elgato 4K X mode, the same one OBS uses: YUYV 1920x1080
 v4l2_args = ["-input_format", "yuyv422", "-video_size", "1920x1080"]
-# The studio reads a YUYV capture card itself (memory-mapped, the kernel's
+# The lab reads a YUYV capture card itself (memory-mapped, the kernel's
 # timestamps; the lowest latency for AgentZero); false leaves it to ffmpeg,
 # which also takes over when reading it this way fails
 # v4l2_direct = true
@@ -75,7 +75,7 @@ preview_encoder = ["-c:v", "h264_nvenc", "-preset", "p1", "-tune", "ll", "-zerol
 # inbox/ folder to drop material into); by default "Knowledge" next to the
 # Inkspector's root. It may be a synced folder; the embedding model stays in
 # ~/.cache/procon-cuttlefish. The chat needs a model backend: ANTHROPIC_API_KEY
-# in the studio's environment (never put it in a file here), or the logged-in
+# in the lab's environment (never put it in a file here), or the logged-in
 # Claude Code CLI on your own subscription
 # knowledge = "/data/Knowledge"
 # What answers: "auto" (the API when the key is set, else `claude` on PATH),

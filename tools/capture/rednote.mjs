@@ -34,7 +34,7 @@ const DEFAULT_PROFILE = join(homedir(), ".config", "procon", "browser-profile");
 const DEFAULT_PORT = 9251;
 
 /** AgentZero's folder, beside the repository the tool is run from (as
- * the studio's `[predictor] agentzero`): its environment has the cover
+ * the lab's `[predictor] agentzero`): its environment has the cover
  * check's model */
 const DEFAULT_AGENTZERO = resolve("..", "AgentZero");
 
@@ -57,7 +57,7 @@ const USAGE = `usage: rednote.mjs <login | run | status> [options]
   status                   what the state file says
 
 Where (run, status):
-  --config <path>          the studio's config.toml (default ./config.toml); the knowledge folder is found as the cuttlefish CLI finds it
+  --config <path>          the lab's config.toml (default ./config.toml); the knowledge folder is found as the cuttlefish CLI finds it
   --data <folder>          the knowledge folder itself
 
 Browser:

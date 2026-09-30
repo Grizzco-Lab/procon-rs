@@ -89,7 +89,7 @@ fn main() -> anyhow::Result<()> {
     // Create multi-dumper for async processing
     let mut multi_dumper = MultiDumper::new();
 
-    // Stream frames to the studio host, which records them with the video
+    // Stream frames to Grizzco Lab, which records them with the video
     multi_dumper.add_dumper(Box::new(FrameStreamer::listen(config.stream.port)?));
 
     // Optional local backup: one session from launch until exit

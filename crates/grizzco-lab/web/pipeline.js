@@ -2,7 +2,7 @@
 // the agents keep, AgentZero's runs/queue.json (agentzero-queue writes it;
 // AgentZero's README has the format): what runs, what waits in the order it
 // runs, why each entry runs (the question it answers) and what came out.
-// The studio samples the GPU and the machine every 5 s and follows each
+// The lab samples the GPU and the machine every 5 s and follows each
 // entry's processes and run folder (src/pipeline.rs). The page shows:
 //
 // - Running: a card per running entry, with its progress and ETA, the loss
@@ -278,7 +278,7 @@
 
   /**
    * What the page makes of an entry: its place (running, waiting, finished)
-   * and its state word, from the queue's status and what the studio saw:
+   * and its state word, from the queue's status and what the lab saw:
    * processes alive (`live`), and a run folder at its last step
    */
   function view(entry) {
@@ -316,7 +316,7 @@
     null;
 
   /** How long an entry took, from its start (the file's, else when the
-   * studio first saw it) to its end: "≥ 5 min" when the studio only saw it
+   * lab first saw it) to its end: "≥ 5 min" when the lab only saw it
    * from its own start */
   function tookOf(entry) {
     const ended = endedAt(entry);
@@ -403,7 +403,7 @@
     if (pl.shown && !document.hidden) pl.timer = setTimeout(poll, POLL_MS);
   }
 
-  /** The whole timeline window, averaged down by the studio */
+  /** The whole timeline window, averaged down by the lab */
   async function loadTimeline() {
     const data = await api(`timeline?minutes=${pl.minutes}`);
     pl.samples = data.samples;
@@ -1549,7 +1549,7 @@
   });
   sized.observe(timelineBox);
 
-  /** The entries' bars over [from, to]: the spans the studio saw them
+  /** The entries' bars over [from, to]: the spans the lab saw them
    * running, else the queue's own times, packed into lanes */
   function laneBars(from, to) {
     const entries = pl.state?.queue.entries ?? [];
@@ -1560,7 +1560,7 @@
       let spans = seen ? seen.map(([a, b]) => [a, b]) : [];
       const started = entry.started_ms;
       if (spans.length && started != null && started < spans[0][0]) {
-        // Begun before the studio saw it
+        // Begun before the lab saw it
         spans[0][0] = started;
       }
       if (!spans.length && started != null) {
@@ -1627,7 +1627,7 @@
         util: gpu?.util != null ? num(gpu.util) : "–",
       }),
     });
-    // Before the studio sampled: nothing to show but the queue's lanes
+    // Before the lab sampled: nothing to show but the queue's lanes
     const since = pl.samplingSince;
     if (since != null && since > from)
       root.append(

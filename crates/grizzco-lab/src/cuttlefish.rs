@@ -560,7 +560,7 @@ impl Listed {
 /// The reviews listing, kept in memory: the reviews folder may be a network
 /// mount (rclone on Dropbox), where every review folder not looked at in
 /// the last minutes costs a round trip. It is read once at startup
-/// ([`Cuttlefish::warm`]), with [`LIST_READERS`] files at once; the studio's
+/// ([`Cuttlefish::warm`]), with [`LIST_READERS`] files at once; the lab's
 /// own writes update it, and a listing older than [`LIST_FRESH`] is served
 /// while it is read again in the background. No lock is held while files
 /// are read.
@@ -578,7 +578,7 @@ struct ListState {
     read_at: Option<Instant>,
     /// A reading is under way
     reading: bool,
-    /// The studio's changes while a reading is under way, applied over its
+    /// The lab's changes while a reading is under way, applied over its
     /// result (`None`: deleted)
     changed: Vec<(String, Option<Listed>)>,
 }
@@ -661,7 +661,7 @@ impl ReviewList {
         Ok(())
     }
 
-    /// The studio wrote review `id` (`None`: deleted it)
+    /// The lab wrote review `id` (`None`: deleted it)
     fn put(&self, id: &str, review: Option<&Review>) {
         let listed = review.map(|review| Listed::new(id, review, now_ms()));
         let mut state = self.state.lock().unwrap();
@@ -806,7 +806,7 @@ impl Cuttlefish {
     }
 
     /// Read the reviews list now, so that the library's first listing does
-    /// not wait for the folder; the studio calls it on a thread at startup
+    /// not wait for the folder; the lab calls it on a thread at startup
     pub fn warm(&self) -> Result<()> {
         self.list.refresh()
     }
@@ -987,7 +987,7 @@ impl Cuttlefish {
                 };
                 knowledge.log(id, stats.to_string());
                 knowledge.log(id, format!("reviews: {written}"));
-                let _lock = cuttlefish::lock::acquire(root, "procon studio expert comments")?;
+                let _lock = cuttlefish::lock::acquire(root, "grizzco-lab expert comments")?;
                 let loaded = knowledge.loaded()?;
                 let plan = expert::plan(&loaded.store.read().unwrap(), &built)?;
                 let mut embedded = 0;
@@ -2360,7 +2360,7 @@ fn run_ytdlp(
     if !status.success() {
         bail!(
             "yt-dlp failed: {}",
-            errors.last().map_or("see the studio's log", String::as_str)
+            errors.last().map_or("see the lab's log", String::as_str)
         );
     }
     ensure!(
@@ -2603,7 +2603,7 @@ mod tests {
         };
         assert_eq!(ids(&cuttlefish), ["r-1"]);
 
-        // The studio's own writes show at once, newest first
+        // The lab's own writes show at once, newest first
         cuttlefish.save_review("r-2", &review).unwrap();
         assert_eq!(ids(&cuttlefish), ["r-2", "r-1"]);
         cuttlefish.delete_review("r-1").unwrap();

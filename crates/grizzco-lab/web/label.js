@@ -1,8 +1,8 @@
 // Inkspector labeling mode: boxes around objects on recorded frames, drawn
 // with the shared drawing layer (sketch.js) and saved frame by frame through
-// POST /api/inspect/objects (format in src/objects.rs). Follow carries the
+// POST /api/inspect/objects (format in src/inspect/objects.rs). Follow carries the
 // boxes of a frame over the next frames with a tracker, as model boxes to
-// accept or correct (/api/inspect/follow/..., src/follow.rs). The labeled
+// accept or correct (/api/inspect/follow/..., src/inspect/follow.rs). The labeled
 // frames are marked on the scrubber, in the labeling mode or not. Runs after
 // inspect.js and uses its state (inspector, go, drawMarks, remembered,
 // remember).
@@ -55,7 +55,7 @@
     status: "",
     error: false,
     follow: {
-      /** The current or last Follow, as the studio reports it */
+      /** The current or last Follow, as the lab reports it */
       job: null,
       timer: null,
       /** Frames written when the labels were last read again */
@@ -66,7 +66,7 @@
       html: "",
       title: "",
       error: false,
-      /** Whether the studio can start the tracker */
+      /** Whether the lab can start the tracker */
       canStart: false,
     },
   };
@@ -125,7 +125,7 @@
 
   const active = () => labels.on && inspector.shown && inspector.info;
 
-  /** Fetch JSON, posting `body` if given; errors carry the studio's message */
+  /** Fetch JSON, posting `body` if given; errors carry the lab's message */
   async function fetchJson(url, body) {
     const options =
       body === undefined
@@ -684,7 +684,7 @@
         }
         if (status.started?.startsWith("exited"))
           return setFollow(
-            `The tracker ${escapeHtml(status.started)}; see the studio's log.`,
+            `The tracker ${escapeHtml(status.started)}; see the lab's log.`,
             true,
           );
       }

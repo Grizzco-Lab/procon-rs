@@ -1,5 +1,5 @@
 // The knowledge folder, found as the cuttlefish CLI finds it: `--data`,
-// else the studio's config (`--config`, or `./config.toml` when there is
+// else the lab's config (`--config`, or `./config.toml` when there is
 // one): `[cuttlefish] knowledge` relative to the config file, else
 // `Knowledge` next to the sessions' folder (`[inspect] root`, else the
 // folder of the recording prefix, the dashboard's saved choice in
@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 /** The string values of a TOML file's tables, `{table: {key: value}}`.
- * Enough for the studio's config: `[table]` headers, `key = "string"`
+ * Enough for the lab's config: `[table]` headers, `key = "string"`
  * lines; other values are kept as their raw text. */
 export function readToml(text) {
   const tables = {};
@@ -34,8 +34,8 @@ export function readToml(text) {
   return tables;
 }
 
-/** The knowledge folder of the studio with this config */
-export function studioKnowledge(configPath) {
+/** The knowledge folder of the lab with this config */
+export function labKnowledge(configPath) {
   const config = readToml(readFileSync(configPath, "utf8"));
   const dir = dirname(configPath);
   const knowledge = config.cuttlefish?.knowledge;
@@ -72,9 +72,9 @@ export function knowledgeFolder(
   if (data) return resolve(cwd, data);
   const path =
     config ?? (existsSync(resolve(cwd, "config.toml")) ? "config.toml" : null);
-  if (path) return studioKnowledge(resolve(cwd, path));
+  if (path) return labKnowledge(resolve(cwd, path));
   if (env.CUTTLEFISH_DATA) return resolve(cwd, env.CUTTLEFISH_DATA);
   throw new Error(
-    "no knowledge folder: run where the studio's config.toml is, or give --config <studio config>, --data <folder> or $CUTTLEFISH_DATA",
+    "no knowledge folder: run where the lab's config.toml is, or give --config <lab config>, --data <folder> or $CUTTLEFISH_DATA",
   );
 }

@@ -17,9 +17,9 @@
 //!                      index beside them ([`crate::keyword`])
 //! ```
 //!
-//! The studio passes its `[cuttlefish] knowledge` (by default `Knowledge`
+//! The lab passes its `[cuttlefish] knowledge` (by default `Knowledge`
 //! next to the Inkspector's root); the CLI finds the same folder through the
-//! studio's config, else `--data` or `$CUTTLEFISH_DATA`. What needs no
+//! lab's config, else `--data` or `$CUTTLEFISH_DATA`. What needs no
 //! syncing stays on this machine, in [`cache_dir`]: the embedding model,
 //! thumbnails, unpacked archives. [`migrate`] copies our entries of the
 //! folder of before (`~/.local/share/cuttlefish`, shared with another

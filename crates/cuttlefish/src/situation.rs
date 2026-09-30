@@ -4,7 +4,7 @@
 //!
 //! A [`Situation`] holds what is known about the moment or range:
 //!
-//! - the controller input ([`summarize_input`]): recorded for the studio's
+//! - the controller input ([`summarize_input`]): recorded for the lab's
 //!   own sessions (`controller.bin`, aligned per frame by `gameplay-data`),
 //!   else predicted from the video by AgentZero's IDM when the Predictor
 //!   has run on it. Both are per-frame [`Label`]s; the summary names held
@@ -242,7 +242,7 @@ pub struct Situation {
     /// Objects a person labelled on that frame
     pub labelled: Vec<SeenObject>,
     /// Objects a detector found on that frame. Nothing fills it yet: the
-    /// studio will from the Vision app's detections (the same annotations
+    /// lab will from the Vision app's detections (the same annotations
     /// format, `by: "model"`) once a Salmon Run detector is trained.
     pub detected: Vec<SeenObject>,
 }

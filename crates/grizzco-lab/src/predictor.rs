@@ -910,7 +910,7 @@ impl Predictor {
         });
     }
 
-    /// Stop a run at the studio's exit and wait for it to end: in a group
+    /// Stop a run at the lab's exit and wait for it to end: in a group
     /// of its own, it does not get the terminal's Ctrl-C
     pub fn stop(self: &Arc<Self>) {
         let running = || self.job().is_some_and(|job| !job.finished());

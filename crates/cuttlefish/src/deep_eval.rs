@@ -5,7 +5,7 @@
 //! Answers go to `<knowledge>/eval/deep-<date>.jsonl`, one [`Entry`] per
 //! line with the sources the model was given and cited; the file is
 //! rewritten after every batch, so a stopped run keeps what it got. The
-//! studio's Knowledge view lists the files; the player marks each answer
+//! lab's Knowledge view lists the files; the player marks each answer
 //! good or wrong ([`mark`]) and turns a wrong one into an expert note
 //! ([`crate::notes`]), whose id the entry then carries. That is how the
 //! memory grows.

@@ -12,8 +12,8 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content"
     />
-    <title>ProCon Studio</title>
-    <link rel="icon" type="image/svg+xml" href="/icons/app-studio.svg" />
+    <title data-i18n="shell.title">Grizzco Lab</title>
+    <link rel="icon" type="image/svg+xml" href="/icons/brand.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -52,7 +52,9 @@
           <circle class="brand-eye" cx="8" cy="11" r="1.6" />
           <circle class="brand-eye" cx="16" cy="11" r="1.6" />
         </svg>
-        <span class="brand-name">ProCon <b>Studio</b></span>
+        <span class="brand-name" data-i18n-html="shell.brand"
+          >Grizzco <b>Lab</b></span
+        >
       </div>
       <!-- Apps: a rail on the left or a segmented switch in this bar (see
            data-nav). Each link names its app and what it is for (.app-sub):
@@ -129,7 +131,7 @@
         </a>
       </nav>
       <!-- Status: passive indicators (a dot and a word, details on hover),
-           the open app's first, then the studio's own -->
+           the open app's first, then the lab's own -->
       <div
         class="status-strip"
         role="group"
@@ -363,9 +365,10 @@
               How it fits together
             </h2>
             <p class="guide-lede" data-i18n="guide.lede">
-              Six apps, one pipeline: record your play with the controller's
-              input, check it frame by frame, learn from it, teach models to see
-              the game and to play it, and follow their training as it runs.
+              Grizzco Lab is six apps and one pipeline: record your play with
+              the controller's input, check it frame by frame, learn from it,
+              teach models to see the game and to play it, and follow their
+              training as it runs.
             </p>
           </div>
           <button
@@ -3674,7 +3677,7 @@
                   class="check"
                   id="po-rec-wrap"
                   hidden
-                  title="Run AgentZero while the studio records (the recording may want the GPU; AgentZero's own play may be worth recording)"
+                  title="Run AgentZero while the Studio records (the recording may want the GPU; AgentZero's own play may be worth recording)"
                   data-i18n-title="po.allowRecNote"
                   ><input type="checkbox" id="po-rec" />
                   <span data-i18n="po.allowRec"
@@ -3853,7 +3856,7 @@
                       type="button"
                       class="btn btn-small"
                       id="po-measure-btn"
-                      title="Tap ZR as fast as you can for 10 s; the studio counts your presses from the controller"
+                      title="Tap ZR as fast as you can for 10 s; the lab counts your presses from the controller"
                       data-i18n-title="po.measure.startNote"
                     >
                       Measure my max…

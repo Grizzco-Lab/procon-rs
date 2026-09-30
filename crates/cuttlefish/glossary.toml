@@ -11,11 +11,11 @@
 # This seed has English and Japanese names, the Simplified Chinese names of
 # the official release (stat.ink's zh-CN translations where it has them),
 # the slang Chinese players use, and the player jargon at the end (the
-# studio's chat examples); a jargon term has no name in the game, so its
+# lab's chat examples); a jargon term has no name in the game, so its
 # `forms` are descriptive. A line starting with "# unsure:" marks a name to
 # check. Copy it to <data>/glossary.toml, check it and add the other languages
 # there (the file in the data folder replaces this one). What you teach or
-# approve in the studio goes to <data>/glossary-user.toml instead.
+# approve in the lab goes to <data>/glossary-user.toml instead.
 
 [[term]]
 id = "salmon-run"
@@ -329,7 +329,7 @@ aliases = [
 ]
 
 # ---------------------------------------------------------------------------
-# Player jargon (the studio's chat examples): no names in the game, so the
+# Player jargon (the lab's chat examples): no names in the game, so the
 # official forms are descriptive English and the players' words are aliases.
 # English forms marked "unsure" are literal: the English community may have
 # no fixed word.

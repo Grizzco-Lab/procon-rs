@@ -833,7 +833,7 @@ impl Knowledge {
     /// Deletes documents and their chunks, and writes the index
     pub fn delete(&self, ids: &[String]) -> Result<Value> {
         ensure!(!ids.is_empty(), "no documents given");
-        let _lock = lock::acquire(&self.root, "procon studio delete")?;
+        let _lock = lock::acquire(&self.root, "grizzco-lab delete")?;
         let loaded = self.loaded()?;
         let mut store = loaded.store.write().unwrap();
         let mut deleted = Vec::new();
@@ -1192,7 +1192,7 @@ impl Knowledge {
         let _lock = if dry_run {
             None
         } else {
-            Some(lock::acquire(&self.root, "procon studio import")?)
+            Some(lock::acquire(&self.root, "grizzco-lab import")?)
         };
         self.update(id, |job| {
             job.lines.push("loading the knowledge store".to_string())
@@ -1696,7 +1696,7 @@ impl Knowledge {
         if note.id.is_empty() {
             note.id = notes::new_id(&self.root, &note.question, note.date);
         }
-        let _lock = lock::acquire(&self.root, "procon studio note")?;
+        let _lock = lock::acquire(&self.root, "grizzco-lab note")?;
         notes::save(&self.root, &note)?;
         let loaded = self.loaded()?;
         let mut store = loaded.store.write().unwrap();
@@ -1708,7 +1708,7 @@ impl Knowledge {
 
     /// Removes a note and its document (`POST notes/delete`)
     pub fn delete_note(&self, id: &str) -> Result<Value> {
-        let _lock = lock::acquire(&self.root, "procon studio note")?;
+        let _lock = lock::acquire(&self.root, "grizzco-lab note")?;
         ensure!(notes::remove(&self.root, id)?, "no note {id}");
         let loaded = self.loaded()?;
         let mut store = loaded.store.write().unwrap();

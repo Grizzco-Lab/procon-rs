@@ -23,7 +23,7 @@
 //! ([`image_text`]), which joins their messages.
 //! The #vod-review archive becomes a corpus of reviewed VODs ([`corpus`]),
 //! their videos downloaded at 480p ([`corpus_videos`]) and each conversation
-//! a review of the studio ([`corpus_reviews`]); each reviewer's comment is
+//! a review in the lab ([`corpus_reviews`]); each reviewer's comment is
 //! a unit of retrieval of its own ([`expert`]), found for a moment through
 //! a text summary of it ([`situation`]: controller input, HUD, objects).
 //! Lean's Splatoon 3 datamine becomes fact cards of exact game numbers

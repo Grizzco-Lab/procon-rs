@@ -6,7 +6,7 @@
 // and a button per moment it places in the VOD that opens the community
 // review there; a chunk of a wiki page, guide, game data or expert note
 // shows its text with the title, section, licence and credit. The original
-// stays a small link. Data from GET /api/cuttlefish/source (src/pedia.rs).
+// stays a small link. Data from GET /api/cuttlefish/source (src/cuttlefish/pedia.rs).
 // Beside the element clicked on a wide page, a sheet at the bottom on a
 // phone; Escape, a click outside or leaving the view closes it. Shared as
 // window.cuttlefishSource.open(anchor, ref) by cuttlefish.js and pedia.js;

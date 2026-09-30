@@ -35,11 +35,11 @@ use std::time::Instant;
 #[derive(Parser)]
 #[command(about = "Cuttlefish: Salmon Run knowledge store and AI reviewer")]
 struct Cli {
-    /// Knowledge folder; by default the studio's (see --config), else
+    /// Knowledge folder; by default the lab's (see --config), else
     /// $CUTTLEFISH_DATA
     #[arg(long, global = true)]
     data: Option<PathBuf>,
-    /// The studio's config file, whose knowledge folder is used ([cuttlefish]
+    /// The lab's config file, whose knowledge folder is used ([cuttlefish]
     /// knowledge, else Knowledge next to the Inkspector's root); by default
     /// ./config.toml when there is one
     #[arg(long, global = true)]
@@ -57,7 +57,7 @@ enum Command {
     #[command(subcommand)]
     Fetch(Fetch),
     /// The #vod-review corpus: the reviewed VODs of the fetched archive,
-    /// their videos, and reviews of them for the studio
+    /// their videos, and reviews of them in the lab
     #[command(subcommand)]
     Corpus(Corpus),
     /// Show the chunks closest to a query
@@ -101,7 +101,7 @@ enum Command {
     /// for embeddings, BM25 and hybrid ranking; or `deep`: ask the model
     /// the deep question bank's questions that need no video
     /// (questions/deep.toml) and keep the answers in
-    /// <knowledge>/eval/deep-<date>.jsonl for review in the studio
+    /// <knowledge>/eval/deep-<date>.jsonl for review in the lab
     Eval {
         /// Evaluation file, "retrieval" or "deep"
         target: String,
@@ -166,8 +166,8 @@ enum Command {
         #[command(flatten)]
         model: ModelArgs,
     },
-    /// Slang suggestions from the community documents, as the studio's
-    /// Slang panel makes them (the studio reads the file on each request;
+    /// Slang suggestions from the community documents, as the lab's
+    /// Slang panel makes them (the lab reads the file on each request;
     /// its chat picks the changes up on the next slang change or restart)
     #[command(subcommand)]
     Slang(Slang),
@@ -186,7 +186,7 @@ enum Slang {
         /// Batches sent at once (at most 8)
         #[arg(long, default_value_t = slang::DEFAULT_PARALLEL)]
         parallel: usize,
-        /// Leave every suggestion pending, for review in the studio
+        /// Leave every suggestion pending, for review in the lab
         #[arg(long)]
         no_auto_apply: bool,
         /// Confidence from which a suggestion is approved at once
@@ -375,7 +375,7 @@ enum Fetch {
         count: bool,
         /// Folder for the channels' files themselves. By default each channel
         /// goes to <knowledge>/inbox/discord/<guild>/<channel>/, the
-        /// knowledge folder being the studio's (see --config), where the
+        /// knowledge folder being the lab's (see --config), where the
         /// inbox import picks it up
         #[arg(long)]
         out: Option<PathBuf>,
@@ -459,12 +459,12 @@ enum Corpus {
         #[arg(long)]
         refresh: bool,
     },
-    /// Create or update a review of the studio for every VOD whose video
+    /// Create or update a review in the lab for every VOD whose video
     /// is on disk: <reviews>/discord-<id>/review.json, the comments at
     /// their moments, the rest as notes; re-running changes only what the
-    /// archive gave, never what was added in the studio
+    /// archive gave, never what was added in the lab
     Reviews {
-        /// The reviews folder; by default the studio's ([cuttlefish]
+        /// The reviews folder; by default the lab's ([cuttlefish]
         /// reviews of --config, else Reviews next to the knowledge folder)
         #[arg(long)]
         reviews: Option<PathBuf>,
@@ -610,12 +610,12 @@ impl ingest::Sink for Sink {
     }
 }
 
-/// Where the studio with this config keeps its knowledge, as the studio
+/// Where the lab with this config keeps its knowledge, as the lab
 /// finds it: `[cuttlefish] knowledge` (relative to the config file), else
 /// `Knowledge` next to the sessions' folder, which is `[inspect] root` or
 /// the folder of the recording prefix (the dashboard's choice, saved in
 /// `<config>.state.json`, before `[recording] prefix`)
-fn studio_knowledge(config: &Path) -> Result<PathBuf> {
+fn lab_knowledge(config: &Path) -> Result<PathBuf> {
     let text =
         std::fs::read_to_string(config).with_context(|| format!("reading {}", config.display()))?;
     let value: toml::Value =
@@ -648,7 +648,7 @@ fn studio_knowledge(config: &Path) -> Result<PathBuf> {
         .join("Knowledge"))
 }
 
-/// The reviews folder as the studio finds it: `[cuttlefish] reviews` of the
+/// The reviews folder as the lab finds it: `[cuttlefish] reviews` of the
 /// config (relative to it), else `Reviews` next to the knowledge folder
 fn reviews_folder(knowledge: &Path, config: Option<&Path>) -> Result<PathBuf> {
     let config = config
@@ -670,7 +670,7 @@ fn reviews_folder(knowledge: &Path, config: Option<&Path>) -> Result<PathBuf> {
     Ok(knowledge.parent().unwrap_or(Path::new(".")).join("Reviews"))
 }
 
-/// The knowledge folder: `--data`, else the studio's through `--config` (or
+/// The knowledge folder: `--data`, else the lab's through `--config` (or
 /// `./config.toml` when there is one), else `$CUTTLEFISH_DATA`
 fn knowledge_folder(data: Option<PathBuf>, config: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(data) = data {
@@ -678,7 +678,7 @@ fn knowledge_folder(data: Option<PathBuf>, config: Option<PathBuf>) -> Result<Pa
     }
     let config = config.or_else(|| Some(PathBuf::from("config.toml")).filter(|c| c.is_file()));
     if let Some(config) = config {
-        let data = studio_knowledge(&config)?;
+        let data = lab_knowledge(&config)?;
         log::info!(
             "knowledge folder of {}: {}",
             config.display(),
@@ -689,7 +689,7 @@ fn knowledge_folder(data: Option<PathBuf>, config: Option<PathBuf>) -> Result<Pa
     match std::env::var_os("CUTTLEFISH_DATA").filter(|d| !d.is_empty()) {
         Some(d) => Ok(PathBuf::from(d)),
         None => bail!(
-            "no knowledge folder: run where the studio's config.toml is, or give --config <studio config>, --data <folder> or $CUTTLEFISH_DATA"
+            "no knowledge folder: run where the lab's config.toml is, or give --config <lab config>, --data <folder> or $CUTTLEFISH_DATA"
         ),
     }
 }
@@ -1250,7 +1250,7 @@ fn eval_deep(data: &Path, settings: Settings, opts: &deep_eval::Options) -> Resu
             println!();
         },
     )?;
-    println!("{summary}; review them in the studio's Knowledge view");
+    println!("{summary}; review them in the lab's Knowledge view");
     Ok(())
 }
 
