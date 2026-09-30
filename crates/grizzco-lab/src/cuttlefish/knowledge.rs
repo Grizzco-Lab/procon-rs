@@ -803,11 +803,12 @@ impl Knowledge {
         &self.glossaries
     }
 
-    /// The glossary as kept, at once (see [`Kept::get`]); `202` while none
-    /// was ever made on this machine (a thread makes it: ask again)
-    fn glossary_kept(&self) -> Result<Arc<Glossaries>, Status> {
+    /// The glossary as kept, at once, and whether its files are being
+    /// looked at again (see [`Kept::get`]); `202` while none was ever made
+    /// on this machine (a thread makes it: ask again)
+    fn glossary_kept(&self) -> Result<(Arc<Glossaries>, bool), Status> {
         match self.glossaries.get()? {
-            Some((glossaries, _)) => Ok(glossaries),
+            Some(kept) => Ok(kept),
             None => Err(Status(
                 StatusCode::ACCEPTED,
                 anyhow::anyhow!("the glossary is being read; ask again"),
@@ -1258,7 +1259,7 @@ impl Knowledge {
     /// `folder` (and below) when given, with their term's names
     pub fn assets(&self, query: &str, folder: &str) -> Result<Value, Status> {
         let catalogue = self.catalogue();
-        let glossaries = self.glossary_kept()?;
+        let (glossaries, _) = self.glossary_kept()?;
         let glossary = &glossaries.glossary;
         let query = query.trim().to_lowercase();
         let mut shown = Vec::new();
@@ -1365,7 +1366,7 @@ impl Knowledge {
     /// data folder's glossary (or the seed) as kept, without loading the
     /// model
     pub fn glossary(&self, query: &str) -> Result<Value, Status> {
-        let glossaries = self.glossary_kept()?;
+        let (glossaries, _) = self.glossary_kept()?;
         let glossary = &glossaries.glossary;
         let query = query.trim();
         let terms = match glossary.lookup(query) {
@@ -1715,7 +1716,7 @@ impl Knowledge {
     /// Terms whose names contain `query` (see `Glossary::search`), for
     /// picking one as you type
     pub fn terms(&self, query: &str) -> Result<Value, Status> {
-        let glossaries = self.glossary_kept()?;
+        let (glossaries, _) = self.glossary_kept()?;
         Ok(json!({ "terms": glossaries.glossary.search(query, MAX_TERMS_FOUND) }))
     }
 
@@ -1724,11 +1725,12 @@ impl Knowledge {
     /// term is gone; a new term's name while it waits) and, for a new
     /// term's alias, that term's status (`term_status`); the new terms,
     /// newest first; the old aliases that could move to a new term; how
-    /// many suggestions wait; the auto-apply default. As the files are now
-    /// (a run of `cuttlefish` or a hand may have edited the user file): the
-    /// kept glossary once their sizes and times are looked at.
-    pub fn slang(&self) -> Result<Value> {
-        let glossaries = self.glossaries.current()?;
+    /// many suggestions wait; the auto-apply default. From the kept
+    /// glossary, at once: a run of `cuttlefish` or a hand may have edited
+    /// the user file, which shows once the files were looked at again
+    /// (`refreshing` meanwhile, and the page asks again; see [`Kept::get`])
+    pub fn slang(&self) -> Result<Value, Status> {
+        let (glossaries, refreshing) = self.glossary_kept()?;
         let (glossary, user) = (&glossaries.glossary, &glossaries.user);
         let aliases: Vec<Value> = user
             .aliases
@@ -1783,6 +1785,7 @@ impl Knowledge {
             "pending": user.pending().count() + user.pending_terms().count(),
             "backend": self.translate.detect(),
             "auto_apply": self.auto_apply,
+            "refreshing": refreshing,
         }))
     }
 
@@ -2296,7 +2299,7 @@ impl Knowledge {
             "overview" => self.panel("overview"),
             "glossary" => self.glossary(text("q")),
             "terms" => self.terms(text("q")),
-            "slang" => Ok(self.slang()?),
+            "slang" => self.slang(),
             "assets" => self.assets(text("q"), text("folder")),
             "inbox" => self.panel("inbox"),
             "reports" => Ok(json!({ "reports": inbox::reports(&self.root, REPORTS_SHOWN) })),
@@ -2658,7 +2661,7 @@ mod tests {
         assert_eq!(now.glossary.terms.len(), seed);
         // A later run answers with the local copy, the same glossary
         let again = Knowledge::new(root.clone(), dir.join("cache"), Settings::default(), None);
-        let kept = again.glossary_kept().unwrap();
+        let (kept, _) = again.glossary_kept().unwrap();
         assert_eq!(kept.glossary, now.glossary);
         assert_eq!(kept.user, now.user);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -2815,6 +2818,9 @@ mod tests {
             ..slang::UserAlias::default()
         });
         user.save(&dir).unwrap();
+        // An edit from outside shows once the lab looked at the files again
+        // (on a request, at most every 10 s); here at once
+        knowledge.glossaries().current().unwrap();
         let listed = knowledge.slang().unwrap();
         assert_eq!(listed["pending"], 2);
         assert_eq!(listed["terms"][0]["aliases"], json!(["missiles"]));

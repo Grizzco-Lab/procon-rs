@@ -556,6 +556,9 @@
   const RUN_POLL_MS = 1500;
   /** Wait after a keystroke before searching terms, in ms */
   const SEARCH_MS = 150;
+  /** How soon the slang is asked for again while the lab looks at its
+   * files again (`refreshing`), in ms */
+  const SLANG_AGAIN_MS = 1000;
 
   const slang = {
     /** The user glossary as the server lists it */
@@ -577,6 +580,8 @@
     job: null,
     /** The last text selected in a translation's source: `{id, text}` */
     selected: { id: null, text: "" },
+    /** The timer asking for the slang again */
+    again: 0,
   };
 
   /** A term's name for the page: in its language, else English, else the
@@ -868,10 +873,14 @@
 
   // --------------------------------------------------------- the panel
 
-  /** The user glossary from the server, drawn */
+  /** The user glossary from the server, drawn; asked for again while the
+   * lab looks at its files again (`refreshing`: the user file may have
+   * been edited outside the page) */
   async function loadSlang() {
+    clearTimeout(slang.again);
+    let data;
     try {
-      const data = await api("knowledge/slang");
+      data = await api("knowledge/slang");
       Object.assign(slang, {
         aliases: data.aliases,
         terms: data.terms ?? [],
@@ -887,6 +896,8 @@
       return;
     }
     drawSlang();
+    if (data.refreshing && tr.shown)
+      slang.again = setTimeout(loadSlang, SLANG_AGAIN_MS);
   }
 
   /** Whether runs from this page apply confident suggestions at once: the
