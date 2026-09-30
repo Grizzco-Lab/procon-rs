@@ -17,12 +17,14 @@
 //! Two GPUs take the entries: this host's (`device: gpu:linux`) and the
 //! win11 VM's (`gpu:win11`; `gpu` is either, `cpu` none). AgentZero's win11
 //! runner (`agentzero-win11 run`) feeds the VM: it marks the entries it
-//! takes `host: win11`, writes the VM's GPU to `win11/gpu.json` beside the
-//! queue file every 10 s ([`Remote`]), and copies each job's log and
-//! metrics back into the same paths here every minute. An entry on the VM
-//! has no process here: whether it runs is what that file says, while it
-//! is fresh ([`REMOTE_STALE`]). Each runner takes the first queued entry
-//! that fits its device and waits for nothing ([`next_for`]).
+//! takes `host: win11`, writes the VM's GPU, CPU and memory to
+//! `win11/gpu.json` beside the queue file every 10 s ([`Remote`]; a runner
+//! of before writes the GPU alone, without its power limit, fan and clock),
+//! and copies each job's log and metrics back into the same paths here
+//! every minute. An entry on the VM has no process here: whether it runs
+//! is what that file says, while it is fresh ([`REMOTE_STALE`]). Each
+//! runner takes the first queued entry that fits its device and waits for
+//! nothing ([`next_for`]).
 //!
 //! The page reorders the waiting entries by dragging them: `POST order`
 //! writes their priorities into the file, holding the lock the helper takes
@@ -33,9 +35,9 @@
 //! A sampler samples the machine every [`SAMPLE_EVERY`], read-only
 //! ([`Sample`]): this host's GPU through `nvidia-smi` (utilization,
 //! memory, temperature, power, and each compute process's memory), the
-//! VM's GPU from its file (unknown, never 0, while the file is stale),
-//! CPU, load and memory from `/proc`, the processes of each entry here
-//! with the CPU they took, and
+//! VM's GPU, CPU and memory from its file (unknown, never 0, while the file
+//! is stale), CPU, load and memory from `/proc`, the processes of each
+//! entry here with the CPU they took and its main one ([`Live`]), and
 //! each live entry's progress from its run folder (`metrics.jsonl` rows
 //! with `step` and `split`, `args.json` with `steps`) or else its log (the
 //! last `N/M` in it), with the rate and ETA it saw. A run whose trainer
@@ -43,7 +45,11 @@
 //! log, printed that it stops, [`END_LINES`]) has ended, early when before
 //! its last step; a live entry whose step has not moved for [`STALL`] does
 //! something else now (an evaluation after training, say). Neither has an
-//! ETA.
+//! ETA. What a live entry does is also read from its log
+//! ([`log_activity`]): the step its job script started last (`== start
+//! <name> (step N of the job) <date> <time>`, the agents' job scripts;
+//! `== end <name>` closes it), whether a counter came after that start,
+//! and the log's last line.
 //!
 //! The sampler also watches the disks the work lands on ([`Storage`]): the
 //! Proxmox host's ZFS pools (`[pipeline] storage_host`, `pve`: every VM's
@@ -60,9 +66,10 @@
 //! each sample to a log on this machine, [`HISTORY_FILE`] in the local
 //! cache (`cuttlefish::store::cache_dir`, never the synced knowledge
 //! folder), with the entries seen running then, the CPU each took and the
-//! free space of each disk ([`Sample::line`]), and rewrites
-//! [`SNAPSHOT_FILE`] beside it with what it saw of now ([`Snapshot`]: the
-//! GPUs, their processes, each entry's processes and progress, the disks).
+//! free space of each disk and the VM's CPU and memory ([`Sample::line`]),
+//! and rewrites [`SNAPSHOT_FILE`] beside it with what it saw of now
+//! ([`Snapshot`]: the GPUs, their processes, each entry's processes,
+//! progress and what its log says it runs, the disks).
 //! It rewrites the log at start and every hour ([`compact`]): samples older
 //! than [`KEEP`] thinned to one a minute, those older than
 //! [`HISTORY_KEEP`] dropped, a torn last line skipped. It exits when its
@@ -79,9 +86,9 @@
 //! Endpoints under `/api/pipeline/`:
 //!
 //! - `GET state[?since=<ms>]`: the machine now, both GPUs and their
-//!   processes, the disks ([`Storage::to_json`]), the queue with each
-//!   entry's processes, progress and runner, and with `since` the samples
-//!   taken after it
+//!   processes, the VM's CPU and memory, the disks ([`Storage::to_json`]),
+//!   the queue with each entry's processes, progress, runner and what its
+//!   log says it runs, and with `since` the samples taken after it
 //! - `GET timeline?minutes=<n>`: the samples of the last `n` minutes (at
 //!   most [`KEEP`]), averaged down to [`MAX_POINTS`], and when each entry
 //!   was seen running
@@ -782,7 +789,8 @@ fn nvidia_smi(args: &[&str]) -> Result<String> {
 
 /// A remote GPU's file as its runner writes it (AgentZero's
 /// `win11.Runner.status_file`): when it read the GPU, whether it could,
-/// the GPU, its compute processes, the job it runs, and the runner
+/// the GPU, its compute processes, the machine's CPU and memory (a runner
+/// of before writes neither), the job it runs, and the runner
 #[derive(Debug, Default, Deserialize)]
 struct RemoteFile {
     #[serde(default)]
@@ -795,6 +803,10 @@ struct RemoteFile {
     gpu: Option<RemoteGpu>,
     #[serde(default)]
     processes: Vec<RemoteProc>,
+    #[serde(default)]
+    cpu: Option<HostCpu>,
+    #[serde(default)]
+    memory: Option<HostMemory>,
     #[serde(default)]
     job: Option<RemoteJob>,
     #[serde(default)]
@@ -813,6 +825,28 @@ struct RemoteGpu {
     memory_total_mib: Option<f64>,
     temperature_c: Option<f64>,
     power_w: Option<f64>,
+    power_limit_w: Option<f64>,
+    fan_percent: Option<f64>,
+    sm_clock_mhz: Option<f64>,
+    #[serde(default)]
+    pstate: Option<String>,
+}
+
+/// Another machine's CPU as its runner reads it: busy over the last
+/// second, %, and its logical processors
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct HostCpu {
+    pub percent: Option<f64>,
+    pub cores: Option<u32>,
+}
+
+/// Another machine's memory as its runner reads it, in bytes
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct HostMemory {
+    #[serde(default)]
+    pub used: u64,
+    #[serde(default)]
+    pub total: u64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -854,12 +888,18 @@ pub struct Remote {
     /// Written within [`REMOTE_STALE`]
     pub fresh: bool,
     /// The reading, when the runner could take one (`name`, `util`,
-    /// `mem_used_mib`, `mem_total_mib`, `temp_c`, `power_w`)
+    /// `mem_used_mib`, `mem_total_mib`, `temp_c`, `power_w`, and from a
+    /// runner of now `power_limit_w`, `fan`, `sm_mhz`, `pstate`)
     pub gpu: Option<Gpu>,
     /// Why there is no reading: the runner could not reach the machine, or
     /// the file does not read
     pub error: Option<String>,
     pub processes: Vec<RemoteProc>,
+    /// The machine's CPU and memory, when its runner reads them
+    #[serde(default)]
+    pub cpu: Option<HostCpu>,
+    #[serde(default)]
+    pub memory: Option<HostMemory>,
     /// The entry its runner runs there, and that job's process there
     pub job: Option<String>,
     pub job_pid: Option<u64>,
@@ -901,7 +941,10 @@ pub fn parse_remote(host: &str, text: &str, now: u64, alive: impl Fn(u32) -> boo
         mem_total_mib: gpu.memory_total_mib,
         temp_c: gpu.temperature_c,
         power_w: gpu.power_w,
-        ..Gpu::default()
+        power_limit_w: gpu.power_limit_w,
+        fan: gpu.fan_percent,
+        sm_mhz: gpu.sm_clock_mhz,
+        pstate: gpu.pstate.unwrap_or_default(),
     });
     let runner = file.runner.unwrap_or_default();
     Remote {
@@ -915,6 +958,8 @@ pub fn parse_remote(host: &str, text: &str, now: u64, alive: impl Fn(u32) -> boo
         },
         gpu,
         processes: file.processes,
+        cpu: file.cpu.filter(|_| file.ok),
+        memory: file.memory.filter(|memory| file.ok && memory.total > 0),
         job: file
             .job
             .as_ref()
@@ -1576,6 +1621,77 @@ fn clean_line(line: &str) -> String {
     out.trim_end().to_string()
 }
 
+/// Most characters of a log's last line sent to the page
+const LINE_CHARS: usize = 300;
+
+/// What a live entry's log says it does now ([`log_activity`])
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct Activity {
+    /// The step its job script started last, while no end line of it
+    /// followed (`== start <name> ...`), and when it started, Unix ms
+    pub step: Option<String>,
+    pub step_ms: Option<u64>,
+    /// Whether an `N/M` came after that start: the log's counter is that
+    /// step's, else an earlier one's
+    pub counted: bool,
+    /// The log's last line, and when the log was last written, Unix ms
+    pub line: Option<String>,
+    pub line_ms: Option<u64>,
+}
+
+/// The step a job script's line starts, `== start <name> (step N of the
+/// job) <date> <time>` (the agents' scripts), and when, the local time at
+/// its end; the win11 VM's own `== start <date> <time> in <folder>` starts
+/// no step
+fn step_start(line: &str) -> Option<(String, Option<u64>)> {
+    let words: Vec<&str> = line.strip_prefix("== start ")?.split_whitespace().collect();
+    if !words.get(1)?.starts_with('(') {
+        return None;
+    }
+    let name = words[0].to_string();
+    let when = words
+        .len()
+        .checked_sub(2)
+        .filter(|&at| at > 0)
+        .and_then(|at| parse_time(&words[at..].join(" ")))
+        .and_then(|ms| u64::try_from(ms).ok());
+    Some((name, when))
+}
+
+/// What a job's log (`text`, its last part) says it does now: the step its
+/// script started last unless its `== end <name>` line came after, when,
+/// whether a counter followed that start, and the last line (cleaned, at
+/// most [`LINE_CHARS`]); `line_ms` is left to the caller
+pub fn log_activity(text: &str) -> Activity {
+    let mut activity = Activity::default();
+    for line in text
+        .lines()
+        .map(clean_line)
+        .filter(|l| !l.trim().is_empty())
+    {
+        if let Some((name, when)) = step_start(&line) {
+            activity.step = Some(name);
+            activity.step_ms = when;
+            activity.counted = false;
+        } else if let Some(name) = line.strip_prefix("== end ")
+            && name.split_whitespace().next() == activity.step.as_deref()
+        {
+            activity.step = None;
+            activity.step_ms = None;
+            activity.counted = false;
+        } else if activity.step.is_some() && log_progress(&line).is_some() {
+            activity.counted = true;
+        }
+        activity.line = Some(line);
+    }
+    if let Some(line) = &mut activity.line
+        && line.chars().count() > LINE_CHARS
+    {
+        *line = line.chars().take(LINE_CHARS).collect::<String>() + "…";
+    }
+    activity
+}
+
 // ------------------------------------------------------------------ state
 
 /// One GPU's numbers in a [`Sample`]; `NAN` for what was not read
@@ -1629,6 +1745,10 @@ pub struct Sample {
     /// pools (`pve:rpool`), this host's `/` (`linux:/`) and the VM's `C:`
     /// (`win11:C:`), those read
     pub free_gb: Vec<(String, f64)>,
+    /// The win11 VM's CPU busy, %, and memory in use, MiB, while its
+    /// runner's file is fresh and tells them
+    pub remote_cpu: f64,
+    pub remote_ram_mib: f64,
 }
 
 impl Default for Sample {
@@ -1642,9 +1762,17 @@ impl Default for Sample {
             ram_mib: f64::NAN,
             running: Vec::new(),
             free_gb: Vec::new(),
+            remote_cpu: f64::NAN,
+            remote_ram_mib: f64::NAN,
         }
     }
 }
+
+/// Where a line of the log on disk keeps the VM's CPU and memory, after
+/// the CPU of each entry (14) and the free space of each disk (15): what
+/// a version adds goes at the end
+const LINE_REMOTE_CPU: usize = 16;
+const LINE_REMOTE_RAM: usize = 17;
 
 /// A number rounded to `digits` decimals for JSON, `null` when not read
 fn rounded(v: f64, digits: i32) -> Value {
@@ -1703,13 +1831,19 @@ impl Sample {
         Value::Object(free)
     }
 
+    /// The VM's CPU, %, and memory, MiB
+    fn remote_host(&self) -> [Value; 2] {
+        [rounded(self.remote_cpu, 1), rounded(self.remote_ram_mib, 0)]
+    }
+
     /// As a row for the page: its [`Self::numbers`], then the CPU of each
-    /// entry ([`Self::cores`]) and the free space of each disk
-    /// ([`Self::free`])
+    /// entry ([`Self::cores`]), the free space of each disk
+    /// ([`Self::free`]), and the VM's CPU and memory
     fn row(&self) -> Value {
         let mut values = self.numbers();
         values.push(self.cores());
         values.push(self.free());
+        values.extend(self.remote_host());
         Value::Array(values)
     }
 
@@ -1723,12 +1857,14 @@ impl Sample {
         values.insert(8, json!(ids));
         values.push(self.cores());
         values.push(self.free());
+        values.extend(self.remote_host());
         Value::Array(values).to_string()
     }
 
     /// A line of the log on disk back ([`Self::line`], or an earlier
-    /// version's line, whose remote GPU, load, CPU per entry or free space
-    /// are not known); `None` for a torn or foreign line
+    /// version's line, whose remote GPU, load, CPU per entry, free space or
+    /// VM's CPU and memory are not known); `None` for a torn or foreign
+    /// line
     pub fn parse_line(line: &str) -> Option<Self> {
         let values: Vec<Value> = serde_json::from_str(line).ok()?;
         let free_gb = values
@@ -1776,14 +1912,16 @@ impl Sample {
             load: number(13),
             running,
             free_gb,
+            remote_cpu: number(LINE_REMOTE_CPU),
+            remote_ram_mib: number(LINE_REMOTE_RAM),
         })
     }
 }
 
 /// Samples as one, at the last one's time: the mean utilization, power,
-/// CPU and load, the most memory, temperature and RAM, every entry seen
-/// running with its mean CPU while it ran, and each disk's least free
-/// space
+/// CPU and load, the most memory, temperature and RAM (of both machines),
+/// every entry seen running with its mean CPU while it ran, and each
+/// disk's least free space
 pub fn merge(bucket: &[Sample]) -> Sample {
     let Some(last) = bucket.last() else {
         return Sample::default();
@@ -1836,6 +1974,8 @@ pub fn merge(bucket: &[Sample]) -> Sample {
         ram_mib: most(&|s| s.ram_mib),
         running,
         free_gb,
+        remote_cpu: mean(&|s| s.remote_cpu),
+        remote_ram_mib: most(&|s| s.remote_ram_mib),
     }
 }
 
@@ -1919,6 +2059,11 @@ struct Live {
     since_ms: u64,
     /// How it was found: `pgid`, `pid` or `match`
     found_by: String,
+    /// Its main process's short name ([`short_name`]): the one holding
+    /// the most GPU memory, else the one that took the most CPU lately,
+    /// else the newest
+    #[serde(default)]
+    main: Option<String>,
 }
 
 /// An entry's progress: steps done of the total, and the rate seen
@@ -1969,6 +2114,9 @@ struct Snapshot {
     gpu_procs: Vec<ProcInfo>,
     live: HashMap<String, Live>,
     progress: HashMap<String, Progress>,
+    /// What each live entry's log says it does
+    #[serde(default)]
+    activity: HashMap<String, Activity>,
     storage: Storage,
 }
 
@@ -2001,6 +2149,8 @@ struct Inner {
     /// Each live entry's processes
     live: HashMap<String, Live>,
     progress: HashMap<String, Progress>,
+    /// What each live entry's log says it does
+    activity: HashMap<String, Activity>,
     /// (Unix ms, step) seen of each entry, for its rate
     seen: HashMap<String, VecDeque<(u64, f64)>>,
     /// The step of each entry's log and when the sampler first saw it
@@ -2164,6 +2314,7 @@ impl Pipeline {
         inner.gpu_procs = snapshot.gpu_procs;
         inner.live = snapshot.live;
         inner.progress = snapshot.progress;
+        inner.activity = snapshot.activity;
         *self.storage() = snapshot.storage;
     }
 
@@ -2244,6 +2395,7 @@ impl Pipeline {
             gpu_procs: inner.gpu_procs.clone(),
             live: inner.live.clone(),
             progress: inner.progress.clone(),
+            activity: inner.activity.clone(),
             storage: self.storage().clone(),
         }
     }
@@ -2470,6 +2622,7 @@ impl Pipeline {
         // their groups when they lead them); an entry of another machine
         // has none here
         let by_pid: HashMap<u32, &ProcStat> = procs.iter().map(|p| (p.pid, p)).collect();
+        let gpu_of: HashMap<u32, f64> = apps.iter().copied().collect();
         let boot_ms = cpu.map_or(0, |(_, _, boot)| boot * 1000);
         let mut owner: HashMap<u32, String> = HashMap::new();
         let mut live: HashMap<String, Live> = HashMap::new();
@@ -2541,6 +2694,33 @@ impl Pipeline {
                             * 100.0;
                 }
             }
+            // Its main process: the most GPU memory, else the most CPU
+            // since the last sample, else the newest
+            let rank = |pid: &u32| {
+                let proc_ = by_pid[pid];
+                let ticks = inner
+                    .ticks_before
+                    .get(pid)
+                    .map_or(0, |before| proc_.ticks.saturating_sub(*before));
+                (
+                    gpu_of.get(pid).copied().unwrap_or(0.0),
+                    ticks,
+                    proc_.start_ticks,
+                )
+            };
+            info.main = members
+                .iter()
+                .max_by(|a, b| {
+                    let ((gpu_a, ticks_a, start_a), (gpu_b, ticks_b, start_b)) = (rank(a), rank(b));
+                    gpu_a
+                        .total_cmp(&gpu_b)
+                        .then(ticks_a.cmp(&ticks_b))
+                        .then(start_a.cmp(&start_b))
+                })
+                .map(|pid| {
+                    let words = app_words.get(pid).cloned().unwrap_or_else(|| cmdline(*pid));
+                    short_name(&words, &by_pid[pid].comm)
+                });
             info.pids = members;
             live.insert(entry.id.clone(), info);
         }
@@ -2609,10 +2789,8 @@ impl Pipeline {
 
         let reading = gpu.as_ref().ok().and_then(Option::as_ref);
         let number = |v: Option<f64>| v.unwrap_or(f64::NAN);
-        let remote_reading = remote
-            .as_ref()
-            .filter(|remote| remote.fresh)
-            .and_then(|remote| remote.gpu.as_ref());
+        let fresh = remote.as_ref().filter(|remote| remote.fresh);
+        let remote_reading = fresh.and_then(|remote| remote.gpu.as_ref());
         let sample = Sample {
             t_ms: now,
             gpu: GpuSample {
@@ -2640,6 +2818,10 @@ impl Pipeline {
             }),
             running,
             free_gb: storage.free_gb(now),
+            remote_cpu: number(fresh.and_then(|remote| remote.cpu?.percent)),
+            remote_ram_mib: fresh
+                .and_then(|remote| remote.memory)
+                .map_or(f64::NAN, |memory| memory.used as f64 / (1 << 20) as f64),
         };
         inner.samples.push_back(sample.clone());
         inner.remote = remote;
@@ -2687,27 +2869,45 @@ impl Pipeline {
             .cloned()
             .collect();
         let mut progress = HashMap::new();
+        let mut activity = HashMap::new();
         for entry in &running {
             let alive = sample.running.iter().any(|(id, _)| *id == entry.id);
-            if let Some(found) = self.progress_of(&mut inner, entry, alive, now) {
+            // A log only tells of a live entry: an old one may be anything's
+            let log = entry
+                .log
+                .as_deref()
+                .filter(|_| entry.status() == "running" || alive)
+                .map(|log| self.resolve(log))
+                .and_then(|log| Some((tail(&log, LOG_TAIL_BYTES)?, modified_ms(&log))));
+            if let Some(found) = self.progress_of(&mut inner, entry, alive, log.as_ref(), now) {
                 progress.insert(entry.id.clone(), found);
+            }
+            if let Some((text, line_ms)) = &log {
+                let found = Activity {
+                    line_ms: *line_ms,
+                    ..log_activity(text)
+                };
+                activity.insert(entry.id.clone(), found);
             }
         }
         let ids: HashSet<&String> = running.iter().map(|entry| &entry.id).collect();
         inner.seen.retain(|id, _| ids.contains(id));
         inner.moved.retain(|id, _| ids.contains(id));
         inner.progress = progress;
+        inner.activity = activity;
         sample
     }
 
-    /// An entry's progress now, from its run folder or its log, with the
-    /// rate over what was seen of it lately; `alive`: its processes run
-    /// (here, or on the machine whose runner runs it)
+    /// An entry's progress now, from its run folder or its log (`log`, the
+    /// last part of a live entry's and when it was written), with the rate
+    /// over what was seen of it lately; `alive`: its processes run (here,
+    /// or on the machine whose runner runs it)
     fn progress_of(
         &self,
         inner: &mut Inner,
         entry: &Entry,
         alive: bool,
+        log: Option<&(String, Option<u64>)>,
         now: u64,
     ) -> Option<Progress> {
         let mut found = None;
@@ -2748,15 +2948,12 @@ impl Pipeline {
                 });
             }
         }
-        // A log only tells of a live entry: an old one may be anything's.
         // Its end lines count only here, where its `N/M` is the progress: a
         // job's log holds each of its steps, so a run folder's run may be
         // after the end line of the step before it
         if found.is_none()
-            && (entry.status() == "running" || alive)
-            && let Some(log) = entry.log.as_deref().map(|log| self.resolve(log))
-            && let Some(text) = tail(&log, LOG_TAIL_BYTES)
-            && let Some((step, total)) = log_progress(&text)
+            && let Some((text, updated_ms)) = log
+            && let Some((step, total)) = log_progress(text)
         {
             // It moved when the sampler first saw this step
             let moved = inner.moved.entry(entry.id.clone()).or_insert((step, now));
@@ -2767,8 +2964,8 @@ impl Pipeline {
                 step,
                 total: Some(total),
                 source: String::from("log"),
-                ended: log_done(&text),
-                updated_ms: modified_ms(&log),
+                ended: log_done(text),
+                updated_ms: *updated_ms,
                 moved_ms: Some(moved.1),
                 ..Progress::default()
             });
@@ -2914,6 +3111,7 @@ impl Pipeline {
                     })).collect::<Vec<_>>(),
                     "live": inner.live.get(&entry.id).filter(|_| fresh),
                     "progress": inner.progress.get(&entry.id),
+                    "activity": inner.activity.get(&entry.id).filter(|_| fresh),
                     "seen": spans.map(|spans| json!({
                         "first_ms": spans.first().map(|s| s.0),
                         "last_ms": spans.last().map(|s| s.1),
@@ -3627,13 +3825,20 @@ mod tests {
                 .collect(),
             ..Sample::default()
         };
+        let vm = |mut sample: Sample, cpu: f64, ram_mib: f64| {
+            sample.remote_cpu = cpu;
+            sample.remote_ram_mib = ram_mib;
+            sample
+        };
         let merged = merge(&[
-            sample(0, &[("b", 1.0)]),
-            sample(5000, &[("a", f64::NAN), ("b", 3.0)]),
+            vm(sample(0, &[("b", 1.0)]), 10.0, 900.0),
+            vm(sample(5000, &[("a", f64::NAN), ("b", 3.0)]), 30.0, 700.0),
             sample(10000, &[]),
         ]);
         assert_eq!(merged.t_ms, 10000);
         assert_eq!(merged.cpu, 20.0);
+        // The VM's CPU as a mean, its memory as the most, where read
+        assert_eq!((merged.remote_cpu, merged.remote_ram_mib), (20.0, 900.0));
         // Every entry seen, with its mean CPU while it ran; one on another
         // machine stays unknown
         assert_eq!(merged.running.len(), 2);
@@ -3714,6 +3919,8 @@ mod tests {
                 (String::from("pve:rpool"), 839.314),
                 (String::from("linux:/"), 841.9),
             ],
+            remote_cpu: 31.04,
+            remote_ram_mib: 13638.2,
         };
         let line = new.line();
         let values: Vec<Value> = serde_json::from_str(&line).unwrap();
@@ -3721,6 +3928,8 @@ mod tests {
         assert_eq!(values[8], json!(["g-chunk-train", "g-present-dropout"]));
         assert_eq!(values[14], json!({"g-present-dropout": 1.61}));
         assert_eq!(values[15], json!({"pve:rpool": 839.3, "linux:/": 841.9}));
+        assert_eq!(values[LINE_REMOTE_CPU], json!(31.0));
+        assert_eq!(values[LINE_REMOTE_RAM], json!(13638));
         let back = Sample::parse_line(&line).unwrap();
         assert_eq!(back.remote.util, 37.0);
         assert_eq!(back.remote.power_w, 105.0);
@@ -3729,18 +3938,22 @@ mod tests {
         assert!(back.running[0].1.is_nan());
         assert_eq!(back.running[1].1, 1.61);
         assert!(back.free_gb.contains(&(String::from("pve:rpool"), 839.3)));
-        // The version before this one wrote no free space: none read
+        assert_eq!((back.remote_cpu, back.remote_ram_mib), (31.0, 13638.0));
+        // The version before this one wrote no free space: none read, and
+        // no VM's CPU or memory
         let before: Vec<Value> = values[..15].to_vec();
         let back = Sample::parse_line(&Value::Array(before).to_string()).unwrap();
         assert!(back.free_gb.is_empty());
         assert_eq!(back.running[1].1, 1.61);
-        // The page's row: the numbers, then the CPU of each entry and the
-        // free space of each disk
+        assert!(back.remote_cpu.is_nan() && back.remote_ram_mib.is_nan());
+        // The page's row: the numbers, then the CPU of each entry, the free
+        // space of each disk, and the VM's CPU and memory
         let row = new.row();
         assert_eq!(row[8], json!(37));
         assert_eq!(row[12], json!(6.68));
         assert_eq!(row[13], json!({"g-present-dropout": 1.61}));
         assert_eq!(row[14], json!({"pve:rpool": 839.3, "linux:/": 841.9}));
+        assert_eq!((&row[15], &row[16]), (&json!(31.0), &json!(13638)));
     }
 
     #[test]
@@ -3991,6 +4204,12 @@ mod tests {
         assert_eq!(gpu.name, "NVIDIA GeForce RTX 4080 SUPER");
         assert_eq!(gpu.util, Some(37.0));
         assert_eq!(gpu.mem_total_mib, Some(16376.0));
+        // A runner of before tells the GPU alone
+        assert_eq!(
+            (gpu.power_limit_w, gpu.fan, gpu.pstate.as_str()),
+            (None, None, "")
+        );
+        assert!(remote.cpu.is_none() && remote.memory.is_none());
         assert_eq!(remote.processes[0].name, "python.exe");
         assert_eq!(remote.processes[0].memory_mib, None);
         assert_eq!(remote.running(), Some("g-chunk-train"));
@@ -4009,6 +4228,105 @@ mod tests {
         // A file that does not read
         let broken = parse_remote("win11", "{", at, |_| true);
         assert!(!broken.fresh && broken.error.is_some());
+    }
+
+    #[test]
+    fn remote_files_of_now_tell_the_machine_as_this_host_is_told() {
+        let text = r#"{
+  "host": "win11",
+  "at": "2026-09-30T12:31:54-07:00",
+  "ok": true,
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 4080 SUPER",
+    "utilization_percent": 90.0,
+    "memory_used_mib": 4916.0,
+    "memory_total_mib": 16376.0,
+    "temperature_c": 89.0,
+    "power_w": 218.56,
+    "power_limit_w": 320.0,
+    "fan_percent": 100.0,
+    "sm_clock_mhz": 2490.0,
+    "pstate": "P2"
+  },
+  "processes": [{"pid": 4732, "name": "python.exe", "memory_mib": null}],
+  "disk": {"free": 360326111232, "total": 535938723840},
+  "cpu": {"percent": 31.0, "cores": 16},
+  "memory": {"used": 14300585984, "total": 34320936960},
+  "job": null,
+  "runner": {"pid": 53208, "hold": true}
+}"#;
+        let at = parse_time("2026-09-30T12:31:54-07:00").unwrap() as u64;
+        let remote = parse_remote("win11", text, at + 5_000, |_| true);
+        let gpu = remote.gpu.as_ref().unwrap();
+        assert_eq!(gpu.power_limit_w, Some(320.0));
+        assert_eq!((gpu.fan, gpu.sm_mhz), (Some(100.0), Some(2490.0)));
+        assert_eq!(gpu.pstate, "P2");
+        assert_eq!(
+            remote.cpu,
+            Some(HostCpu {
+                percent: Some(31.0),
+                cores: Some(16)
+            })
+        );
+        assert_eq!(
+            remote.memory,
+            Some(HostMemory {
+                used: 14300585984,
+                total: 34320936960
+            })
+        );
+        assert!(remote.hold && remote.running().is_none());
+        // Unreachable, it tells nothing of the machine
+        let down = text.replace("\"ok\": true", "\"ok\": false");
+        let remote = parse_remote("win11", &down, at, |_| true);
+        assert!(remote.gpu.is_none() && remote.cpu.is_none() && remote.memory.is_none());
+    }
+
+    #[test]
+    fn logs_tell_the_step_a_job_runs() {
+        // An agent's job script: a training step, then a scoring step
+        let log = "== start pdk-azu (step 1 of the job) 2026-09-30 01:22:15\n\
+                   [pdk-azu, part 1 of the job] step   500/12000  loss 3.637\n\
+                   == end pdk-azu (exit 0, group peak RSS 5462 MB) 2026-09-30 01:33:03\n\
+                   == start decode-pdk (step 2 of the job) 2026-09-30 01:33:03\n";
+        let activity = log_activity(log);
+        assert_eq!(activity.step.as_deref(), Some("decode-pdk"));
+        assert_eq!(
+            activity.step_ms,
+            parse_time("2026-09-30 01:33:03").map(|t| t as u64)
+        );
+        // The counter in the log is the step before's
+        assert!(!activity.counted);
+        assert_eq!(
+            activity.line.as_deref(),
+            Some("== start decode-pdk (step 2 of the job) 2026-09-30 01:33:03")
+        );
+        // The step counts
+        let counting = log_activity(&format!("{log}step 250/2000 loss 3.1\n"));
+        assert!(counting.counted);
+        assert_eq!(counting.line.as_deref(), Some("step 250/2000 loss 3.1"));
+        // Between steps; a start line without its time
+        let between = log_activity(
+            "== start a (step 1 of the job)\nok\n== end a (exit 0) 2026-09-30 01:00:00\n",
+        );
+        assert_eq!((between.step, between.step_ms), (None, None));
+        let untimed = log_activity("== start a (step 1 of the job)\n");
+        assert_eq!(
+            (untimed.step.as_deref(), untimed.step_ms),
+            (Some("a"), None)
+        );
+        // The win11 VM's job starts no step of its own
+        let vm = log_activity(
+            "== start Wed 09/30/2026 13:01:46.27 in C:\\Users\\cjr\\AgentZero\n\
+             step  3750/12000  loss 3.296\n",
+        );
+        assert_eq!((vm.step, vm.counted), (None, false));
+        // A log without steps: its last line as a progress bar leaves it
+        let plain = log_activity("loading\r50%\r100%\n\n");
+        assert_eq!((plain.step, plain.line.as_deref()), (None, Some("100%")));
+        let long = log_activity(&"x".repeat(LINE_CHARS + 50));
+        assert_eq!(long.line.unwrap().chars().count(), LINE_CHARS + 1);
+        assert_eq!(log_activity(""), Activity::default());
     }
 
     #[test]
