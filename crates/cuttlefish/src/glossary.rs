@@ -318,6 +318,16 @@ pub(crate) fn is_cjk(c: char) -> bool {
     matches!(c as u32, 0x3040..=0x30ff | 0x3400..=0x9fff | 0xac00..=0xd7af)
 }
 
+/// The last characters Chinese players drop from a Salmonid's name
+/// ([`Glossary::partial_in`]): "fish" (simplified and traditional) and
+/// "monster", as the Steelhead's "green hat monster" is said "green hat" and
+/// the Slammin' Lid's "pot lid fish" "pot lid"
+pub const SHORT_FORM_SUFFIXES: [char; 3] = ['\u{9c7c}', '\u{9b5a}', '\u{602a}'];
+
+/// Most terms a short form may belong to before it is too common to
+/// suggest any ([`Glossary::partial_in`])
+pub const MAX_PARTIAL_TERMS: usize = 3;
+
 impl Glossary {
     /// Parses a glossary file's content
     pub fn parse(toml_text: &str) -> Result<Self> {
@@ -404,6 +414,19 @@ impl Glossary {
     /// longer matches win over names inside them (`キンシャケ` is Goldie,
     /// not Chum), and an official name over an alias as long.
     pub fn find_in(&self, text: &str) -> Vec<&Term> {
+        let mut out: Vec<&Term> = Vec::new();
+        for (_, _, ti) in self.spans(text) {
+            let term = &self.terms[ti];
+            if !out.iter().any(|t| t.id == term.id) {
+                out.push(term);
+            }
+        }
+        out
+    }
+
+    /// Where [`Glossary::find_in`] finds its terms: (start, end, term index)
+    /// in the lowercased `text`, in order
+    fn spans(&self, text: &str) -> Vec<(usize, usize, usize)> {
         let hay = text.to_lowercase();
         // (start, end, is an alias, term index) of every occurrence
         let mut hits: Vec<(usize, usize, bool, usize)> = Vec::new();
@@ -437,14 +460,55 @@ impl Glossary {
             }
         }
         taken.sort_by_key(|&(s, _, _, _)| s);
-        let mut out: Vec<&Term> = Vec::new();
-        for (_, _, _, ti) in taken {
-            let term = &self.terms[ti];
-            if !out.iter().any(|t| t.id == term.id) {
-                out.push(term);
+        taken.into_iter().map(|(s, e, _, ti)| (s, e, ti)).collect()
+    }
+
+    /// Possible short forms in `text`: a name or approved alias of three or
+    /// more CJK characters ending in one of [`SHORT_FORM_SUFFIXES`], written
+    /// without it, outside what [`Glossary::find_in`] matches. Candidates
+    /// for the model to judge in context, not matches: the short form may be
+    /// a common word (the Steelhead's "green hat" is also slang for a
+    /// cheated partner). A short form of more than [`MAX_PARTIAL_TERMS`]
+    /// terms says nothing and is dropped. Each is (short form, the name it
+    /// shortens, the term), in order of the short form in `text`.
+    pub fn partial_in(&self, text: &str) -> Vec<(String, &str, &Term)> {
+        let hay = text.to_lowercase();
+        let found = self.spans(text);
+        let free = |s: usize, e: usize| found.iter().all(|f| e <= f.0 || s >= f.1);
+        // (first start, short form, name, term index)
+        let mut hits: Vec<(usize, String, &str, usize)> = Vec::new();
+        for (ti, term) in self.terms.iter().enumerate() {
+            for name in term.names() {
+                let mut chars: Vec<char> = name.to_lowercase().chars().collect();
+                if chars.len() < 3
+                    || !chars.iter().all(|&c| is_cjk(c))
+                    || chars
+                        .pop()
+                        .is_none_or(|c| !SHORT_FORM_SUFFIXES.contains(&c))
+                {
+                    continue;
+                }
+                let short: String = chars.into_iter().collect();
+                let start = hay
+                    .match_indices(&short)
+                    .map(|(s, _)| s)
+                    .find(|&s| free(s, s + short.len()));
+                if let Some(start) = start
+                    && !hits.iter().any(|h| h.1 == short && h.3 == ti)
+                {
+                    hits.push((start, short, name, ti));
+                }
             }
         }
-        out
+        // one hit per short form and term
+        let terms_of = |short: &str| hits.iter().filter(|h| h.1 == short).count();
+        let mut out: Vec<(usize, String, &str, &Term)> = hits
+            .iter()
+            .filter(|h| terms_of(&h.1) <= MAX_PARTIAL_TERMS)
+            .map(|(s, short, name, ti)| (*s, short.clone(), *name, &self.terms[*ti]))
+            .collect();
+        out.sort_by_key(|h| h.0);
+        out.into_iter().map(|(_, s, n, t)| (s, n, t)).collect()
     }
 
     /// `text` followed by every official name of the terms it mentions, so
@@ -616,6 +680,50 @@ impl Glossary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_forms_are_candidates() {
+        let mut toml = String::from(
+            r#"
+            [[term]]
+            id = "steelhead"
+            forms = { zh = ["炸弹鱼"] }
+            aliases = [{ lang = "zh", text = "绿帽怪" }]
+            [[term]]
+            id = "slammin-lid"
+            forms = { zh = ["锅盖鱼"] }
+            [[term]]
+            id = "goldie"
+            forms = { zh = ["金鲑鱼"] }
+            [[term]]
+            id = "jet-squelcher"
+            forms = { zh = ["喷射清洁枪"] }
+            "#,
+        );
+        // Four terms shortened alike say nothing
+        for id in ["a", "b", "c", "d"] {
+            toml.push_str(&alloc::format!(
+                "[[term]]\nid = \"{id}\"\nforms = {{ zh = [\"大熊鱼\"] }}\n"
+            ));
+        }
+        let g = Glossary::parse(&toml).unwrap();
+        let found = g.partial_in("绿帽来了，先处理锅盖和绿帽，再打金鲑鱼，大熊，喷射，帽怪");
+        let found: Vec<(&str, &str, &str)> = found
+            .iter()
+            .map(|(f, n, t)| (f.as_str(), *n, t.id.as_str()))
+            .collect();
+        // Only a name without its last "fish" or "monster": not a fragment
+        // of a name ending otherwise, nor the middle of one; a name matched
+        // whole is no candidate
+        assert_eq!(
+            found,
+            [
+                ("绿帽", "绿帽怪", "steelhead"),
+                ("锅盖", "锅盖鱼", "slammin-lid")
+            ]
+        );
+        assert!(g.partial_in("绿帽怪来了").is_empty());
+    }
 
     #[test]
     fn seed_parses() {

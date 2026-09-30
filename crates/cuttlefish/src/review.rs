@@ -689,8 +689,40 @@ pub fn language_name(code: &str) -> &str {
     }
 }
 
+/// A possible short form in a text ([`Glossary::partial_in`]): the short
+/// form, the name it may stand for, and that name's term
+pub type Partial<'a> = (String, &'a str, &'a Term);
+
+/// The glossary lines of `terms` and of the terms `partial` may mean, then
+/// the possible short forms as "short form → maybe short for name (term)"
+fn glossary_blocks(terms: &[&Term], partial: &[Partial], lang: &str) -> Vec<Block> {
+    let mut all: Vec<&Term> = terms.to_vec();
+    for (_, _, t) in partial {
+        if !all.iter().any(|a| a.id == t.id) {
+            all.push(t);
+        }
+    }
+    let mut out = Vec::new();
+    if !all.is_empty() {
+        out.push(Block::Text(alloc::format!(
+            "<glossary>\n{}</glossary>",
+            Glossary::prompt_lines(&all, Some(lang))
+        )));
+    }
+    if !partial.is_empty() {
+        let lines: String = partial
+            .iter()
+            .map(|(frag, name, t)| alloc::format!("- {frag} → maybe short for {name} ({})\n", t.id))
+            .collect();
+        out.push(Block::Text(alloc::format!(
+            "<possible-short-forms>\n{lines}</possible-short-forms>"
+        )));
+    }
+    out
+}
+
 /// The prompt for a translation into `target` (a language code)
-pub fn translate_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
+pub fn translate_prompt(text: &str, target: &str, terms: &[&Term], partial: &[Partial]) -> Prompt {
     let lang = language_name(target);
     let system = alloc::format!(
         "You translate Splatoon 3 Salmon Run community material (guides, VOD review \
@@ -703,16 +735,12 @@ pub fn translate_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
          (in {lang} slang when the glossary gives one, else the official name). When \
          you are not sure what a slang word means, keep it as written and add one line \
          after the translation saying which word you were unsure of. Output only the \
-         translation (and that line)."
+         translation (and that line). The possible short forms are words of the \
+         text that players may say for a longer name, and may also be ordinary words \
+         with another meaning: take one only when the context is about that thing."
     );
     let lang_key = target.split('-').next().unwrap_or(target);
-    let mut user = Vec::new();
-    if !terms.is_empty() {
-        user.push(Block::Text(alloc::format!(
-            "<glossary>\n{}</glossary>",
-            Glossary::prompt_lines(terms, Some(lang_key))
-        )));
-    }
+    let mut user = glossary_blocks(terms, partial, lang_key);
     user.push(Block::Text(alloc::format!("<text>\n{text}\n</text>")));
     Prompt {
         system,
@@ -725,7 +753,7 @@ pub fn translate_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
 
 /// The prompt explaining a term or callout in `target` (a language code):
 /// what it means and when a player says it
-pub fn explain_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
+pub fn explain_prompt(text: &str, target: &str, terms: &[&Term], partial: &[Partial]) -> Prompt {
     let lang = language_name(target);
     let system = alloc::format!(
         "You are Cuttlefish, an experienced Splatoon 3 Salmon Run player and a kind \
@@ -735,16 +763,12 @@ pub fn explain_prompt(text: &str, target: &str, terms: &[&Term]) -> Prompt {
          glossary lists them). Players use slang and abbreviations: the glossary lists \
          known slang as \"alias → official\"; resolve it through the glossary. If the \
          glossary does not cover it and you are not sure, say so instead of guessing. \
-         Output only the explanation."
+         The possible short forms are words of the text that players may say for a \
+         longer name, and may also be ordinary words with another meaning: take one \
+         only when the context is about that thing. Output only the explanation."
     );
     let lang_key = target.split('-').next().unwrap_or(target);
-    let mut user = Vec::new();
-    if !terms.is_empty() {
-        user.push(Block::Text(alloc::format!(
-            "<glossary>\n{}</glossary>",
-            Glossary::prompt_lines(terms, Some(lang_key))
-        )));
-    }
+    let mut user = glossary_blocks(terms, partial, lang_key);
     user.push(Block::Text(alloc::format!("<term>\n{text}\n</term>")));
     Prompt {
         system,
@@ -899,7 +923,8 @@ pub fn ask(
 /// knowledge store
 pub fn translate(client: &Client, glossary: &Glossary, text: &str, target: &str) -> Result<String> {
     let terms = glossary.find_in(text);
-    let reply = client.send(&translate_prompt(text, target, &terms))?;
+    let partial = glossary.partial_in(text);
+    let reply = client.send(&translate_prompt(text, target, &terms, &partial))?;
     Ok(String::from(reply.text.trim()))
 }
 
@@ -907,7 +932,8 @@ pub fn translate(client: &Client, glossary: &Glossary, text: &str, target: &str)
 /// a knowledge store
 pub fn explain(client: &Client, glossary: &Glossary, text: &str, target: &str) -> Result<String> {
     let terms = glossary.find_in(text);
-    let reply = client.send(&explain_prompt(text, target, &terms))?;
+    let partial = glossary.partial_in(text);
+    let reply = client.send(&explain_prompt(text, target, &terms, &partial))?;
     Ok(String::from(reply.text.trim()))
 }
 
@@ -1388,7 +1414,7 @@ mod tests {
     fn translate_prompts_use_target_names() {
         let g = Glossary::seed();
         let text = "Kill the Steelhead at low tide";
-        let p = translate_prompt(text, "ja", &g.find_in(text));
+        let p = translate_prompt(text, "ja", &g.find_in(text), &[]);
         assert!(p.system.contains("into Japanese"));
         let Block::Text(gl) = &p.user[0] else {
             panic!()
@@ -1400,7 +1426,7 @@ mod tests {
     #[test]
     fn explain_prompts_name_the_term() {
         let g = Glossary::seed();
-        let p = explain_prompt("熊刷", "en", &g.find_in("熊刷"));
+        let p = explain_prompt("熊刷", "en", &g.find_in("熊刷"), &[]);
         assert!(p.system.contains("Explain in English"));
         let Block::Text(gl) = &p.user[0] else {
             panic!()
@@ -1412,8 +1438,28 @@ mod tests {
         );
         assert!(p.schema.is_none());
         // Nothing known: no glossary block, the term alone
-        let p = explain_prompt("gg", "zh", &[]);
+        let p = explain_prompt("gg", "zh", &[], &[]);
         assert_eq!(p.user.len(), 1);
+        // A possible short form: its term's glossary line, then the candidate
+        let g = Glossary::parse(
+            r#"
+            [[term]]
+            id = "steelhead"
+            forms = { en = ["Steelhead"], zh = ["炸弹鱼"] }
+            aliases = [{ lang = "zh", text = "绿帽怪" }]
+            "#,
+        )
+        .unwrap();
+        let text = "绿帽";
+        let p = explain_prompt(text, "en", &g.find_in(text), &g.partial_in(text));
+        let [Block::Text(gl), Block::Text(short), _] = &p.user[..] else {
+            panic!()
+        };
+        assert!(gl.contains("- steelhead ("), "{gl}");
+        assert_eq!(
+            short,
+            "<possible-short-forms>\n- 绿帽 → maybe short for 绿帽怪 (steelhead)\n</possible-short-forms>"
+        );
     }
 
     #[test]
