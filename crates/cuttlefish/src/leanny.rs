@@ -976,6 +976,15 @@ pub fn name_table(data: &Data) -> Table {
 /// path below it
 pub const IMAGES: &str = "https://leanny.github.io/splat3/images";
 
+/// Salmon Run specials of the data that Salmon Run never hands out: the
+/// Trizooka's and the Splashdown's `Coop` rows exist, but no player gets
+/// them. The nine it does hand out are the ones Inkipedia's Salmon Run Next
+/// Wave page lists (revision 737727: Crab Tank, Killer Wail 5.1, Booyah
+/// Bomb, Triple Inkstrike, Inkjet, Reefslider, Wave Breaker, and since
+/// 6.0.0 Kraken Royale and Triple Splashdown), the same nine the Eggstra
+/// Work scenarios of Lean's data hand out
+pub const SPECIALS_NOT_HANDED_OUT: [&str; 2] = ["SpUltraShot_Coop", "SpSuperLanding_Coop"];
+
 /// A Salmon Run weapon or special as a picker lists it (the lab's
 /// Techniques panel), from the raw copies of the newest version
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -986,7 +995,8 @@ pub struct Item {
     pub key: String,
     /// The game's number for it (`Id`); the game lists them in its order
     pub id: u64,
-    /// A Grizzco weapon (`IsCoopRare`)
+    /// A Grizzco weapon (`IsCoopRare`): Salmon Run's rare weapons, eight in
+    /// Splatoon 3 (Inkipedia's Grizzco Industries page)
     pub grizzco: bool,
     /// Its picture below [`IMAGES`] ([`icon_url`]): a weapon's flat icon,
     /// its battle form's (`weapon_flat/Path_Wst_Shooter_Normal_00.png`) or,
@@ -1003,11 +1013,16 @@ pub struct Item {
     pub search: Vec<String>,
 }
 
-/// The Salmon Run weapons (Grizzco's included) and specials of the newest
+/// Salmon Run's weapon pool and the specials it hands out, from the newest
 /// version in the raw copies (`<knowledge>/raw/leanny/`, fetched by
-/// [`ingest`]): the weapons, then the specials, each in the game's order,
-/// with their names and Pedia term from `glossary` (the store's, which has
-/// Lean's name table merged in). Empty when nothing was fetched yet.
+/// [`ingest`]), with their names and Pedia term from `glossary` (the
+/// store's, which has Lean's name table merged in). The weapons are the
+/// `Coop` rows: one per main weapon, which its battle kits point to (no
+/// kit, variant or scope has one of its own), and the Grizzco weapons
+/// (`IsCoopRare`); the specials are the `Coop` rows but
+/// [`SPECIALS_NOT_HANDED_OUT`]. The weapons come first, the Grizzco ones
+/// last, then the specials, each in the game's order. Empty when nothing
+/// was fetched yet.
 pub fn items(knowledge: &Path, glossary: &Glossary) -> Result<Vec<Item>> {
     let dir = knowledge.join("raw").join(RAW);
     let read = |rel: &str| -> Result<Value> {
@@ -1082,13 +1097,16 @@ pub fn items(knowledge: &Path, glossary: &Glossary) -> Result<Vec<Item>> {
     }
     for row in specials.iter().filter(coop) {
         let key = row_id(row);
+        if SPECIALS_NOT_HANDED_OUT.contains(&key) {
+            continue;
+        }
         let icon = alloc::format!(
             "subspe/Wsp_{}00.png",
             key.strip_suffix("_Coop").unwrap_or(key)
         );
         out.push(item("special", row, SPECIAL_NAMES, icon));
     }
-    out.sort_by_key(|i| (i.kind != "weapon", i.id));
+    out.sort_by_key(|i| (i.kind != "weapon", i.grizzco, i.id));
     Ok(out)
 }
 
@@ -1958,7 +1976,10 @@ mod tests {
                 {"__RowId": "Roller_Bear_Coop", "Type": "Coop", "Id": 21900, "IsCoopRare": true},
                 {"__RowId": "Shooter_Normal_00", "Type": "Versus", "Id": 40,
                  "WeaponInfoForCoop": "Work/Gyml/Shooter_Normal_Coop.spl__WeaponInfoMain.gyml"},
-                {"__RowId": "Shooter_Normal_Coop", "Type": "Coop", "Id": 20040, "IsCoopRare": false}
+                // A kit of the same main weapon: no item of its own
+                {"__RowId": "Shooter_Normal_01", "Type": "Versus", "Id": 41},
+                {"__RowId": "Shooter_Normal_Coop", "Type": "Coop", "Id": 20040, "IsCoopRare": false},
+                {"__RowId": "Saber_Normal_Coop", "Type": "Coop", "Id": 28000, "IsCoopRare": false}
             ])
             .to_string(),
         )
@@ -1968,7 +1989,9 @@ mod tests {
             json!([
                 {"__RowId": "SpJetpack_Coop", "Type": "Coop", "Id": 20010},
                 {"__RowId": "SpNiceBall", "Type": "Versus", "Id": 6},
-                {"__RowId": "SpNiceBall_Coop", "Type": "Coop", "Id": 20006}
+                {"__RowId": "SpNiceBall_Coop", "Type": "Coop", "Id": 20006},
+                // Its Coop row exists, but Salmon Run never hands it out
+                {"__RowId": "SpUltraShot_Coop", "Type": "Coop", "Id": 20001}
             ])
             .to_string(),
         )
@@ -2015,11 +2038,13 @@ mod tests {
             .push(String::from("Hero Shot"));
         let found = items(&root, &glossary).unwrap();
         let keys: Vec<&str> = found.iter().map(|i| i.key.as_str()).collect();
-        // Weapons, then specials, each by the game's number
+        // One item per main weapon, the Grizzco ones last, then the specials
+        // Salmon Run hands out, each by the game's number
         assert_eq!(
             keys,
             [
                 "Shooter_Normal_Coop",
+                "Saber_Normal_Coop",
                 "Roller_Bear_Coop",
                 "SpNiceBall_Coop",
                 "SpJetpack_Coop"
@@ -2035,15 +2060,16 @@ mod tests {
         // languages are neither
         assert!(!shot.names.contains_key("fr"));
         assert_eq!(shot.search, ["Hero Shot", "shot"]);
-        let roller = &found[1];
+        let roller = &found[2];
         assert!(roller.grizzco);
         assert_eq!(roller.icon, "weapon_flat/Path_Wst_Roller_Bear.png");
         // Not in the glossary: no term, no names
         assert_eq!(roller.term, None);
         assert!(roller.names.is_empty());
-        assert_eq!(found[2].kind, "special");
-        assert_eq!(found[2].icon, "subspe/Wsp_SpNiceBall00.png");
-        assert_eq!(found[2].term.as_deref(), Some("booyah-bomb"));
+        let ball = &found[3];
+        assert_eq!(ball.kind, "special");
+        assert_eq!(ball.icon, "subspe/Wsp_SpNiceBall00.png");
+        assert_eq!(ball.term.as_deref(), Some("booyah-bomb"));
 
         // Only the pictures pickers show are ever asked of Lean's site
         assert_eq!(

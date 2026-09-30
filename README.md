@@ -164,13 +164,16 @@ Studio's preview pauses, and each app stops its own work while hidden.
   in five groups, one open at a time: **Movement** (squid roll, sub strafe /
   inertia cancel, main strafe, fast wall climb, small hop / big jump),
   **Egg handling** (grabbing eggs without cancelling ink recovery, egg
-  throw, egg runs at the basket), **Weapons** (every Salmon Run weapon,
-  Grizzco's too, one item each: a span shows all its uses), **Sub weapon**
-  (Splat Bomb throw) and **Specials**, plus any technique you add. The
-  weapons and specials, with their English, Japanese and Chinese names and
-  their icons, come from Lean's datamine once it is imported (Cuttlefish →
-  Knowledge → Game data (Lean)); the lab fetches each icon from Lean's site
-  into its local cache the first time it shows. Pick an item (**/** finds
+  throw, egg runs at the basket), **Weapons** (Salmon Run's weapon pool, one
+  item per main weapon, no kits or scopes: a span shows all its uses; the
+  eight Grizzco weapons last, under their own head), **Sub weapon** (Splat
+  Bomb throw) and **Specials** (the nine Salmon Run hands out, Kraken Royale
+  and Triple Splashdown among them; no Trizooka or Splashdown), plus any
+  technique you add. The weapons and specials, with their English, Japanese
+  and Chinese names and their icons, come from Lean's datamine once it is
+  imported (Cuttlefish → Knowledge → Game data (Lean)); the lab fetches each
+  icon from Lean's site into its local cache the first time it shows. Pick
+  an item (**/** finds
   one by any of its names, ↑ ↓ and Enter; keys 1–9 pick in the open group),
   then while recording mark a span with **Start span** / **Stop span** (M),
   or **Mark last** N seconds (B); **Undo** (U) removes the last marker (or

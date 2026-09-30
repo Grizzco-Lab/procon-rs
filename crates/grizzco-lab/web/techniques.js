@@ -1,7 +1,8 @@
 // Technique markers: spans of a recording labelled as what was practised,
 // for labelled examples and as a reminder of what to record. The Studio's
-// Techniques panel lists the items in groups (movement, egg handling, every
-// Salmon Run weapon with Grizzco's, the sub weapon, the specials), each
+// Techniques panel lists the items in groups (movement, egg handling,
+// Salmon Run's weapon pool with the Grizzco weapons last under a head of
+// their own, the sub weapon, the specials Salmon Run hands out), each
 // folded or open with how many of its items are recorded; while recording
 // it marks spans (started and stopped by hand, or the last few seconds)
 // through /api/command. They are saved in the session's session.json as
@@ -98,6 +99,8 @@ function loadGameItems() {
     .then(async (response) => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
+      // In the lab's order: the weapons, the Grizzco ones last, then the
+      // specials
       gameItems.list = data.items.map((item) => ({
         id: item.key,
         // The groups of the weapons and specials are named as their kinds
@@ -107,6 +110,7 @@ function loadGameItems() {
         ja: item.names.ja ?? "",
         term: item.term ?? null,
         icon: item.icon,
+        grizzco: item.grizzco,
         search: item.search,
       }));
       gameItems.failed = "";
@@ -311,7 +315,7 @@ function itemRow(tech, { picked, count, key = "", hit = false, tag = false }) {
     ? `<img class="tech-icon" src="${iconUrl(tech.icon)}" alt="" loading="lazy" decoding="async" />`
     : "";
   const group = tag
-    ? `<span class="tech-tag">${escapeHtml(t(`tech.group.${tech.group}`))}</span>`
+    ? `<span class="tech-tag">${escapeHtml(t(tech.grizzco ? "tech.grizzco" : `tech.group.${tech.group}`))}</span>`
     : "";
   const classes = `tech-item${isMarking(tech) ? " is-open" : ""}${hit ? " is-hit" : ""}`;
   return `<li class="${classes}">
@@ -333,17 +337,15 @@ function dataNote() {
   return t("tech.data.none", { link });
 }
 
-/** A group: its head (folded or open, how many of its items are recorded,
- * marks for the item picked or being marked) and, open, its items, the
- * first nine with their keys */
-function groupBlock(group, items, { picked, count }) {
-  const open = techPanel.group === group.id;
+/** How many of `items` are recorded (the checklist) or marked (this
+ * session), as a head shows it: its count, the color level and what it
+ * counts; "…" while not `known` */
+function tallyOf(items, count, known = true) {
   const counts = items.map(count);
-  const known =
-    counts.every((n) => n != null) && !(group.data && !gameItems.list);
+  const ready = known && counts.every((n) => n != null);
   const done = counts.filter((n) => n > 0).length;
   const all = techPanel.mode === "all";
-  const tally = !known
+  const text = !ready
     ? "…"
     : items.length
       ? t(all ? "tech.group.recorded" : "tech.group.marked", {
@@ -351,25 +353,40 @@ function groupBlock(group, items, { picked, count }) {
           n: items.length,
         })
       : "–";
-  const note = t(all ? "tech.group.recordedNote" : "tech.group.markedNote");
   // Green once every item is recorded
   const level =
-    !known || !done ? "" : done < items.length ? " is-some" : " is-done";
+    !ready || !done ? "" : done < items.length ? " is-some" : " is-done";
+  const note = t(all ? "tech.group.recordedNote" : "tech.group.markedNote");
+  return `<span class="tech-group-count${level}" title="${escapeHtml(note)}">${escapeHtml(text)}</span>`;
+}
+
+/** A group: its head (folded or open, how many of its items are recorded,
+ * marks for the item picked or being marked) and, open, its items, the
+ * first nine with their keys; the Grizzco weapons come last in the
+ * Weapons, under a head of their own */
+function groupBlock(group, items, { picked, count }) {
+  const open = techPanel.group === group.id;
   const marking = items.some(isMarking);
   const hasPicked = items.some((tech) => itemKey(tech) === itemKey(picked));
   const classes = `tech-group${open ? " is-open" : ""}${marking ? " is-marking" : ""}${hasPicked ? " has-picked" : ""}`;
   const head = `<button type="button" class="tech-group-head" data-group="${group.id}" aria-expanded="${open}">
       <span class="tech-chevron" aria-hidden="true"></span>
       <span class="tech-group-name">${escapeHtml(t(`tech.group.${group.id}`))}</span>
-      <span class="tech-group-count${level}" title="${escapeHtml(note)}">${escapeHtml(tally)}</span>
+      ${tallyOf(items, count, !(group.data && !gameItems.list))}
     </button>`;
   if (!open) return `<li class="${classes}">${head}</li>`;
+  const rare = items.filter((tech) => tech.grizzco);
+  const rows = items.map((tech, i) => {
+    const row = itemRow(tech, {
+      picked,
+      count,
+      key: i < 9 ? String(i + 1) : "",
+    });
+    if (!tech.grizzco || items[i - 1]?.grizzco) return row;
+    return `<li class="tech-subhead"><span>${escapeHtml(t("tech.grizzco"))}</span>${tallyOf(rare, count)}</li>${row}`;
+  });
   const body = items.length
-    ? `<ul class="tech-items">${items
-        .map((tech, i) =>
-          itemRow(tech, { picked, count, key: i < 9 ? String(i + 1) : "" }),
-        )
-        .join("")}</ul>`
+    ? `<ul class="tech-items">${rows.join("")}</ul>`
     : `<p class="panel-note tech-empty">${group.data ? dataNote() : ""}</p>`;
   const credit =
     group.data && items.length

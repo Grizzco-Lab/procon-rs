@@ -1003,6 +1003,7 @@ I18N.zh = {
   "tech.group.weapon": "武器",
   "tech.group.sub": "副武器",
   "tech.group.special": "特殊武器",
+  "tech.grizzco": "熊先生印章武器",
   "tech.group.recorded": "已录 {done} / {n}",
   "tech.group.recordedNote": "在任意一场录制中已有样例的项目",
   "tech.group.marked": "本场 {done} / {n}",

@@ -516,14 +516,22 @@ function drawMarkers() {
         const key = itemKey(tech);
         return `<option value="${escapeHtml(key)}" ${key === current ? "selected" : ""}>${escapeHtml(label)}</option>`;
       };
-      // The Techniques panel's groups, then the marker's own name when no
-      // item of the lists is it
+      // The Techniques panel's groups (the Grizzco weapons apart), then the
+      // marker's own name when no item of the lists is it
       const options =
-        TECH_GROUPS.map((group) => {
+        TECH_GROUPS.flatMap((group) => {
           const items = list.filter((tech) => tech.group === group.id);
-          if (!items.length) return "";
-          return `<optgroup label="${escapeHtml(t(`tech.group.${group.id}`))}">${items.map(option).join("")}</optgroup>`;
-        }).join("") +
+          return [
+            [t(`tech.group.${group.id}`), items.filter((x) => !x.grizzco)],
+            [t("tech.grizzco"), items.filter((x) => x.grizzco)],
+          ];
+        })
+          .filter(([, items]) => items.length)
+          .map(
+            ([label, items]) =>
+              `<optgroup label="${escapeHtml(label)}">${items.map(option).join("")}</optgroup>`,
+          )
+          .join("") +
         (list.some((tech) => itemKey(tech) === current) ? "" : option(marker));
       const seconds = ((b - a) / info.fps).toFixed(1);
       return `<li class="i-marker" data-i="${i}">

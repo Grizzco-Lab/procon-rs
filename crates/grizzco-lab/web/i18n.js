@@ -1067,6 +1067,7 @@ const I18N = {
     "tech.group.weapon": "Weapons",
     "tech.group.sub": "Sub weapon",
     "tech.group.special": "Specials",
+    "tech.grizzco": "Grizzco weapons",
     "tech.group.recorded": "recorded {done} / {n}",
     "tech.group.recordedNote": "Items with an example in any session",
     "tech.group.marked": "marked {done} / {n}",
