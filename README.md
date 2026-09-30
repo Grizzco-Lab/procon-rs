@@ -89,7 +89,11 @@ Everything runs from the PC.
    It builds it first (`cargo build --release -p grizzco-lab`): after an
    update of the code that takes about 15–45 s, after a change of
    dependencies or a toolchain update over a minute; the dashboard answers
-   once it is built.
+   once it is built. Ctrl-C stops it step by step, each step in the log:
+   AgentZero, the recording (its file finished), what the page started,
+   the capture, then the requests still under way, which get 2 s before
+   they are left and named. A second Ctrl-C quits at once (exit code 130),
+   naming the step it cut short.
 
 3. Open `http://<pc>:8090`.
 
@@ -151,7 +155,13 @@ Studio's preview pauses, and each app stops its own work while hidden.
   low-latency H.264 played by the browser, with its delay shown next to the
   title; **Inputs** draws the sticks, pressed buttons and turn rates over it,
   delayed to match the picture. A capture card can only be opened by one
-  program, so close OBS first.
+  program, so close OBS first. While the lab reads the card itself, the
+  Studio's **Capture card** chip in the top bar tells how many frames the
+  card sent, how many it sent corrupted or short (skipped) and how many
+  its driver dropped, since the reader started and in the file being
+  recorded (its tooltip); neither kind reaches a recording, as the frame
+  before stands in for each, so the video keeps its timing. It turns amber
+  while frames are being lost, or once the recording lost some.
 - **Controller**: a 3D Pro Controller (three.js from a CDN; a flat drawing
   without WebGL) with the battery level. **Splatoon mode** tracks the
   controller's real pose from the gyro and accelerometer, Y recenters it, and
@@ -831,6 +841,16 @@ runs now, what waits and why, and what came out.
 - **Results** and **History**: what came out, newest first, each with its
   conclusion and next step; open a result for its question, loss curve and
   log.
+- **Storage**: every VM's disk is a thin volume on the Proxmox host's ZFS
+  pool `rpool`, and a full pool hangs the host and both VMs. The lab reads
+  the host's pools once a minute (`ssh pve zpool list`, `[pipeline]
+  storage_host` and `storage_command`; a host that does not answer in 30 s
+  is given up until the next minute), this host's `/`, and the VM's `C:`
+  from its runner's file. While `rpool` runs low (amber: under 300 GB free
+  or 85 % used; red: under 150 GB, AgentZero's storage guard's thresholds)
+  or has no fresh reading, a banner tops this page and a chip shows in the
+  top bar of every app, with every disk's numbers in its tooltip. The
+  samples keep each disk's free space, so the history on disk has it too.
 
 ## Recordings
 
@@ -843,7 +863,7 @@ prefix's folder must exist. Before a recording day, go through
 |---|---|
 | `controller.bin` | 80-byte frames, little endian: Unix ms on the Pi (u64), report size (u8, 0 for a heartbeat), sequence number (u32), µs from the proxy reading the report to the Switch taking it (u16, 0 if unknown), 1 padding byte, the 64-byte HID report |
 | `video-01.mkv`, `video-02.mkv`, … | One file per stretch between pauses: constant-rate H.264 with a keyframe every second, plus an Opus sound track (48 kHz stereo) when "Record sound" is on |
-| `session.json` | Start/stop times, the proxy's address and clock offset, frame and dropped-frame counts, the video input, size and frame rate, each file's first-frame time (`start_unix_ms`, and `audio_start_unix_ms` with sound), `game_settings` and, if any were marked, `markers`: `[{kind: "technique", label, term?, t_start_ms, t_end_ms, created_ms}]` in PC Unix ms (the controller frames' clock); after a bot run, `bot`: `{own_session, log, plays: [{checkpoint, cpu, limits, seconds, start_ms, end_ms, ended, sent}], takeovers: [{t_start_ms, t_end_ms, channels, buttons}]}` in the same clock |
+| `session.json` | Start/stop times, the proxy's address and clock offset, frame and dropped-frame counts, the video input, size and frame rate, each file's first-frame time (`start_unix_ms`, and `audio_start_unix_ms` with sound), `game_settings`, each file's `capture` when the lab read the capture card itself (`{frames, corrupted, dropped}`: the frames the card sent while it recorded, the corrupted or short ones skipped and those its driver dropped; the frame before stands in for each) and, if any were marked, `markers`: `[{kind: "technique", label, term?, t_start_ms, t_end_ms, created_ms}]` in PC Unix ms (the controller frames' clock); after a bot run, `bot`: `{own_session, log, plays: [{checkpoint, cpu, limits, seconds, start_ms, end_ms, ended, sent}], takeovers: [{t_start_ms, t_end_ms, channels, buttons}]}` in the same clock |
 | `agentzero.jsonl` | Bot runs only: one line per action of the policy, with `t_ms` (PC Unix ms), the frame it saw (`seen`, `captured_ms`), `buttons` and `button_probs`, the sticks and gyro it wanted (`send`) and the line `sent` after the limits (null while it only watched) |
 
 To line them up on the PC's clock:
@@ -904,7 +924,7 @@ Both programs take `--config <path>`.
 | `[cuttlefish]` | Optional: `reviews` (one folder per review with its video, and the translator's `translations.jsonl`; default `Reviews` next to the root), `knowledge` (the knowledge store with its `inbox/`, default `Knowledge` next to the root), `backend` (`auto`, `api` or `claude-cli`), `model` and `translate_model` |
 | `[vision]` | Optional: `results` (default `Vision` next to the root), `size` (COCO model first chosen: `n`, `s` or `m`), `weights` + `classes` + `weights_size` (your own model), `confidence` (0.25), `detector` (the Salmon Run detector, default `http://127.0.0.1:7341`), `detector_command` and `detector_dir` (what Start detector runs, default `uv run agentzero-detect-serve --port <port>` in `../AgentZero`) |
 | `[predictor]` | Optional: `agentzero` (the AgentZero folder, default `../AgentZero`) and `results` (stored predictions, default `Predictions` next to the root) |
-| `[pipeline]` | Optional: `queue` (the experiment queue agents keep, default `runs/queue.json` in `[predictor] agentzero`) |
+| `[pipeline]` | Optional: `queue` (the experiment queue agents keep, default `runs/queue.json` in `[predictor] agentzero`), `storage_host` (the Proxmox host whose ZFS pools are watched over ssh, default `pve`, `""` for none) and `storage_command` (what runs there, default `zpool list -Hp -o name,size,alloc,free,cap,frag`) |
 | `[logging]` | `level`: error, warn, info, debug or trace |
 
 `proxy.toml` (USB proxy, on the Pi):
@@ -941,6 +961,17 @@ as with Tailscale Funnel).
   has been plugged into the console itself). The proxy resets it at start to
   force USB; if it happens while running, replug it and restart the proxy.
 - **No video**: a capture card can only be opened by one program; close OBS.
+- **"No frames from /dev/video0 in 1500 ms, reopening it"** at start: the
+  Elgato 4K X streams only on every other start, so the lab reopens it; it
+  goes on while the console sends no picture.
+- **"The capture card lost N frames … skipped"**: the first loss is logged
+  at once, then at most a line a minute while it goes on, with the rate
+  per 1000 frames. A few at the start are harmless; a steady rate means
+  the card's USB link struggles (here: the VM's USB passthrough, which
+  suffers when the host is busy). Either way nothing broken reaches a
+  recording; each file's count is in `session.json` (`capture`).
+- **Ctrl-C takes a while**: the log says which step it is in (see
+  [Quick start](#quick-start)); a second Ctrl-C quits at once.
 - **Switch asleep**: the proxy logs "Switch stopped taking input" once and
   drops reports until it wakes. Home then signals USB remote wakeup
   (`crates/procon-proxy/src/wake.rs`). The Switch 2 ignores it, as it does

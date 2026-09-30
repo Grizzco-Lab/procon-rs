@@ -93,7 +93,8 @@ stays there), and `uv` rebuilds it when the Rust sources change.
 | `src/recorder.rs` | Session folders and `controller.bin`: start/pause/resume/stop |
 | `src/config.rs` | The TOML loader and the `[logging]` section both config files have |
 | **`crates/grizzco-lab/`** | **Grizzco Lab on the PC, one module per app** |
-| `src/main.rs` | Binary `grizzco-lab` (`config.toml`, read by `src/config.rs`): frame receiver, video, recorder, replay player, dashboard |
+| `src/main.rs` | Binary `grizzco-lab` (`config.toml`, read by `src/config.rs`): frame receiver, video, recorder, replay player, dashboard, and the exit on Ctrl-C |
+| `src/exit.rs` | The exit's step under way and the blocking work in flight, named (`exit::blocking` runs every request's file, ffmpeg or model work), so a slow exit says what it waits for |
 | `src/web.rs` | Dashboard server (warp): page, WebSocket, command API, and every app's routes under its prefix |
 | `src/studio.rs` | The Studio app's coordinator: sessions, `session.json`, dashboard commands, saved settings, technique markers (open span, mark last N s, undo; each with its kind and item id, a technique or Lean's key of a weapon or special; `web/techniques.js` is their panel, the weapons and specials from `GET /api/cuttlefish/game-items`) |
 | `src/studio/player.rs` | The Studio's Replay panel: plays actions to the replay port |
@@ -183,7 +184,15 @@ Paths in this and the following sections are in `crates/grizzco-lab/`.
   frame passes four of its threads before a pipe; on the Elgato 4K X at
   1080p60 the policy's hand-off fell from 26.9 ms to 17.8 (median), most of
   what is left being the card's own transfer of a frame over one frame
-  period. When the device cannot be opened this way, ffmpeg reads it.
+  period. `pump` also counts the card's frames (`CaptureCounts`): every
+  frame, the corrupted or short ones it skips and the ones the driver
+  dropped (gaps in its sequence numbers); the frame before stands in for
+  either on the constant rate. The status has the counts since the reader
+  started and since the file being recorded started (the Studio's chip),
+  each file's own go into `session.json` (`capture`), and the log has the
+  first loss at once and then, while losses go on, a line a minute with
+  their rate (`LossLog`), so a burst at the start reads apart from a
+  steady loss. When the device cannot be opened this way, ffmpeg reads it.
   Otherwise the grabber's second output (fd 3) is the live policy's frames
   (see the Predictor below). Every raw output runs `-threads 1`, since
   ffmpeg's rawvideo encoder is frame threaded and held a frame or two back,
@@ -206,7 +215,20 @@ fragments as binary), `POST /api/command` (a `studio::Command` such as
 `src/vision.rs`), `/api/predictor/...` (see `src/predictor.rs`) and
 `/api/pipeline/...` (see `src/pipeline.rs`). Everything
 that reads files, runs ffmpeg or a model is kept off the async workers
-(`spawn_blocking`, or a thread of its own for jobs).
+(`exit::blocking`, tokio's `spawn_blocking` with the work named, or a
+thread of its own for jobs).
+
+Ctrl-C stops the lab in steps, each logged (`exit::step`): AgentZero (the
+controller first), the recording (ffmpeg finishes the file,
+`session.json` gets its end), the tracker, detector and prediction the page
+started (SIGTERM to each group, SIGKILL after 5 s: `end_group`), the
+capture, then the requests' blocking work, which gets 2 s before the
+runtime goes without waiting. A tokio runtime dropped waits for every
+blocking task, as long as they take: a read on the Dropbox mount with a
+cold cache or an answer from the model can hold the exit for minutes. Tokio's
+SIGINT handler replaces the default for the rest of the process, so the
+lab listens for a second Ctrl-C itself, which exits at once (code 130),
+naming the step and the work it cut short (`exit::doing`).
 
 Startup does nothing slow before the server listens: the last replay file
 (`Player::restore`, which keeps naming the file until it is loaded, so saved
@@ -559,12 +581,25 @@ which entry (running entries claim theirs first), each live entry's CPU,
 RSS and GPU memory, and when each was seen running; it keeps 12 hours of
 samples in memory for the timeline, averaged down to 720 points for a
 window, each sample with the entries seen running and the cores each took.
+The same thread watches the disks (`Storage`): the Proxmox host's ZFS pools
+(`[pipeline] storage_host`, default `pve`: every VM's disk is a thin zvol
+on `rpool`, and a full pool hangs the host and both VMs), read with `ssh
+<host> zpool list -Hp ...` once a minute by a `PoolProbe` the sampler looks
+at without waiting (given up after 30 s, so a hung host never stalls the
+samples), this host's `/` (statvfs) and the VM's `C:` from its runner's
+file (`disk`). `pool_level` has AgentZero's storage guard's thresholds
+(low under 300 GB free or at 85 % used, critical under 150 GB); a reading
+older than 5 minutes, or failing, makes the level unknown. The `state`
+answer has the disks and the level; the `/ws` status carries them while
+`rpool` is not fine (`Pipeline::storage_alert`), for the top bar's chip in
+every app, and the page shows a banner.
+
 Each sample is also appended to `pipeline-gpu.jsonl` in the local cache
 (`~/.cache/procon-cuttlefish`) and read back at start, so a restart keeps
 the timeline; the log keeps a week, older than 12 hours one row a minute.
 Its lines keep the first version's layout (eight numbers, then the running
-ids) and add the VM's GPU, the load and each entry's cores after it, so
-either version reads the other's lines. Progress comes from the run
+ids) and add the VM's GPU, the load, each entry's cores and each disk's
+free space in GB after it, so every version reads the others' lines. Progress comes from the run
 folder's `metrics.jsonl`, read as it grows (whole lines only, from the
 start again when the file shrinks), with the total from `args.json`, else
 from the last `N/M` in the log of a live entry; the ETA comes from the
