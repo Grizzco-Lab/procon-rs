@@ -3,11 +3,19 @@
 //! Runs on the machine with the capture card. It receives controller frames
 //! from `procon-proxy` (on the Raspberry Pi), captures video with ffmpeg and records both
 //! into session folders.
+//!
+//! Ctrl-C stops it step by step, each logged: AgentZero, the recording
+//! (its video file finished), the services the page started, the capture,
+//! then the web server's requests, which get [`REQUESTS_PATIENCE`] before
+//! they are left unfinished and named (see [`grizzco_lab::exit`]). A second
+//! Ctrl-C quits at once (exit code 130), naming what it cut short.
 
 use alloc::sync::Arc;
 use clap::Parser;
+use core::time::Duration;
 use grizzco_lab::config::LabConfig;
 use grizzco_lab::cuttlefish::Cuttlefish;
+use grizzco_lab::exit;
 use grizzco_lab::inspect::Inspector;
 use grizzco_lab::inspect::follow::{self, Follow};
 use grizzco_lab::pipeline::{self, Pipeline};
@@ -23,8 +31,14 @@ use procon_core::dump::MultiDumper;
 use procon_core::recorder::{Recorder, RecorderState};
 use procon_core::stream::{self, LinkStats};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
+use tokio::signal::unix::{SignalKind, signal};
 
 extern crate alloc;
+
+/// How long the exit waits for the requests still under way (a read on a
+/// network mount, ffmpeg, the model) before it leaves them unfinished
+const REQUESTS_PATIENCE: Duration = Duration::from_secs(2);
 
 /// Grizzco Lab: records Nintendo Switch gameplay with the Pro Controller's input
 #[derive(Parser)]
@@ -272,31 +286,71 @@ fn main() -> anyhow::Result<()> {
     ));
 
     let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
-        tokio::select! {
-            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, Arc::clone(&vision), Arc::clone(&predictor), Arc::clone(&online), Arc::clone(&follow), pipeline, &config.web) => {}
-            _ = tokio::signal::ctrl_c() => {
-                // AgentZero may be playing the Switch: the controller first
-                tokio::task::block_in_place(|| online.shutdown());
-                // Let ffmpeg finish the video file and session.json get its end time
-                if studio.recorder.status().state != RecorderState::Idle {
-                    log::info!("Stopping the recording before exit");
-                    if let Err(e) = tokio::task::block_in_place(|| studio.run(Command::Stop)) {
-                        log::error!("Failed to stop recording: {:#}", e);
-                    }
-                }
-            }
-        }
+    // Tokio's SIGINT handler replaces the default (exit) for the rest of
+    // the process: this listener hears the second Ctrl-C too
+    let (mut interrupts, interrupted) = rt.block_on(async {
+        let mut interrupts = signal(SignalKind::interrupt())?;
+        let interrupted = tokio::select! {
+            _ = web::serve(feed, Arc::clone(&studio), inspector, cuttlefish, Arc::clone(&vision), Arc::clone(&predictor), Arc::clone(&online), Arc::clone(&follow), pipeline, &config.web) => false,
+            _ = interrupts.recv() => true,
+        };
+        anyhow::Ok((interrupts, interrupted))
+    })?;
+    if interrupted {
+        log::info!("Ctrl-C: stopping the lab (Ctrl-C again quits at once)");
+    } else {
+        log::error!("The dashboard's server stopped; stopping the lab");
+    }
+    // A second Ctrl-C quits at once, naming what it cut short
+    rt.spawn(async move {
+        interrupts.recv().await;
+        log::warn!("Ctrl-C again: quitting at once while {}", exit::doing());
+        std::process::exit(130);
     });
-    // A tracker, detector, prediction or AgentZero started from the page
-    // ends with the lab
+
+    // AgentZero may be playing the Switch: the controller first
+    exit::step("stopping AgentZero");
     online.shutdown();
+    // Let ffmpeg finish the video file and session.json get its end time
+    if studio.recorder.status().state != RecorderState::Idle {
+        exit::step("stopping the recording");
+        if let Err(e) = studio.run(Command::Stop) {
+            log::error!("Failed to stop recording: {:#}", e);
+        }
+    }
+    // A tracker, detector or prediction started from the page ends with
+    // the lab
+    exit::step("stopping the tracker, the detector and the prediction");
     follow.stop_service();
     vision.stop_detector();
     predictor.stop();
     // Stops ffmpeg even when idle
-    studio.video.set_input(None)?;
+    exit::step("stopping the video capture and the sound");
+    if let Err(e) = studio.video.set_input(None) {
+        log::error!("Failed to stop the video capture: {:#}", e);
+    }
     studio.video.stop_audio();
+    // The requests' blocking work gets a moment, the runtime still up so a
+    // second Ctrl-C still quits at once; then the runtime goes without
+    // waiting for what is left (dropping it would wait as long as that takes)
+    let busy = exit::busy();
+    if !busy.is_empty() {
+        exit::step(&format!(
+            "waiting up to {} s for {}",
+            REQUESTS_PATIENCE.as_secs(),
+            busy.join(", ")
+        ));
+        let deadline = Instant::now() + REQUESTS_PATIENCE;
+        while !exit::busy().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    let left = exit::busy();
+    if !left.is_empty() {
+        log::warn!("Left unfinished: {}", left.join(", "));
+    }
+    rt.shutdown_background();
+    log::info!("Stopped");
     Ok(())
 }
 

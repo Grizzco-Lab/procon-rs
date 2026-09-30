@@ -1986,7 +1986,14 @@ pub fn routes(cuttlefish: Arc<Cuttlefish>) -> BoxedFilter<(Response<Vec<u8>>,)> 
         .and_then(
             move |tail: warp::path::Tail, query: HashMap<String, String>, range: Option<String>| {
                 let cuttlefish = Arc::clone(&reader);
-                blocking(move || cuttlefish.get(tail.as_str(), &query, range.as_deref()))
+                let what = crate::exit::request(
+                    "GET",
+                    &format!("/api/cuttlefish/{}", tail.as_str()),
+                    &query,
+                );
+                blocking(what, move || {
+                    cuttlefish.get(tail.as_str(), &query, range.as_deref())
+                })
             },
         );
     let change = warp::method()
@@ -1997,17 +2004,22 @@ pub fn routes(cuttlefish: Arc<Cuttlefish>) -> BoxedFilter<(Response<Vec<u8>>,)> 
         .and_then(
             move |method: Method, tail: warp::path::Tail, body: warp::hyper::body::Bytes| {
                 let cuttlefish = Arc::clone(&cuttlefish);
-                blocking(move || cuttlefish.change(&method, tail.as_str(), &body))
+                let what = format!("{method} /api/cuttlefish/{}", tail.as_str());
+                blocking(what, move || {
+                    cuttlefish.change(&method, tail.as_str(), &body)
+                })
             },
         );
     knowledge.or(get).unify().or(change).unify().boxed()
 }
 
-/// Run `answer` on a blocking thread and turn it into a response
+/// Run `answer` on a blocking thread, named `what` for the exit, and turn
+/// it into a response
 async fn blocking(
+    what: String,
     answer: impl FnOnce() -> Result<Reply, Status> + Send + 'static,
 ) -> Result<Response<Vec<u8>>, core::convert::Infallible> {
-    let reply = match tokio::task::spawn_blocking(answer).await {
+    let reply = match crate::exit::blocking(what, answer).await {
         Ok(Ok(reply)) => reply,
         Ok(Err(Status(status, e))) => Reply::status(status, json!({ "error": format!("{e:#}") })),
         Err(e) => Reply::status(

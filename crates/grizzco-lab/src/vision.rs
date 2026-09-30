@@ -1062,7 +1062,9 @@ pub fn routes(vision: Arc<Vision>) -> BoxedFilter<(Response<Vec<u8>>,)> {
         .and_then(
             move |tail: warp::path::Tail, query: HashMap<String, String>| {
                 let vision = Arc::clone(&reader);
-                blocking(move || vision.get(tail.as_str(), &query))
+                let what =
+                    crate::exit::request("GET", &format!("/api/vision/{}", tail.as_str()), &query);
+                blocking(what, move || vision.get(tail.as_str(), &query))
             },
         );
     let post = warp::post()
@@ -1073,17 +1075,20 @@ pub fn routes(vision: Arc<Vision>) -> BoxedFilter<(Response<Vec<u8>>,)> {
         .and_then(
             move |tail: warp::path::Tail, body: warp::hyper::body::Bytes| {
                 let vision = Arc::clone(&vision);
-                blocking(move || vision.post(tail.as_str(), &body))
+                let what = format!("POST /api/vision/{}", tail.as_str());
+                blocking(what, move || vision.post(tail.as_str(), &body))
             },
         );
     get.or(post).unify().boxed()
 }
 
-/// Run `answer` on a blocking thread and turn it into a JSON response
+/// Run `answer` on a blocking thread, named `what` for the exit, and turn
+/// it into a JSON response
 async fn blocking(
+    what: String,
     answer: impl FnOnce() -> Result<Value, Status> + Send + 'static,
 ) -> Result<Response<Vec<u8>>, core::convert::Infallible> {
-    let (status, value) = match tokio::task::spawn_blocking(answer).await {
+    let (status, value) = match crate::exit::blocking(what, answer).await {
         Ok(Ok(value)) => (StatusCode::OK, value),
         Ok(Err(Status(status, e))) => (status, json!({ "error": format!("{e:#}") })),
         Err(e) => (

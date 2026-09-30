@@ -16,6 +16,7 @@
 
 use crate::config::VisionConfig;
 use crate::inspect::follow::{agent, port_of};
+use crate::predictor::end_group;
 use anyhow::{Context, Result, bail, ensure};
 use core::time::Duration;
 use gameplay_vision::labels::{ObjectBox, Source};
@@ -275,15 +276,15 @@ impl Service {
     }
 
     /// Stop the service the lab started, if it did, with its group
+    /// (SIGKILL when it outlives SIGTERM, see [`end_group`])
     pub fn stop(&self) {
-        if let Some(mut child) = self.child.lock().unwrap().take() {
-            if let Ok(None) = child.try_wait() {
-                log::info!("Stopping the detector (pid {})", child.id());
-                // SAFETY: kill(2) with a negative pid signals the group the
-                // child leads; it touches no memory
-                unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGTERM) };
-            }
-            let _ = child.wait();
+        // Taken out first: its status is not held up meanwhile
+        let child = self.child.lock().unwrap().take();
+        if let Some(mut child) = child
+            && let Ok(None) = child.try_wait()
+        {
+            log::info!("Stopping the detector (pid {})", child.id());
+            end_group(&mut child);
         }
     }
 

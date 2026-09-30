@@ -13,12 +13,14 @@
 //! - [`pipeline`]: the Pipeline, the GPU and the experiment queue.
 //!
 //! [`web`] serves the page (embedded from `web/`) with every app's routes,
-//! and [`config`] reads `config.toml`.
+//! [`config`] reads `config.toml`, and [`exit`] names what the lab still
+//! does as it exits.
 
 extern crate alloc;
 
 pub mod config;
 pub mod cuttlefish;
+pub mod exit;
 pub mod inspect;
 pub mod pipeline;
 pub mod predictor;

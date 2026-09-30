@@ -1924,7 +1924,12 @@ async fn upload(
 ) -> Response<Vec<u8>> {
     let (tx, rx) = tokio::sync::mpsc::channel(8);
     let path = rel.clone();
-    let writer = tokio::task::spawn_blocking(move || knowledge.write_upload(&path, rx));
+    // Named for the exit while the file is written
+    let busy = crate::exit::Busy::new(format!("POST /api/cuttlefish/knowledge/upload?path={rel}"));
+    let writer = tokio::task::spawn_blocking(move || {
+        let _busy = busy;
+        knowledge.write_upload(&path, rx)
+    });
     let mut complete = true;
     while let Some(chunk) = body.next().await {
         let sent = match chunk {
@@ -1993,7 +1998,8 @@ pub fn routes(knowledge: Arc<Knowledge>) -> BoxedFilter<(Response<Vec<u8>>,)> {
             let knowledge = Arc::clone(&knowledge);
             async move {
                 let id = query.get("id").cloned().unwrap_or_default();
-                let made = tokio::task::spawn_blocking(move || knowledge.thumbnail(&id)).await;
+                let what = format!("GET /api/cuttlefish/knowledge/thumb?id={id}");
+                let made = crate::exit::blocking(what, move || knowledge.thumbnail(&id)).await;
                 match made {
                     Ok(Ok((bytes, media_type))) => Response::builder()
                         .header("content-type", media_type)

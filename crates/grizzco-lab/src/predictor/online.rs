@@ -1869,7 +1869,12 @@ pub fn routes(online: Arc<Online>) -> BoxedFilter<(Response<Vec<u8>>,)> {
         .and_then(
             move |tail: warp::path::Tail, query: HashMap<String, String>| {
                 let online = Arc::clone(&reader);
-                blocking(move || online.get(tail.as_str(), &query))
+                let what = crate::exit::request(
+                    "GET",
+                    &format!("/api/predictor/online/{}", tail.as_str()),
+                    &query,
+                );
+                blocking(what, move || online.get(tail.as_str(), &query))
             },
         );
     let post = warp::post()
@@ -1880,7 +1885,8 @@ pub fn routes(online: Arc<Online>) -> BoxedFilter<(Response<Vec<u8>>,)> {
         .and_then(
             move |tail: warp::path::Tail, body: warp::hyper::body::Bytes| {
                 let online = Arc::clone(&online);
-                blocking(move || online.post(tail.as_str(), &body))
+                let what = format!("POST /api/predictor/online/{}", tail.as_str());
+                blocking(what, move || online.post(tail.as_str(), &body))
             },
         );
     get.or(post).unify().boxed()

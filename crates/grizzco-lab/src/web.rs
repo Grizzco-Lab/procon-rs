@@ -32,6 +32,7 @@
 
 use crate::config::WebConfig;
 use crate::cuttlefish::{self, Cuttlefish};
+use crate::exit;
 use crate::inspect::Inspector;
 use crate::inspect::follow::{self, Follow};
 use crate::pipeline::{self, Pipeline};
@@ -206,8 +207,9 @@ pub async fn serve(
         .and_then(
             move |endpoint: String, query: HashMap<String, String>, range: Option<String>| {
                 let inspector = Arc::clone(&inspector);
+                let what = exit::request("GET", &format!("/api/inspect/{endpoint}"), &query);
                 async move {
-                    let result = tokio::task::spawn_blocking(move || {
+                    let result = exit::blocking(what, move || {
                         inspector.handle(&endpoint, &query, range.as_deref())
                     })
                     .await;
@@ -256,6 +258,7 @@ pub async fn serve(
             let result = if delay_ms.is_none() && body["remove"] != true {
                 Err(anyhow::anyhow!("give video_delay_ms or remove"))
             } else {
+                let _busy = exit::Busy::new("POST /api/inspect/delay");
                 tokio::task::block_in_place(|| delay_inspector.set_delay(&session, delay_ms))
             };
             match result {
@@ -277,8 +280,10 @@ pub async fn serve(
         .and_then(move |body: Value| {
             let inspector = Arc::clone(&objects_inspector);
             async move {
-                let result =
-                    tokio::task::spawn_blocking(move || inspector.save_objects(&body)).await;
+                let result = exit::blocking("POST /api/inspect/objects", move || {
+                    inspector.save_objects(&body)
+                })
+                .await;
                 let (status, reply) = match result {
                     Ok(Ok(saved)) => (StatusCode::OK, saved),
                     Ok(Err(e)) => (
@@ -305,8 +310,10 @@ pub async fn serve(
         .and_then(move |body: Value| {
             let inspector = Arc::clone(&markers_inspector);
             async move {
-                let result =
-                    tokio::task::spawn_blocking(move || inspector.save_markers(&body)).await;
+                let result = exit::blocking("POST /api/inspect/markers", move || {
+                    inspector.save_markers(&body)
+                })
+                .await;
                 let (status, reply) = match result {
                     Ok(Ok(saved)) => (StatusCode::OK, saved),
                     Ok(Err(e)) => (
@@ -343,6 +350,7 @@ pub async fn serve(
         .and(warp::body::json())
         .map(move |command: Command| {
             // Commands may wait for ffmpeg to restart; keep that off the async workers
+            let _busy = exit::Busy::new("POST /api/command");
             match tokio::task::block_in_place(|| studio.run(command)) {
                 Ok(()) => {
                     let reply = json!({
@@ -608,6 +616,9 @@ const RATE_WINDOW: usize = 7;
 /// Re-count the size of every session this often; it walks the folder
 const ALL_SESSIONS_EVERY: Duration = Duration::from_secs(10);
 
+/// The status's blocking work, as the exit names it ([`exit::Busy`])
+const STATUS_WORK: &str = "the status (the recording, the capture, session sizes and free space)";
+
 /// Counters at one status tick, for rates
 struct Sample {
     at: Instant,
@@ -629,7 +640,7 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
         let snapshot = {
             let studio = Arc::clone(&studio);
             // Status reads files and locks shared by blocking code
-            tokio::task::spawn_blocking(move || {
+            exit::blocking(STATUS_WORK, move || {
                 (
                     studio.recorder.status(),
                     studio.video.status(),

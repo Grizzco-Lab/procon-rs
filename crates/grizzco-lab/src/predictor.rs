@@ -53,6 +53,7 @@
 pub mod online;
 
 use crate::cuttlefish::{Cuttlefish, VideoKind, VideoRef};
+use crate::exit;
 use crate::inspect::objects::write_atomic;
 use crate::inspect::{Inspector, ffprobe};
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -1067,6 +1068,23 @@ fn signal_group(child: &Child, signal: libc::c_int) {
     unsafe { libc::kill(-(child.id() as libc::pid_t), signal) };
 }
 
+/// End the process group `child` leads (a service the page started): SIGTERM,
+/// then SIGKILL to what is left of it after [`KILL_AFTER`]; returns once
+/// `child` is reaped
+pub(crate) fn end_group(child: &mut Child) {
+    signal_group(child, libc::SIGTERM);
+    let deadline = Instant::now() + KILL_AFTER;
+    while Instant::now() < deadline {
+        if !matches!(child.try_wait(), Ok(None)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    log::warn!("pid {} outlived SIGTERM; killing its group", child.id());
+    signal_group(child, libc::SIGKILL);
+    let _ = child.wait();
+}
+
 /// `/api/cuttlefish/video`'s name of a kind
 fn kind_name(kind: VideoKind) -> &'static str {
     match kind {
@@ -1249,7 +1267,9 @@ pub fn routes(predictor: Arc<Predictor>) -> BoxedFilter<(Response<Vec<u8>>,)> {
         .and_then(
             move |tail: warp::path::Tail, query: HashMap<String, String>| {
                 let predictor = Arc::clone(&reader);
-                blocking(move || predictor.get(tail.as_str(), &query))
+                let what =
+                    exit::request("GET", &format!("/api/predictor/{}", tail.as_str()), &query);
+                blocking(what, move || predictor.get(tail.as_str(), &query))
             },
         );
     let post = warp::post()
@@ -1260,17 +1280,20 @@ pub fn routes(predictor: Arc<Predictor>) -> BoxedFilter<(Response<Vec<u8>>,)> {
         .and_then(
             move |tail: warp::path::Tail, body: warp::hyper::body::Bytes| {
                 let predictor = Arc::clone(&predictor);
-                blocking(move || predictor.post(tail.as_str(), &body))
+                let what = format!("POST /api/predictor/{}", tail.as_str());
+                blocking(what, move || predictor.post(tail.as_str(), &body))
             },
         );
     get.or(post).unify().boxed()
 }
 
-/// Run `answer` on a blocking thread and turn it into a JSON response
+/// Run `answer` on a blocking thread, named `what` for the exit, and turn
+/// it into a JSON response
 async fn blocking(
+    what: String,
     answer: impl FnOnce() -> Result<Value, Status> + Send + 'static,
 ) -> Result<Response<Vec<u8>>, core::convert::Infallible> {
-    let (status, value) = match tokio::task::spawn_blocking(answer).await {
+    let (status, value) = match crate::exit::blocking(what, answer).await {
         Ok(Ok(value)) => (StatusCode::OK, value),
         Ok(Err(Status(status, e))) => (status, json!({ "error": format!("{e:#}") })),
         Err(e) => (

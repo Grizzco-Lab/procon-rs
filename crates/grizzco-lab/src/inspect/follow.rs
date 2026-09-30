@@ -40,6 +40,7 @@
 use crate::config::InspectConfig;
 use crate::inspect::Inspector;
 use crate::inspect::objects::{FollowWrite, ObjectBox, follow_span};
+use crate::predictor::end_group;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
@@ -456,16 +457,16 @@ impl Follow {
     }
 
     /// Stop the tracker the lab started, if it did: its whole process
-    /// group, so the Python behind `uv run` goes too
+    /// group, so the Python behind `uv run` goes too (SIGKILL when it
+    /// outlives SIGTERM, see [`end_group`])
     pub fn stop_service(&self) {
-        if let Some(mut child) = self.service.lock().unwrap().take() {
-            if let Ok(None) = child.try_wait() {
-                log::info!("Stopping the tracker (pid {})", child.id());
-                // SAFETY: kill(2) with a negative pid signals the group the
-                // child leads; it touches no memory
-                unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGTERM) };
-            }
-            let _ = child.wait();
+        // Taken out first: its status is not held up meanwhile
+        let child = self.service.lock().unwrap().take();
+        if let Some(mut child) = child
+            && let Ok(None) = child.try_wait()
+        {
+            log::info!("Stopping the tracker (pid {})", child.id());
+            end_group(&mut child);
         }
     }
 
@@ -774,7 +775,8 @@ pub fn routes(follow: Arc<Follow>) -> BoxedFilter<(Response<Vec<u8>>,)> {
     let reader = Arc::clone(&follow);
     let get = warp::get().and(base()).and_then(move |path: String| {
         let follow = Arc::clone(&reader);
-        blocking(move || match path.as_str() {
+        let what = format!("GET /api/inspect/follow/{path}");
+        blocking(what, move || match path.as_str() {
             "status" => Ok(follow.status()),
             "job" => Ok(json!(follow.job())),
             _ => Err(Status(
@@ -789,16 +791,19 @@ pub fn routes(follow: Arc<Follow>) -> BoxedFilter<(Response<Vec<u8>>,)> {
         .and(warp::body::bytes())
         .and_then(move |path: String, body: warp::hyper::body::Bytes| {
             let follow = Arc::clone(&follow);
-            blocking(move || follow.post(&path, &body))
+            let what = format!("POST /api/inspect/follow/{path}");
+            blocking(what, move || follow.post(&path, &body))
         });
     get.or(post).unify().boxed()
 }
 
-/// Run `answer` on a blocking thread and turn it into a JSON response
+/// Run `answer` on a blocking thread, named `what` for the exit, and turn
+/// it into a JSON response
 async fn blocking(
+    what: String,
     answer: impl FnOnce() -> Result<Value, Status> + Send + 'static,
 ) -> Result<Response<Vec<u8>>, core::convert::Infallible> {
-    let (status, value) = match tokio::task::spawn_blocking(answer).await {
+    let (status, value) = match crate::exit::blocking(what, answer).await {
         Ok(Ok(value)) => (StatusCode::OK, value),
         Ok(Err(Status(status, e))) => (status, json!({ "error": format!("{e:#}") })),
         Err(e) => (
