@@ -775,7 +775,15 @@
   function renderChip(state) {
     const chip = $("pl-chip");
     const running = state.queue.entries.filter((e) => aliveOf(e));
-    const gone = state.queue.entries.filter((e) => view(e).state === "gone");
+    // What to look at: entries with no process or no word, stalled steps
+    const trouble = state.queue.entries.filter((e) => {
+      const { state: word } = view(e);
+      return (
+        word === "gone" ||
+        word === "unknown" ||
+        (aliveOf(e) && phaseOf(e, word) === "stalled")
+      );
+    });
     const remote = state.remote;
     const parts = [];
     if (state.gpu?.util != null)
@@ -790,7 +798,7 @@
         : t("pl.chip.idle"),
     );
     chip.hidden = false;
-    chip.dataset.level = gone.length
+    chip.dataset.level = trouble.length
       ? "warning"
       : running.length
         ? "good"

@@ -1419,7 +1419,7 @@ const I18N = {
     "pl.results.unmarkedLog":
       "Its log reached {step} of {total}; no result written yet.",
     "pl.results.noSummary": "No result written yet.",
-    "pl.chip.gpu": "GPU {util}%",
+    "pl.chip.gpu": "Linux {util}%",
     "pl.chip.running": ({ n }) => `${n} running`,
     "pl.chip.idle": "idle",
     "pl.dur.s": "{s} s",

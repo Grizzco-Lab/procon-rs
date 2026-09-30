@@ -1331,7 +1331,7 @@ I18N.zh = {
   "pl.results.unmarked": "运行目录已到第 {step} / {total} 步；还没写结果。",
   "pl.results.unmarkedLog": "日志已到 {step} / {total}；还没写结果。",
   "pl.results.noSummary": "还没写结果。",
-  "pl.chip.gpu": "GPU {util}%",
+  "pl.chip.gpu": "Linux {util}%",
   "pl.chip.running": "{n} 项运行中",
   "pl.chip.idle": "空闲",
   "pl.dur.s": "{s} 秒",
