@@ -50,7 +50,7 @@ use crate::messages::{self, Category};
 use crate::store::{Store, write_atomic};
 use crate::tables::{self, Member};
 use crate::{discord, discord_fetch, image_text, rednote, x};
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
 use anyhow::{Context, Result, ensure};
@@ -378,6 +378,29 @@ impl Manifest {
     fn save(&self, root: &Path) -> Result<()> {
         write_atomic(&Self::path(root), &serde_json::to_vec_pretty(self)?)
     }
+}
+
+/// The documents of the name sources in the inbox, by id: the prose taken
+/// from an archive or folder at the inbox's top that also gave name tables
+/// (a code repository or a game's text dump dropped for its names, such as
+/// stat.ink's: its README, API pages and data files). They hold names and
+/// keys, not game knowledge, so they are never evidence for an answer
+/// ([`crate::store::Store::is_evidence`]); their names are in the glossary.
+/// Read from `inbox.json`; conversations and captures (`discord`, `x`,
+/// `rednote`) are not prose files and never count.
+pub fn name_source_documents(root: &Path) -> BTreeSet<String> {
+    let files = Manifest::load(root).files;
+    let top = |path: &str| String::from(path.split('/').next().unwrap_or(path));
+    let sources: BTreeSet<String> = files
+        .iter()
+        .filter(|(_, seen)| seen.kind == "table")
+        .map(|(path, _)| top(path))
+        .collect();
+    files
+        .iter()
+        .filter(|(path, seen)| seen.kind == "document" && sources.contains(&top(path)))
+        .filter_map(|(_, seen)| seen.id.clone())
+        .collect()
 }
 
 /// A file taken by an import
@@ -1760,7 +1783,27 @@ mod tests {
         file("ja", "app", "    'Save' => '保存',\n");
         file("zh-CN", "app", "    'Save' => '保存',\n");
         file("_deepl/zh", "salmon-boss3", "    'Steelhead' => '机器',\n");
+        // The repository's own pages: about the site and its API's keys
+        std::fs::write(
+            src.join("statink/README.md"),
+            "# stat.ink\n\nA site that keeps Splatoon battle results; its API lists weapons and stages by key.\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(src.join("statink/web/apidoc")).unwrap();
+        std::fs::write(
+            src.join("statink/web/apidoc/v2.html"),
+            "<html><head><title>stat.ink API for Splatoon 2</title></head><body><p>Salmon Run \
+             bosses by key: steelhead, flyfish, drizzler, with their names in every language.</p>\
+             <table><tr><td>steelhead</td><td>Steelhead</td></tr></table></body></html>",
+        )
+        .unwrap();
         zip(&root, &src, "statink");
+        // A guide dropped beside the archive is no part of it
+        write(
+            &root,
+            "guides/eggs.md",
+            b"# Eggs\n\nBring the golden eggs to the basket before the wave ends, two at a time.\n",
+        );
         let mut sink = Memory {
             root: root.clone(),
             ..Default::default()
@@ -1836,6 +1879,25 @@ mod tests {
         );
         assert!(glossary.lookup("Save").is_none());
         assert!(glossary.lookup("机器").is_none());
+        // The archive gave name tables, so its pages are reference, never
+        // evidence; the guide beside it is evidence
+        let id_of = |path: &str| {
+            sink.docs
+                .iter()
+                .find(|d| d.path.as_deref() == Some(path))
+                .unwrap_or_else(|| panic!("no document of {path}"))
+                .id
+                .clone()
+        };
+        let reference = name_source_documents(&root);
+        assert_eq!(
+            reference,
+            BTreeSet::from([
+                id_of("inbox/statink.zip/statink/README.md"),
+                id_of("inbox/statink.zip/statink/web/apidoc/v2.html"),
+            ])
+        );
+        assert!(!reference.contains(&id_of("inbox/guides/eggs.md")));
         let tables = tables::load_all(&root);
         assert_eq!(tables.len(), 3);
         assert_eq!(tables[0].game.as_deref(), Some("S3"));

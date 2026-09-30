@@ -134,6 +134,14 @@ pub fn models_dir() -> PathBuf {
     cache_dir().join("models")
 }
 
+/// Whether a heading is a page's table of names: Inkipedia's "Names in
+/// other languages" (under Etymology) and "Internal names", the name in
+/// every language and the game's file key, which the glossary holds
+pub fn is_name_table(heading: &str) -> bool {
+    let heading = heading.trim().to_lowercase();
+    heading.ends_with("in other languages") || heading.starts_with("internal name")
+}
+
 /// True for a document id ([`crate::doc::doc_id`]: 16 lowercase hex
 /// digits); other files in `docs/` (conflict copies, temporary files) are
 /// not documents
@@ -182,6 +190,10 @@ pub struct Store {
     keywords: KeywordIndex,
     glossary: Glossary,
     chunking: ChunkConfig,
+    /// Documents that are never evidence: the other files of the name
+    /// sources in the inbox ([`crate::inbox::name_source_documents`]), read
+    /// with the glossary
+    reference: BTreeSet<String>,
 }
 
 impl Store {
@@ -254,6 +266,7 @@ impl Store {
             keywords,
             glossary: Self::load_glossary(root)?,
             chunking: ChunkConfig::default(),
+            reference: crate::inbox::name_source_documents(root),
         })
     }
 
@@ -281,10 +294,21 @@ impl Store {
         Ok(glossary)
     }
 
-    /// Reads the glossary again (after an import of name tables)
+    /// Reads the glossary again (after an import of name tables), and
+    /// which documents came with the name sources
     pub fn reload_glossary(&mut self) -> Result<()> {
         self.glossary = Self::load_glossary(&self.root)?;
+        self.reference = crate::inbox::name_source_documents(&self.root);
         Ok(())
+    }
+
+    /// Whether a chunk may be handed to the model as evidence: not from a
+    /// document that came with a name source (the README and API pages of
+    /// stat.ink's repository, dropped for its name tables), and not under a
+    /// page's table of names ([`is_name_table`]); those hold names and
+    /// keys, which the glossary has, not game knowledge
+    pub fn is_evidence(&self, entry: &Entry) -> bool {
+        !self.reference.contains(&entry.doc_id) && !entry.heading.split(" > ").any(is_name_table)
     }
 
     /// The data folder
@@ -997,6 +1021,42 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(counts.len(), 2);
         assert_eq!(chunks, 2);
+    }
+
+    #[test]
+    fn a_pages_table_of_names_is_no_evidence() {
+        let root = temp("names");
+        let e = HashEmbedder { dim: 256 };
+        let mut store = Store::open(&root, &e).unwrap();
+        // Sections long enough to be chunks of their own
+        let long = |line: &str| alloc::vec![line; 80].join(" ");
+        let text = alloc::format!(
+            "# Behavior\n\n{}\n\n# Etymology\n\n{}\n\n## Names in other languages\n\n{}\n\n\
+             ## Internal names\n\n{}",
+            long("It fires cannonballs from the shore."),
+            long("Its name is a pun."),
+            long("Chinese (Simplified) 铁球鱼"),
+            long("Sakelien Cannon"),
+        );
+        let mut page = doc("https://wiki/big-shot", "Big Shot", &text);
+        page.source = SourceKind::Wiki;
+        store.add(&page, &e).unwrap();
+        let chunks = store.index().entries();
+        let evidence = |heading: &str| {
+            chunks
+                .iter()
+                .filter(|c| c.heading == heading)
+                .map(|c| store.is_evidence(c))
+                .collect::<Vec<_>>()
+        };
+        assert!(!evidence("Behavior").is_empty() && evidence("Behavior").iter().all(|&e| e));
+        assert!(evidence("Etymology").iter().all(|&e| e));
+        let names = evidence("Etymology > Names in other languages");
+        assert!(!names.is_empty() && names.iter().all(|&e| !e));
+        assert!(is_name_table(" Name in other Languages "));
+        assert!(is_name_table("Internal names"));
+        assert!(!is_name_table("Languages spoken by Salmonids"));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

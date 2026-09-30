@@ -253,6 +253,10 @@ pub const EXPERT_K: usize = 4;
 /// Expert notes retrieved per request, before everything else
 pub const NOTE_K: usize = 2;
 
+/// Chunks of one document among the `k` other excerpts at most, so one long
+/// thread or page cannot fill the list alone
+pub const PER_DOCUMENT: usize = 2;
+
 const PERSONA: &str = "\
 You are Cuttlefish, an experienced Salmon Run (Splatoon 3) player who plays at \
 Eggsecutive VP 999 and high Hazard Levels, and a kind mentor. You review gameplay \
@@ -868,8 +872,11 @@ impl Reviewer {
 
 /// The [`NOTE_K`] best expert notes, the [`EXPERT_K`] best expert comments
 /// ([`crate::expert::search`]) and the `k` best other chunks for a query,
-/// in that order, and the glossary terms it mentions
-fn retrieve<'a>(
+/// at most [`PER_DOCUMENT`] of a document, in that order, and the glossary
+/// terms it mentions: what every review, question and chat is given. Names
+/// are never among them: not the documents that came with a name source,
+/// nor a page's table of names ([`Store::is_evidence`]).
+pub fn retrieve<'a>(
     store: &'a Store,
     embedder: &dyn Embedder,
     k: usize,
@@ -884,7 +891,20 @@ fn retrieve<'a>(
         EXPERT_K,
         &|_| true,
     )?);
-    hits.extend(store.search_where(query, k, embedder, &|e| e.expert.is_none() && !is_note(e))?);
+    let others = store.search_where(query, k * 4, embedder, &|e| {
+        e.expert.is_none() && !is_note(e) && store.is_evidence(e)
+    })?;
+    let mut per_document: alloc::collections::BTreeMap<String, usize> = Default::default();
+    hits.extend(
+        others
+            .into_iter()
+            .filter(|h| {
+                let n = per_document.entry(h.entry.doc_id.clone()).or_default();
+                *n += 1;
+                *n <= PER_DOCUMENT
+            })
+            .take(k),
+    );
     let terms = store.glossary().find_in(query);
     Ok((hits, terms))
 }
@@ -1801,6 +1821,51 @@ mod tests {
         );
         assert!(!block.contains("source=\"expert-note\""));
         assert!(system_prompt(None).contains("expert_notes block"));
+        // A page that came with a name source (stat.ink's API, say) may
+        // match best, but is never evidence
+        let api = crate::doc::Document::new(
+            SourceKind::File,
+            "inbox/statink.zip/statink/web/apidoc/v2.html",
+            String::from("stat.ink API"),
+            String::from("# Keys\n\ngo left, the basket starved; go left, the basket starved"),
+        );
+        store.add(&api, &e).unwrap();
+        let given = |store: &Store| {
+            retrieve(store, &e, 5, "go left, the basket starved")
+                .unwrap()
+                .0
+                .iter()
+                .any(|h| h.entry.doc_id == api.id)
+        };
+        assert!(given(&store));
+        let seen = |kind: &str, id: &str| json!({"hash": "h", "bytes": 1, "modified": 0, "kind": kind, "id": id});
+        let manifest = json!({"files": {
+            "statink.zip/statink/messages/ja/salmon3.php": seen("table", "t1"),
+            "statink.zip/statink/web/apidoc/v2.html": seen("document", &api.id),
+        }});
+        std::fs::write(root.join("inbox.json"), manifest.to_string()).unwrap();
+        store.reload_glossary().unwrap();
+        assert!(!given(&store));
+        // A long thread gives its best two chunks, not the whole list
+        let thread = crate::doc::Document::new(
+            SourceKind::Rednote,
+            "https://www.xiaohongshu.com/explore/1",
+            String::from("A long thread"),
+            (0..12)
+                .map(|i| {
+                    alloc::format!(
+                        "# Part {i}\n\n{}",
+                        alloc::vec!["go left, the basket starved"; 60].join(" ")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        );
+        store.add(&thread, &e).unwrap();
+        let (hits, _) = retrieve(&store, &e, 5, "go left, the basket starved").unwrap();
+        let of_thread = hits.iter().filter(|h| h.entry.doc_id == thread.id).count();
+        assert_eq!(of_thread, PER_DOCUMENT);
+        assert_eq!(hits.len(), 9);
         std::fs::remove_dir_all(&root).unwrap();
         std::fs::remove_dir_all(&corpus_root).unwrap();
     }

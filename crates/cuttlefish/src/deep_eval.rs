@@ -238,6 +238,23 @@ pub fn ask_again(asker: Asker<'_>, k: usize, entry: &Entry) -> Answered {
     answer(asker, k, &entry.question)
 }
 
+/// What retrieval gives every question of the bank in `lang`, the video
+/// ones too (retrieval needs no video), without asking the model: the
+/// excerpts in the order the model would get them (`cuttlefish eval deep
+/// --dry-run`, to see what the answers stand on)
+pub fn retrieval<'b>(
+    store: &Store,
+    embedder: &dyn Embedder,
+    bank: &'b Bank,
+    lang: &str,
+    k: usize,
+) -> Result<Vec<(&'b Question, Vec<crate::store::Hit>)>> {
+    bank.questions
+        .iter()
+        .map(|q| Ok((q, review::retrieve(store, embedder, k, q.text(lang))?.0)))
+        .collect()
+}
+
 /// Asks the picked questions, `parallel` at a time, writing `out` after
 /// each batch; `report` hears each entry with how many are done of how
 /// many; `cancelled` is asked between batches
@@ -453,6 +470,11 @@ mod tests {
             Settings::default(),
         );
         let bank = Bank::seed();
+        // Retrieval alone: every question of the bank, no model asked
+        let found = retrieval(&store, &e, &bank, "en", 8).unwrap();
+        assert_eq!(found.len(), bank.questions.len());
+        assert!(found.iter().all(|(_, hits)| hits.len() == 1));
+        assert!(sent.lock().unwrap().is_empty());
         let opts = Options {
             lang: String::from("zh"),
             parallel: 1,

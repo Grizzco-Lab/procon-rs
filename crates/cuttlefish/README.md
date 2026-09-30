@@ -60,6 +60,7 @@ cuttlefish ask "When should I leave the basket to kill a Stinger?"
 cuttlefish translate "Kill the Steelhead before the Flyfish" --to ja
 cuttlefish eval eval.example.toml --answer
 cuttlefish eval deep --lang zh --max 5       # the deep question bank; answers into <data>/eval/, reviewed in the lab
+cuttlefish eval deep --dry-run --lang zh     # what retrieval gives each bank question, no model asked
 ```
 
 The first command that embeds downloads the embedding model (about 470 MB)
@@ -1428,6 +1429,22 @@ message's date when indexed (`cuttlefish reindex`). The prompt tells the
 model that high-level review outweighs generic pages and to cite only
 excerpts it was given; every source keeps its license and url so citations
 are clickable.
+
+Names are never evidence. What retrieval hands the model (`review::retrieve`,
+for reviews, questions, chats and the deep eval) leaves out, by
+`Store::is_evidence`: the documents that came with a *name source*, an
+archive or folder at the inbox's top that also gave name tables
+(`inbox::name_source_documents`, from `inbox.json`: stat.ink's repository
+gave the glossary its names and, with them, its README, API pages and data
+files as documents), and a page's table of names (`store::is_name_table`:
+Inkipedia's "Names in other languages" and "Internal names"). Those hold
+names and keys, which the glossary already carries into the prompt. At most
+two chunks of one document are among the `k` other excerpts
+(`review::PER_DOCUMENT`), so a long thread cannot fill the list alone. The
+lab's Search panel shows the same; `cuttlefish search` still finds
+everything. `cuttlefish eval deep --dry-run [--lang zh]` prints what every
+question of the bank would be given, counted by source kind and by
+document, without asking the model.
 
 **5. Evaluation.** `eval.example.toml` shows the format: questions with the
 sources that should be retrieved and points a good answer makes. Build 30-50

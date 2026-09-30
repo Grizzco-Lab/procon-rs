@@ -801,13 +801,16 @@ impl Knowledge {
         }))
     }
 
-    /// The `k` chunks nearest to a query
+    /// The `k` chunks nearest to a query among those the chat may be given
+    /// (not the documents of a name source, `Store::is_evidence`)
     pub fn search(&self, query: &str, k: usize) -> Result<Value> {
         let query = query.trim();
         ensure!(!query.is_empty(), "type something to search for");
         let loaded = self.loaded()?;
         let store = loaded.store.read().unwrap();
-        let hits = store.search(query, k.clamp(1, MAX_K), &loaded.embedder)?;
+        let hits = store.search_where(query, k.clamp(1, MAX_K), &loaded.embedder, &|e| {
+            store.is_evidence(e)
+        })?;
         Ok(json!({ "hits": hits }))
     }
 

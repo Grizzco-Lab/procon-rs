@@ -28,6 +28,7 @@ use cuttlefish::store::{self, Retrieval, Store};
 use cuttlefish::{assets, env_file, image_text, inbox, leanny, tables};
 use cuttlefish::{corpus, corpus_reviews, corpus_videos, expert};
 use cuttlefish::{deep_eval, notes, questions};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -124,6 +125,11 @@ enum Command {
         /// deep: only these question ids (repeatable)
         #[arg(long)]
         only: Vec<String>,
+        /// deep: retrieval alone, no model: what every question of the bank
+        /// would be given, and those excerpts counted by source kind; the
+        /// store is only read
+        #[arg(long)]
+        dry_run: bool,
         #[command(flatten)]
         model: ModelArgs,
     },
@@ -784,8 +790,12 @@ fn main() -> Result<()> {
             parallel,
             max,
             only,
+            dry_run,
             model,
         } => {
+            if target == "deep" && dry_run {
+                return eval_deep_dry(&data, &lang, k);
+            }
             if target == "deep" {
                 let opts = deep_eval::Options {
                     lang,
@@ -1251,6 +1261,67 @@ fn eval_deep(data: &Path, settings: Settings, opts: &deep_eval::Options) -> Resu
         },
     )?;
     println!("{summary}; review them in the lab's Knowledge view");
+    Ok(())
+}
+
+/// `eval deep --dry-run`: what retrieval gives every question of the bank,
+/// without the model, and those excerpts counted by source kind and by
+/// document; the store is only read
+fn eval_deep_dry(data: &Path, lang: &str, k: usize) -> Result<()> {
+    let (store, embedder) = open(data, false)?;
+    let bank = questions::Bank::seed();
+    let found = deep_eval::retrieval(&store, &embedder, &bank, lang, k)?;
+    let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+    let mut docs: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    for (q, hits) in &found {
+        println!("[{}] {}", q.id, q.text(lang));
+        for (i, hit) in hits.iter().enumerate() {
+            let e = &hit.entry;
+            let kind = serde_json::to_value(e.source)?
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            println!(
+                "     S{} {kind:<18} {:.3} {}{}",
+                i + 1,
+                hit.score,
+                e.title,
+                if e.heading.is_empty() {
+                    String::new()
+                } else {
+                    format!(" > {}", e.heading)
+                }
+            );
+            *kinds.entry(kind.clone()).or_default() += 1;
+            docs.entry(e.doc_id.clone())
+                .or_insert_with(|| (0, format!("{kind:<18} {}", e.title)))
+                .0 += 1;
+        }
+    }
+    let total: usize = kinds.values().sum();
+    println!(
+        "\n{total} excerpts for {} questions in {lang} (k = {k}), by source kind:",
+        found.len()
+    );
+    let mut kinds: Vec<(String, usize)> = kinds.into_iter().collect();
+    kinds.sort_by_key(|(_, n)| core::cmp::Reverse(*n));
+    for (kind, n) in kinds {
+        println!("  {n:>5}  {kind}");
+    }
+    println!("\nDocuments given most often:");
+    let paths: BTreeMap<String, String> = store::read_documents(data)?
+        .into_iter()
+        .filter_map(|d| Some((d.id, d.path?)))
+        .collect();
+    let mut docs: Vec<(String, (usize, String))> = docs.into_iter().collect();
+    docs.sort_by_key(|(_, (n, _))| core::cmp::Reverse(*n));
+    for (id, (n, what)) in docs.into_iter().take(25) {
+        let path = paths
+            .get(&id)
+            .map(|p| format!(" ({p})"))
+            .unwrap_or_default();
+        println!("  {n:>5}  {what}{path}");
+    }
     Ok(())
 }
 
