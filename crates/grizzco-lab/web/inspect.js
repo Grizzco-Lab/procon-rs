@@ -509,14 +509,22 @@ function drawMarkers() {
   const list = techniques();
   $("i-markers").innerHTML = spans
     .map(({ marker, i, a, b }) => {
-      const current = markerTechnique(marker);
-      const options = [...list, ...(list.includes(current) ? [] : [current])]
-        .map((tech) => {
-          const [name, alt] = techniqueNames(tech);
-          const label = alt ? `${name} · ${alt}` : name;
-          return `<option value="${escapeHtml(tech.label)}" ${tech === current ? "selected" : ""}>${escapeHtml(label)}</option>`;
-        })
-        .join("");
+      const current = itemKey(markerTechnique(marker));
+      const option = (tech) => {
+        const [name, alt] = techniqueNames(tech);
+        const label = alt ? `${name} · ${alt}` : name;
+        const key = itemKey(tech);
+        return `<option value="${escapeHtml(key)}" ${key === current ? "selected" : ""}>${escapeHtml(label)}</option>`;
+      };
+      // The Techniques panel's groups, then the marker's own name when no
+      // item of the lists is it
+      const options =
+        TECH_GROUPS.map((group) => {
+          const items = list.filter((tech) => tech.group === group.id);
+          if (!items.length) return "";
+          return `<optgroup label="${escapeHtml(t(`tech.group.${group.id}`))}">${items.map(option).join("")}</optgroup>`;
+        }).join("") +
+        (list.some((tech) => itemKey(tech) === current) ? "" : option(marker));
       const seconds = ((b - a) / info.fps).toFixed(1);
       return `<li class="i-marker" data-i="${i}">
         <select class="select" data-field="label" aria-label="${escapeHtml(t("mk.technique"))}">${options}</select>
@@ -576,10 +584,15 @@ $("i-markers").addEventListener("change", (event) => {
   const i = Number(event.target.closest("[data-i]").dataset.i);
   const marker = inspector.markers[i];
   if (field === "label") {
-    const tech = techniques().find((x) => x.label === event.target.value);
+    const tech = techniques().find((x) => itemKey(x) === event.target.value);
     if (!tech) return;
     saveMarkers(
-      changedMarkers(i, { label: tech.label, term: tech.term ?? null }),
+      changedMarkers(i, {
+        kind: itemKind(tech),
+        label: tech.label,
+        term: tech.term ?? null,
+        item: tech.id ?? null,
+      }),
     );
     return;
   }
@@ -606,18 +619,23 @@ $("i-marker-add").addEventListener("click", () => {
   saveMarkers([
     ...inspector.markers,
     {
-      kind: "technique",
+      kind: itemKind(tech),
       label: tech.label,
       term: tech.term ?? null,
+      item: tech.id ?? null,
       t_start_ms: msOfFrame(frame),
       t_end_ms: msOfFrame(end),
       created_ms: Date.now(),
     },
   ]);
 });
-window.addEventListener("lang-change", () => {
-  if (inspector.info) drawMarkers();
-});
+// Redrawn in the page's language, and with Lean's weapons and specials
+// once techniques.js has them
+for (const name of ["lang-change", "tech-items"]) {
+  window.addEventListener(name, () => {
+    if (inspector.info) drawMarkers();
+  });
+}
 
 /** Jump to frame n, pausing playback */
 function go(n) {

@@ -7,7 +7,10 @@
 //! and hazard-level configuration, plus one per Eggstra Work event and
 //! wave; and a name table for the glossary (English, Japanese and
 //! Simplified Chinese names by internal key), which also lets the assets
-//! link icons named by those keys.
+//! link icons named by those keys. [`items`] lists the Salmon Run weapons
+//! and specials of the raw copies for the lab's pickers (the Studio's
+//! Techniques panel), each with its picture on Lean's site
+//! ([`icon_url`]), which the lab fetches into its local cache when shown.
 //!
 //! The data is Nintendo's, extracted and published by Lean without a
 //! licence: it is fetched into the knowledge folder at run time
@@ -22,7 +25,7 @@ use crate::crawl::Fetcher;
 use crate::doc::{Document, SourceKind, doc_id};
 use crate::eggstra::{self, Event, Events, Scenario, Shift};
 use crate::game::Game;
-use crate::glossary::Term;
+use crate::glossary::{Glossary, Term};
 use crate::ingest::{self, Meta, Sink};
 use crate::stats::{self, FactKind, Facts};
 use crate::tables::{Table, slug};
@@ -390,9 +393,14 @@ impl Site<'_> {
     }
 }
 
+/// The site's path of one of a version's tables (`WeaponInfoMain`)
+fn mush_path(version: &str, name: &str) -> String {
+    alloc::format!("splat3/data/mush/{version}/{name}.json")
+}
+
 /// The site's paths of the data files of a version
 fn data_paths(version: &str) -> Vec<String> {
-    let mush = |name: &str| alloc::format!("splat3/data/mush/{version}/{name}.json");
+    let mush = |name: &str| mush_path(version, name);
     alloc::vec![
         mush("CoopEnemyInfo"),
         mush("CoopSceneInfo"),
@@ -960,6 +968,140 @@ pub fn name_table(data: &Data) -> Table {
         attribution: Some(String::from(ATTRIBUTION)),
         terms,
     }
+}
+
+// ------------------------------------------------------------ pickers
+
+/// Where Lean's site keeps the game's pictures; an [`Item`]'s `icon` is a
+/// path below it
+pub const IMAGES: &str = "https://leanny.github.io/splat3/images";
+
+/// A Salmon Run weapon or special as a picker lists it (the lab's
+/// Techniques panel), from the raw copies of the newest version
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Item {
+    /// `weapon` or `special`
+    pub kind: &'static str,
+    /// Lean's internal key, the row's `__RowId` (`Shooter_Normal_Coop`)
+    pub key: String,
+    /// The game's number for it (`Id`); the game lists them in its order
+    pub id: u64,
+    /// A Grizzco weapon (`IsCoopRare`)
+    pub grizzco: bool,
+    /// Its picture below [`IMAGES`] ([`icon_url`]): a weapon's flat icon,
+    /// its battle form's (`weapon_flat/Path_Wst_Shooter_Normal_00.png`) or,
+    /// for a Grizzco weapon, its own (`weapon_flat/Path_Wst_Roller_Bear.png`);
+    /// a special's icon (`subspe/Wsp_SpJetpack00.png`)
+    pub icon: String,
+    /// Its term in the glossary, the one whose names came from Lean's table
+    /// under this key ([`NAMES_SOURCE`]): its Pedia entry
+    pub term: Option<String>,
+    /// The term's main name in each of [`LANGUAGES`] it has
+    pub names: BTreeMap<String, String>,
+    /// The term's other names in those languages (official ones after the
+    /// first) and its approved slang, for search
+    pub search: Vec<String>,
+}
+
+/// The Salmon Run weapons (Grizzco's included) and specials of the newest
+/// version in the raw copies (`<knowledge>/raw/leanny/`, fetched by
+/// [`ingest`]): the weapons, then the specials, each in the game's order,
+/// with their names and Pedia term from `glossary` (the store's, which has
+/// Lean's name table merged in). Empty when nothing was fetched yet.
+pub fn items(knowledge: &Path, glossary: &Glossary) -> Result<Vec<Item>> {
+    let dir = knowledge.join("raw").join(RAW);
+    let read = |rel: &str| -> Result<Value> {
+        let path = dir.join(rel);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
+            Err(e) => {
+                return Err(e).with_context(|| alloc::format!("cannot read {}", path.display()));
+            }
+        };
+        serde_json::from_slice(&bytes)
+            .with_context(|| alloc::format!("cannot parse {}", path.display()))
+    };
+    let versions = read("splat3/versions.json")?;
+    let Some(folder) = versions
+        .as_array()
+        .and_then(|v| v.last())
+        .and_then(Value::as_str)
+    else {
+        return Ok(Vec::new());
+    };
+    let coop = |row: &&Value| row["Type"].as_str() == Some("Coop");
+    let weapons = rows(&read(&mush_path(folder, "WeaponInfoMain"))?);
+    let specials = rows(&read(&mush_path(folder, "WeaponInfoSpecial"))?);
+    let item = |kind, row: &Value, category, icon| {
+        let key = row_id(row);
+        let origin = alloc::format!("{NAMES_SOURCE}#{category}/{key}");
+        let term = glossary.terms.iter().find(|t| t.from.contains(&origin));
+        let names: BTreeMap<String, String> = LANGUAGES
+            .iter()
+            .filter_map(|(lang, _)| Some((String::from(*lang), String::from(term?.name(lang)?))))
+            .collect();
+        let official = term
+            .into_iter()
+            .flat_map(|t| LANGUAGES.iter().filter_map(|(lang, _)| t.forms.get(*lang)))
+            .flatten();
+        let slang = term.into_iter().flat_map(|t| t.approved().map(|a| &a.text));
+        let mut search: Vec<String> = Vec::new();
+        for name in official.chain(slang) {
+            if !names.values().any(|n| n == name) && !search.contains(name) {
+                search.push(name.clone());
+            }
+        }
+        Item {
+            kind,
+            key: String::from(key),
+            id: row["Id"].as_u64().unwrap_or(u64::MAX),
+            grizzco: row["IsCoopRare"].as_bool().unwrap_or(false),
+            icon,
+            term: term.map(|t| t.id.clone()),
+            names,
+            search,
+        }
+    };
+    let mut out = Vec::new();
+    for row in weapons.iter().filter(coop) {
+        let key = row_id(row);
+        // The battle form's picture; a Grizzco weapon has only its own
+        let form = weapons
+            .iter()
+            .find(|v| {
+                v["WeaponInfoForCoop"]
+                    .as_str()
+                    .and_then(stem)
+                    .is_some_and(|s| s == key)
+            })
+            .map(row_id)
+            .unwrap_or(key.strip_suffix("_Coop").unwrap_or(key));
+        let icon = alloc::format!("weapon_flat/Path_Wst_{form}.png");
+        out.push(item("weapon", row, WEAPON_NAMES, icon));
+    }
+    for row in specials.iter().filter(coop) {
+        let key = row_id(row);
+        let icon = alloc::format!(
+            "subspe/Wsp_{}00.png",
+            key.strip_suffix("_Coop").unwrap_or(key)
+        );
+        out.push(item("special", row, SPECIAL_NAMES, icon));
+    }
+    out.sort_by_key(|i| (i.kind != "weapon", i.id));
+    Ok(out)
+}
+
+/// The address on Lean's site of a picture a picker shows: an [`Item`]'s
+/// `icon`, or a sub weapon's (`subspe/Wsb_Bomb_Splash00.png`); `None` for
+/// any other path, so nothing else is ever fetched
+pub fn icon_url(path: &str) -> Option<String> {
+    let name = ["weapon_flat/Path_Wst_", "subspe/Wsp_", "subspe/Wsb_"]
+        .iter()
+        .find_map(|prefix| path.strip_prefix(prefix))?
+        .strip_suffix(".png")?;
+    let plain = !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    plain.then(|| alloc::format!("{IMAGES}/{path}"))
 }
 
 // ------------------------------------------------------------- ingest
@@ -1795,5 +1937,133 @@ mod tests {
         assert!(
             provenance("11.3.0").starts_with("Splatoon 3 v11.3.0 game data from Lean's datamine")
         );
+    }
+
+    #[test]
+    fn items_for_pickers_in_the_games_order() {
+        let root = temp("items");
+        // Nothing fetched yet
+        assert!(items(&root, &Glossary::default()).unwrap().is_empty());
+        let raw = root.join("raw").join(RAW).join("splat3");
+        let mush = raw.join("data/mush/1130");
+        std::fs::create_dir_all(&mush).unwrap();
+        std::fs::write(
+            raw.join("versions.json"),
+            json!(["099", "1130"]).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            mush.join("WeaponInfoMain.json"),
+            json!([
+                {"__RowId": "Roller_Bear_Coop", "Type": "Coop", "Id": 21900, "IsCoopRare": true},
+                {"__RowId": "Shooter_Normal_00", "Type": "Versus", "Id": 40,
+                 "WeaponInfoForCoop": "Work/Gyml/Shooter_Normal_Coop.spl__WeaponInfoMain.gyml"},
+                {"__RowId": "Shooter_Normal_Coop", "Type": "Coop", "Id": 20040, "IsCoopRare": false}
+            ])
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            mush.join("WeaponInfoSpecial.json"),
+            json!([
+                {"__RowId": "SpJetpack_Coop", "Type": "Coop", "Id": 20010},
+                {"__RowId": "SpNiceBall", "Type": "Versus", "Id": 6},
+                {"__RowId": "SpNiceBall_Coop", "Type": "Coop", "Id": 20006}
+            ])
+            .to_string(),
+        )
+        .unwrap();
+        let forms = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(lang, name)| (String::from(*lang), alloc::vec![String::from(*name)]))
+                .collect()
+        };
+        let mut glossary = Glossary::default();
+        glossary.merge(&[
+            Term {
+                id: String::from("splattershot"),
+                forms: forms(&[
+                    ("en", "Splattershot"),
+                    ("ja", "Splattershot ja"),
+                    ("fr", "Liquidateur"),
+                ]),
+                from: alloc::vec![alloc::format!(
+                    "{NAMES_SOURCE}#{WEAPON_NAMES}/Shooter_Normal_Coop"
+                )],
+                aliases: alloc::vec![crate::glossary::Alias {
+                    text: String::from("shot"),
+                    lang: String::from("en"),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            Term {
+                id: String::from("booyah-bomb"),
+                forms: forms(&[("en", "Booyah Bomb")]),
+                from: alloc::vec![alloc::format!(
+                    "{NAMES_SOURCE}#{SPECIAL_NAMES}/SpNiceBall_Coop"
+                )],
+                ..Default::default()
+            },
+        ]);
+        // A second English name, as an older game's table gives one
+        glossary.terms[0]
+            .forms
+            .get_mut("en")
+            .unwrap()
+            .push(String::from("Hero Shot"));
+        let found = items(&root, &glossary).unwrap();
+        let keys: Vec<&str> = found.iter().map(|i| i.key.as_str()).collect();
+        // Weapons, then specials, each by the game's number
+        assert_eq!(
+            keys,
+            [
+                "Shooter_Normal_Coop",
+                "Roller_Bear_Coop",
+                "SpNiceBall_Coop",
+                "SpJetpack_Coop"
+            ]
+        );
+        let shot = &found[0];
+        assert_eq!((shot.kind, shot.id, shot.grizzco), ("weapon", 20040, false));
+        assert_eq!(shot.icon, "weapon_flat/Path_Wst_Shooter_Normal_00.png");
+        assert_eq!(shot.term.as_deref(), Some("splattershot"));
+        assert_eq!(shot.names["en"], "Splattershot");
+        assert_eq!(shot.names["ja"], "Splattershot ja");
+        // Further names and approved slang are searched, not shown; other
+        // languages are neither
+        assert!(!shot.names.contains_key("fr"));
+        assert_eq!(shot.search, ["Hero Shot", "shot"]);
+        let roller = &found[1];
+        assert!(roller.grizzco);
+        assert_eq!(roller.icon, "weapon_flat/Path_Wst_Roller_Bear.png");
+        // Not in the glossary: no term, no names
+        assert_eq!(roller.term, None);
+        assert!(roller.names.is_empty());
+        assert_eq!(found[2].kind, "special");
+        assert_eq!(found[2].icon, "subspe/Wsp_SpNiceBall00.png");
+        assert_eq!(found[2].term.as_deref(), Some("booyah-bomb"));
+
+        // Only the pictures pickers show are ever asked of Lean's site
+        assert_eq!(
+            icon_url(&shot.icon).as_deref(),
+            Some(
+                "https://leanny.github.io/splat3/images/weapon_flat/Path_Wst_Shooter_Normal_00.png"
+            )
+        );
+        assert!(icon_url("subspe/Wsb_Bomb_Splash00.png").is_some());
+        for bad in [
+            "",
+            "weapon_flat/Path_Wst_.png",
+            "weapon_flat/Path_Wst_x.jpg",
+            "weapon_flat/../Path_Wst_x.png",
+            "subspe/Wsp_a/../b.png",
+            "coopEnemy/SakelienBomber.png",
+            "https://example.com/x.png",
+        ] {
+            assert_eq!(icon_url(bad), None, "{bad}");
+        }
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

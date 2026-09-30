@@ -1,36 +1,132 @@
-// Technique markers: spans of a recording labelled as a technique practised
-// (a squid roll, an inertia cancel, an egg throw…), for labelled examples and
-// as a reminder of what to record. The Studio's Techniques panel marks them
-// while recording (a span started and stopped by hand, or the last few
-// seconds) through /api/command; they are saved in the session's
-// session.json as `markers` (host Unix ms, the frames' clock). The
-// Inkspector shows and edits them (inspect.js) and the Pedia lists them
-// under a technique's entry (pedia.js), both through
-// /api/inspect/markers. Runs after app.js and player.js and uses their
-// helpers ($, sendCommand, recorder, studioShown, escapeHtml) and those of
-// i18n.js (t, I18N).
+// Technique markers: spans of a recording labelled as what was practised,
+// for labelled examples and as a reminder of what to record. The Studio's
+// Techniques panel lists the items in groups (movement, egg handling, every
+// Salmon Run weapon with Grizzco's, the sub weapon, the specials), each
+// folded or open with how many of its items are recorded; while recording
+// it marks spans (started and stopped by hand, or the last few seconds)
+// through /api/command. They are saved in the session's session.json as
+// `markers` (host Unix ms, the frames' clock) with the item's id and kind
+// (`technique`, `weapon` or `special`), so examples can be counted per
+// weapon and special. The weapons and specials, with their names and
+// pictures, come from Lean's datamine in the Cuttlefish store
+// (GET /api/cuttlefish/game-items; each picture fetched once by the lab into
+// its cache, game-icon), credited to Lean where they show. The Inkspector
+// shows and edits the markers (inspect.js) and the Pedia lists them under
+// the item's entry (pedia.js), both through /api/inspect/markers. Runs after
+// app.js and player.js and uses their helpers ($, sendCommand, recorder,
+// studioShown, escapeHtml, showError, formatClock) and those of i18n.js (t,
+// I18N, i18nLang).
 "use strict";
 
+/** Lean's site, credited under the items from his data */
+const LEANNY = "https://leanny.github.io/";
+
+/** The panel's groups in order: `kind` is what their markers are, `data`
+ * when their items come from Lean's data, `adds` when techniques added by
+ * hand may join them */
+const TECH_GROUPS = [
+  { id: "movement", kind: "technique", adds: true },
+  { id: "eggs", kind: "technique", adds: true },
+  { id: "weapon", kind: "weapon", data: true },
+  { id: "sub", kind: "technique", adds: true },
+  { id: "special", kind: "special", data: true },
+];
+
 /**
- * The usual techniques to practise: `id` (their Chinese name is
- * `tech.zh.<id>` in i18n-zh.js), the English name markers get as their
- * label, and the Pedia term id where the glossary has one. Techniques added
- * in the panel follow them, saved in the dashboard's state file.
+ * The usual techniques and the sub weapon: `id` (markers keep it as their
+ * item; the Chinese name is `tech.zh.<id>` in i18n-zh.js), the group, the
+ * English name markers get as their label, the Pedia term id where the
+ * glossary has one, and a picture on Lean's site. Techniques added in the
+ * panel join their group, saved in the dashboard's state file; the weapons
+ * and specials come from Lean's data.
  */
 const TECHNIQUES = [
-  { id: "squid-roll", label: "Squid roll", term: "squid-roll" },
+  {
+    id: "squid-roll",
+    group: "movement",
+    label: "Squid roll",
+    term: "squid-roll",
+  },
   {
     id: "sub-strafe",
+    group: "movement",
     label: "Sub strafe (inertia cancel)",
     term: "inertia-cancel",
   },
-  { id: "main-strafe", label: "Main strafe", term: "main-strafe" },
-  { id: "wall-climb", label: "Fast wall climb" },
-  { id: "hop", label: "Small hop / big jump" },
-  { id: "egg-grab", label: "Grab eggs without cancelling ink recovery" },
-  { id: "egg-throw", label: "Egg throw", term: "egg-toss" },
-  { id: "basket-run", label: "Egg runs at the basket", term: "egg-run" },
+  {
+    id: "main-strafe",
+    group: "movement",
+    label: "Main strafe",
+    term: "main-strafe",
+  },
+  { id: "wall-climb", group: "movement", label: "Fast wall climb" },
+  { id: "hop", group: "movement", label: "Small hop / big jump" },
+  {
+    id: "egg-grab",
+    group: "eggs",
+    label: "Grab eggs without cancelling ink recovery",
+  },
+  { id: "egg-throw", group: "eggs", label: "Egg throw", term: "egg-toss" },
+  {
+    id: "basket-run",
+    group: "eggs",
+    label: "Egg runs at the basket",
+    term: "egg-run",
+  },
+  {
+    id: "splat-bomb",
+    group: "sub",
+    label: "Splat Bomb throw",
+    term: "splat-bomb",
+    icon: "subspe/Wsb_Bomb_Splash00.png",
+  },
 ];
+
+/** Search results shown at most */
+const TECH_FOUND = 12;
+
+/** Lean's weapons and specials (GET /api/cuttlefish/game-items) as items
+ * of the list: null until read, `failed` when the read failed */
+const gameItems = { list: null, loading: null, failed: "" };
+
+/** Read Lean's weapons and specials once (again after a failure, or while
+ * the store has none); the panel and the Inkspector's markers redraw when
+ * they come */
+function loadGameItems() {
+  if (gameItems.list?.length || gameItems.loading) return;
+  gameItems.loading = fetch("/api/cuttlefish/game-items")
+    .then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      gameItems.list = data.items.map((item) => ({
+        id: item.key,
+        // The groups of the weapons and specials are named as their kinds
+        group: item.kind,
+        label: item.names.en ?? item.key,
+        zh: item.names.zh ?? "",
+        ja: item.names.ja ?? "",
+        term: item.term ?? null,
+        icon: item.icon,
+        search: item.search,
+      }));
+      gameItems.failed = "";
+    })
+    .catch((error) => {
+      gameItems.failed = error.message;
+    })
+    .finally(() => {
+      gameItems.loading = null;
+      drawTechniques();
+      window.dispatchEvent(new Event("tech-items"));
+    });
+}
+
+/** An item's key: its id, or an added technique's name */
+const itemKey = (tech) => tech.id ?? tech.label;
+
+/** The kind of an item's markers: its group's */
+const itemKind = (tech) =>
+  TECH_GROUPS.find((group) => group.id === tech.group)?.kind ?? "technique";
 
 /** A technique's Chinese name, if it has one */
 function techniqueZh(tech) {
@@ -44,13 +140,19 @@ function techniqueNames(tech) {
   return i18nLang() === "zh" ? [zh, tech.label] : [tech.label, zh];
 }
 
-/** Whether a marker is an example of a technique */
+/** Whether a marker is an example of an item: by the item's id when the
+ * marker has one, else (older markers, added techniques) by name or term */
 function markerOf(marker, tech) {
+  if (marker.item) return marker.item === tech.id;
   return (
     marker.label === tech.label ||
     Boolean(tech.term && marker.term === tech.term)
   );
 }
+
+/** A picture of Lean's site, fetched by the lab into its cache */
+const iconUrl = (path) =>
+  `/api/cuttlefish/game-icon?path=${encodeURIComponent(path)}`;
 
 /** Every session's markers (GET /api/inspect/markers), kept a little while */
 const allMarkers = { list: null, at: 0, loading: null };
@@ -78,16 +180,25 @@ function loadAllMarkers() {
 // ------------------------------------------------------------ Studio panel
 
 const techPanel = {
-  /** The label of the technique picked, remembered in this browser */
+  /** The key of the item picked, remembered in this browser */
   picked: null,
   /** "session": reps marked in this session; "all": the checklist */
   mode: "session",
+  /** The open group ("" when all are folded), remembered too */
+  group: "movement",
+  /** The search typed, and which of its results Enter picks */
+  query: "",
+  hit: 0,
+  /** The results as last drawn */
+  found: [],
   /** The server's side: added techniques, open span, counts */
   status: { added: [], open: null, counts: {}, total: 0 },
   /** When the open span's elapsed time arrived */
   receivedAt: 0,
-  /** The list's markup as last drawn, to redraw only on change */
+  /** The list's markup as last drawn, to redraw only on change, and the
+   * group open then ("" for search results) */
   drawn: "",
+  drawnGroup: "",
   /** Recorder state and marker total last seen, to reload the checklist */
   seen: "",
 };
@@ -96,32 +207,59 @@ try {
   techPanel.picked = localStorage.getItem("procon-technique");
   techPanel.mode =
     localStorage.getItem("procon-technique-mode") === "all" ? "all" : "session";
+  techPanel.group =
+    localStorage.getItem("procon-technique-group") ?? techPanel.group;
 } catch {
   // Storage may be refused; the first technique is picked
 }
 
-/** The usual techniques, then the added ones */
-function techniques() {
-  return [
-    ...TECHNIQUES,
-    ...techPanel.status.added.map((tech) => ({ ...tech, added: true })),
-  ];
-}
-
-/** The technique picked, else the first */
-function pickedTechnique() {
-  const list = techniques();
-  return list.find((tech) => tech.label === techPanel.picked) ?? list[0];
-}
-
-function pickTechnique(label) {
-  techPanel.picked = label;
+/** Remember a choice in this browser */
+function techRemember(key, value) {
   try {
-    localStorage.setItem("procon-technique", label);
+    localStorage.setItem(key, value);
   } catch {
     // The choice holds until reload
   }
+}
+
+/** Every item: the usual techniques, the added ones in their groups, then
+ * Lean's weapons and specials */
+function techniques() {
+  const added = techPanel.status.added.map((tech) => ({
+    ...tech,
+    group: TECH_GROUPS.some((g) => g.adds && g.id === tech.group)
+      ? tech.group
+      : "movement",
+    added: true,
+  }));
+  return [...TECHNIQUES, ...added, ...(gameItems.list ?? [])];
+}
+
+/** The item picked, else the first */
+function pickedTechnique() {
+  const list = techniques();
+  const key = techPanel.picked;
+  return (
+    list.find((tech) => itemKey(tech) === key) ??
+    // Picked by name before items had ids
+    list.find((tech) => tech.label === key) ??
+    list[0]
+  );
+}
+
+/** Pick an item; its group opens, so 1–9 carry on in it */
+function pickTechnique(tech) {
+  techPanel.picked = itemKey(tech);
+  techRemember("procon-technique", techPanel.picked);
+  openGroup(tech.group);
   drawTechniques();
+  showPicked();
+}
+
+/** Open a group (folding the others), or fold it with `toggle` */
+function openGroup(id, toggle = false) {
+  techPanel.group = toggle && techPanel.group === id ? "" : id;
+  techRemember("procon-technique-group", techPanel.group);
 }
 
 /** The panel from the status's `techniques` (or a command's reply) */
@@ -136,6 +274,151 @@ function renderTechniques(status) {
   drawTechniques();
 }
 
+/** Whether an item is the one being marked */
+function isMarking(tech) {
+  const open = techPanel.status.open;
+  if (!open) return false;
+  return open.item ? open.item === tech.id : open.label === tech.label;
+}
+
+/** An item as the list shows it: its key (1–9 in the open group), picture,
+ * names (and group, among search results), count, a link to its Pedia
+ * entry and, added by hand, Remove */
+function itemRow(tech, { picked, count, key = "", hit = false, tag = false }) {
+  const [name, alt] = techniqueNames(tech);
+  const n = count(tech);
+  let counted;
+  if (techPanel.mode === "all") {
+    counted =
+      n == null
+        ? `<span class="tech-count">…</span>`
+        : n
+          ? `<span class="tech-count is-done" title="${escapeHtml(t("tech.allCount", { n }))}">✓ ${n}</span>`
+          : `<span class="tech-count is-missing" title="${escapeHtml(t("tech.none"))}">○</span>`;
+  } else {
+    counted = `<span class="tech-count${n ? " is-done" : ""}" title="${escapeHtml(t("tech.sessionCount", { n }))}">${n ? `×${n}` : "–"}</span>`;
+  }
+  // An empty slot keeps the counts in one column
+  const pedia = tech.term
+    ? `<a class="tech-link" href="/cuttlefish/pedia/${encodeURIComponent(tech.term)}" title="${escapeHtml(t("tech.pedia"))}" aria-label="${escapeHtml(t("tech.pedia"))}">?</a>`
+    : tech.added
+      ? ""
+      : `<span class="tech-link is-empty" aria-hidden="true"></span>`;
+  const remove = tech.added
+    ? `<button type="button" class="tech-link" data-remove="${escapeHtml(tech.label)}" title="${escapeHtml(t("tech.remove"))}" aria-label="${escapeHtml(t("tech.remove"))}">×</button>`
+    : "";
+  const icon = tech.icon
+    ? `<img class="tech-icon" src="${iconUrl(tech.icon)}" alt="" loading="lazy" decoding="async" />`
+    : "";
+  const group = tag
+    ? `<span class="tech-tag">${escapeHtml(t(`tech.group.${tech.group}`))}</span>`
+    : "";
+  const classes = `tech-item${isMarking(tech) ? " is-open" : ""}${hit ? " is-hit" : ""}`;
+  return `<li class="${classes}">
+      <button type="button" class="tech-pick" data-pick="${escapeHtml(itemKey(tech))}" aria-pressed="${itemKey(tech) === itemKey(picked)}">
+        <span class="tech-key">${key}</span>${icon}
+        <span class="tech-names"><span class="tech-name">${escapeHtml(name)}</span>${alt ? `<span class="tech-alt">${escapeHtml(alt)}</span>` : ""}${group}</span>
+        ${counted}
+      </button>${pedia}${remove}</li>`;
+}
+
+/** Why a group of Lean's items is empty: still read, not read, or not
+ * imported into the store yet */
+function dataNote() {
+  if (gameItems.loading || (!gameItems.list && !gameItems.failed))
+    return escapeHtml(t("tech.data.loading"));
+  if (gameItems.failed)
+    return escapeHtml(t("tech.data.failed", { error: gameItems.failed }));
+  const link = `<a href="/cuttlefish/knowledge">${escapeHtml(t("tech.data.knowledge"))}</a>`;
+  return t("tech.data.none", { link });
+}
+
+/** A group: its head (folded or open, how many of its items are recorded,
+ * marks for the item picked or being marked) and, open, its items, the
+ * first nine with their keys */
+function groupBlock(group, items, { picked, count }) {
+  const open = techPanel.group === group.id;
+  const counts = items.map(count);
+  const known =
+    counts.every((n) => n != null) && !(group.data && !gameItems.list);
+  const done = counts.filter((n) => n > 0).length;
+  const all = techPanel.mode === "all";
+  const tally = !known
+    ? "…"
+    : items.length
+      ? t(all ? "tech.group.recorded" : "tech.group.marked", {
+          done,
+          n: items.length,
+        })
+      : "–";
+  const note = t(all ? "tech.group.recordedNote" : "tech.group.markedNote");
+  // Green once every item is recorded
+  const level =
+    !known || !done ? "" : done < items.length ? " is-some" : " is-done";
+  const marking = items.some(isMarking);
+  const hasPicked = items.some((tech) => itemKey(tech) === itemKey(picked));
+  const classes = `tech-group${open ? " is-open" : ""}${marking ? " is-marking" : ""}${hasPicked ? " has-picked" : ""}`;
+  const head = `<button type="button" class="tech-group-head" data-group="${group.id}" aria-expanded="${open}">
+      <span class="tech-chevron" aria-hidden="true"></span>
+      <span class="tech-group-name">${escapeHtml(t(`tech.group.${group.id}`))}</span>
+      <span class="tech-group-count${level}" title="${escapeHtml(note)}">${escapeHtml(tally)}</span>
+    </button>`;
+  if (!open) return `<li class="${classes}">${head}</li>`;
+  const body = items.length
+    ? `<ul class="tech-items">${items
+        .map((tech, i) =>
+          itemRow(tech, { picked, count, key: i < 9 ? String(i + 1) : "" }),
+        )
+        .join("")}</ul>`
+    : `<p class="panel-note tech-empty">${group.data ? dataNote() : ""}</p>`;
+  const credit =
+    group.data && items.length
+      ? `<p class="panel-note tech-credit">${t("tech.credit", {
+          link: `<a href="${LEANNY}" target="_blank" rel="noopener">leanny.github.io ↗</a>`,
+        })}</p>`
+      : "";
+  return `<li class="${classes}">${head}${body}${credit}</li>`;
+}
+
+/** A name or query as searched: full-width forms made plain, lowercase,
+ * letters and digits only, as the Pedia's search (pedia.js) */
+const techLoose = (s) =>
+  (s ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+
+/** How well an item matches the search `q` (loose): 0 a whole name, 1 a
+ * name's start, 2 inside a name; null when it does not */
+function techRank(tech, q) {
+  const names = [
+    tech.label,
+    techniqueZh(tech),
+    tech.ja,
+    tech.term,
+    tech.id,
+    ...(tech.search ?? []),
+  ];
+  let best = null;
+  for (const name of names) {
+    const n = techLoose(name);
+    if (!n) continue;
+    const r = n === q ? 0 : n.startsWith(q) ? 1 : n.includes(q) ? 2 : null;
+    if (r !== null && (best === null || r < best)) best = r;
+  }
+  return best;
+}
+
+/** The items matching the search, best first, at most TECH_FOUND */
+function foundItems(list, q) {
+  return list
+    .map((tech, i) => ({ tech, i, rank: techRank(tech, q) }))
+    .filter((x) => x.rank !== null)
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .slice(0, TECH_FOUND)
+    .map((x) => x.tech);
+}
+
 function drawTechniques() {
   const { status, mode } = techPanel;
   const list = techniques();
@@ -146,42 +429,53 @@ function drawTechniques() {
     loadAllMarkers().then(drawTechniques, (error) =>
       showError(error.message, "tech-error"),
     );
-  const rows = list.map((tech, i) => {
-    const [name, alt] = techniqueNames(tech);
-    let count;
-    if (mode === "all") {
-      const n = all ? all.filter((m) => markerOf(m, tech)).length : null;
-      count =
-        n == null
-          ? `<span class="tech-count">…</span>`
-          : n
-            ? `<span class="tech-count is-done" title="${escapeHtml(t("tech.allCount", { n }))}">✓ ${n}</span>`
-            : `<span class="tech-count is-missing" title="${escapeHtml(t("tech.none"))}">○</span>`;
-    } else {
-      const n = status.counts[tech.label] ?? 0;
-      count = `<span class="tech-count${n ? " is-done" : ""}" title="${escapeHtml(t("tech.sessionCount", { n }))}">${n ? `×${n}` : "–"}</span>`;
-    }
-    const open = status.open?.label === tech.label;
-    // An empty slot keeps the counts in one column
-    const pedia = tech.term
-      ? `<a class="tech-link" href="/cuttlefish/pedia/${encodeURIComponent(tech.term)}" title="${escapeHtml(t("tech.pedia"))}" aria-label="${escapeHtml(t("tech.pedia"))}">?</a>`
-      : tech.added
-        ? ""
-        : `<span class="tech-link is-empty" aria-hidden="true"></span>`;
-    const remove = tech.added
-      ? `<button type="button" class="tech-link" data-remove="${i}" title="${escapeHtml(t("tech.remove"))}" aria-label="${escapeHtml(t("tech.remove"))}">×</button>`
-      : "";
-    return `<li class="tech-item${open ? " is-open" : ""}">
-      <button type="button" class="tech-pick" data-pick="${i}" aria-pressed="${tech === picked}">
-        <span class="tech-key">${i < 9 ? i + 1 : ""}</span>
-        <span class="tech-names"><span class="tech-name">${escapeHtml(name)}</span>${alt ? `<span class="tech-alt">${escapeHtml(alt)}</span>` : ""}</span>
-        ${count}
-      </button>${pedia}${remove}</li>`;
-  });
-  const html = rows.join("");
+  // This session's reps by name (as the lab counts them), or every
+  // session's examples; null while those are read
+  const count = (tech) =>
+    mode === "all"
+      ? all
+        ? all.filter((m) => markerOf(m, tech)).length
+        : null
+      : (status.counts[tech.label] ?? 0);
+  const q = techLoose(techPanel.query);
+  let html;
+  if (q) {
+    const found = foundItems(list, q);
+    techPanel.found = found;
+    techPanel.hit = Math.max(0, Math.min(techPanel.hit, found.length - 1));
+    html = found.length
+      ? found
+          .map((tech, i) =>
+            itemRow(tech, {
+              picked,
+              count,
+              hit: i === techPanel.hit,
+              tag: true,
+            }),
+          )
+          .join("")
+      : `<li class="panel-note tech-empty">${escapeHtml(t("tech.find.none"))}</li>`;
+  } else {
+    techPanel.found = [];
+    html = TECH_GROUPS.map((group) =>
+      groupBlock(
+        group,
+        list.filter((tech) => tech.group === group.id),
+        { picked, count },
+      ),
+    ).join("");
+  }
   if (html !== techPanel.drawn) {
+    const box = $("tech-list");
+    // The open group's list keeps its scroll through a redraw
+    const shown = q ? "" : techPanel.group;
+    const scrolled = box.querySelector(".tech-items")?.scrollTop ?? 0;
+    const same = techPanel.drawnGroup === shown;
     techPanel.drawn = html;
-    $("tech-list").innerHTML = html;
+    techPanel.drawnGroup = shown;
+    box.innerHTML = html;
+    const items = box.querySelector(".tech-items");
+    if (items && same) items.scrollTop = scrolled;
   }
 
   if (mode === "all") {
@@ -212,7 +506,35 @@ function drawTechniques() {
   $("tech-span").classList.toggle("is-open", Boolean(status.open));
   $("tech-last").disabled = recorder.state === "idle";
   $("tech-undo").disabled = !status.open && !status.total;
+  drawPicked(picked);
   drawSpanClock();
+}
+
+/** What M and B mark: the item picked, with its picture */
+function drawPicked(tech) {
+  const [name, alt] = techniqueNames(tech);
+  const html = `<span class="tech-picked-label">${escapeHtml(t("tech.picked"))}</span>
+    ${tech.icon ? `<img class="tech-icon" src="${iconUrl(tech.icon)}" alt="" />` : ""}
+    <span class="tech-name">${escapeHtml(name)}</span>${alt ? `<span class="tech-alt">${escapeHtml(alt)}</span>` : ""}`;
+  const el = $("tech-picked");
+  if (el.dataset.drawn !== html) {
+    el.dataset.drawn = html;
+    el.innerHTML = html;
+  }
+}
+
+/** Bring the item picked into view in its group's list, scrolling only the
+ * list */
+function showPicked() {
+  const row = $("tech-list").querySelector(
+    '.tech-items .tech-pick[aria-pressed="true"]',
+  );
+  const box = row?.closest(".tech-items");
+  if (!box) return;
+  const top = row.offsetTop - box.offsetTop;
+  if (top < box.scrollTop) box.scrollTop = top;
+  else if (top + row.offsetHeight > box.scrollTop + box.clientHeight)
+    box.scrollTop = top + row.offsetHeight - box.clientHeight;
 }
 
 /** The span being marked and how long it has run */
@@ -220,7 +542,7 @@ function drawSpanClock() {
   const open = techPanel.status.open;
   $("tech-live").hidden = !open;
   if (!open) return;
-  const tech = techniques().find((x) => x.label === open.label) ?? open;
+  const tech = techniques().find(isMarking) ?? open;
   const elapsed =
     open.elapsed_ms +
     (recorder.state === "recording"
@@ -239,23 +561,27 @@ function techCommand(body) {
   return sendCommand(body, "tech-error");
 }
 
+/** The item picked as a marker command names it */
+function markedItem() {
+  const tech = pickedTechnique();
+  return {
+    label: tech.label,
+    term: tech.term ?? null,
+    item: tech.id ?? null,
+    kind: itemKind(tech),
+  };
+}
+
 function toggleSpan() {
   if (techPanel.status.open) return techCommand({ action: "mark_stop" });
   if (recorder.state !== "recording") return;
-  const tech = pickedTechnique();
-  techCommand({ action: "mark_start", label: tech.label, term: tech.term });
+  techCommand({ action: "mark_start", ...markedItem() });
 }
 
 function markLast() {
   if (recorder.state === "idle") return;
-  const tech = pickedTechnique();
   const seconds = parseFloat($("tech-seconds").value) || 5;
-  techCommand({
-    action: "mark_last",
-    label: tech.label,
-    term: tech.term,
-    seconds,
-  });
+  techCommand({ action: "mark_last", ...markedItem(), seconds });
 }
 
 function undoMarker() {
@@ -266,19 +592,55 @@ function undoMarker() {
 function saveAdded(added) {
   return techCommand({
     action: "set_techniques",
-    techniques: added.map(({ label, zh, term }) => ({ label, zh, term })),
+    techniques: added.map(({ label, zh, term, group }) => ({
+      label,
+      zh,
+      term,
+      group,
+    })),
   });
 }
 
+/** Leave the search: its text cleared, the groups back */
+function closeFind() {
+  const find = $("tech-find");
+  find.value = "";
+  techPanel.query = "";
+  techPanel.hit = 0;
+  find.blur();
+  drawTechniques();
+}
+
 $("tech-list").addEventListener("click", (event) => {
+  const head = event.target.closest("[data-group]");
+  if (head) {
+    openGroup(head.dataset.group, true);
+    return drawTechniques();
+  }
   const pick = event.target.closest("[data-pick]");
-  if (pick) return pickTechnique(techniques()[Number(pick.dataset.pick)].label);
+  if (pick) {
+    const tech = techniques().find((x) => itemKey(x) === pick.dataset.pick);
+    if (!tech) return;
+    if (techPanel.query) closeFind();
+    return pickTechnique(tech);
+  }
   const remove = event.target.closest("[data-remove]");
   if (!remove) return;
-  const tech = techniques()[Number(remove.dataset.remove)];
-  if (!confirm(t("tech.removeAsk", { name: tech.label }))) return;
-  saveAdded(techPanel.status.added.filter((x) => x.label !== tech.label));
+  const label = remove.dataset.remove;
+  if (!confirm(t("tech.removeAsk", { name: label }))) return;
+  saveAdded(techPanel.status.added.filter((x) => x.label !== label));
 });
+// A picture Lean's site does not have leaves its slot empty
+for (const id of ["tech-list", "tech-picked"]) {
+  $(id).addEventListener(
+    "error",
+    (event) => {
+      if (event.target.classList?.contains("tech-icon"))
+        event.target.classList.add("is-broken");
+    },
+    true,
+  );
+}
 $("tech-span").addEventListener("click", toggleSpan);
 $("tech-last").addEventListener("click", markLast);
 $("tech-undo").addEventListener("click", undoMarker);
@@ -288,16 +650,37 @@ for (const [id, mode] of [
 ]) {
   $(id).addEventListener("click", () => {
     techPanel.mode = mode;
-    try {
-      localStorage.setItem("procon-technique-mode", mode);
-    } catch {
-      // The choice holds until reload
-    }
+    techRemember("procon-technique-mode", mode);
     // The checklist always reads the sessions afresh when opened
     if (mode === "all") allMarkers.at = 0;
     drawTechniques();
   });
 }
+
+// The search: type to list the matching items, ↑ ↓ to choose, Enter picks
+// (the first by default), Esc leaves
+$("tech-find").addEventListener("input", (event) => {
+  techPanel.query = event.target.value;
+  techPanel.hit = 0;
+  drawTechniques();
+});
+$("tech-find").addEventListener("keydown", (event) => {
+  const { found } = techPanel;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (!found.length) return;
+    const step = event.key === "ArrowDown" ? 1 : found.length - 1;
+    techPanel.hit = (techPanel.hit + step) % found.length;
+    drawTechniques();
+  } else if (event.key === "Enter") {
+    const tech = found[techPanel.hit];
+    if (!tech) return;
+    closeFind();
+    pickTechnique(tech);
+  } else if (event.key === "Escape") closeFind();
+  else return;
+  event.preventDefault();
+});
+
 $("tech-add").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
@@ -308,28 +691,33 @@ $("tech-add").addEventListener("submit", async (event) => {
     showError(t("tech.exists", { name: label }), "tech-error");
     return;
   }
+  const group = value("group");
   const added = [
     ...techPanel.status.added,
-    { label, zh: value("zh") || null, term: value("term") || null },
+    { label, zh: value("zh") || null, term: value("term") || null, group },
   ];
   if (await saveAdded(added)) {
     form.reset();
-    pickTechnique(label);
+    pickTechnique({ label, group });
   }
 });
 
-// Keys while the Studio is shown, outside text fields: 1–9 pick, M starts or
-// stops a span, B marks the last seconds, U undoes the last marker
+// Keys while the Studio is shown, outside text fields: / finds an item,
+// 1–9 pick in the open group, M starts or stops a span, B marks the last
+// seconds, U undoes the last marker
 document.addEventListener("keydown", (event) => {
   if (!studioShown() || event.repeat) return;
   const tag = event.target.tagName;
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   const key = event.key.toLowerCase();
-  if (/^[1-9]$/.test(key)) {
-    const tech = techniques()[Number(key) - 1];
+  if (key === "/") $("tech-find").focus();
+  else if (/^[1-9]$/.test(key)) {
+    const tech = techniques().filter((x) => x.group === techPanel.group)[
+      Number(key) - 1
+    ];
     if (!tech) return;
-    pickTechnique(tech.label);
+    pickTechnique(tech);
   } else if (key === "m") toggleSpan();
   else if (key === "b") markLast();
   else if (key === "u") undoMarker();
@@ -347,8 +735,12 @@ window.addEventListener("lang-change", () => {
   drawTechniques();
 });
 window.addEventListener("app-route", ({ detail }) => {
-  // Back to the Studio: the checklist may have changed in the Inkspector
-  if (detail.app === "studio") allMarkers.at = 0;
-  if (detail.app === "studio" && techPanel.mode === "all") drawTechniques();
+  if (detail.app !== "studio") return;
+  // Back to the Studio: the checklist may have changed in the Inkspector,
+  // and Lean's data may have been imported since
+  allMarkers.at = 0;
+  loadGameItems();
+  if (techPanel.mode === "all") drawTechniques();
 });
+loadGameItems();
 drawTechniques();

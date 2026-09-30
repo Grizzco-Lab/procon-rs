@@ -95,7 +95,7 @@ stays there), and `uv` rebuilds it when the Rust sources change.
 | **`crates/grizzco-lab/`** | **Grizzco Lab on the PC, one module per app** |
 | `src/main.rs` | Binary `grizzco-lab` (`config.toml`, read by `src/config.rs`): frame receiver, video, recorder, replay player, dashboard |
 | `src/web.rs` | Dashboard server (warp): page, WebSocket, command API, and every app's routes under its prefix |
-| `src/studio.rs` | The Studio app's coordinator: sessions, `session.json`, dashboard commands, saved settings, technique markers (open span, mark last N s, undo; `web/techniques.js` is their panel) |
+| `src/studio.rs` | The Studio app's coordinator: sessions, `session.json`, dashboard commands, saved settings, technique markers (open span, mark last N s, undo; each with its kind and item id, a technique or Lean's key of a weapon or special; `web/techniques.js` is their panel, the weapons and specials from `GET /api/cuttlefish/game-items`) |
 | `src/studio/player.rs` | The Studio's Replay panel: plays actions to the replay port |
 | `src/studio/parser.rs`, `src/studio/keystate.rs` | Input reports parsed into buttons, sticks and IMU samples |
 | `src/studio/motion.rs` | Controller orientation from the IMU for Splatoon mode |
@@ -104,7 +104,7 @@ stays there), and `uv` rebuilds it when the Rust sources change.
 | `src/inspect.rs` | Inkspector backend: sessions, frames, labels, delays, technique markers (read, replace, every session's) |
 | `src/inspect/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes, Follow's write rules |
 | `src/inspect/follow.rs` | Follow: boxes carried over the next frames by AgentZero's SAM 2 tracker, proxied from a thread; starts the tracker |
-| `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` with the chat, and the video, optional), video bytes with ranges, yt-dlp downloads into new or existing reviews, migration of the older flat layout, the chat endpoint over the shared knowledge store |
+| `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` with the chat, and the video, optional), video bytes with ranges, yt-dlp downloads into new or existing reviews, migration of the older flat layout, the chat endpoint over the shared knowledge store; pictures of other sites fetched once into the local cache (Gungee's stage maps, Lean's weapon and special icons) and Lean's Salmon Run weapons and specials for the Techniques panel |
 | `src/cuttlefish/knowledge.rs` | Cuttlefish's Knowledge view: the store and embedder loaded once (the chat's retrieval too), search, glossary lookups and `Knowledge::translate` for the Translate view, import jobs, inbox uploads, overview, assets and thumbnails, document deletion |
 | `src/cuttlefish/pedia.rs` | Cuttlefish's Overfishing Pedia: the terms in scope with sections, games and facets (`cuttlefish::pedia`), their #vod-review mentions searched once and cached until the corpus or the names change, entries with quotes, fact cards, notes and deep questions; `GET source`, the context of a cited source or a quote for the page's source popover (`web/source.js`) |
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results through our classes, dataset overview, send to labels |

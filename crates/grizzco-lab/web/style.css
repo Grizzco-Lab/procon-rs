@@ -15,6 +15,9 @@
   --warning: #fab219;
   --serious: #ec835a;
   --critical: #d03b3b;
+  /* The tile under game pictures (Techniques panel), mid grey in every
+     theme: the specials' icons are black and white */
+  --icon-tile: #8b9099;
 
   /* A: Studio, the default */
   --bg: #0d0e10;
@@ -228,9 +231,10 @@ body[data-rec="recording"] .topbar {
 }
 
 /* ------------------------------------------------------------ techniques
- * The Techniques panel (techniques.js): the list to pick from, with each
- * technique's reps this session or, as a checklist, its examples so far;
- * the span being marked; the marking buttons; a field to add techniques.
+ * The Techniques panel (techniques.js): the search, the groups to pick
+ * from (one open at a time), with each item's reps this session or, as a
+ * checklist, its examples so far; the span being marked; the item picked;
+ * the marking buttons; a field to add techniques.
  */
 
 .seg-switch {
@@ -346,6 +350,165 @@ body[data-rec="recording"] .topbar {
 
 .tech-link.is-empty {
   visibility: hidden;
+}
+
+.select.tech-find {
+  width: 100%;
+  max-width: none;
+}
+
+/* A group: its head folds or opens it; the open group's items scroll
+   when long (the weapons) */
+.tech-group {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tech-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+
+.tech-group-head:hover {
+  border-color: var(--panel-border);
+  background: var(--btn-hover);
+  color: var(--text);
+}
+
+.tech-group.is-open .tech-group-head {
+  color: var(--text);
+}
+
+/* A folded group holding the item picked, or the one being marked */
+.tech-group.has-picked:not(.is-open) .tech-group-head {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.tech-group.is-marking:not(.is-open) .tech-group-head {
+  box-shadow: inset 3px 0 0 var(--rec);
+}
+
+.tech-chevron {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid currentColor;
+  transition: transform 0.15s;
+}
+
+.tech-group-head[aria-expanded="true"] .tech-chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tech-chevron {
+    transition: none;
+  }
+}
+
+.tech-group-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.tech-group-count {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-num);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Some of the group's items recorded, or all of them */
+.tech-group-count.is-some {
+  color: var(--text-2);
+}
+
+.tech-group-count.is-done {
+  color: var(--good);
+}
+
+.tech-items {
+  display: grid;
+  gap: 4px;
+  max-height: 22rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.tech-icon {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--icon-tile);
+  object-fit: contain;
+}
+
+.tech-icon.is-broken {
+  visibility: hidden;
+}
+
+/* A search result's group */
+.tech-tag {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+/* The search result Enter picks */
+.tech-item.is-hit .tech-pick {
+  border-color: var(--accent);
+  background: var(--btn-hover);
+}
+
+.tech-empty,
+.tech-credit {
+  margin: 0;
+  padding: 0 8px;
+}
+
+.tech-credit {
+  font-size: 11.5px;
+}
+
+/* What M and B mark */
+.tech-picked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.tech-picked .tech-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+}
+
+.tech-picked-label {
+  color: var(--text-3);
 }
 
 .tech-live {

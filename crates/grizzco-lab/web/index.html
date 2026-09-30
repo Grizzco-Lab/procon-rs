@@ -928,8 +928,9 @@
         <p class="notice" id="rec-error" role="alert" hidden></p>
       </section>
 
-      <!-- Technique markers (techniques.js): pick a technique, then mark a
-           span of the recording as it, or the last few seconds -->
+      <!-- Technique markers (techniques.js): pick an item (a technique, a
+           weapon, a special; by group, or found with /), then mark a span
+           of the recording as it, or the last few seconds -->
       <section class="panel p-techniques" aria-labelledby="h-techniques">
         <header class="panel-head">
           <h2 id="h-techniques" data-i18n="tech.title">Techniques</h2>
@@ -959,11 +960,23 @@
           </div>
         </header>
         <p class="panel-note" id="tech-note"></p>
+        <input
+          class="select tech-find"
+          id="tech-find"
+          type="search"
+          placeholder="Find a technique, weapon or special  /"
+          data-i18n-placeholder="tech.find"
+          aria-label="Find an item to mark: type, then Enter"
+          data-i18n-aria-label="tech.findLabel"
+          autocomplete="off"
+          spellcheck="false"
+        />
         <ul class="tech-list" id="tech-list"></ul>
         <div class="tech-live" id="tech-live" hidden>
           <span class="tech-live-dot" aria-hidden="true"></span>
           <span id="tech-live-text"></span>
         </div>
+        <p class="tech-picked" id="tech-picked"></p>
         <div class="tech-actions">
           <button
             type="button"
@@ -1027,13 +1040,28 @@
             autocomplete="off"
             spellcheck="false"
           />
+          <select
+            class="select"
+            name="group"
+            aria-label="Its group"
+            data-i18n-aria-label="tech.add.group"
+          >
+            <option value="movement" data-i18n="tech.group.movement">
+              Movement
+            </option>
+            <option value="eggs" data-i18n="tech.group.eggs">
+              Egg handling
+            </option>
+            <option value="sub" data-i18n="tech.group.sub">Sub weapon</option>
+          </select>
           <button type="submit" class="btn btn-small" data-i18n="tech.add">
             Add
           </button>
         </form>
         <p class="panel-note keys" data-i18n-html="tech.keys">
-          <kbd>1</kbd>–<kbd>9</kbd> pick · <kbd>M</kbd> start/stop a span ·
-          <kbd>B</kbd> mark the last seconds · <kbd>U</kbd> undo the last marker
+          <kbd>/</kbd> find · <kbd>1</kbd>–<kbd>9</kbd> pick in the open group ·
+          <kbd>M</kbd> start/stop a span · <kbd>B</kbd> mark the last seconds ·
+          <kbd>U</kbd> undo the last marker
         </p>
         <p class="notice" id="tech-error" role="alert" hidden></p>
       </section>

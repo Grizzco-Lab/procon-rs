@@ -1041,8 +1041,9 @@ const I18N = {
     "k.delete.askInbox":
       'Delete "{title}" and its {n} chunks? Its file stays in the inbox; it comes back only if the file changes or is imported with "Again if stored".',
 
-    // Technique markers: the Studio's Techniques panel (techniques.js), the
-    // Inkspector's markers (inspect.js) and the Pedia's recorded examples
+    // Technique markers: the Studio's Techniques panel (techniques.js; its
+    // weapons and specials are named by Lean's data), the Inkspector's
+    // markers (inspect.js) and the Pedia's recorded examples
     "tech.title": "Techniques",
     "tech.mode.session": "This session",
     "tech.mode.sessionNote": "Reps marked in this session",
@@ -1058,8 +1059,29 @@ const I18N = {
     "tech.add.label": "Add a technique",
     "tech.add.zh": "Chinese name",
     "tech.add.term": "Pedia term id",
+    "tech.add.group": "Its group",
     "tech.keys":
-      "<kbd>1</kbd>–<kbd>9</kbd> pick · <kbd>M</kbd> start/stop a span · <kbd>B</kbd> mark the last seconds · <kbd>U</kbd> undo the last marker",
+      "<kbd>/</kbd> find · <kbd>1</kbd>–<kbd>9</kbd> pick in the open group · <kbd>M</kbd> start/stop a span · <kbd>B</kbd> mark the last seconds · <kbd>U</kbd> undo the last marker",
+    "tech.group.movement": "Movement",
+    "tech.group.eggs": "Egg handling",
+    "tech.group.weapon": "Weapons",
+    "tech.group.sub": "Sub weapon",
+    "tech.group.special": "Specials",
+    "tech.group.recorded": "recorded {done} / {n}",
+    "tech.group.recordedNote": "Items with an example in any session",
+    "tech.group.marked": "marked {done} / {n}",
+    "tech.group.markedNote": "Items marked in this session",
+    "tech.find": "Find a technique, weapon or special  /",
+    "tech.findLabel": "Find an item to mark: type, then Enter",
+    "tech.find.none": "Nothing matches.",
+    "tech.picked": "Picked",
+    "tech.data.loading": "Reading Lean's weapons and specials…",
+    "tech.data.failed": "Could not read the weapons and specials: {error}",
+    "tech.data.none":
+      "No game data yet: import “Game data (Lean)” in Cuttlefish's {link}.",
+    "tech.data.knowledge": "Knowledge view",
+    "tech.credit":
+      "Names and pictures from Lean's Splatoon 3 datamine, {link}. Thanks, Lean!",
     "tech.sessionCount": ({ n }) =>
       n === 1
         ? "1 rep marked in this session"
@@ -1073,7 +1095,7 @@ const I18N = {
       'Remove "{name}" from the list? Its markers stay in the sessions.',
     "tech.exists": '"{name}" is on the list already',
     "tech.idleNote":
-      "Pick a technique, record, then mark each rep (a span, or the last seconds).",
+      "Pick what you practise (/ finds it), record, then mark each rep (a span, or the last seconds).",
     "tech.sessionNote": ({ n }) =>
       n === 1 ? "1 marker in this session" : `${n} markers in this session`,
     "tech.allNote": ({ done, n, markers, sessions }) =>
@@ -1094,7 +1116,7 @@ const I18N = {
     "mk.delete": "Delete",
     "mk.deleteAsk": 'Delete the marker "{name}"?',
     "mk.saveError": "Could not save the markers: {error}",
-    "mk.technique": "Technique",
+    "mk.technique": "Technique, weapon or special",
     "mk.frames": "Frames",
     "pedia.examples": "Recorded examples",
     "pedia.examplesNote": ({ n }) =>

@@ -4,8 +4,9 @@
 //! on the host clock. Older sessions lack `video.fps` and `video.height`
 //! and have variable-rate video; newer ones may add `game_settings`,
 //! `video.audio`, per segment with sound, `audio_start_unix_ms`, and
-//! `markers` (spans labelled by hand, such as a technique practised).
-//! Fields that are absent stay absent when written back.
+//! `markers` (spans labelled by hand: a technique practised, play with a
+//! Salmon Run weapon or a special). Fields that are absent stay absent when
+//! written back.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -40,8 +41,19 @@ pub struct SessionInfo {
     pub markers: Vec<Marker>,
 }
 
-/// [`Marker::kind`] of a technique practised, such as a squid roll
+/// [`Marker::kind`] of a technique practised, such as a squid roll, an egg
+/// throw or a Splat Bomb thrown
 pub const MARKER_TECHNIQUE: &str = "technique";
+
+/// [`Marker::kind`] of play with a Salmon Run weapon (Grizzco's included),
+/// every use of it in the span
+pub const MARKER_WEAPON: &str = "weapon";
+
+/// [`Marker::kind`] of a Salmon Run special used in the span
+pub const MARKER_SPECIAL: &str = "special";
+
+/// The kinds a [`Marker`] may have
+pub const MARKER_KINDS: [&str; 3] = [MARKER_TECHNIQUE, MARKER_WEAPON, MARKER_SPECIAL];
 
 /// A span of a session labelled by hand
 ///
@@ -50,13 +62,21 @@ pub const MARKER_TECHNIQUE: &str = "technique";
 /// `video_delay_ms` later.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Marker {
-    /// What the span holds: [`MARKER_TECHNIQUE`]; other kinds may come
+    /// What the span holds, one of [`MARKER_KINDS`]
     pub kind: String,
-    /// The technique's name, such as `Squid roll`
+    /// Its name as the Techniques panel lists it, such as `Squid roll` or
+    /// `Splattershot`
     pub label: String,
-    /// The Pedia (glossary) term id of the technique, if it has one
+    /// The Pedia (glossary) term id of what it marks, if it has one
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub term: Option<String>,
+    /// What it marks by id, so examples can be counted per item: a
+    /// technique's id in the Techniques panel's list (`squid-roll`), or
+    /// Lean's internal key of the Salmon Run weapon or special
+    /// (`Shooter_Normal_Coop`, `SpJetpack_Coop`); older markers and
+    /// techniques added by hand have none, and go by `label`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
     /// Host Unix ms where the span starts
     pub t_start_ms: u64,
     /// Host Unix ms where the span ends
@@ -247,20 +267,30 @@ mod tests {
           {"kind": "technique", "label": "Squid roll", "term": "squid-roll",
            "t_start_ms": 1790369545000, "t_end_ms": 1790369547500, "created_ms": 1790369547500},
           {"kind": "technique", "label": "Fast wall climb",
-           "t_start_ms": 1790369550000, "t_end_ms": 1790369555000, "created_ms": 1790369560000}]}"#;
+           "t_start_ms": 1790369550000, "t_end_ms": 1790369555000, "created_ms": 1790369560000},
+          {"kind": "weapon", "label": "Splattershot", "term": "splattershot",
+           "item": "Shooter_Normal_Coop",
+           "t_start_ms": 1790369556000, "t_end_ms": 1790369570000, "created_ms": 1790369570000}]}"#;
 
     #[test]
     fn markers_round_trip() {
         let info: SessionInfo = serde_json::from_str(WITH_MARKERS).unwrap();
-        assert_eq!(info.markers.len(), 2);
+        assert_eq!(info.markers.len(), 3);
         let roll = &info.markers[0];
         assert_eq!(roll.kind, MARKER_TECHNIQUE);
         assert_eq!(roll.term.as_deref(), Some("squid-roll"));
         assert_eq!(roll.t_end_ms - roll.t_start_ms, 2500);
+        // Markers made before items had ids have none
+        assert_eq!(roll.item, None);
         assert_eq!(info.markers[1].term, None);
+        let weapon = &info.markers[2];
+        assert_eq!(weapon.kind, MARKER_WEAPON);
+        assert_eq!(weapon.item.as_deref(), Some("Shooter_Normal_Coop"));
+        assert!(MARKER_KINDS.contains(&weapon.kind.as_str()));
         let written = serde_json::to_string(&info).unwrap();
-        // A marker without a term leaves it out
-        assert_eq!(written.matches("\"term\"").count(), 1);
+        // A marker without a term or an item leaves it out
+        assert_eq!(written.matches("\"term\"").count(), 2);
+        assert_eq!(written.matches("\"item\"").count(), 1);
         let again: SessionInfo = serde_json::from_str(&written).unwrap();
         assert_eq!(again, info);
     }

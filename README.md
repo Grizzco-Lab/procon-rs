@@ -160,17 +160,28 @@ Studio's preview pauses, and each app stops its own work while hidden.
   (1080p to 360p) and frame rate (60 to 10 fps); "Preview at recording
   quality"; "Record sound"; and the game's settings (Splatoon 3 motion and
   stick sensitivity, motion controls, invert Y/X), saved with each session.
-- **Techniques**: technique markers, labelled examples of what you practise
-  (squid roll, sub strafe / inertia cancel, main strafe, fast wall climb,
-  small hop / big jump, grabbing eggs without cancelling ink recovery, egg
-  throw, egg runs at the basket, and any you add). Pick one (keys 1–9), then
-  while recording mark a span with **Start span** / **Stop span** (M), or
-  **Mark last** N seconds (B); **Undo** (U) removes the last marker (or drops
-  the open span). Starting another technique ends the open span; Pause and
-  Stop end it too. **This session** counts the reps marked so far;
-  **Checklist** shows which techniques have examples in any session under
-  the Inkspector's root. Added techniques (name, Chinese name, Pedia term
-  id) are saved in `config.state.json`; each has a link to its Pedia entry.
+- **Techniques**: technique markers, labelled examples of what you practise,
+  in five groups, one open at a time: **Movement** (squid roll, sub strafe /
+  inertia cancel, main strafe, fast wall climb, small hop / big jump),
+  **Egg handling** (grabbing eggs without cancelling ink recovery, egg
+  throw, egg runs at the basket), **Weapons** (every Salmon Run weapon,
+  Grizzco's too, one item each: a span shows all its uses), **Sub weapon**
+  (Splat Bomb throw) and **Specials**, plus any technique you add. The
+  weapons and specials, with their English, Japanese and Chinese names and
+  their icons, come from Lean's datamine once it is imported (Cuttlefish →
+  Knowledge → Game data (Lean)); the lab fetches each icon from Lean's site
+  into its local cache the first time it shows. Pick an item (**/** finds
+  one by any of its names, ↑ ↓ and Enter; keys 1–9 pick in the open group),
+  then while recording mark a span with **Start span** / **Stop span** (M),
+  or **Mark last** N seconds (B); **Undo** (U) removes the last marker (or
+  drops the open span). Starting another item ends the open span; Pause
+  and Stop end it too. Each marker keeps the item's id and kind (technique,
+  weapon or special), so examples can be counted per weapon and special.
+  **This session** counts the reps marked so far (and "marked x / y" per
+  group); **Checklist** shows which items have examples in any session under
+  the Inkspector's root ("recorded x / y" per group). Added techniques
+  (name, Chinese name, Pedia term id, group) are saved in
+  `config.state.json`; each item has a link to its Pedia entry.
 - **Replay**: plays a session folder, a `controller.bin` or a `.jsonl` of
   actions to the Switch (see below).
 - **Data**: controller and video write rates, this session's size, all
@@ -220,11 +231,12 @@ with the picture, and a model's predictions against them.
   under the truth, differences in red.
 - **Technique markers**: the session's markers are red bands on the
   scrubber with labelled chips under it (a click goes to the start), and a
-  list in the Session panel: change a marker's technique, its first and last
-  frame (typed, or **Start here** / **End here** at the frame shown),
-  **Go** to it or **Delete** it. **Add marker here** adds one after the fact
-  (2 s from the frame shown, the technique picked in the Studio). Markers
-  cover controller input, so they are drawn at the delay in use.
+  list in the Session panel: change a marker's technique, weapon or special
+  (the list grouped as in the Studio), its first and last frame (typed, or
+  **Start here** / **End here** at the frame shown), **Go** to it or
+  **Delete** it. **Add marker here** adds one after the fact (2 s from the
+  frame shown, the item picked in the Studio). Markers cover controller
+  input, so they are drawn at the delay in use.
 - **Label** (L): draw boxes around objects on the frame, class by class, for
   training a detector. Boxes are saved per frame in `[inspect] annotations`
   (default `Annotations` next to the sessions' folder); the model's boxes

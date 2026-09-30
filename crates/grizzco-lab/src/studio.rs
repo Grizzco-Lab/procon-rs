@@ -18,11 +18,13 @@
 //! techniques added to the list, what the bot may press) are saved to a small
 //! JSON state file so they survive restarts.
 //!
-//! While a session is open, the Techniques panel marks spans of it as a
-//! technique practised: a span started and stopped by hand, or the last few
-//! seconds. They go to `session.json` as `markers` (see
-//! [`gameplay_data::session::Marker`]), which the Inkspector can edit too, so
-//! the file holds the list and each change here reads it first.
+//! While a session is open, the Techniques panel marks spans of it as what
+//! was practised (a technique, a Salmon Run weapon or a special): a span
+//! started and stopped by hand, or the last few seconds. They go to
+//! `session.json` as `markers` (see [`gameplay_data::session::Marker`]:
+//! each with its kind and item id, so examples can be counted per weapon and
+//! special), which the Inkspector can edit too, so the file holds the list
+//! and each change here reads it first.
 //!
 //! A run of the bot is recorded too (see [`crate::predictor::online`]): a
 //! session of its own, `<prefix>bot-<stamp>/`, from the play to its end, or
@@ -44,7 +46,9 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
-use gameplay_data::session::{MARKER_TECHNIQUE, Marker, SessionInfo, write_atomic, write_markers};
+use gameplay_data::session::{
+    MARKER_KINDS, MARKER_TECHNIQUE, Marker, SessionInfo, write_atomic, write_markers,
+};
 use player::Player;
 use procon::dump::unix_ms;
 use procon::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
@@ -193,6 +197,10 @@ pub struct Technique {
     /// Its Pedia term id
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub term: Option<String>,
+    /// The panel's group it is listed in (`movement`, `eggs` or `sub`);
+    /// Movement when none
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 /// Longest "mark the last N seconds", in seconds
@@ -245,17 +253,24 @@ pub enum Command {
     SetReplayMix {
         enabled: bool,
     },
-    /// Start a span of a technique now (ending the open one)
+    /// Start a span of an item now (ending the open one): a technique, or
+    /// with `kind` a weapon or a special ([`Marker::kind`]); `item` is its
+    /// id ([`Marker::item`])
     MarkStart {
         label: String,
         term: Option<String>,
+        item: Option<String>,
+        kind: Option<String>,
     },
     /// End the open span
     MarkStop,
-    /// Mark the last `seconds` as a technique
+    /// Mark the last `seconds` as an item, named as for
+    /// [`Command::MarkStart`]
     MarkLast {
         label: String,
         term: Option<String>,
+        item: Option<String>,
+        kind: Option<String>,
         seconds: f64,
     },
     /// Remove the last marker of the session (a mistaken key)
@@ -266,11 +281,34 @@ pub enum Command {
     },
 }
 
-/// A technique span started but not ended yet
-#[derive(Clone)]
-struct OpenSpan {
+/// What a marker marks, as checked from a dashboard command ([`marked`])
+#[derive(Clone, Debug)]
+struct Marked {
+    kind: String,
     label: String,
     term: Option<String>,
+    item: Option<String>,
+}
+
+impl Marked {
+    /// Its marker from `t_start_ms` to `t_end_ms`, made at `created_ms`
+    fn marker(self, t_start_ms: u64, t_end_ms: u64, created_ms: u64) -> Marker {
+        Marker {
+            kind: self.kind,
+            label: self.label,
+            term: self.term,
+            item: self.item,
+            t_start_ms,
+            t_end_ms,
+            created_ms,
+        }
+    }
+}
+
+/// A span started but not ended yet
+#[derive(Clone)]
+struct OpenSpan {
+    what: Marked,
     start_ms: u64,
 }
 
@@ -352,16 +390,15 @@ impl Session {
         let Some(span) = self.open_span.take() else {
             return false;
         };
-        self.markers.push(Marker {
-            kind: MARKER_TECHNIQUE.into(),
-            label: span.label,
-            term: span.term,
-            t_start_ms: span.start_ms,
-            t_end_ms: now.max(span.start_ms),
-            created_ms: now,
-        });
+        let end = now.max(span.start_ms);
+        self.markers.push(span.what.marker(span.start_ms, end, now));
         true
     }
+}
+
+/// Text as the dashboard sends it, trimmed; blank is none
+fn trimmed(text: Option<String>) -> Option<String> {
+    text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
 }
 
 /// A technique's name and term as the dashboard sends them: trimmed, and
@@ -369,8 +406,30 @@ impl Session {
 fn technique(label: &str, term: Option<String>) -> Result<(String, Option<String>)> {
     let label = label.trim();
     ensure!(!label.is_empty(), "pick a technique first");
-    let term = term.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-    Ok((label.to_string(), term))
+    Ok((label.to_string(), trimmed(term)))
+}
+
+/// What the dashboard asks to mark: its name and term as [`technique`]
+/// checks them, its item id, and its kind, one of [`MARKER_KINDS`] (a
+/// technique when none is given)
+fn marked(
+    label: &str,
+    term: Option<String>,
+    item: Option<String>,
+    kind: Option<String>,
+) -> Result<Marked> {
+    let (label, term) = technique(label, term)?;
+    let kind = trimmed(kind).unwrap_or_else(|| MARKER_TECHNIQUE.into());
+    ensure!(
+        MARKER_KINDS.contains(&kind.as_str()),
+        "no marker kind {kind}"
+    );
+    Ok(Marked {
+        kind,
+        label,
+        term,
+        item: trimmed(item),
+    })
 }
 
 /// Session coordinator shared by the web server
@@ -501,8 +560,13 @@ impl Studio {
                 }
             }
             Command::Stop => self.stop_session(&mut session)?,
-            Command::MarkStart { label, term } => {
-                let (label, term) = technique(&label, term)?;
+            Command::MarkStart {
+                label,
+                term,
+                item,
+                kind,
+            } => {
+                let what = marked(&label, term, item, kind)?;
                 ensure!(
                     self.recorder.status().state == RecorderState::Recording,
                     "start recording to mark a technique"
@@ -510,13 +574,12 @@ impl Studio {
                 let current = session.as_mut().context("no session is open")?;
                 let now = unix_ms();
                 current.reload_markers();
-                // Another technique ends the one being marked
+                // Another item ends the one being marked
                 if current.close_span(now) {
                     write_markers(&current.dir, &current.markers)?;
                 }
                 current.open_span = Some(OpenSpan {
-                    label,
-                    term,
+                    what,
                     start_ms: now,
                 });
             }
@@ -530,9 +593,11 @@ impl Studio {
             Command::MarkLast {
                 label,
                 term,
+                item,
+                kind,
                 seconds,
             } => {
-                let (label, term) = technique(&label, term)?;
+                let what = marked(&label, term, item, kind)?;
                 ensure!(
                     seconds > 0.0 && seconds <= MAX_MARK_LAST_S,
                     "mark between 0 and {MAX_MARK_LAST_S} seconds, not {seconds}"
@@ -544,16 +609,10 @@ impl Studio {
                 let current = session.as_mut().context("no session is open")?;
                 let now = unix_ms();
                 current.reload_markers();
-                current.markers.push(Marker {
-                    kind: MARKER_TECHNIQUE.into(),
-                    label,
-                    term,
-                    t_start_ms: now
-                        .saturating_sub((seconds * 1000.0) as u64)
-                        .max(current.started_at_ms),
-                    t_end_ms: now,
-                    created_ms: now,
-                });
+                let start = now
+                    .saturating_sub((seconds * 1000.0) as u64)
+                    .max(current.started_at_ms);
+                current.markers.push(what.marker(start, now, now));
                 write_markers(&current.dir, &current.markers)?;
             }
             Command::MarkUndo => {
@@ -578,8 +637,12 @@ impl Studio {
                 let mut kept = Vec::new();
                 for t in techniques {
                     let (label, term) = technique(&t.label, t.term)?;
-                    let zh = t.zh.map(|z| z.trim().to_string()).filter(|z| !z.is_empty());
-                    kept.push(Technique { label, zh, term });
+                    kept.push(Technique {
+                        label,
+                        zh: trimmed(t.zh),
+                        term,
+                        group: trimmed(t.group),
+                    });
                 }
                 *self.techniques.lock().unwrap() = kept;
                 self.save_state()?;
@@ -790,8 +853,9 @@ impl Studio {
     }
 
     /// The Techniques panel's state: the techniques added to the list, the
-    /// span being marked (`label`, `term`, `elapsed_ms`) and the markers of
-    /// the current or last session (`counts` by label, `total`)
+    /// span being marked (`kind`, `label`, `term`, `item`, `elapsed_ms`) and
+    /// the markers of the current or last session (`counts` by label,
+    /// `total`)
     pub fn techniques_status(&self) -> Value {
         let added = self.techniques.lock().unwrap().clone();
         let session = self.session.lock().unwrap_or_else(|e| e.into_inner());
@@ -804,8 +868,10 @@ impl Studio {
             total = session.markers.len();
             if let Some(span) = &session.open_span {
                 open = json!({
-                    "label": span.label,
-                    "term": span.term,
+                    "kind": span.what.kind,
+                    "label": span.what.label,
+                    "term": span.what.term,
+                    "item": span.what.item,
                     "elapsed_ms": unix_ms().saturating_sub(span.start_ms),
                 });
             }
@@ -947,5 +1013,37 @@ impl Studio {
         std::fs::write(&temp, serde_json::to_string_pretty(&state)?)?;
         std::fs::rename(&temp, &self.state_path)
             .with_context(|| format!("cannot save {}", self.state_path.display()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gameplay_data::session::MARKER_WEAPON;
+
+    #[test]
+    fn marked_items_are_checked() {
+        let what = marked(
+            " Splattershot ",
+            Some(String::from(" splattershot ")),
+            Some(String::from("Shooter_Normal_Coop")),
+            Some(String::from(MARKER_WEAPON)),
+        )
+        .unwrap();
+        let marker = what.marker(1, 2, 3);
+        assert_eq!(marker.kind, MARKER_WEAPON);
+        assert_eq!(marker.label, "Splattershot");
+        assert_eq!(marker.term.as_deref(), Some("splattershot"));
+        assert_eq!(marker.item.as_deref(), Some("Shooter_Normal_Coop"));
+        assert_eq!(
+            (marker.t_start_ms, marker.t_end_ms, marker.created_ms),
+            (1, 2, 3)
+        );
+        // A technique unless said otherwise; blanks are none
+        let roll = marked("Squid roll", None, Some(String::from(" ")), None).unwrap();
+        assert_eq!(roll.kind, MARKER_TECHNIQUE);
+        assert_eq!(roll.item, None);
+        assert!(marked(" ", None, None, None).is_err());
+        assert!(marked("Steelhead", None, None, Some(String::from("boss"))).is_err());
     }
 }

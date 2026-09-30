@@ -78,6 +78,11 @@
 //! - `GET stage-map?stage=<Gungee's key>&tide=<Low|Mid|High>`: Gungee's
 //!   top-down map of a Salmon Run stage (salmon-learn-nw.gungee.jp), fetched
 //!   once into the local cache; the page credits him wherever it shows one
+//! - `GET game-items`: `{"items"}`, the Salmon Run weapons and specials of
+//!   Lean's datamine in the store, for the Studio's Techniques panel (see
+//!   [`cuttlefish::leanny::items`]); `GET game-icon?path=<an item's icon>`:
+//!   its picture from Lean's site (leanny.github.io), fetched once into the
+//!   local cache; the page credits him where it shows them
 //! - `POST download` with `{"url", "start_s", "end_s", "review"?}` starts
 //!   downloading a YouTube range into a new review (or finds the review that
 //!   has it), or with `review` into that review, which has no video yet;
@@ -694,9 +699,9 @@ pub struct Cuttlefish {
     writing: Arc<Mutex<()>>,
     lookups: Arc<Mutex<MetaLookups>>,
     thumbs: Mutex<Thumbs>,
-    /// Held while one of Gungee's stage maps is fetched, so each is fetched
-    /// once
-    stage_maps: Mutex<()>,
+    /// Held while a picture of another site (Gungee's stage maps, Lean's
+    /// icons) is fetched, so each is fetched once
+    pictures: Mutex<()>,
     /// The `cuttlefish` crate's store, shared by the reviewer and the
     /// knowledge view
     knowledge: Arc<Knowledge>,
@@ -761,7 +766,7 @@ impl Cuttlefish {
             writing: Arc::default(),
             lookups: Arc::default(),
             thumbs: Mutex::default(),
-            stage_maps: Mutex::default(),
+            pictures: Mutex::default(),
             knowledge: Arc::new(
                 Knowledge::new(knowledge, settings, translate_model).with_auto_apply(auto_apply),
             ),
@@ -1227,12 +1232,52 @@ impl Cuttlefish {
         let dir = cuttlefish::store::cache_dir().join("gungee");
         let file = dir.join(format!("{key}_{tide}.png"));
         {
-            let _one = self.stage_maps.lock().unwrap();
+            let _one = self.pictures.lock().unwrap();
             if !file.is_file() {
                 std::fs::create_dir_all(&dir)
                     .with_context(|| format!("cannot create {}", dir.display()))?;
                 let url = format!("{GUNGEE}/assets/img/map/model/{key}_{tide}.png");
                 log::info!("Fetching Gungee's stage map {url}");
+                cuttlefish::crawl::download(&url, &file)?;
+            }
+        }
+        let body =
+            std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
+        Ok(Reply {
+            status: StatusCode::OK,
+            body,
+            content_type: "image/png",
+            content_range: None,
+            cacheable: true,
+        })
+    }
+
+    /// The Salmon Run weapons and specials of Lean's datamine for the
+    /// Studio's Techniques panel ([`cuttlefish::leanny::items`]: from the
+    /// store's raw copies, named by its glossary, each with its Pedia term
+    /// and picture); empty until the Game data (Lean) import has run
+    fn game_items(&self) -> Result<Value> {
+        let root = self.knowledge.root();
+        let glossary = cuttlefish::store::Store::load_glossary(root)?;
+        let items = cuttlefish::leanny::items(root, &glossary)?;
+        Ok(json!({ "items": items }))
+    }
+
+    /// A picture of Lean's site an item shows (its `icon`, see
+    /// [`cuttlefish::leanny::icon_url`]), fetched once into `leanny/` in the
+    /// cache ([`cuttlefish::store::cache_dir`]) and served from there; never
+    /// kept in the repository
+    fn game_icon(&self, path: &str) -> Result<Reply> {
+        let url =
+            cuttlefish::leanny::icon_url(path).with_context(|| format!("no picture {path}"))?;
+        let file = cuttlefish::store::cache_dir().join("leanny").join(path);
+        {
+            let _one = self.pictures.lock().unwrap();
+            if !file.is_file() {
+                let dir = file.parent().context("no folder")?;
+                std::fs::create_dir_all(dir)
+                    .with_context(|| format!("cannot create {}", dir.display()))?;
+                log::info!("Fetching Lean's picture {url}");
                 cuttlefish::crawl::download(&url, &file)?;
             }
         }
@@ -1820,6 +1865,10 @@ impl Cuttlefish {
                 let arg = |name: &str| query.get(name).map_or("", String::as_str);
                 self.stage_map(arg("stage"), arg("tide")).map_err(bad)
             }
+            None if path == "game-items" => Ok(Reply::json(self.game_items().map_err(bad)?)),
+            None if path == "game-icon" => self
+                .game_icon(query.get("path").map_or("", String::as_str))
+                .map_err(bad),
             None if path == "meta" => Ok(Reply::json(
                 self.meta(&video()?, query.get("r").map(String::as_str))
                     .map_err(bad)?,
