@@ -3803,107 +3803,112 @@
                   >
                 </button>
                 <p class="po-play-note" id="po-play-note"></p>
-                <!-- Each play recorded as a session (studio.rs, BotRecord):
-                     the video, what reached the Switch, the policy's own
-                     actions and every takeover -->
-                <label
-                  class="check"
-                  title="Each time AgentZero plays, a session is recorded as the Studio's Record does, bot-<time> beside your own: the video with sound, what reached the Switch in controller.bin, the policy's own actions in agentzero.jsonl, and in session.json the checkpoint, the limits and every moment you took over. A session being recorded takes the run instead."
-                  data-i18n-title="po.recordNote"
-                  ><input type="checkbox" id="po-record" checked />
-                  <span data-i18n="po.record">Record bot runs</span></label
-                >
-                <p class="po-play-note" id="po-record-note" hidden></p>
-                <!-- What it may press, held to in every line sent (masks and
-                     the press-rate cap, online/limits.rs), and a person's
-                     fastest tapping measured to set the cap from -->
-                <fieldset class="po-limits">
-                  <legend data-i18n="po.limits.title">
-                    What AgentZero may press
-                  </legend>
-                  <label
-                    class="check"
-                    title="The d-pad sends signals that disturb teammates. Your own presses still reach the Switch."
-                    data-i18n-title="po.limits.dpadNote"
-                    ><input type="checkbox" id="po-block-dpad" checked />
-                    <span data-i18n="po.limits.dpad"
-                      >Block the d-pad (signals)</span
-                    ></label
-                  >
-                  <label
-                    class="check"
-                    title="Your own presses still reach the Switch."
-                    data-i18n-title="po.limits.specialNote"
-                    ><input type="checkbox" id="po-block-special" checked />
-                    <span data-i18n="po.limits.special"
-                      >Block the special (R-stick click)</span
-                    ></label
-                  >
-                  <div
-                    class="po-cap"
-                    title="No button faster than a person could press it, so its play never looks like a turbo"
-                    data-i18n-title="po.limits.capNote"
-                  >
-                    <label class="po-field"
-                      ><span data-i18n="po.limits.cap">At most</span>
-                      <input
-                        type="number"
-                        class="select num po-num"
-                        id="po-cap"
-                        min="2"
-                        max="15"
-                        step="0.1"
-                        aria-label="Presses a second"
-                      />
-                      <span data-i18n="po.limits.capUnit"
-                        >presses a second per button,</span
-                      ></label
-                    >
-                    <label class="po-field"
-                      ><span data-i18n="po.limits.hold">each held</span>
-                      <input
-                        type="number"
-                        class="select num po-num"
-                        id="po-hold"
-                        min="20"
-                        max="250"
-                        step="1"
-                        aria-label="Shortest press in ms"
-                      />
-                      <span data-i18n="po.limits.holdUnit"
-                        >ms or more</span
-                      ></label
-                    >
-                  </div>
-                  <p class="po-play-note" data-i18n="po.limits.note">
-                    Never Home or Capture. Your own presses always reach the
-                    Switch.
-                  </p>
-                  <div class="po-measure">
-                    <button
-                      type="button"
-                      class="btn btn-small"
-                      id="po-measure-btn"
-                      title="Tap ZR as fast as you can for 10 s; the lab counts your presses from the controller"
-                      data-i18n-title="po.measure.startNote"
-                    >
-                      Measure my max…
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-small"
-                      id="po-measure-use"
-                      hidden
-                    ></button>
-                    <span class="po-play-note" id="po-measure-note"></span>
-                  </div>
-                </fieldset>
               </div>
               <details class="p-log" id="po-log-wrap">
                 <summary data-i18n="po.log">Command and output</summary>
                 <code id="po-command"></code>
                 <pre id="po-log"></pre>
               </details>
+            </div>
+
+            <!-- Before AgentZero starts too: whether its plays are recorded,
+                 and what it may press -->
+            <div class="po-setup" id="po-setup" hidden>
+              <!-- Each play recorded as a session (studio.rs, BotRecord):
+                   the video, what reached the Switch, the policy's own
+                   actions and every takeover -->
+              <label
+                class="check"
+                title="Each time AgentZero plays, a session is recorded as the Studio's Record does, bot-<time> beside your own: the video with sound, what reached the Switch in controller.bin, the policy's own actions in agentzero.jsonl, and in session.json the checkpoint, the limits and every moment you took over. A session being recorded takes the run instead."
+                data-i18n-title="po.recordNote"
+                ><input type="checkbox" id="po-record" checked />
+                <span data-i18n="po.record">Record bot runs</span></label
+              >
+              <p class="po-play-note" id="po-record-note" hidden></p>
+              <!-- What it may press, held to in every line sent (masks and
+                   the press-rate cap, online/limits.rs), and a person's
+                   fastest tapping measured to set the cap from -->
+              <fieldset class="po-limits">
+                <legend data-i18n="po.limits.title">
+                  What AgentZero may press
+                </legend>
+                <label
+                  class="check"
+                  title="The d-pad sends signals that disturb teammates. Your own presses still reach the Switch."
+                  data-i18n-title="po.limits.dpadNote"
+                  ><input type="checkbox" id="po-block-dpad" checked />
+                  <span data-i18n="po.limits.dpad"
+                    >Block the d-pad (signals)</span
+                  ></label
+                >
+                <label
+                  class="check"
+                  title="Your own presses still reach the Switch."
+                  data-i18n-title="po.limits.specialNote"
+                  ><input type="checkbox" id="po-block-special" checked />
+                  <span data-i18n="po.limits.special"
+                    >Block the special (R-stick click)</span
+                  ></label
+                >
+                <div
+                  class="po-cap"
+                  title="No button faster than a person could press it, so its play never looks like a turbo"
+                  data-i18n-title="po.limits.capNote"
+                >
+                  <label class="po-field"
+                    ><span data-i18n="po.limits.cap">At most</span>
+                    <input
+                      type="number"
+                      class="select num po-num"
+                      id="po-cap"
+                      min="2"
+                      max="15"
+                      step="0.1"
+                      aria-label="Presses a second"
+                    />
+                    <span data-i18n="po.limits.capUnit"
+                      >presses a second per button,</span
+                    ></label
+                  >
+                  <label class="po-field"
+                    ><span data-i18n="po.limits.hold">each held</span>
+                    <input
+                      type="number"
+                      class="select num po-num"
+                      id="po-hold"
+                      min="20"
+                      max="250"
+                      step="1"
+                      aria-label="Shortest press in ms"
+                    />
+                    <span data-i18n="po.limits.holdUnit"
+                      >ms or more</span
+                    ></label
+                  >
+                </div>
+                <p class="po-play-note" data-i18n="po.limits.note">
+                  Never Home or Capture. Your own presses always reach the
+                  Switch.
+                </p>
+                <div class="po-measure">
+                  <button
+                    type="button"
+                    class="btn btn-small"
+                    id="po-measure-btn"
+                    title="Tap ZR as fast as you can for 10 s; the lab counts your presses from the controller"
+                    data-i18n-title="po.measure.startNote"
+                  >
+                    Measure my max…
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-small"
+                    id="po-measure-use"
+                    hidden
+                  ></button>
+                  <span class="po-play-note" id="po-measure-note"></span>
+                </div>
+              </fieldset>
             </div>
           </section>
 

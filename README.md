@@ -744,8 +744,10 @@ AgentZero whose `agentzero-play` has `--json`). Its view is
   not reaching the lab, the policy going quiet for half a second and
   closing every dashboard page. A red frame marks it playing. Only in the
   practice area or a private job, with you at the console.
-- **What AgentZero may press** (under that button, kept with the dashboard's
-  settings, held to in every line the lab sends): the d-pad (its signals
+- **What AgentZero may press** (under that button, and shown with **Record
+  bot runs** as soon as AgentZero online is chosen, before it starts; kept
+  with the dashboard's settings, held to in every line the lab sends): the
+  d-pad (its signals
   disturb teammates) and the special (the right stick's click) are blocked
   unless unticked, Home and Capture always; your own presses still reach the
   Switch. No button is pressed faster than a person could, so its play never

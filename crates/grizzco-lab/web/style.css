@@ -7591,6 +7591,14 @@ body {
   border-top: 1px solid var(--panel-border);
 }
 
+/* Whether AgentZero's plays are recorded and what it may press, shown
+   with the model before it runs too */
+.po-setup {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .po-state {
   display: flex;
   flex-wrap: wrap;

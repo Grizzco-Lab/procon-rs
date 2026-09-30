@@ -429,6 +429,7 @@
       : remembered("kind", "session");
     $("p-kind").value = !policy && kind === "live" ? "session" : kind;
     $("po-rec-wrap").hidden = !policy;
+    $("po-setup").hidden = !policy;
     $("p-run").textContent = policy ? t("po.start") : "Run the IDM";
     fillCheckpoints();
     renderCaps();
@@ -632,11 +633,13 @@
     }
   }
 
-  /** The run's state in the form panel, the loop and "Let AgentZero play" */
+  /** The run's state in the form panel, the loop and "Let AgentZero play";
+   * whether plays are recorded and what it may press, before it runs too */
   function renderOnline() {
     const run = pred.online;
     $("po-run").hidden = !run;
     checkForm();
+    renderSetup();
     if (!run) return;
     const busy = run.state === "running";
     const state = run.loading
@@ -687,9 +690,8 @@
     renderLoop();
   }
 
-  /** "Let AgentZero play": off or playing (with the time left), what it may
-   * press and the measurement of a person's tapping; only while it runs on
-   * the live capture */
+  /** "Let AgentZero play": off or playing (with the time left), only while
+   * it runs on the live capture; and the setup below it (renderSetup) */
   function renderPlay() {
     const run = pred.online;
     const bot = pred.bot;
@@ -724,14 +726,20 @@
       "notice",
       !playing && Boolean(bot?.ended) && !["you", "time"].includes(bot.ended),
     );
-    renderRecord();
     $("po-live").dataset.state = playing ? "playing" : "watching";
     $("po-badge").textContent = playing
       ? t("po.badge.playing")
       : t("po.badge.watching");
+    renderSetup();
+    renderStopBot();
+  }
+
+  /** "Record bot runs", what it may press and the measurement of a
+   * person's tapping */
+  function renderSetup() {
+    renderRecord();
     renderLimits();
     renderMeasure();
-    renderStopBot();
   }
 
   /** "Record bot runs", and the session recording the run (or the last
