@@ -194,6 +194,9 @@ pub struct Store {
     /// sources in the inbox ([`crate::inbox::name_source_documents`]), read
     /// with the glossary
     reference: BTreeSet<String>,
+    /// The official names of every Salmonid and stage for the system prompt
+    /// ([`crate::review::names_block`]), made with the glossary
+    names: String,
 }
 
 impl Store {
@@ -260,14 +263,17 @@ impl Store {
                 started.elapsed().as_millis()
             );
         }
-        Ok(Store {
+        let mut store = Store {
             root: root.to_path_buf(),
             index,
             keywords,
-            glossary: Self::load_glossary(root)?,
+            glossary: Glossary::default(),
             chunking: ChunkConfig::default(),
-            reference: crate::inbox::name_source_documents(root),
-        })
+            reference: BTreeSet::new(),
+            names: String::new(),
+        };
+        store.reload_glossary()?;
+        Ok(store)
     }
 
     /// The data folder's own `glossary.toml`, or the seed without one:
@@ -286,20 +292,34 @@ impl Store {
     /// first, and the aliases the user approved
     /// (`glossary-user.toml`, [`crate::slang`])
     pub fn load_glossary(root: &Path) -> Result<Glossary> {
+        Self::glossary_with(root, &crate::tables::load_all(root))
+    }
+
+    /// The glossary with these name tables
+    fn glossary_with(root: &Path, tables: &[crate::tables::Table]) -> Result<Glossary> {
         let mut glossary = Self::own_glossary(root)?;
-        for table in crate::tables::load_all(root) {
+        for table in tables {
             glossary.merge(&table.terms);
         }
         crate::slang::UserGlossary::load(root)?.apply(&mut glossary);
         Ok(glossary)
     }
 
-    /// Reads the glossary again (after an import of name tables), and
-    /// which documents came with the name sources
+    /// Reads the glossary again (after an import of name tables), with the
+    /// official names of the system prompt and which documents came with
+    /// the name sources
     pub fn reload_glossary(&mut self) -> Result<()> {
-        self.glossary = Self::load_glossary(&self.root)?;
+        let tables = crate::tables::load_all(&self.root);
+        self.glossary = Self::glossary_with(&self.root, &tables)?;
+        self.names = crate::review::names_block(&tables, &self.glossary);
         self.reference = crate::inbox::name_source_documents(&self.root);
         Ok(())
+    }
+
+    /// The official names of every Salmonid and stage, for the system
+    /// prompt ([`crate::review::names_block`]); empty without Lean's table
+    pub fn names(&self) -> &str {
+        &self.names
     }
 
     /// Whether a chunk may be handed to the model as evidence: not from a

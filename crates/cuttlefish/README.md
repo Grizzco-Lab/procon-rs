@@ -1332,6 +1332,19 @@ sources agree on, a few thousand tokens. It sits in the system prompt, which
 is cached, so it costs a tenth of normal input after the first call. Keep it
 short and opinionated; retrieval covers the long tail.
 
+Before it, the system prompt holds the rules of an answer and the official
+names. The rules: short and specific, the answer first; every claim cites
+the excerpt it rests on or is marked as the model's own guess; when the
+excerpts do not cover the question, one line saying so and no filler; no
+word about excerpts that do not bear on it. The names (`review::names_block`,
+made with the glossary as `Store::names`): every Salmonid and Salmon Run
+stage of Lean's name table with its official Splatoon 3 name in English,
+Japanese and Simplified Chinese, and the nicknames players use (approved
+slang, some from Splatoon 2) marked as nicknames, so an answer names every
+Salmonid right whatever the question mentions and never claims a name does
+not exist. A prompt's glossary block says the first name in each language
+is the official one.
+
 **3. Glossary for jargon.** `glossary.toml` lists terms with official names
 per language (`forms`), a definition, and aliases: the slang players use,
 each with its language, a note on its origin or use, a source (`seed`,
