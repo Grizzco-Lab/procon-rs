@@ -18,10 +18,10 @@ use grizzco_lab::studio::video::Video;
 use grizzco_lab::studio::{Command, SavedState, Studio};
 use grizzco_lab::vision::{self, Vision};
 use grizzco_lab::web::{self, LiveFeed};
-use procon::config;
-use procon::dump::MultiDumper;
-use procon::recorder::{Recorder, RecorderState};
-use procon::stream::{self, LinkStats};
+use procon_core::config;
+use procon_core::dump::MultiDumper;
+use procon_core::recorder::{Recorder, RecorderState};
+use procon_core::stream::{self, LinkStats};
 use std::path::{Path, PathBuf};
 
 extern crate alloc;

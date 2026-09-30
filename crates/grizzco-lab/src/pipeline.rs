@@ -77,7 +77,7 @@ use alloc::collections::{BTreeMap, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail};
 use core::time::Duration;
-use procon::dump::unix_ms;
+use procon_core::dump::unix_ms;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};

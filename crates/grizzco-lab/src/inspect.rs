@@ -56,7 +56,7 @@ use gameplay_data::labels::{self, Label};
 use gameplay_data::session::{Marker, SESSION_FILE, SessionInfo, write_markers};
 use gameplay_data::turn::{self, TurnFit, read_turn_fits};
 use objects::{Annotations, ObjectBox};
-use procon::recorder::Recorder;
+use procon_core::recorder::Recorder;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

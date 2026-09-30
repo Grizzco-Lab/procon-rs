@@ -1270,7 +1270,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let inspector = Arc::new(Inspector::new(
             Some(dir.join("sessions")),
-            procon::recorder::Recorder::new("/tmp/procon-test-"),
+            procon_core::recorder::Recorder::new("/tmp/procon-test-"),
             dir.join("calibration.json"),
             dir.join("annotations"),
         ));

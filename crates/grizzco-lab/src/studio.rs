@@ -50,9 +50,9 @@ use gameplay_data::session::{
     MARKER_KINDS, MARKER_TECHNIQUE, Marker, SessionInfo, write_atomic, write_markers,
 };
 use player::Player;
-use procon::dump::unix_ms;
-use procon::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
-use procon::stream::LinkStats;
+use procon_core::dump::unix_ms;
+use procon_core::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
+use procon_core::stream::LinkStats;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs::{File, OpenOptions};
@@ -964,7 +964,7 @@ impl Studio {
             },
             "controller": {
                 "file": CONTROLLER_FILE,
-                "frame_size": procon::dump::FRAME_SIZE,
+                "frame_size": procon_core::dump::FRAME_SIZE,
                 "frames": recorder.frames,
                 "dropped": self.link.dropped.load(Ordering::Relaxed) - session.dropped_before,
             },

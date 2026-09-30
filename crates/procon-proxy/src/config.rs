@@ -1,7 +1,7 @@
 //! Configuration of the USB proxy (`proxy.toml`)
 
 use anyhow::Result;
-use procon::config::{LoggingConfig, load};
+use procon_core::config::{LoggingConfig, load};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

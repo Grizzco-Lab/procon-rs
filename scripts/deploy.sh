@@ -5,7 +5,7 @@
 #
 # The proxy is a static musl binary linked by Rust's bundled lld (see
 # .cargo/config.toml), so it needs no C toolchain here and no libraries there.
-# Only its own package is built (crates/procon-proxy, with crates/procon): the
+# Only its own package is built (crates/procon-proxy, with crates/procon-core): the
 # lab's crates are of no use on the Pi and some of them need a C compiler for
 # the target.
 

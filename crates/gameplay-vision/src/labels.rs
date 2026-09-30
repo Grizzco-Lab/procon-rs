@@ -36,7 +36,7 @@ pub const OBJECTS_EXT: &str = ".objects.jsonl";
 /// its gold one, Chinook, Mothership). Every row of Lean's `CoopEnemyInfo`
 /// that has a name is covered; both Goldies (`SakelienGolden`,
 /// `SakelienGeyser`) are one class. `(name, label, color)`, in the order and
-/// colors of the labeling tool's list (`procon::objects::STARTER_CLASSES`);
+/// colors of the labeling tool's list (`grizzco-lab`'s `inspect::objects::STARTER_CLASSES`);
 /// only ever appended to, since labels name classes and the labeling mode's
 /// keys follow the order.
 pub const STARTER_CLASSES: [(&str, &str, &str); 28] = [

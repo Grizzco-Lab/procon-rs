@@ -1,6 +1,6 @@
 [workspace]
 # Every package is a crate under crates/: the proxy on the Pi (procon-proxy),
-# what it shares with the lab (procon), Grizzco Lab on the capture host
+# what it shares with the lab (procon-core), Grizzco Lab on the capture host
 # (grizzco-lab) and the libraries and CLIs they use
 members = ["crates/*"]
 resolver = "3"

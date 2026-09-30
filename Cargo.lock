@@ -1446,7 +1446,7 @@ dependencies = [
  "libc",
  "log",
  "num_cpus",
- "procon",
+ "procon-core",
  "serde",
  "serde_json",
  "tokio",
@@ -2591,7 +2591,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "procon"
+name = "procon-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2614,7 +2614,7 @@ dependencies = [
  "libc",
  "log",
  "num_cpus",
- "procon",
+ "procon-core",
  "serde",
  "usb-gadget",
 ]

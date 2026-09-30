@@ -3,7 +3,7 @@
 //! Resets the controller, presents itself to the Switch as a wired Pro
 //! Controller (a USB gadget) and forwards reports both ways, streaming each
 //! input report to the capture host and applying the actions replayed to it
-//! (see the `procon` crate for the frames, the link and the replay format).
+//! (see the `procon-core` crate for the frames, the link and the replay format).
 
 mod config;
 mod device;
@@ -17,10 +17,10 @@ use clap::Parser;
 use config::Config;
 use gadget::ProConGadget;
 use priority::set_high_priority;
-use procon::dump::{AsyncDumper, MultiDumper};
-use procon::recorder::Recorder;
-use procon::replay::Replay;
-use procon::stream::FrameStreamer;
+use procon_core::dump::{AsyncDumper, MultiDumper};
+use procon_core::recorder::Recorder;
+use procon_core::replay::Replay;
+use procon_core::stream::FrameStreamer;
 use proxy::Proxy;
 
 /// Nintendo Switch Pro Controller HID Proxy

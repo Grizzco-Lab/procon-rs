@@ -15,9 +15,9 @@
 
 use core::f64::consts::TAU;
 use core::time::Duration;
-use procon::dump::{Dumper, stamped};
-use procon::replay::Replay;
-use procon::stream::FrameStreamer;
+use procon_core::dump::{Dumper, stamped};
+use procon_core::replay::Replay;
+use procon_core::stream::FrameStreamer;
 
 /// (byte offset, bit mask) of every Pro Controller button in an input report
 const BUTTONS: [(usize, u8); 18] = [

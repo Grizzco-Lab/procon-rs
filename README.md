@@ -48,7 +48,7 @@ Switch HDMI ──capture card──> Linux PC (grizzco-lab) ──> dashboard :
 - **`grizzco-lab`** (on the PC): Grizzco Lab. Connects to the proxy,
   captures video and sound with ffmpeg, serves the dashboard and records
   sessions.
-- **`crates/procon`**: what the two share: the frames, the link between
+- **`crates/procon-core`**: what the two share: the frames, the link between
   them, the replayed actions and the session folders.
 - **`crates/gameplay-data`**: the recording format and the per-frame alignment
   of controller input to video, shared with the training code through Python
@@ -885,7 +885,7 @@ A `.jsonl` file has one action per line:
 
 Fields left out keep the controller's own values. Sticks are raw 12-bit
 (center ≈ 2048), `gyro`/`accel` raw IMU units; see
-`crates/procon/src/replay.rs`. A model can also connect to the replay port
+`crates/procon-core/src/replay.rs`. A model can also connect to the replay port
 itself and stream lines (without `t_ms`) as it predicts them.
 
 ## Configuration

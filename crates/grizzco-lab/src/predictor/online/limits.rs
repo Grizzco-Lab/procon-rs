@@ -10,7 +10,7 @@
 //! blocked on the page, which they are by default, and Home and Capture
 //! always (Home would suspend the game; neither is play). They hold back the
 //! bot's presses only: a person's own reach the Switch, since the proxy adds
-//! the controller's buttons to the bot's (see [`procon::replay`]).
+//! the controller's buttons to the bot's (see [`procon_core::replay`]).
 //!
 //! **The press-rate cap.** Pressing a button faster than a person can is what
 //! a turbo or a macro does, and what cheat detection looks for; rapid fire on

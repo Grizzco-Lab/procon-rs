@@ -49,7 +49,7 @@ use anyhow::Result;
 use core::sync::atomic::Ordering;
 use core::time::Duration;
 use futures_util::{SinkExt, StreamExt};
-use procon::dump::{Dumper, Frame};
+use procon_core::dump::{Dumper, Frame};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::os::unix::ffi::OsStrExt;

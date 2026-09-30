@@ -22,7 +22,7 @@ linked by Rust's bundled `rust-lld` (`.cargo/config.toml`), so no C cross
 toolchain or Pi sysroot is needed. `rust-toolchain.toml` adds the target.
 The root `Cargo.toml` is a virtual workspace, every package a crate under
 `crates/`, and the proxy is a package of its own (`cargo build -p
-procon-proxy`): of ours it builds only `procon` and `gameplay-data`, never the
+procon-proxy`): of ours it builds only `procon-core` and `gameplay-data`, never the
 lab's crates (tokio, warp, the model and knowledge crates), which it has no
 use for and which need a C compiler for the target.
 
@@ -86,7 +86,7 @@ stays there), and `uv` rebuilds it when the Rust sources change.
 | `src/wake.rs` | USB remote wakeup on Home, through the DWC2 registers |
 | `src/priority.rs` | Real-time priority and optional CPU affinity |
 | `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy (or one at rest, `--still`) and applies replayed actions |
-| **`crates/procon/`** | **What the proxy and the lab share** |
+| **`crates/procon-core/`** | **What the proxy and the lab share** |
 | `src/dump.rs` | `Dumper` trait, `AsyncDumper` (own thread), `FileDumper`, `MultiDumper` |
 | `src/stream.rs` | Frame link: `FrameStreamer` on the proxy, `receive_frames` in the lab |
 | `src/replay.rs` | Replay `Action`s, loading them, and the proxy's replay port |
@@ -124,7 +124,7 @@ stays there), and `uv` rebuilds it when the Rust sources change.
 ### Proxy (on the Pi)
 
 `crates/procon-proxy`, with the dumpers, the recorder, the link and the replay
-port of `crates/procon`:
+port of `crates/procon-core`:
 
 1. `device::reset()` replugs the controller through sysfs (`authorized` 0/1).
    A controller the console knows over Bluetooth connects to it wirelessly
@@ -153,7 +153,7 @@ output endpoint and the Switch's handshake.
 
 ### Frame link
 
-`crates/procon/src/stream.rs`: the proxy sends an 8-byte header, then 80-byte
+`crates/procon-core/src/stream.rs`: the proxy sends an 8-byte header, then 80-byte
 frames (the `controller.bin` record, `gameplay_data::frame`), and an empty
 frame (a heartbeat) after a second without reports. The lab counts sequence
 gaps as dropped frames and keeps the smallest `host_now - proxy_timestamp`
@@ -510,7 +510,7 @@ corrects it live and it never pauses: the proxy ORs the buttons and takes
 each stick and the gyro from the controller while it is pushed past
 `STICK_DEADZONE` (300 raw units from 2048, past where a resting stick reads
 its calibrated centre) or turned faster than `GYRO_DEADZONE_DPS` (10 °/s),
-else from the line (`crates/procon/src/replay.rs`; a person's turn replaces the bot's
+else from the line (`crates/procon-core/src/replay.rs`; a person's turn replaces the bot's
 rather than adding to it, since both raw readings carry the controller's
 rest bias and a policy aiming by the picture would double a shared turn).
 Before a line goes out, a `Limiter` holds its buttons to the page's

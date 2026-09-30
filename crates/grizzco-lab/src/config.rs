@@ -1,6 +1,6 @@
 //! Configuration of the lab (`config.toml`)
 
-use procon::config::LoggingConfig;
+use procon_core::config::LoggingConfig;
 use serde::{Deserialize, Serialize};
 
 /// On unless the file says otherwise

@@ -6,7 +6,7 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
 ## Workspace layout
 
 - [x] **Virtual workspace.** The root `Cargo.toml` is a virtual workspace
-  and every package lives under `crates/`: `procon-proxy`, `procon` (what
+  and every package lives under `crates/`: `procon-proxy`, `procon-core` (what
   the proxy and the lab share: frames, the link, replay, the recorder),
   `grizzco-lab` (one module per app), `gameplay-data`, `gameplay-vision`,
   `cuttlefish`. The proxy's package cannot pick up the lab's dependencies,
@@ -15,7 +15,8 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
   build compile candle and tokenizers) is gone.
 - [x] **Name.** The lab on the capture host is Grizzco Lab (the binary
   `grizzco-lab`, ProCon Studio before), its first app keeps the name Studio,
-  and the proxy keeps `procon-proxy`. Names the user's data lives under stay
+  the proxy keeps `procon-proxy` and the shared crate is `procon-core`
+  (`procon` before). Names the user's data lives under stay
   (`procon-*` in `localStorage`, `~/.config/procon/`,
   `~/.cache/procon-cuttlefish`). The repository directory is renamed later.
 

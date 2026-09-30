@@ -66,7 +66,7 @@ use anyhow::{Context, Result, ensure};
 use core::ops::Range;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use core::time::Duration;
-use procon::dump::unix_ms;
+use procon_core::dump::unix_ms;
 use serde::Serialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
