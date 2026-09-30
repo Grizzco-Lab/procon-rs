@@ -22,6 +22,30 @@ const VIEW = { x: -40, y: -60, width: 980, height: 740 };
 /** SVG point to model coordinates: centered, y up */
 const at = (x, y) => new THREE.Vector2(x - 450, 320 - y);
 
+/** The Studio is the open app: the model is only shown there */
+const inStudio = () => document.documentElement.dataset.app === "studio";
+
+/** Waits for the page's next frame to be painted with the Studio open: the
+ * heavy steps below run one at a time, the page painting and answering
+ * between them, and never while another app is open (they wait for the
+ * Studio to come back) */
+const breathe = () =>
+  new Promise((resolve) => {
+    const next = () =>
+      requestAnimationFrame(() =>
+        setTimeout(() => (inStudio() ? resolve() : wait()), 0),
+      );
+    const wait = () =>
+      window.addEventListener(
+        "app-route",
+        ({ detail }) => (detail.app === "studio" ? next() : wait()),
+        { once: true },
+      );
+    next();
+  });
+
+// Even the renderer waits: making its WebGL context takes a while
+await breathe();
 const renderer = new THREE.WebGLRenderer({
   canvas,
   antialias: true,
@@ -31,11 +55,6 @@ renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
 // Neutral keeps theme colors true, unlike filmic curves
 renderer.toneMapping = THREE.NeutralToneMapping;
 const scene = new THREE.Scene();
-// A soft studio room to reflect, so plastic reads as plastic
-scene.environment = new THREE.PMREMGenerator(renderer).fromScene(
-  new RoomEnvironment(),
-  0.04,
-).texture;
 scene.environmentIntensity = 0.6;
 const camera = new THREE.PerspectiveCamera(28, 16 / 9, 10, 10000);
 camera.position.set(0, 0, 2300);
@@ -501,7 +520,18 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 
+await breathe();
+// A soft studio room to reflect, so plastic reads as plastic
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(
+  new RoomEnvironment(),
+  0.04,
+).texture;
+await breathe();
 build();
+await breathe();
+// The shaders compiled beside the page where the browser can, rather than
+// in the first frame drawn
+await renderer.compileAsync(scene, camera);
 new ResizeObserver(resize).observe(stage);
 // Theme changes recolor the model
 new MutationObserver(build).observe(document.documentElement, {
@@ -509,8 +539,10 @@ new MutationObserver(build).observe(document.documentElement, {
   attributeFilter: ["data-theme"],
 });
 renderer.setAnimationLoop(() => {
-  // Not while another app is shown: its section is hidden, not the canvas
-  if (!canvas.hidden && canvas.checkVisibility())
+  // Not while another app is shown: its section is hidden, not the canvas.
+  // The open app first: checkVisibility makes the page lay itself out, a
+  // cost on every frame of every other app
+  if (inStudio() && !canvas.hidden && canvas.checkVisibility())
     renderer.render(scene, camera);
 });
 

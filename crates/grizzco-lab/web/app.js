@@ -3,6 +3,158 @@
 
 const $ = (id) => document.getElementById(id);
 
+// ------------------------------------------------------------------ requests
+
+// Every request of the page to the lab takes its turn in one queue. The
+// page has six connections to the lab (HTTP/1.1), shared by every app: a
+// few slow answers, or a burst of pictures, would hold every other request
+// up, and the whole page with them. So at most REQUESTS_AT_ONCE run at a
+// time, whole bodies included: changes (POST, PUT, DELETE) at once, then
+// the open app's requests, its pictures (`priority: "low"`) after its data,
+// then the rest. A GET belongs to the app open when it was asked; leaving
+// that app aborts it, queued or under way (one AbortController per app), so
+// the next app never waits for the one left: its promise rejects with an
+// AbortError (`isAbort`) and the app asks again when shown. The page's own
+// requests (`keep: true`, such as the icons, or asked before an app is
+// open) are never aborted. A GET the lab answers with 202 (still reading:
+// it answers at once and works on a thread) is asked again every
+// ASK_AGAIN_MS until it answers. A caller may add a signal of its own.
+
+/** Requests to the lab running at once; the browser's other two
+ * connections stay free for the video and what the page loads itself */
+const REQUESTS_AT_ONCE = 4;
+/** How soon a request the lab answered with 202 is asked again, in ms */
+const ASK_AGAIN_MS = 1000;
+
+const requests = {
+  /** Running now */
+  running: 0,
+  /** Waiting: { change, low, app, signal, run } */
+  queue: [],
+  /** Each app's AbortController for its GETs */
+  apps: new Map(),
+};
+
+/** The browser's own fetch */
+const pageFetch = window.fetch.bind(window);
+
+/** Whether an error is a request aborted: its app was left */
+const isAbort = (error) => error?.name === "AbortError";
+
+// A request aborted by leaving its app is expected, not an error to report
+window.addEventListener("unhandledrejection", (event) => {
+  if (isAbort(event.reason)) event.preventDefault();
+});
+
+/** The signal of `app`'s GETs */
+function appSignal(app) {
+  let controller = requests.apps.get(app);
+  if (!controller) {
+    controller = new AbortController();
+    requests.apps.set(app, controller);
+  }
+  return controller.signal;
+}
+
+/** A request's turn: 0 a change, 1 the open app's data, 2 its pictures and
+ * the page's own requests, 3 another app's */
+function requestRank(job) {
+  if (job.change) return 0;
+  if (!job.app) return 2;
+  if (job.app !== document.documentElement.dataset.app) return 3;
+  return job.low ? 2 : 1;
+}
+
+/** Start waiting requests while there is room, the best turn first; a
+ * change never waits */
+function nextRequests() {
+  for (;;) {
+    let best = -1;
+    for (let i = 0; i < requests.queue.length; i++) {
+      const job = requests.queue[i];
+      if (job.signal?.aborted || job.change) {
+        best = i;
+        break;
+      }
+      if (best < 0 || requestRank(job) < requestRank(requests.queue[best]))
+        best = i;
+    }
+    if (best < 0) return;
+    const job = requests.queue[best];
+    const room = requests.running < REQUESTS_AT_ONCE;
+    if (!room && !job.change && !job.signal?.aborted) return;
+    requests.queue.splice(best, 1);
+    job.run();
+  }
+}
+
+window.fetch = function fetch(input, init = {}) {
+  const method = String(init.method ?? input?.method ?? "GET").toUpperCase();
+  const change = method !== "GET" && method !== "HEAD";
+  // The app it belongs to: none for a change or the page's own request
+  const app =
+    change || init.keep ? "" : (document.documentElement.dataset.app ?? "");
+  const own = init.signal;
+  const signal = !app
+    ? own
+    : own && AbortSignal.any
+      ? AbortSignal.any([own, appSignal(app)])
+      : (own ?? appSignal(app));
+  const job = { change, low: init.priority === "low", app, signal };
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      requests.queue.push({
+        ...job,
+        run: async () => {
+          if (signal?.aborted) return reject(signal.reason);
+          requests.running++;
+          try {
+            const response = await pageFetch(input, { ...init, signal });
+            // The whole body, so the connection is free once counted out
+            const empty = [204, 205, 304].includes(response.status);
+            const body = empty ? null : await response.blob();
+            const answer = new Response(body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+            });
+            if (response.status === 202 && !change)
+              setTimeout(attempt, ASK_AGAIN_MS);
+            else resolve(answer);
+          } catch (error) {
+            reject(error);
+          } finally {
+            requests.running--;
+            nextRequests();
+          }
+        },
+      });
+      nextRequests();
+    };
+    attempt();
+  });
+};
+
+// Leaving an app aborts its GETs; the new app's requests go first
+window.addEventListener("app-route", ({ detail }) => {
+  for (const [app, controller] of requests.apps) {
+    if (app === detail.app) continue;
+    controller.abort(new DOMException(`left ${app}`, "AbortError"));
+    requests.apps.delete(app);
+  }
+  nextRequests();
+});
+
+/** An image of the lab through the queue (see above), as an object URL of
+ * its bytes, for pictures that come in numbers (frames, thumbnails): they
+ * take their turn after the app's data and stop when it is left. `signal`
+ * may abort it sooner; the caller revokes the URL when done with it. */
+async function imageUrl(url, signal) {
+  const response = await fetch(url, { priority: "low", signal });
+  if (!response.ok) throw new Error(`${response.status} ${url}`);
+  return URL.createObjectURL(await response.blob());
+}
+
 // ---------------------------------------------------------------- formatting
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"];
@@ -416,13 +568,22 @@ appNav.addEventListener("drop", (event) => event.preventDefault());
 document.addEventListener("DOMContentLoaded", routeApp);
 
 /** Load the 3D controller (three.js from the CDN) when the Studio is first
- * shown, so other apps start without waiting for it; it announces itself
- * with `procon3d-ready` */
+ * shown, so other apps start without waiting for it, and only once the
+ * Studio is painted and the page idle: the flat view shows meanwhile. It
+ * announces itself with `procon3d-ready` */
 let loading3d = false;
 window.addEventListener("app-route", ({ detail }) => {
   if (loading3d || detail.app !== "studio") return;
   loading3d = true;
-  import("/controller3d.js").catch((error) => console.warn("3D view:", error));
+  const load = () =>
+    import("/controller3d.js").catch((error) =>
+      console.warn("3D view:", error),
+    );
+  requestAnimationFrame(() => {
+    if (window.requestIdleCallback)
+      requestIdleCallback(load, { timeout: 1000 });
+    else setTimeout(load, 100);
+  });
 });
 
 // ------------------------------------------------------------------ guide

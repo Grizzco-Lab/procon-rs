@@ -4,7 +4,11 @@
 // the expert notes (the player's corrections, Cuttlefish's memory; the
 // editor dialog is shared with the chat as window.cuttlefishNotes.edit) and
 // the deep questions with their eval runs, through
-// /api/cuttlefish/knowledge/... (see src/cuttlefish/knowledge.rs). Questions are the
+// /api/cuttlefish/knowledge/... (see src/cuttlefish/knowledge.rs). The
+// panels that read many files of the store (stats, documents, overview,
+// inbox) come at once from what the lab keeps in memory, and are asked for
+// again while it makes them again (`Panels` there), so opening the view
+// never holds the browser's connections to the lab. Questions are the
 // chat's (cuttlefish.js), glossary lookups and translations the
 // translator's (translate.js). Runs after cuttlefish.js, which hides its
 // library and player for this view and marks the tab, and uses the helpers
@@ -14,6 +18,9 @@
 (() => {
   /** How often a running import is asked about, in ms */
   const POLL_MS = 1000;
+  /** How soon a panel the lab is making again (`refreshing`) is asked for
+   * again, in ms */
+  const PANEL_MS = 1000;
   /** Log lines shown per import */
   const LOG_SHOWN = 8;
   /** Source kinds as shown, as i18n keys */
@@ -67,6 +74,8 @@
     report: null,
     /** Whether an import was running at the last look */
     wasRunning: false,
+    /** The panels asked for again while the lab makes them, by loader */
+    again: new Map(),
   };
 
   function remembered(key, fallback) {
@@ -85,7 +94,9 @@
     }
   }
 
-  /** GET or POST JSON; throws with the server's message and status */
+  /** GET or POST JSON; throws with the server's message and status. A
+   * panel the lab has not made yet answers 202, which app.js's request
+   * queue asks again until it is made. */
   async function api(path, body) {
     const response = await fetch(
       `/api/cuttlefish/knowledge/${path}`,
@@ -104,6 +115,14 @@
       throw error;
     }
     return data;
+  }
+
+  /** Asks for a panel again (`load`, its loader) while the lab makes it
+   * again (`refreshing`), so the view shows what it holds now */
+  function again(data, load) {
+    clearTimeout(k.again.get(load));
+    if (data.refreshing && k.shown)
+      k.again.set(load, setTimeout(load, PANEL_MS));
   }
 
   function note(id, message) {
@@ -136,12 +155,14 @@
     try {
       stats = await api("stats");
     } catch (error) {
+      if (isAbort(error)) return;
       $("k-loading").hidden = true;
       note("k-stats-error", t("k.stats.cannotOpen", { error: error.message }));
       return;
     }
     k.stats = stats;
     drawStats();
+    again(stats, loadStats);
   }
 
   /** The store's numbers and the keys' state */
@@ -503,9 +524,10 @@
     try {
       pending = await api("inbox");
     } catch (error) {
-      $("k-inbox-status").textContent = error.message;
+      if (!isAbort(error)) $("k-inbox-status").textContent = error.message;
       return;
     }
+    again(pending, loadInbox);
     $("k-inbox-folder").textContent = pending.folder;
     $("k-inbox-status").textContent = pending.files
       ? t("k.inbox.status", {
@@ -767,10 +789,12 @@
     try {
       o = await api("overview");
     } catch (error) {
-      $("k-overview").innerHTML =
-        `<p class="notice">${escapeHtml(error.message)}</p>`;
+      if (!isAbort(error))
+        $("k-overview").innerHTML =
+          `<p class="notice">${escapeHtml(error.message)}</p>`;
       return;
     }
+    again(o, loadOverview);
     const tables = o.glossary.tables
       .map(
         (table) =>
@@ -892,13 +916,16 @@
   // ------------------------------------------------------------ documents
 
   async function loadDocuments() {
+    let data;
     try {
-      k.documents = (await api("documents")).documents;
+      data = await api("documents");
     } catch (error) {
-      $("k-docs-note").textContent = error.message;
+      if (!isAbort(error)) $("k-docs-note").textContent = error.message;
       return;
     }
+    k.documents = data.documents;
     drawDocuments();
+    again(data, loadDocuments);
   }
 
   function drawDocuments() {
@@ -910,19 +937,21 @@
           .toLowerCase()
           .includes(filter),
     );
-    $("k-docs").replaceChildren(
-      ...shown.map((d) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
+    // One date formatter and one parse of the whole table: a thousand rows
+    // made one by one held the page for a tenth of a second
+    const date = new Intl.DateTimeFormat(i18nLocale());
+    const remove = escapeHtml(t("k.delete"));
+    $("k-docs").innerHTML = shown
+      .map(
+        (d) => `<tr>
           <td>${titleLink(d.title, d.url)}${d.language ? ` <span class="panel-note">${escapeHtml(d.language)}</span>` : ""}${d.path ? `<br /><span class="panel-note path">${escapeHtml(d.path)}</span>` : ""}</td>
           <td><span class="cf-kind">${escapeHtml(sourceName(d.source))}</span></td>
           <td class="num">${d.chunks}</td>
           <td>${escapeHtml(d.license ?? "–")}</td>
-          <td>${escapeHtml(new Date(d.fetched_at).toLocaleDateString(i18nLocale()))}</td>
-          <td><button type="button" class="mode-toggle" data-delete="${escapeHtml(d.id)}">${escapeHtml(t("k.delete"))}</button></td>`;
-        return tr;
-      }),
-    );
+          <td>${escapeHtml(date.format(new Date(d.fetched_at)))}</td>
+          <td><button type="button" class="mode-toggle" data-delete="${escapeHtml(d.id)}">${remove}</button></td></tr>`,
+      )
+      .join("");
     $("k-docs-note").textContent = k.documents.length
       ? t("k.docs.shown", { n: shown.length, total: k.documents.length })
       : t("k.docs.none");

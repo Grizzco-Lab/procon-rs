@@ -24,7 +24,8 @@
     if (!symbols.has(name)) {
       symbols.set(
         name,
-        fetch(`/icons/${name}.svg`)
+        // The page's own (app.js's queue never aborts it with an app)
+        fetch(`/icons/${name}.svg`, { keep: true })
           .then((response) => response.text())
           .then((text) => {
             const svg = new DOMParser().parseFromString(text, "image/svg+xml");

@@ -179,7 +179,8 @@
     try {
       data = await api("translations");
     } catch (error) {
-      $("cf-tr-note").textContent = error.message;
+      // Aborted: the app was left, and the history is read when shown again
+      if (!isAbort(error)) $("cf-tr-note").textContent = error.message;
       return;
     }
     tr.file = data.file;
@@ -882,7 +883,7 @@
         autoApply: data.auto_apply ?? slang.autoApply,
       });
     } catch (error) {
-      $("cf-slang-note").textContent = error.message;
+      if (!isAbort(error)) $("cf-slang-note").textContent = error.message;
       return;
     }
     drawSlang();

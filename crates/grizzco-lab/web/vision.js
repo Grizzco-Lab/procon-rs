@@ -1204,7 +1204,8 @@
     try {
       await Promise.all([loadInfo(), loadSessions()]);
     } catch (error) {
-      return showError(error.message);
+      // Aborted: the app was left, and routes again when shown
+      return isAbort(error) || showError(error.message);
     }
     if (salmon()) checkDetector();
     const s = state.get("s") ?? remembered("session", "");

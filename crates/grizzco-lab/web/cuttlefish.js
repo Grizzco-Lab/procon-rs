@@ -413,6 +413,8 @@
       if (!response.ok) throw new Error(data.error);
       cf.sessions = data.sessions;
     } catch (error) {
+      // Aborted (the app was left): read when shown again
+      if (isAbort(error)) return;
       cf.sessions = [];
       for (const [sessions] of SESSION_PICKERS) {
         $(sessions).replaceChildren(
@@ -466,7 +468,7 @@
       data = await response.json();
       if (!response.ok) throw new Error(data.error);
     } catch (error) {
-      note.textContent = error.message;
+      if (!isAbort(error)) note.textContent = error.message;
       return;
     }
     cf.listing = data;
@@ -816,6 +818,7 @@
       if (meta.width && meta.height)
         screen.style.aspectRatio = `${meta.width} / ${meta.height}`;
     } catch (error) {
+      if (isAbort(error)) return;
       note.hidden = false;
       note.textContent = error.message;
     }

@@ -596,8 +596,11 @@
       refreshCurves();
       refreshLogs();
     } catch (error) {
-      pl.error = error.message;
-      renderError();
+      // Aborted: the app was left, and polls again when shown
+      if (!isAbort(error)) {
+        pl.error = error.message;
+        renderError();
+      }
     }
     pl.polling = false;
     clearTimeout(pl.timer);

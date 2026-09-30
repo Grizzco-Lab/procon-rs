@@ -160,8 +160,9 @@
       await refresh();
       setStatus("");
     } catch (error) {
+      // Read again with the next frame shown (aborted: the app was left)
       labels.key = null;
-      setStatus(error.message, true);
+      if (!isAbort(error)) setStatus(error.message, true);
     }
     render();
     // A Follow may be under way on this segment (after a reload)

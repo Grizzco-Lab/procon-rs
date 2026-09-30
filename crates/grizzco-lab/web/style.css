@@ -6615,6 +6615,10 @@ body {
 .k-docs-wrap {
   max-height: 560px;
   overflow: auto;
+  /* A thousand rows are laid out only once the table comes into view, not
+   * when the view opens */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 560px;
 }
 
 /* Titles, paths and licenses wrap, so the table fits its panel; on a phone
@@ -8395,6 +8399,9 @@ body.bot-playing {
 .pd-group {
   display: grid;
   gap: 12px;
+  /* Hundreds of cards: a section is laid out once it comes into view */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 600px;
 }
 
 .pd-group-head {

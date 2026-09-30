@@ -267,6 +267,8 @@
     try {
       pd.list = await api("pedia");
     } catch (error) {
+      // Aborted: the app was left, and the list is read when shown again
+      if (isAbort(error)) return;
       $("pd-empty").hidden = false;
       $("pd-empty").textContent = t("pedia.failed", { error: error.message });
       return;
@@ -548,6 +550,8 @@
     try {
       entry = await api(`pedia/${encodeURIComponent(id)}?quotes=${pd.quotes}`);
     } catch (error) {
+      // Aborted: the app was left, and the entry is read when shown again
+      if (isAbort(error)) return;
       box.innerHTML = `<nav class="pd-crumbs"><a href="/cuttlefish/pedia">${escapeHtml(t("pedia.title"))}</a></nav>
         <p class="panel-note level-critical">${escapeHtml(t("pedia.noEntry", { id, error: error.message }))}</p>`;
       return;

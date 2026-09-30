@@ -124,7 +124,8 @@ function loadGameItems(again = false) {
       if (data.refreshing) setTimeout(() => loadGameItems(true), 2000);
     })
     .catch((error) => {
-      gameItems.failed = error.message;
+      // Aborted (the Studio was left): read again when it is shown
+      if (!isAbort(error)) gameItems.failed = error.message;
     })
     .finally(() => {
       gameItems.loading = null;
@@ -181,11 +182,16 @@ function loadAllMarkers() {
       allMarkers.list = data.markers;
       return data.markers;
     })
+    .catch((error) => {
+      // A failed read is not retried at once either; an aborted one (its
+      // app was left) is, when asked for again
+      if (isAbort(error)) allMarkers.at = 0;
+      throw error;
+    })
     .finally(() => {
-      // A failed read is not retried at once either
-      allMarkers.at = performance.now();
       allMarkers.loading = null;
     });
+  allMarkers.at = performance.now();
   return allMarkers.loading;
 }
 
@@ -451,8 +457,9 @@ function drawTechniques() {
   const all = mode === "all" ? allMarkers.list : null;
   const stale = !allMarkers.at || performance.now() - allMarkers.at >= 30000;
   if (mode === "all" && stale && !allMarkers.loading)
-    loadAllMarkers().then(drawTechniques, (error) =>
-      showError(error.message, "tech-error"),
+    loadAllMarkers().then(
+      drawTechniques,
+      (error) => isAbort(error) || showError(error.message, "tech-error"),
     );
   // This session's reps by name (as the lab counts them), or every
   // session's examples; null while those are read

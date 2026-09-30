@@ -436,7 +436,7 @@
     if (!load) return;
     showKind();
     const loading = policy ? loadOnlineInfo() : loadInfo();
-    loading.catch((error) => showRunError(error.message));
+    loading.catch((error) => isAbort(error) || showRunError(error.message));
   }
 
   for (const button of document.querySelectorAll("[data-model]")) {
@@ -1756,7 +1756,7 @@
   async function route(state) {
     // Reading the command's options takes seconds; the viewer does not wait
     const loading = pred.model === "policy" ? loadOnlineInfo() : loadInfo();
-    loading.catch((error) => showRunError(error.message));
+    loading.catch((error) => isAbort(error) || showRunError(error.message));
     showKind();
     poll();
     const watching = state.get("view") === "online";

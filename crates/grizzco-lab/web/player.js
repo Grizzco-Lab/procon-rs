@@ -22,7 +22,9 @@
 // A source is { frames, fps, frame(n) } for exact frames (the Inkspector's
 // endpoint) or { video, fps } for a <video>, plus thumb(n) for the strip
 // (frame(n) by default), audio (a URL, exact frames only), sound, labels(n)
-// (a promise of [truth, prediction]) and title (of the full overlay).
+// (a promise of [truth, prediction]) and title (of the full overlay). Frames
+// and thumbnails load through the page's request queue (`imageUrl` in
+// app.js), after the app's data, and stop when they are no longer wanted.
 "use strict";
 
 /** Stick difference (raw 12-bit units) that counts as a mismatch */
@@ -250,8 +252,10 @@ class Player {
     this.overlay = this.remembered("overlay", "full");
     /** Play the sound: an exact-frame source's audio sets the frame then */
     this.sound = this.remembered("sound", "true") === "true";
-    /** Loaded frame images by frame number (exact frames) */
+    /** Loaded frame images by frame number (exact frames), and what stops
+     * their loads when the source changes */
     this.images = new Map();
+    this.loads = new AbortController();
     /** Marks on the scrubber: ticks {n, kind, short?, id?, title?} and ranges {a, b, kind} */
     this.marks = { ticks: [], ranges: [] };
     this.stripKey = "";
@@ -474,7 +478,7 @@ class Player {
     this.pause();
     this.source = source;
     this.opened += 1;
-    this.images = new Map();
+    this.forgetImages();
     this.marks = { ticks: [], ranges: [] };
     this.stripKey = "";
     this.fps = source.fps || 30;
@@ -513,7 +517,7 @@ class Player {
     this.source = null;
     this.frames = 0;
     this.frame = 0;
-    this.images = new Map();
+    this.forgetImages();
     this.marks = { ticks: [], ranges: [] };
     this.canvas.hidden = true;
     this.video.hidden = true;
@@ -587,27 +591,63 @@ class Player {
 
   // -------------------------------------------------------------- frames
 
-  /** The frame's image, loading it once (exact frames) */
+  /**
+   * The frame's image, loading it once (exact frames) through the page's
+   * request queue (`imageUrl` in app.js): its turn after the app's data,
+   * stopped when the app is left, the source changes or the frame is
+   * forgotten; one that did not load is asked for again next time
+   */
   image(n) {
-    const { images, source } = this;
+    const { images, source, loads } = this;
     if (!images.has(n)) {
       const img = new Image();
-      img.loaded = new Promise((resolve) => {
-        img.onload = () => resolve(true);
-        img.onerror = () => resolve(false);
-      });
-      img.src = source.frame(n);
+      img.stop = new AbortController();
+      const signal = AbortSignal.any
+        ? AbortSignal.any([loads.signal, img.stop.signal])
+        : loads.signal;
+      img.loaded = imageUrl(source.frame(n), signal).then(
+        (url) => {
+          img.src = url;
+          return img.decode().then(
+            () => true,
+            () => false,
+          );
+        },
+        () => {
+          if (images.get(n) === img) images.delete(n);
+          return false;
+        },
+      );
       images.set(n, img);
     }
     return images.get(n);
+  }
+
+  /** A frame's image no longer kept: its load stopped, its bytes let go */
+  forget(img) {
+    img.stop?.abort();
+    if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
+  }
+
+  /** Every frame and strip picture of the source let go, their loads
+   * stopped: another source comes, or none */
+  forgetImages() {
+    this.loads?.abort();
+    this.loads = new AbortController();
+    for (const img of this.images?.values() ?? []) this.forget(img);
+    this.images = new Map();
+    this.forgetStrip();
   }
 
   /** Request the next frames and forget those far away */
   prefetch(n) {
     const { images, frames, radius } = this;
     for (let k = n; k < Math.min(frames, n + PREFETCH); k++) this.image(k);
-    for (const k of images.keys()) {
-      if (k < n - 2 * radius || k > n + 2 * PREFETCH) images.delete(k);
+    for (const [k, img] of images) {
+      if (k < n - 2 * radius || k > n + 2 * PREFETCH) {
+        this.forget(img);
+        images.delete(k);
+      }
     }
   }
 
@@ -878,7 +918,9 @@ class Player {
     ].join("|");
     if (key === this.stripKey) return this.markStrip();
     this.stripKey = key;
+    this.forgetStrip();
     const thumb = source.thumb ?? source.frame;
+    const { signal } = this.stripLoads;
     const figures = [];
     for (let k = -radius; k <= radius; k++) {
       const n = center + k * step;
@@ -908,14 +950,31 @@ class Player {
           ? `<span class="strip-more">+${near.length - STRIP_MARKS}</span>`
           : "";
       const caption = step > 1 ? clock(this.timeOf(n)).slice(0, -2) : n;
-      figure.innerHTML = `<img src="${escapeHtml(thumb(n))}" alt="" loading="lazy"><figcaption><span data-cap="${n}">${caption}</span><span class="strip-marks">${marks}${more}</span></figcaption>`;
-      figure.querySelector("img").onerror = () =>
-        figure.classList.add("is-missing");
+      figure.innerHTML = `<img alt=""><figcaption><span data-cap="${n}">${caption}</span><span class="strip-marks">${marks}${more}</span></figcaption>`;
+      const img = figure.querySelector("img");
+      imageUrl(thumb(n), signal).then(
+        (url) => {
+          this.stripUrls.push(url);
+          img.src = url;
+        },
+        (error) => {
+          if (!isAbort(error)) figure.classList.add("is-missing");
+        },
+      );
       if (near.length) figure.classList.add("has-marks");
       figures.push(figure);
     }
     strip.replaceChildren(...figures);
     this.markStrip();
+  }
+
+  /** The strip's pictures let go, their loads stopped: it is drawn again,
+   * or the source changes */
+  forgetStrip() {
+    this.stripLoads?.abort();
+    this.stripLoads = new AbortController();
+    for (const url of this.stripUrls ?? []) URL.revokeObjectURL(url);
+    this.stripUrls = [];
   }
 
   /** Mark the thumbnail nearest the current frame and keep it in view */

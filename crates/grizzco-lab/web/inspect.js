@@ -237,6 +237,9 @@ function showPicker() {
 /** Load a segment's info and show it at the address's frame and delay */
 async function showSegment(session, segment, state) {
   framePlayer.close();
+  // None shown until it loads (leaving meanwhile aborts the load, and the
+  // way back loads it again)
+  inspector.info = null;
   $("inspect-picker").hidden = true;
   $("inspect-viewer").hidden = false;
   $("i-session").value = session;
@@ -359,14 +362,17 @@ async function labels(n) {
       delay,
       pred,
     });
-    labelChunks.set(
-      chunk,
-      fetch(url).then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error);
-        return data;
-      }),
-    );
+    const loading = fetch(url).then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      return data;
+    });
+    // Aborted (the app was left): asked for again next time
+    loading.catch((error) => {
+      if (isAbort(error) && labelChunks.get(chunk) === loading)
+        labelChunks.delete(chunk);
+    });
+    labelChunks.set(chunk, loading);
   }
   const data = await labelChunks.get(chunk);
   const i = n - chunk * LABEL_CHUNK;
@@ -743,6 +749,8 @@ async function routeInspector(state) {
   if (!same) return showSegment(session, segment, state);
   $("inspect-picker").hidden = true;
   $("inspect-viewer").hidden = false;
+  // The Studio may have marked it meanwhile, or the read was aborted
+  loadMarkers();
   const delay = state.has("delay")
     ? parseFloat(state.get("delay")) || 0
     : inspector.delay;
