@@ -807,6 +807,10 @@
         stroke: var(--egg);
         stroke-width: 2;
       }
+      .chart .crash {
+        stroke: var(--red);
+        stroke-width: 2;
+      }
       .chart .bar,
       .chart .dot {
         stroke: var(--surface);
@@ -1381,14 +1385,17 @@
             A Salmon Run player wanted a bot that works a shift the way he does.
             This is how a Pro Controller, a Raspberry Pi and a capture card
             became a recording studio (now Grizzco Lab), how a model learned to
-            read his hands off the screen, and how the first policies were
-            trained and wired to the controller. It is told in the order things
-            happened, with the numbers, the ideas and where they came from, and
-            the roads that led nowhere.
+            read his hands off the screen, how the first policies were trained
+            and wired to the controller, and what they did when they first
+            played the Switch. It is told in the order things happened, with the
+            numbers, the ideas and where they came from, and the roads that led
+            nowhere.
           </p>
           <p class="lede" data-lang="zh" lang="zh-Hans">
             一位鲑鱼跑玩家想要一个像他一样打工的 bot。这里记下的是：一只 Pro
-            手柄、一块树莓派和一张采集卡怎样变成录制工作室（如今的熊商会实验室），一个模型怎样学会从画面上读出他的手在做什么，最初的几个策略又怎样训练出来、接上了手柄。按事情发生的顺序来讲，带着数字，带着每个想法的来历，也带着那些走不通的路。
+            手柄、一块树莓派和一张采集卡怎样变成录制工作室（如今的熊商会实验室），一个模型怎样学会从画面上读出他的手在做什么，最初的几个策略怎样训练出来、接上了手柄，以及它们第一次真的玩上
+            Switch
+            时做了什么。按事情发生的顺序来讲，带着数字，带着每个想法的来历，也带着那些走不通的路。
           </p>
         </div>
 
@@ -1799,25 +1806,24 @@
         <dl class="facts">
           <div>
             <dt>
-              <span data-lang="en">Thu → Mon</span
-              ><span data-lang="zh" lang="zh-Hans">周四 → 周一</span>
+              <span data-lang="en">Thu → Wed</span
+              ><span data-lang="zh" lang="zh-Hans">周四 → 周三</span>
             </dt>
             <dd>
               <span data-lang="en"
-                >24–28 September 2026, from the studio's first commit</span
+                >24–30 September 2026, from the studio's first commit</span
               ><span data-lang="zh" lang="zh-Hans"
-                >2026 年 9 月 24–28 日，从工作室的第一个提交算起</span
+                >2026 年 9 月 24–30 日，从工作室的第一个提交算起</span
               >
             </dd>
           </div>
           <div>
-            <dt>227</dt>
+            <dt>303</dt>
             <dd>
               <span data-lang="en"
-                >commits on the two main lines (167 procon-rs, 60
-                AgentZero)</span
+                >commits by Wednesday noon (184 procon-rs, 119 AgentZero)</span
               ><span data-lang="zh" lang="zh-Hans"
-                >两条主线上的提交（procon-rs 167 个，AgentZero 60 个）</span
+                >到周三中午的提交（procon-rs 184 个，AgentZero 119 个）</span
               >
             </dd>
           </div>
@@ -1832,7 +1838,7 @@
             </dd>
           </div>
           <div>
-            <dt>45.1 h</dt>
+            <dt>82.2 h</dt>
             <dd>
               <span data-lang="en"
                 >of a top player's jobs, labelled by the IDM</span
@@ -2008,12 +2014,59 @@
             >
           </li>
           <li>
-            <a href="#ch-next"
+            <a href="#ch-scene"
               ><span class="n">14</span
+              ><span class="t"
+                ><span data-lang="en">What is on screen</span
+                ><span data-lang="zh" lang="zh-Hans">画面上有什么</span></span
+              ><span class="d">09-28 14:24 → 09-29 22:10</span></a
+            >
+          </li>
+          <li>
+            <a href="#ch-switch"
+              ><span class="n">15</span
+              ><span class="t"
+                ><span data-lang="en">It plays, he corrects</span
+                ><span data-lang="zh" lang="zh-Hans">它来打，他来改</span></span
+              ><span class="d">09-28 17:30 → 09-29 22:06</span></a
+            >
+          </li>
+          <li>
+            <a href="#ch-copycat"
+              ><span class="n">16</span
+              ><span class="t"
+                ><span data-lang="en">The copycat</span
+                ><span data-lang="zh" lang="zh-Hans">学人精</span></span
+              ><span class="d">09-29 21:47 → 09-30 12:11</span></a
+            >
+          </li>
+          <li>
+            <a href="#ch-gpus"
+              ><span class="n">17</span
+              ><span class="t"
+                ><span data-lang="en">A second GPU, and a Pipeline</span
+                ><span data-lang="zh" lang="zh-Hans"
+                  >第二块 GPU，一条生产流水线</span
+                ></span
+              ><span class="d">09-29 14:07 → 09-30 01:39</span></a
+            >
+          </li>
+          <li>
+            <a href="#ch-disk"
+              ><span class="n">18</span
+              ><span class="t"
+                ><span data-lang="en">Deleted, but not gone</span
+                ><span data-lang="zh" lang="zh-Hans">删了，却还在</span></span
+              ><span class="d">09-30 02:08 → 12:23</span></a
+            >
+          </li>
+          <li>
+            <a href="#ch-next"
+              ><span class="n">19</span
               ><span class="t"
                 ><span data-lang="en">What comes next</span
                 ><span data-lang="zh" lang="zh-Hans">接下来</span></span
-              ><span class="d">09-28 →</span></a
+              ><span class="d">09-30 →</span></a
             >
           </li>
         </ol>
@@ -2039,18 +2092,20 @@
           <div class="chart-after"></div>
           <figcaption>
             <span data-lang="en"
-              ><b>Commits per hour</b> on procon-rs (the rig, the studio and its
-              apps) and AgentZero (the models), Thursday evening to Monday
-              lunchtime; shaded bands are the nights, 00:00 to 08:00. Before
-              this, the repositories had 17 commits from August 2025 and 3 from
-              February 2026. Source: <code>git log</code> of
-              <code>main</code> and <code>dev</code>.</span
+              ><b>Commits per hour</b> on procon-rs (the rig, the lab and its
+              apps) and AgentZero (the models), Thursday evening to Wednesday
+              noon; shaded bands are the nights, 00:00 to 08:00. Before this,
+              the repositories had 17 commits from August 2025 and 3 from
+              February 2026. Source: <code>git log</code> of procon-rs's
+              <code>main</code> and AgentZero's <code>dev</code> and
+              <code>night</code>, by the time each commit was written.</span
             ><span data-lang="zh" lang="zh-Hans"
-              ><b>每小时的提交数</b>：procon-rs（设备、工作室和各个应用）和
-              AgentZero（模型），从周四晚上到周一中午；阴影是夜里 0 点到 8
+              ><b>每小时的提交数</b>：procon-rs（设备、实验室和各个应用）和
+              AgentZero（模型），从周四晚上到周三中午；阴影是夜里 0 点到 8
               点。在这之前，两个仓库只有 2025 年 8 月的 17 个提交和 2026 年 2
-              月的 3 个。来源：<code>main</code> 和 <code>dev</code> 分支的
-              <code>git log</code>。</span
+              月的 3 个。来源：procon-rs 的 <code>main</code>、AgentZero 的
+              <code>dev</code> 和 <code>night</code> 分支的
+              <code>git log</code>，按每个提交写下的时间。</span
             >
           </figcaption>
           <details class="numbers">
@@ -2263,8 +2318,8 @@
                 <tspan data-lang="zh">顶级玩家的直播录像</tspan>
               </text>
               <text class="t-sub" x="768" y="90">
-                <tspan data-lang="en">no inputs; 45.1 h labelled so far</tspan>
-                <tspan data-lang="zh">没有输入记录；已标 45.1 小时</tspan>
+                <tspan data-lang="en">no inputs; 82.2 h labelled so far</tspan>
+                <tspan data-lang="zh">没有输入记录；已标 82.2 小时</tspan>
               </text>
 
               <rect
@@ -6061,13 +6116,1414 @@ LEAD_FRAMES = lead_frames()
       </section>
 
       <!-- ============================================================ 14 -->
-      <section class="chapter" id="ch-next" aria-labelledby="h-next">
+      <section class="chapter" id="ch-scene" aria-labelledby="h-scene">
         <header class="ch-head">
           <p class="ch-meta">
             <span class="ch-no">14</span>
+            <span>2026-09-28 14:24 → 09-29 22:10</span>
+            <span>AgentZero 0c05287 … 30427a3</span>
+          </p>
+          <h2 id="h-scene">
+            <span data-lang="en">What is on screen</span
+            ><span data-lang="zh" lang="zh-Hans">画面上有什么</span>
+          </h2>
+          <p class="lede" data-lang="en">
+            The IDM's tokens say how the picture moved and what the hands did.
+            They do not say where the eggs lie, where the basket is, or which
+            Boss Salmonid is coming. On Monday afternoon the policy was given a
+            second pair of eyes.
+          </p>
+          <p class="lede" data-lang="zh" lang="zh-Hans">
+            IDM 的 token
+            讲的是画面怎么动、手上在做什么；金鲑鱼卵落在哪、蛋筐在哪、来的是哪种巨大鲑鱼，它们并不知道。周一下午，策略多了第二双眼睛。
+          </p>
+        </header>
+        <div class="prose">
+          <p data-lang="en">
+            More of Azu came first. By Monday afternoon IDM v4 had labelled
+            every job of the 29 streams in the corpus index, dives left out: 842
+            jobs and 82.2 hours, 37.1 more than that morning. One whole stream
+            of his, 19 jobs and 1.5 hours that no model trains on, became a
+            second test set. The player's three held-out jobs ask whether a
+            policy's controls are sane; Azu's stream asks whether it imitates
+            the top player, scored against IDM v4's labels, since nobody
+            recorded his controller.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            先来的是更多的 Azu。到周一下午，IDM v4 已经给语料索引里 29
+            场直播的每一局（跳水除外）打好了标签：842 局、82.2
+            小时，比当天早上多了 37.1 小时。他的一整场直播（19 局、1.5
+            小时）不给任何模型训练，成了第二个测试集。玩家的三局留出打工，检验策略的操作合不合理；Azu
+            的这场直播，检验它像不像这位高手。没人录过他的手柄，所以那边以 IDM
+            v4 的标签为准。
+          </p>
+          <aside class="note idea">
+            <p class="tag">
+              <span data-lang="en">The player's concern</span
+              ><span data-lang="zh" lang="zh-Hans">玩家的顾虑</span>
+            </p>
+            <p data-lang="en">
+              Stage 3 fine-tunes on his own jobs and picks checkpoints by his
+              held-out jobs, which can pull a policy that imitates Azu toward
+              his own decisions. The plan (30 September): choose models mainly
+              by Azu's held-out stream, and let stage 3 only calibrate.
+            </p>
+            <p data-lang="zh" lang="zh-Hans">
+              第三阶段用他自己的对局微调，又按他的留出对局挑检查点，这可能把一个模仿
+              Azu 的策略拉向他自己的决定。计划（9 月 30 日）：主要按 Azu
+              的留出直播来挑模型，第三阶段只做校准。
+            </p>
+          </aside>
+          <p data-lang="en">
+            Hours alone had stopped paying. From 36 to 65 hours of his waves,
+            v1's recipe gained nothing on the player's jobs and one to three
+            hundredths on Azu's stream, about what another seed moves. What the
+            IDM's tokens leave out might help more.
+            <code>agentzero-scene</code> hands every third frame, ten a second,
+            to SigLIP 2, frozen: the image model already on the machine for the
+            video-and-text experiments of chapter 12. It keeps the pooled
+            embedding and the patch tokens averaged over 2 × 2 cells, 3,840
+            numbers a frame. The policy adds them to each frame's token through
+            a projection that starts at zero, so at its first step it is the
+            policy without them.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            光加小时数已经不管用了。他的波次从 36 小时加到 65 小时，按 v1
+            的做法训练，玩家的对局上毫无长进，Azu
+            的直播上也只多了一到三个百分点，和换一个随机种子的差别差不多。IDM 的
+            token 里缺的东西，也许更有用。<code>agentzero-scene</code>
+            每三帧取一帧（每秒 10 帧），交给冻结的 SigLIP 2
+            看一遍；这个图像模型本来就在机器上，第 12
+            章做视频和文字的实验时用过。它留下池化向量，再把图块 token 按 2 × 2
+            的格子平均，每帧 3,840
+            个数。策略通过一个从零开始的投影，把它们加到每一帧的 token
+            上，所以训练第一步时，它和没有画面特征的策略完全一样。
+          </p>
+          <p data-lang="en">
+            On 7 hours of Azu the scene helped the buttons, in both seeds and on
+            both sets (merged presses on his stream 0.20 → 0.23), as much as 65
+            hours without it did. The camera did not move. It also let the
+            policy recognise the jobs it had trained on: its training loss fell
+            further while his held-out stream's rose. That night the same test
+            on every sixth job, with 8 seconds of memory, learned its jobs by
+            heart, and with the scene sooner. So on Tuesday the policy was given
+            all of him, which meant taking the scene off the GPU: SigLIP's
+            features for 842 jobs are 22 GB in float16.
+            <code>--stream</code> packs every labelled job once as int8, 16.6 GB
+            in five minutes, and loader workers read each batch's windows
+            straight from disk. It runs as fast as keeping everything on the
+            GPU, 39.5 against 39.4 ms a step on a sixth of the jobs, in 1.3 GiB
+            of GPU memory instead of 5.5.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            在 7 小时的 Azu
+            上，画面特征帮到了按键：两个随机种子、两个测试集都一样（他的直播上合并按键
+            F1 从 0.20 到 0.23），效果相当于不加画面时用 65
+            小时。镜头则纹丝不动。它还让策略认出了训练过的那些对局：训练损失降得更低，他那场留出直播的损失反而升高。当晚在每六局取一局的数据上、以
+            8
+            秒记忆重做这个对照，两边都把对局背了下来，加了画面的背得更快。于是周二，策略拿到了他的全部对局，这就得把画面特征搬出显存：842
+            局的 SigLIP 特征按 float16 要 22 GB。<code>--stream</code>
+            把所有打好标签的对局以 int8 打包一次，5 分钟打出 16.6
+            GB；数据加载进程直接从磁盘读出每一批的窗口。速度和全放在显存里一样（在六分之一的对局上每步
+            39.5 ms 对 39.4 ms），显存却只要 1.3 GiB，而不是 5.5 GiB。
+          </p>
+          <p data-lang="en">
+            On all of him, with 8 seconds of memory, rotary positions, 12,000
+            steps and three seeds each way, the scene lifted the camera too. On
+            his stream turn r was 0.57 / 0.43 against 0.53 / 0.39, every seed
+            with the scene above every seed without, and summed over half a
+            second 0.75 against 0.72; on the player's jobs 0.48 / 0.38 against
+            0.47 / 0.36. The buttons gained a hundredth or two. The run called
+            <code>f12-yes</code> became the best offline policy yet.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            在他的全部对局上（8 秒记忆、旋转位置编码、12,000
+            步，每边各三个随机种子），画面特征把镜头也带起来了：他的直播上转动 r
+            0.57 / 0.43 对 0.53 /
+            0.39，加画面的每个种子都高于不加的每个种子，0.5 秒累计 0.75 对
+            0.72；玩家的对局上 0.48 / 0.38 对 0.47 /
+            0.36。按键多了一两个百分点。名叫 <code>f12-yes</code>
+            的这次运行，成了目前离线最好的策略。
+          </p>
+        </div>
+
+        <figure class="wide">
+          <div class="chart-legend"></div>
+          <div class="chart" data-chart="scene"></div>
+          <figcaption>
+            <span data-lang="en"
+              ><b>The scene, off and on</b>, in two recipes: v1's on 7 hours of
+              Azu (2 s of memory, two seeds each way), and all of him, 65 hours
+              of waves (8 s, rotary positions, 12,000 steps, three seeds each
+              way). Means over seeds; each line runs from the policy without the
+              scene (ring) to the one with it (dot). Source: AgentZero policy
+              whiteboard, section 11.</span
+            ><span data-lang="zh" lang="zh-Hans"
+              ><b>画面特征，关与开</b>，两种做法：v1 的做法，7 小时 Azu（2
+              秒记忆，每边两个随机种子）；以及他的全部对局，65 小时波次（8
+              秒、旋转位置编码、12,000
+              步，每边三个随机种子）。都是各种子的平均；每条线从不加画面的策略（圆环）连到加了画面的策略（实心点）。来源：AgentZero
+              策略白板第 11 节。</span
+            >
+          </figcaption>
+          <details class="numbers">
+            <summary>
+              <span data-lang="en">The numbers</span
+              ><span data-lang="zh" lang="zh-Hans">数据</span>
+            </summary>
+            <div class="scroll"><table></table></div>
+          </details>
+        </figure>
+
+        <div class="prose">
+          <aside class="note deadend">
+            <p class="tag">
+              <span data-lang="en">Dead end · holding it back</span
+              ><span data-lang="zh" lang="zh-Hans">死胡同 · 往回拉</span>
+            </p>
+            <p data-lang="en">
+              Longer runs learned his jobs by heart (30,000 steps fell back). A
+              transformer four times as big, 52.1 million parameters to train
+              against 14.7, scored the same and overfit sooner. Dropout, token
+              dropout, weight decay and a disturbed scene, one at a time and
+              together, moved nothing. Every run's loss on the player's jobs is
+              lowest after 1,000 of its 12,000 steps: that is how far Azu's
+              labelled play is from his, and no regulariser closes it.
+            </p>
+            <p data-lang="zh" lang="zh-Hans">
+              练得更久会把他的对局背下来（30,000 步反而退步）。大四倍的
+              Transformer（可训练参数 5,210 万对 1,470
+              万）成绩一样、过拟合更早。dropout、token
+              dropout、权重衰减、给画面特征加扰动，单独用和一起用，都没有用。每次运行在玩家对局上的损失，都在
+              12,000 步里的第 1,000 步就降到最低：这是 Azu
+              的标签打法和玩家之间的距离，靠正则化拉不回来。
+            </p>
+          </aside>
+          <p data-lang="en">
+            The camera still turned slowly, and on Tuesday that was chased down.
+            It had been put down to regression heads averaging a turn to the
+            left and a turn to the right into none. But the heads are already
+            classifiers, 21 bins a gyro or turn axis trained with cross-entropy;
+            what averages is the reading, the probability-weighted mean of the
+            bins. Read by the most likely bin, the policy turned 11 to 14%
+            faster with the same aim over half a second. A bin drawn at random
+            turned as fast as the player frame by frame, at half the
+            correlation, its turns cancelling. Training without the loss on the
+            mean changed nothing. And the labels were slow before the policy saw
+            them: IDM v4, reading the player's own sessions, turns at 0.73 /
+            0.68 of his speed. Relabelled by the most likely bin, 1.28 / 1.38
+            times faster, they did speed up a policy that had learned from Azu
+            alone (0.59 / 0.39 of the player's speed against 0.52 / 0.33), until
+            the fine-tuning on his jobs brought every variant to 0.62 / 0.45.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            镜头还是转得慢，周二把原因追到了底。之前的说法是：回归头把“向左转”和“向右转”平均成了“不转”。可这些输出头本来就是分类器，陀螺仪和转动的每个轴
+            21
+            个分箱，用交叉熵训练；被平均掉的是读法，也就是各分箱按概率加权的平均值。按最可能的分箱来读，策略转得快了
+            11% 到 14%，0.5
+            秒内的瞄准一样准。从分箱里随机抽一个，逐帧转得和玩家一样快，相关系数却只剩一半，左右还互相抵消。去掉对平均值的那一项损失，毫无变化。而且标签在策略看到之前就已经慢了：IDM
+            v4 读玩家自己的录像，转动只有他实际速度的 0.73 /
+            0.68。按最可能的分箱重新读出的标签快了 1.28 / 1.38 倍，确实让只学了
+            Azu 的策略转得更快（玩家速度的 0.59 / 0.39，原来 0.52 /
+            0.33），可一用玩家的对局微调，所有变体又都回到了 0.62 / 0.45。
+          </p>
+          <p data-lang="en">
+            What keeps the camera slow is the policy's doubt about where the
+            player will turn four frames from now, and an unsure guess is a
+            small one. Only more to go on narrows it; the scene gave the turn
+            two to five hundredths.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            让镜头慢下来的，是策略拿不准玩家 4
+            帧之后往哪边转，而拿不准的猜测，幅度自然就小。只有给它更多可依据的东西，才能缩小这份不确定；画面特征给转动带来了
+            0.02 到 0.05。
+          </p>
+          <p data-lang="en">
+            The scene policy needs SigLIP in the live loop. It takes 1.9 ms on a
+            360p frame, and since Tuesday evening the policy's live stream runs
+            it itself on every third frame, warmed up before the first one
+            arrives. Checked on a minute of a held-out session against the
+            cached features: cosine 0.99999, and the same buttons on 99.97% of
+            frames. From taking a frame to its action, 8.0 ms at the median (p95
+            13.3) of the 33 ms a frame allows. All of it is on AgentZero's
+            <code>dev</code>; from Tuesday on, its runs went through the
+            experiment queue of chapter 17.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            加了画面的策略，实时循环里也得跑 SigLIP。一帧 360p 画面它要 1.9
+            ms；从周二晚上起，策略的实时流每三帧自己跑一次，第一帧到来之前先预热好。在一段留出录像的一分钟上和缓存的特征比对：余弦相似度
+            0.99999，99.97% 的帧按键完全一致。从取到一帧到发出它的动作，中位数
+            8.0 ms（p95 13.3），一帧的预算是 33 ms。这些都在 AgentZero 的
+            <code>dev</code> 上；从周二起，这些运行都经过第 17 章的实验队列。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================================ 15 -->
+      <section class="chapter" id="ch-switch" aria-labelledby="h-switch">
+        <header class="ch-head">
+          <p class="ch-meta">
+            <span class="ch-no">15</span>
+            <span>2026-09-28 17:30 → 09-29 22:06</span>
+            <span>procon-rs a70da4c · 49c97eb · AgentZero 8877844</span>
+          </p>
+          <h2 id="h-switch">
+            <span data-lang="en">It plays, he corrects</span
+            ><span data-lang="zh" lang="zh-Hans">它来打，他来改</span>
+          </h2>
+          <p class="lede" data-lang="en">
+            Chapter 11 left a loop of 27 milliseconds from the capture card to
+            the replay port, and a plan to try it in the practice area. On
+            Monday evening the bot played the Switch for the first time, with
+            the player's hands on the controller.
+          </p>
+          <p class="lede" data-lang="zh" lang="zh-Hans">
+            第 11 章留下了一条从采集卡到回放端口只要 27
+            毫秒的回路，和一个去练习场试一试的计划。周一傍晚，bot
+            第一次真的玩上了 Switch，玩家的手就放在手柄上。
+          </p>
+        </header>
+        <div class="prose">
+          <p data-lang="en">
+            At about half past five he let <code>v1c-azu</code> play: v1's
+            recipe after 36 hours of Azu, before any fine-tuning on his own
+            jobs. From capture to the replay port the loop took 25.6 ms at the
+            median. The camera was very steady, the bot walked around obstacles,
+            and after being revived it went for the lesser Salmonids. At the
+            start of the waves it pushed into the water, again and again. None
+            of it was kept, since the live mode saved nothing.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            大约五点半，他让 <code>v1c-azu</code> 上手：v1 的做法，学了 36 小时
+            Azu，还没用他自己的对局微调。从采集到回放端口，循环的中位数是 25.6
+            ms。镜头稳得出奇；它会绕开障碍物；被救起来之后会去打小怪。可波次一开始，它就一次又一次地往水里冲。这些都没有留下来：实时模式什么都不存。
+          </p>
+          <aside class="note measured">
+            <p class="tag">
+              <span data-lang="en">The live path, measured</span
+              ><span data-lang="zh" lang="zh-Hans">实时链路的实测</span>
+            </p>
+            <p data-lang="en">
+              From the card's timestamp to the policy taking the frame: 17.8 ms
+              (p99 24.9), 16.6 of them the card's own transfer of a 1080p60
+              frame. Onto the GPU, pinned: 0.3 ms. Scaled there to 360p RGB: at
+              most 2.7 ms while another job keeps the GPU at 100%. Then the
+              model, and one line to the Pi. (Policy whiteboard, the real-time
+              loop.)
+            </p>
+            <p data-lang="zh" lang="zh-Hans">
+              从采集卡的时间戳到策略拿到这一帧：17.8 ms（p99 24.9），其中 16.6
+              ms 是采集卡自己传一帧 1080p60 的时间。锁页上传到 GPU：0.3 ms。在
+              GPU 上缩放成 360p RGB：另一个任务把 GPU 占满 100% 时最多 2.7
+              ms。然后是模型，和发给树莓派的一行。（策略白板，实时循环一节。）
+            </p>
+          </aside>
+          <p data-lang="en">
+            By 18:47 every play was a recording. “Record bot runs”, on by
+            default, starts a session as Record does, named <code>bot-</code>
+            and the time, and stops it with the play. Its
+            <code>session.json</code> gets each play's checkpoint, limits,
+            length, why it ended, the actions sent and every takeover;
+            <code>agentzero.jsonl</code> beside it holds each action line of the
+            policy, what it wanted and what was sent after the limits. A
+            takeover is read off the proxy's frames by the mix's own rule: a
+            button that no line of the last 300 ms pressed, or a stick or the
+            gyro equal to no such line's; it ends after 250 ms without one.
+            AgentZero tags these sessions <code>bot</code> and leaves them out
+            of every training step. They are not the player's game.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            到 18:47，每一次试玩都成了一段录像。“记录 bot
+            运行”默认打开：像“录制”一样新建一段录像，以
+            <code>bot-</code>
+            加时间命名，随试玩一起结束。<code>session.json</code>
+            记下每次试玩的检查点、限制、时长、结束原因、发出的动作数，以及每一次接管；旁边的
+            <code>agentzero.jsonl</code>
+            存着策略写出的每一行动作：它想发什么，经过限制之后实际发了什么。接管从代理转发的帧里判断，用的正是混合的规则：出现了过去
+            300 ms 里哪一行都没按过的键，或者摇杆、陀螺仪和哪一行都对不上；满
+            250 ms 没有这样的输入，接管就算结束。AgentZero 给这些录像打上
+            <code>bot</code>
+            标记，训练的每一步都不用它们：那不是玩家自己的游戏。
+          </p>
+          <aside class="note decision">
+            <p class="tag">
+              <span data-lang="en">Decision · the player</span
+              ><span data-lang="zh" lang="zh-Hans">决定 · 玩家</span>
+            </p>
+            <p data-lang="en">
+              After the first play (28 September) he approved five directions:
+              the scene encoder, tested that night; deaths as a negative signal;
+              learning from his takeovers (DAgger); a weapon × stage coverage
+              table for targeted downloads; and later an expert head per weapon
+              class.
+            </p>
+            <p data-lang="zh" lang="zh-Hans">
+              第一次试玩之后（9 月 28
+              日），他认可了五个方向：画面编码器（当晚就测）；把死亡当作负面信号；从他的接管里学习（DAgger）；一张武器
+              ×
+              场地的覆盖表，以便有针对地下载；以及以后给每类武器一个专门的输出头。
+            </p>
+          </aside>
+          <p data-lang="en">
+            On Tuesday evening, from 21:19 to 21:47, he let it play 23 times
+            with seven checkpoints, most often the scene policy's second seed,
+            <code>f12-yes-s1</code>, with SigLIP in the loop. Fourteen plays
+            ended at once, one action sent: the watchdog's stall. The
+            recording's folder, on the network mount, takes 0.5 to 0.8 s to
+            create, and the policy's reader logged every action under the same
+            lock. It sent one action, blocked, and the 500 ms stall clock ended
+            the play the moment the recording opened; the other nine began with
+            half a second of actions piled up. That night the log got a lock of
+            its own. Reproduced with every folder creation delayed 0.8 s, a test
+            play had stalled after 1 ms and one action; with the fix it ran its
+            full 6 seconds and sent 85.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            周二晚上 21:19 到 21:47，他让它上手了 23
+            次，换了七个检查点，用得最多的是画面策略的第二个种子
+            <code>f12-yes-s1</code>，这时 SigLIP 已经在实时循环里了。其中 14
+            次一开始就结束了，只发出一个动作：看门狗判定为“卡住”。原因是录像的文件夹在网络挂载盘上，建一个要
+            0.5 到 0.8
+            秒，而策略的读取线程记录每个动作用的是同一把锁。它发出一个动作就被堵住，录像一打开，500
+            ms
+            的卡顿计时就把这次试玩结束了；另外九次的开头，也都积压了半秒的动作。当晚，日志有了自己的一把锁。让每次建文件夹都延迟
+            0.8 秒来复现：修复之前，一次测试试玩 1 ms
+            后就“卡住”，只发了一个动作；修复之后，它跑满了 6 秒，发了 85 个。
+          </p>
+        </div>
+
+        <figure class="wide">
+          <div class="chart-legend"></div>
+          <div class="chart" data-chart="plays"></div>
+          <figcaption>
+            <span data-lang="en"
+              ><b>The evening of 29 September, play by play.</b> Each row is a
+              play, in order, labelled by its start (and its checkpoint where
+              there is room); the bar is how long it ran, the blue marks the
+              player's takeovers. Fourteen rows end at once: the stall of a slow
+              session start. Source: the <code>session.json</code> of each
+              <code>bot-2026-09-29_*</code> session.</span
+            ><span data-lang="zh" lang="zh-Hans"
+              ><b>9 月 29 日晚上，一次一次地看。</b
+              >每一行是一次试玩，按先后排列，标着开始时间（屏幕够宽时还有检查点）；条的长度是它跑了多久，蓝色标记是玩家的接管。有
+              14 行一开始就结束了：录像启动太慢造成的“卡住”。来源：每段
+              <code>bot-2026-09-29_*</code> 录像的
+              <code>session.json</code>。</span
+            >
+          </figcaption>
+          <details class="numbers">
+            <summary>
+              <span data-lang="en">The numbers</span
+              ><span data-lang="zh" lang="zh-Hans">数据</span>
+            </summary>
+            <div class="scroll"><table></table></div>
+          </details>
+        </figure>
+
+        <div class="prose">
+          <p data-lang="en">
+            The nine that ran lasted 22 to 84 seconds, 7.6 minutes in all, and
+            the player took over 53 times in them. The evening showed one
+            pattern. While his hands moved, the bot's outputs looked like a job.
+            When he let go, it carried his motion on for a moment and then
+            settled where nothing moved, and nothing moved because it had
+            settled. The recorder and the lock fix are on procon-rs's
+            <code>main</code>, the tagging on AgentZero's <code>dev</code>.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            真正跑起来的九次，每次 22 到 84 秒，合计 7.6 分钟，玩家在其中接管了
+            53 次。这一晚显出的是同一个样子：他的手在动时，bot
+            的输出看上去就像在打工；他一松手，它把他的动作延续片刻，然后停在一个什么都不动的地方，而什么都不动，又正是因为它停了。录像和锁的修复在
+            procon-rs 的 <code>main</code> 上，打标记的改动在 AgentZero 的
+            <code>dev</code> 上。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================================ 16 -->
+      <section class="chapter" id="ch-copycat" aria-labelledby="h-copycat">
+        <header class="ch-head">
+          <p class="ch-meta">
+            <span class="ch-no">16</span>
+            <span>2026-09-29 21:47 → 09-30 12:11</span>
+            <span>AgentZero f9ff220 · night 5388e0a … 35cd21f</span>
+            <span class="pill"
+              ><span data-lang="en">on the night branch</span
+              ><span data-lang="zh" lang="zh-Hans">在 night 分支上</span></span
+            >
+          </p>
+          <h2 id="h-copycat">
+            <span data-lang="en">The copycat</span
+            ><span data-lang="zh" lang="zh-Hans">学人精</span>
+          </h2>
+          <p class="lede" data-lang="en">
+            A policy that keeps doing what the picture shows scores well
+            offline, because actions last. The risk table had named it on the
+            first day: copying instead of deciding. On Tuesday night it became
+            the problem.
+          </p>
+          <p class="lede" data-lang="zh" lang="zh-Hans">
+            画面上在做什么就接着做什么，这样的策略离线分数很好看，因为动作本来就会持续。风险表第一天就写下了这一条：照抄，而不是决定。周二晚上，它成了眼前的难题。
+          </p>
+        </header>
+        <div class="prose">
+          <p data-lang="en">
+            The same night an agent took the evening's recordings apart. With
+            <code>f12-yes-s1</code>, during the player's takeovers the policy's
+            ZR probability reached 0.77 at its 90th percentile, its left stick
+            was pushed on 70% of frames and its camera turned 1.7 px a frame at
+            the median: a job. With the bot alone, in the same plays: 0.17, 2%
+            and 0.15. After a takeover ended it sometimes kept pushing the stick
+            the way the player had for a second more. The live path was not
+            broken: the same policy run offline over the recordings gave the
+            same outputs, r 0.995.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            当晚就有一个代理把这晚的录像拆开来看。以
+            <code>f12-yes-s1</code> 为例：玩家接管的时候，策略的 ZR 概率第 90
+            百分位到了 0.77，左摇杆 70% 的帧都推着，镜头转动的中位数每帧 1.7
+            像素：像是在打工。同样这几次试玩里只剩 bot
+            自己时：0.17、2%、0.15。接管一结束，它有时还会顺着玩家的方向再推一秒摇杆。实时链路并没有坏：同一个策略离线跑在这些录像上，输出一模一样，r
+            0.995。
+          </p>
+          <aside class="note measured">
+            <p class="tag">
+              <span data-lang="en">In the risk table since v0</span
+              ><span data-lang="zh" lang="zh-Hans">v0 起就在风险表上</span>
+            </p>
+            <p data-lang="en">
+              “Copying instead of deciding. Actions persist, so ‘keep doing what
+              the picture shows’ scores well offline.” The remedy then: report
+              the repeat-last reference and score onsets. (Policy whiteboard,
+              section 14.)
+            </p>
+            <p data-lang="zh" lang="zh-Hans">
+              “照抄，而不是决定。动作是持续的，所以‘画面上做什么就接着做’离线分数很好看。”当时的对策：报告“重复上一动作”的参照，并给按下时刻打分。（策略白板第
+              14 节。）
+            </p>
+          </aside>
+          <p data-lang="en">
+            It is a known failure of behaviour cloning from a history of
+            observations, the copycat problem (Wen et al., 2020). The newest
+            tokens already show the action being done: the IDM's frame vector
+            two frames back, and the cell motion. Actions last, so the shortcut
+            pays: what is pressed now is mostly still pressed four frames on.
+            Live, the shortcut closes a loop. The bot does what the picture
+            shows, the picture shows what the bot does, and when nothing moves,
+            nothing is predicted.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            这是基于观测历史做行为克隆时一个出了名的毛病，叫“学人精”问题（copycat，Wen
+            等，2020）。最新的几个 token 里已经写着正在做的动作：IDM
+            两帧之前的帧向量，和格子位移。动作是持续的，所以这条捷径很划算：现在按着的键，4
+            帧之后多半还按着。到了实机上，这条捷径就闭成了一个环：bot
+            照着画面做，画面照着 bot 显示；什么都不动时，它就什么都不预测。
+          </p>
+        </div>
+
+        <figure class="scene wide" data-scene="copycat">
+          <div class="screen">
+            <video
+              src="story/copycat-en.mp4"
+              muted
+              loop
+              playsinline
+              controls
+              preload="none"
+            ></video>
+            <canvas width="1280" height="720" hidden></canvas>
+          </div>
+          <div class="scene-bar">
+            <div class="seg" role="group" aria-label="View">
+              <button type="button" data-view="video" aria-pressed="true">
+                <span data-lang="en">Video</span
+                ><span data-lang="zh" lang="zh-Hans">视频</span>
+              </button>
+              <button type="button" data-view="live" aria-pressed="false">
+                <span data-lang="en">Live, drawn by this page</span
+                ><span data-lang="zh" lang="zh-Hans">实时，由本页绘制</span>
+              </button>
+            </div>
+            <div class="live-controls" hidden>
+              <button type="button" class="play" aria-pressed="true">
+                <span class="when-playing"
+                  ><span data-lang="en">Pause</span
+                  ><span data-lang="zh" lang="zh-Hans">暂停</span></span
+                ><span class="when-paused"
+                  ><span data-lang="en">Play</span
+                  ><span data-lang="zh" lang="zh-Hans">播放</span></span
+                >
+              </button>
+              <input
+                type="range"
+                min="0"
+                max="1000"
+                value="0"
+                aria-label="Time"
+              />
+              <span class="clock">0.0 s</span>
+            </div>
+          </div>
+          <figcaption>
+            <span data-lang="en"
+              ><b>A loop that settles.</b> The traces are drawn, not recorded;
+              the numbers under them are <code>f12-yes-s1</code>'s on the Switch
+              on 29 September (its ZR probability at the 90th percentile, the
+              share of frames with the left stick pushed, the camera turn at the
+              median), and the results at the end are the night's, on the
+              player's held-out jobs.</span
+            ><span data-lang="zh" lang="zh-Hans"
+              ><b>一个会停住的环。</b
+              >曲线是画出来的，不是录下来的；曲线下面的数字是
+              <code>f12-yes-s1</code> 9 月 29 日在 Switch 上的实测（ZR 概率的第
+              90
+              百分位、左摇杆推着的帧的比例、镜头转动的中位数），最后的结果是当晚在玩家留出打工上的成绩。</span
+            >
+          </figcaption>
+        </figure>
+
+        <div class="prose">
+          <p data-lang="en">
+            Offline it could now be measured two ways. The copycat scores: of
+            the targets where a button's state differs from the frame seen, the
+            share guessed right (repeating the last action gets 0); and the
+            anticipation, the partial correlation of the guessed stick and turn
+            with the target beyond what the frame seen already shows. Five
+            checkpoints on the three held-out jobs scored 0.33 to 0.39 on the
+            keyframe buttons, keeping the seen state 61 to 72% of the time (ZR,
+            ZL, B), and −0.06 to 0.02 on the left stick: a pure copy. The camera
+            anticipated a little, 0.23 to 0.31. And the lag:
+            <code>f12-yes</code>'s turn matches the truth best four frames
+            early, at the very frame it sees (r 0.61, against 0.48 at its
+            target).
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            离线现在也能从两个角度量了。“照抄检查”：在按键状态和所见帧不同的那些目标里，策略猜对的比例（重复上一动作得
+            0）；以及“预判”：猜出的摇杆和转动，在所见帧已经显示的之外，与目标的偏相关。五个检查点在三局留出打工上：关键帧按键
+            0.33 到 0.39，有 61% 到 72%
+            的时候维持所见的状态（ZR、ZL、B）；左摇杆预判 −0.06 到
+            0.02，纯粹是照抄。镜头略有预判，0.23 到 0.31。再看滞后：<code
+              >f12-yes</code
+            >
+            的转动与真值最吻合的，是提前 4 帧，也就是它看到的那一帧（r
+            0.61，在目标帧上只有 0.48）。
+          </p>
+          <p data-lang="en">
+            Four remedies went in that night, each on <code>f12-yes</code>'s
+            recipe and scored on both sets; the last scores came in the next
+            noon.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            当晚试了四种办法，都在 <code>f12-yes</code>
+            的做法上改，并在两个测试集上评分；最后几项分数到第二天中午才出来。
+          </p>
+          <ul data-lang="en">
+            <li>
+              <b>Keyframes</b>, where an action changes and the old and the new
+              each last three frames, weighed five times: keyframe buttons 0.36
+              → 0.39 on the player's jobs and left-stick anticipation 0.007 →
+              0.021, but merged presses 0.21 → 0.16. An <b>edge head</b>,
+              predicting each button's press and release, changed nothing.
+              Weighing the changes more does not tell the policy what causes
+              them.
+            </li>
+            <li>
+              <b>Present dropout</b>: spans of 4 to 12 frames' tokens, a quarter
+              of the positions, replaced by a learned mask token, the scene
+              kept; a history dropout, one of the baselines in Wen et al. Inside
+              a span the policy has to foresee from older frames and what is on
+              screen. Keyframe buttons 0.40, left-stick anticipation 0.046, the
+              turn a sixth faster (0.66 of the player's speed against 0.56),
+              button F1 as before (0.44 against 0.45) and a lower loss on Azu's
+              stream (2.945 against 2.959). It cost merged presses (0.17 against
+              0.21), and the turn still matched the frame seen best. The first
+              change that moved the copycat scores without losing the buttons,
+              and the one to try live next.
+            </li>
+            <li>
+              <b>Action chunks</b>, as in ACT: the next 15 targets, half a
+              second, at every position, trained on the second GPU (chapter 17).
+              Read at its first offset it moved like present dropout (keyframe
+              buttons 0.41, anticipation 0.041, the turn at 0.64 of the player's
+              speed). Read as live play would, each frame's action the weighted
+              mean of what the last 15 frames predicted for it, it was worse
+              (merged presses 0.11, the turn's r 0.37 against 0.47): a better
+              target, not a better reading.
+            </li>
+            <li>
+              <b>Adversary heads</b>, Wen and colleagues' own remedy: heads that
+              try to read the present action from the policy's state, through a
+              reversed gradient, so that the state learns to hide it. Written at
+              01:27 and trained on the second GPU minutes before 02:08, they
+              were scored only at noon, after the night of chapter 18. They
+              moved the copycat scores furthest: keyframe buttons 0.43 on the
+              player's jobs, and the turn matching the truth best 2 frames
+              before its target instead of 4 (on Azu's stream, 1). They cost the
+              camera's aim (turn r 0.42 against 0.48, over half a second 0.55
+              against 0.71) and the presses (0.15 against 0.21), so the next
+              version sets the adversary on the buttons and sticks only: a
+              camera that keeps turning is not copying.
+            </li>
+            <li>
+              <b>More, and together</b>, scored the same noon. Masking more (45%
+              of the positions, or spans of 12 to 30 frames) did not help.
+              Present dropout with keyframe weights raised the keyframe buttons
+              to 0.42 at the buttons' price (button F1 ±2 0.42 against 0.45);
+              with chunks it did no better than either alone.
+            </li>
+          </ul>
+          <ul data-lang="zh" lang="zh-Hans">
+            <li>
+              <b>关键帧</b>：动作发生变化、且新旧动作各持续 3
+              帧的那些帧，权重乘以 5。玩家对局上关键帧按键 0.36 →
+              0.39，左摇杆预判 0.007 → 0.021，但合并按键 0.21 →
+              0.16。加一个<b>边沿头</b>（预测每个键的按下和松开），什么都没变。把变化的帧看得更重，并不能告诉策略变化从何而来。
+            </li>
+            <li>
+              <b>遮住现在</b>（present dropout）：随机挑出 4 到 12
+              帧长的片段、合计约四分之一的位置，把它们的 token
+              换成一个学出来的遮罩 token，画面特征保留；这是一种“历史
+              dropout”，Wen
+              等人的对照方法里就有。落在片段里的位置，只能从更早的帧和画面上去预见。关键帧按键
+              0.40，左摇杆预判 0.046，镜头快了六分之一（玩家速度的 0.66，原来
+              0.56），按键 F1 基本不变（0.44 对 0.45），Azu
+              直播上的损失还更低（2.945 对 2.959）。代价是合并按键（0.17 对
+              0.21），而且转动仍然和所见帧最吻合。这是第一个让照抄检查往对的方向走、又没丢掉按键的改动，下一次上机就试它。
+            </li>
+            <li>
+              <b>动作块</b>（仿 ACT）：每个位置一次预测接下来 15
+              个目标，也就是半秒，在第二块 GPU 上训练（第 17
+              章）。只读第一个偏移时，它和“遮住现在”表现相近（关键帧按键
+              0.41，预判 0.041，转动是玩家速度的
+              0.64）。按实机的读法，每一帧的动作取过去 15
+              帧对它预测的加权平均，结果反而更差（合并按键 0.11，转动 r 0.37 对
+              0.47）：它是更好的训练目标，却不是更好的读法。
+            </li>
+            <li>
+              <b>对抗头</b>：Wen
+              等人自己的办法。几个输出头试图从策略的状态里读出当下的动作，梯度反转回去，让状态学会把它藏起来。代码
+              01:27 写好，02:08 前几分钟在第二块 GPU
+              上训练完，却直到中午才评上分，那已是第 18
+              章那一夜之后的事了。它把照抄检查推得最远：玩家对局上关键帧按键
+              0.43，转动与真值最吻合的位置从目标前 4 帧挪到了前 2 帧（Azu
+              的直播上是前 1 帧）。代价是镜头的准头（转动 r 0.42 对 0.48，0.5
+              秒累计 0.55 对 0.71）和按键（合并按键 0.15 对
+              0.21）；所以下一版只让对抗头管按键和摇杆：镜头一直转下去，并不是照抄。
+            </li>
+            <li>
+              <b>加码与组合</b>，同一个中午评完分。遮得更多（45% 的位置，或 12
+              到 30
+              帧长的片段）没有帮助。遮住现在加上关键帧权重，把关键帧按键提到
+              0.42，代价是按键（±2 帧按键 F1 0.42 对
+              0.45）；和动作块组合，不比各自单用更好。
+            </li>
+          </ul>
+        </div>
+
+        <figure class="wide">
+          <div class="chart-legend"></div>
+          <div class="chart" data-chart="remedies"></div>
+          <figcaption>
+            <span data-lang="en"
+              ><b>Against the copycat, on the player's three held-out jobs.</b>
+              Keyframe buttons guessed right, through each policy's latch; the
+              left stick's sideways anticipation (0 for a copy of the present);
+              the sideways turn's speed against the player's, read by the mean;
+              and merged presses F1, the price. The grey dot and dashed line are
+              <code>f12-yes</code> (seed 0), scored again beside the others.
+              Source: AgentZero policy whiteboard on the night branch, section
+              11; the last two rows from the experiment queue's results of 30
+              September, noon.</span
+            ><span data-lang="zh" lang="zh-Hans"
+              ><b>对付“学人精”，在玩家的三局留出打工上。</b
+              >关键帧按键猜对的比例，经过各自策略的锁存；左摇杆左右方向的预判（照抄现在为
+              0）；左右转动速度与玩家的比值，按平均值读；以及合并按键
+              F1，也就是代价。灰点和虚线是 <code>f12-yes</code>（种子
+              0），与其他各项一起重新评分。来源：night 分支上的 AgentZero
+              策略白板第 11 节；最后两行来自 9 月 30
+              日中午实验队列里的结果。</span
+            >
+          </figcaption>
+          <details class="numbers">
+            <summary>
+              <span data-lang="en">The numbers</span
+              ><span data-lang="zh" lang="zh-Hans">数据</span>
+            </summary>
+            <div class="scroll"><table></table></div>
+          </details>
+        </figure>
+
+        <div class="prose">
+          <p data-lang="en">
+            Every remedy that night changed the input or the target. None yet
+            changed what the bot does when its own picture stands still, and
+            that is where the next tries go: buttons drawn from their
+            probabilities every frame instead of through a latch, written at
+            noon on Wednesday; and learning from the takeovers themselves, the
+            states only the bot reaches, labelled by the player's corrections
+            (HG-DAgger). The night's work is on AgentZero's
+            <code>night</code> branch, run by the night agent from the queue.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            那一晚的办法，改的都是输入或目标，还没有一个针对“自己的画面停住时
+            bot
+            该做什么”。接下来就往这里试：按键不再经过锁存，而是每帧按概率抽取，周三中午已经写好；以及从接管本身学习：只有
+            bot
+            才会走到的那些局面，由玩家的纠正来标注（HG-DAgger）。这一夜的工作在
+            AgentZero 的 <code>night</code> 分支上，由夜班代理按队列跑完。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================================ 17 -->
+      <section class="chapter" id="ch-gpus" aria-labelledby="h-gpus">
+        <header class="ch-head">
+          <p class="ch-meta">
+            <span class="ch-no">17</span>
+            <span>2026-09-29 14:07 → 09-30 01:39</span>
+            <span
+              >procon-rs a0a5fa2 · 829cf1c · b79f59c · AgentZero 67befdf ·
+              3515bc7 · 743f9f7</span
+            >
+          </p>
+          <h2 id="h-gpus">
+            <span data-lang="en">A second GPU, and a Pipeline</span
+            ><span data-lang="zh" lang="zh-Hans"
+              >第二块 GPU，一条生产流水线</span
+            >
+          </h2>
+          <p class="lede" data-lang="en">
+            On Tuesday morning the GPU sat idle for hours, because nothing had
+            been queued after the overnight script. By half past midnight it had
+            a queue, an app to watch it, and a second GPU to share the work.
+          </p>
+          <p class="lede" data-lang="zh" lang="zh-Hans">
+            周二上午，GPU
+            空转了好几个小时，因为通宵脚本跑完以后，没人排下一件事。到了凌晨零点半，它有了一个队列、一个盯着队列的应用，还有第二块
+            GPU 来分担。
+          </p>
+        </header>
+        <div class="prose">
+          <p data-lang="en">
+            The schedule moved out of the agents' heads into a file. AgentZero's
+            <code>runs/queue.json</code> holds what runs, what waits and why,
+            and what came out. Agents keep it with <code>agentzero-queue</code>:
+            each entry states the question it answers, its device and its owner
+            (the day agent, the night agent, the runner of the other GPU), and
+            when it ends, one line with the numbers and the next step. Waiting
+            entries run highest priority first, and the player sets the order.
+            By Wednesday noon the file held 71 entries.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            排程从代理们的脑子里搬进了一个文件。AgentZero 的
+            <code>runs/queue.json</code>
+            记着：什么在跑、什么在等、为什么，以及跑出了什么。代理们用
+            <code>agentzero-queue</code>
+            维护它：每一项写明要回答的问题、用哪块设备、归谁（白天班的代理、夜班的代理、另一块
+            GPU
+            的调度程序），结束时再写一行带数字的结果和下一步。等待中的项按优先级从高到低运行，顺序由玩家来定。到周三中午，这个文件里已有
+            71 项。
+          </p>
+          <aside class="note decision">
+            <p class="tag">
+              <span data-lang="en">Decision · the player</span
+              ><span data-lang="zh" lang="zh-Hans">决定 · 玩家</span>
+            </p>
+            <p data-lang="en">
+              A sixth app, so that he need not ask what the GPU is doing (29
+              September). The schedule lives in a data file, never in code.
+            </p>
+            <p data-lang="zh" lang="zh-Hans">
+              再做第六个应用，这样他就不用再问 GPU 在忙什么（9 月 29
+              日）。排程放在数据文件里，绝不写进代码。
+            </p>
+          </aside>
+          <p data-lang="en">
+            The app landed the same afternoon. It was asked for as the lab app;
+            since the whole product was becoming Grizzco Lab (ProCon Studio
+            until that night, the Studio now its first app), it is the Pipeline,
+            生产流水线 in Chinese. Every 5 seconds the lab samples the GPU, the
+            CPU and memory, finds each entry's processes by process group, pid
+            or a piece of its command line, and reads its progress from the run
+            folder or its log. The page shows what runs, with its progress, ETA,
+            loss curves and latest scores; a GPU timeline of what ran when; the
+            queue in the order it will run, reordered by dragging a handle and
+            written back under the queue tool's own lock; results and history.
+            That night the timeline went to disk, so a restart keeps it.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            当天下午，这个应用就上线了。它最初叫“实验室”应用；可整个产品正在改名为熊商会实验室（到那天夜里为止还叫
+            ProCon
+            Studio，工作室成了它的第一个应用），于是它叫“生产流水线”。实验室每 5
+            秒采一次 GPU、CPU 和内存，按进程组、pid
+            或命令行里的一段找到每一项的进程，再从运行目录或日志里读进度。页面上有：正在跑的项目，带进度、预计完成时间、损失曲线和最新分数；一条
+            GPU
+            时间线，记着什么时候跑了什么；按运行顺序排好的队列，拖动把手就能重排，并在队列工具自己的锁下写回；还有结果和历史。当晚时间线也存进了磁盘，重启不丢。
+          </p>
+          <p data-lang="en">
+            Chapter 13 had found the GPUs at home more useful as independent
+            runners than as one synchronised job. The first to join was an RTX
+            4080 SUPER in a Windows 11 virtual machine, on the same Proxmox host
+            as the Linux machine the lab runs in. A probe on Tuesday night found
+            native Windows with uv enough (no WSL, which wanted admin rights and
+            a reboot), the LAN fast, 477 MB/s over scp, and the card 1.3 times
+            the 4070 SUPER on token training. Two small commits made the trainer
+            portable: where <code>preadv</code> is missing the pack is read with
+            a seek, loader workers are spawned processes there, and jobs are
+            ordered by name because Windows sorts paths without regard to case.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            第 13 章说过，家里的几块 GPU
+            各自跑独立的实验，比拼成一个同步训练更划算。第一块加进来的是一张 RTX
+            4080 SUPER，装在一台 Windows 11 虚拟机里，和实验室所在的 Linux
+            机器在同一台 Proxmox 主机上。周二晚上的探路发现：Windows 原生加 uv
+            就够了（不用 WSL，那需要管理员权限和重启）；局域网很快，scp 477
+            MB/s；这张卡跑 token 训练是 4070 SUPER 的 1.3
+            倍。两个小提交让训练程序能在那边跑：没有
+            <code>preadv</code> 的地方，打包的数据用 seek
+            来读；数据加载进程在那边是另起的子进程；对局按名字排序，因为 Windows
+            给路径排序时不分大小写。
+          </p>
+        </div>
+
+        <figure class="diagram wide">
+          <div class="scroll">
+            <svg
+              viewBox="0 0 1040 352"
+              style="min-width: 720px"
+              role="img"
+              aria-labelledby="queue-title"
+            >
+              <title id="queue-title">
+                The experiment queue feeds two GPUs: agents on the Linux machine
+                take its entries for the RTX 4070 SUPER, and a runner feeds the
+                Windows VM's RTX 4080 SUPER over ssh. The lab's Pipeline reads
+                the queue and both GPUs, and writes back the order the player
+                drags.
+              </title>
+              <path
+                class="wire wire-plain"
+                d="M370 60 C 250 60, 170 80, 170 144"
+                marker-end="url(#ah-ink)"
+              />
+              <path
+                class="wire wire-plain"
+                d="M670 60 C 790 60, 870 80, 870 144"
+                marker-end="url(#ah-ink)"
+              />
+              <path
+                class="wire wire-plain"
+                d="M170 268 C 170 300, 250 300, 364 300"
+                marker-end="url(#ah-ink)"
+              />
+              <path
+                class="wire wire-plain"
+                d="M870 268 C 870 300, 790 300, 676 300"
+                marker-end="url(#ah-ink)"
+              />
+              <path
+                class="wire wire-you"
+                d="M520 254 V110"
+                marker-end="url(#ah-you)"
+              />
+              <g class="t-edge">
+                <text x="176" y="96">next --device gpu:linux</text>
+                <text x="864" y="96" text-anchor="end">
+                  next --take --host win11
+                </text>
+                <text x="532" y="188">
+                  <tspan data-lang="en">the order he drags</tspan>
+                  <tspan data-lang="zh">他拖出来的顺序</tspan>
+                </text>
+                <text x="186" y="326">
+                  <tspan data-lang="en">processes · metrics.jsonl</tspan>
+                  <tspan data-lang="zh">进程 · metrics.jsonl</tspan>
+                </text>
+                <text x="854" y="326" text-anchor="end">
+                  <tspan data-lang="en">metrics each minute · gpu.json</tspan>
+                  <tspan data-lang="zh">每分钟拷回指标 · gpu.json</tspan>
+                </text>
+              </g>
+
+              <rect
+                class="box"
+                x="370"
+                y="16"
+                width="300"
+                height="90"
+                rx="12"
+              />
+              <text class="t-name" x="390" y="50">
+                <tspan data-lang="en">The experiment queue</tspan>
+                <tspan data-lang="zh">实验队列</tspan>
+              </text>
+              <text class="t-sub" x="390" y="74">
+                AgentZero · runs/queue.json
+              </text>
+              <text class="t-sub" x="390" y="94">
+                <tspan data-lang="en">agentzero-queue: add, next, done …</tspan>
+                <tspan data-lang="zh">agentzero-queue：add、next、done……</tspan>
+              </text>
+
+              <rect
+                class="box"
+                x="20"
+                y="148"
+                width="300"
+                height="116"
+                rx="12"
+              />
+              <use href="#g-pc" x="38" y="162" width="40" height="28" />
+              <text class="t-name" x="88" y="182">Linux · RTX 4070 SUPER</text>
+              <text class="t-sub" x="38" y="214">
+                <tspan data-lang="en">the lab, the desktop, the agents</tspan>
+                <tspan data-lang="zh">实验室、桌面、各个代理</tspan>
+              </text>
+              <text class="t-sub" x="38" y="236">
+                <tspan data-lang="en">nothing heavy while he records</tspan>
+                <tspan data-lang="zh">他录像时不跑重活</tspan>
+              </text>
+
+              <rect
+                class="box"
+                x="720"
+                y="148"
+                width="300"
+                height="116"
+                rx="12"
+              />
+              <use href="#g-pc" x="738" y="162" width="40" height="28" />
+              <text class="t-name" x="788" y="182">win11 · RTX 4080 SUPER</text>
+              <text class="t-sub" x="738" y="214">
+                <tspan data-lang="en">agentzero-win11 run: a git bundle</tspan>
+                <tspan data-lang="zh">agentzero-win11 run：git bundle</tspan>
+              </text>
+              <text class="t-sub" x="738" y="236">
+                <tspan data-lang="en">
+                  and the data over ssh, run detached
+                </tspan>
+                <tspan data-lang="zh">和数据经 ssh 推过去，后台运行</tspan>
+              </text>
+
+              <rect
+                class="box-policy"
+                x="370"
+                y="258"
+                width="300"
+                height="84"
+                rx="12"
+              />
+              <text class="t-name" x="390" y="290">
+                <tspan data-lang="en">Pipeline · Grizzco Lab</tspan>
+                <tspan data-lang="zh">生产流水线 · 熊商会实验室</tspan>
+              </text>
+              <text class="t-sub" x="390" y="314">
+                <tspan data-lang="en">a sample every 5 s, both GPUs</tspan>
+                <tspan data-lang="zh">每 5 秒采样一次，两块 GPU</tspan>
+              </text>
+            </svg>
+          </div>
+          <figcaption>
+            <span data-lang="en"
+              ><b>One queue, two GPUs.</b> Both machines are virtual machines on
+              one Proxmox host. The VM's runner copies each job's metrics back
+              into the same paths every minute and writes its GPU to
+              <code>runs/win11/gpu.json</code> every 10 seconds; older than a
+              minute, that file says nothing about now.</span
+            ><span data-lang="zh" lang="zh-Hans"
+              ><b>一个队列，两块 GPU。</b>两台机器都是同一台 Proxmox
+              主机上的虚拟机。虚拟机那边的调度程序每分钟把每个任务的指标拷回原来的路径，每
+              10 秒把它的 GPU 状况写进
+              <code>runs/win11/gpu.json</code
+              >；超过一分钟没更新，这个文件就不再代表现在。</span
+            >
+          </figcaption>
+        </figure>
+
+        <div class="prose">
+          <p data-lang="en">
+            At 00:32 the runner went in. <code>agentzero-win11 run</code> takes
+            the queue's entries for the VM's GPU, or for either GPU, that carry
+            a command. It pushes the commit it runs from as a git bundle,
+            together with the data the command reads, and starts the job
+            detached on the VM; every minute it copies the log and the metrics
+            back, so the Pipeline's cards work unchanged, and when the job ends
+            it pulls the run folders and marks the entry done or failed. The
+            first real job, the action chunks of chapter 16, started on the VM
+            at 00:41 and finished at 01:04, and by two o'clock four more had
+            followed.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            00:32，调度程序上线。<code>agentzero-win11 run</code>
+            从队列里取出指定给虚拟机
+            GPU（或两块都行）、并带有命令的项目，把它所基于的提交打成 git
+            bundle，连同命令要读的数据一起推过去，在虚拟机上后台启动；每分钟把日志和指标拷回来，所以生产流水线的卡片不用改就能显示；任务结束后拉回运行目录，把这一项标为完成或失败。第一个真正的任务，也就是第
+            16 章的动作块，00:41 在虚拟机上开跑，01:04
+            跑完；到两点，又有四个跟了上去。
+          </p>
+          <p data-lang="en">
+            At 01:39 the Pipeline learned both GPUs, the CPU each job takes, and
+            runs that ended or stalled: a job still scoring after its
+            early-stopped training used to show a frozen bar and “ETA in 84 s”
+            for as long as it ran. Its cards gained the copycat scores. The
+            queue, the runner and the portability are on AgentZero's
+            <code>dev</code>, the Pipeline on procon-rs's <code>main</code>.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            01:39，生产流水线学会了显示两块 GPU、每个任务占用的
+            CPU，以及已经结束或卡住的运行：以前一个训练提前停止、还在评分的任务，会一直显示一根不动的进度条和“预计
+            84
+            秒后完成”。卡片上也有了照抄检查的分数。队列、调度程序和移植的改动在
+            AgentZero 的 <code>dev</code> 上，生产流水线在 procon-rs 的
+            <code>main</code> 上。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================================ 18 -->
+      <section class="chapter" id="ch-disk" aria-labelledby="h-disk">
+        <header class="ch-head">
+          <p class="ch-meta">
+            <span class="ch-no">18</span>
+            <span>2026-09-30 02:08 → 12:23</span>
+            <span>AgentZero 5d88e20 · f8139d2 · 16f1fb2</span>
+          </p>
+          <h2 id="h-disk">
+            <span data-lang="en">Deleted, but not gone</span
+            ><span data-lang="zh" lang="zh-Hans">删了，却还在</span>
+          </h2>
+          <p class="lede" data-lang="en">
+            At 02:08 on Wednesday both GPUs were busy with the copycat night.
+            Then everything stopped. The Pipeline's own log has no sample
+            between 02:08:40 and 11:31:04.
+          </p>
+          <p class="lede" data-lang="zh" lang="zh-Hans">
+            周三凌晨 2:08，两块 GPU
+            都还在为“学人精”那一夜忙着。然后，一切都停了。生产流水线自己的日志里，02:08:40
+            到 11:31:04 之间一个采样都没有。
+          </p>
+        </header>
+
+        <figure class="wide">
+          <div class="chart-legend"></div>
+          <div class="chart" data-chart="night"></div>
+          <figcaption>
+            <span data-lang="en"
+              ><b>The night on both GPUs</b>, as the queue and the Pipeline's
+              sample log recorded it: each bar a queue entry, where and when it
+              ran (the VM's first jobs by the queue's times, since the Pipeline
+              learned that GPU at 01:39). The two jobs running at 02:08:40 died
+              with the host; the axis skips the 9 hours 22 minutes without a
+              sample. Source: <code>runs/queue.json</code> and
+              <code>pipeline-gpu.jsonl</code>.</span
+            ><span data-lang="zh" lang="zh-Hans"
+              ><b>两块 GPU 上的那一夜</b
+              >，按队列和生产流水线的采样日志：每根条是队列里的一项，在哪块 GPU
+              上、什么时候跑（虚拟机上最早的几个任务用队列记下的时间，因为生产流水线
+              01:39 才认识那块 GPU）。02:08:40
+              正在跑的两个任务随主机一起死掉；横轴跳过了没有任何采样的 9 小时 22
+              分钟。来源：<code>runs/queue.json</code> 和
+              <code>pipeline-gpu.jsonl</code>。</span
+            >
+          </figcaption>
+          <details class="numbers">
+            <summary>
+              <span data-lang="en">The numbers</span
+              ><span data-lang="zh" lang="zh-Hans">数据</span>
+            </summary>
+            <div class="scroll"><table></table></div>
+          </details>
+        </figure>
+
+        <div class="prose">
+          <p data-lang="en">
+            The Proxmox host that holds both virtual machines had hung, because
+            its ZFS pool was full: rpool, 3.53 TiB on a single Samsung 990 EVO
+            Plus. Every job, both runners and every agent died, and both GPUs
+            sat idle for nine and a half hours.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            同时承载两台虚拟机的 Proxmox 主机卡死了，因为它的 ZFS
+            存储池满了：rpool，一块三星 990 EVO Plus 上的 3.53
+            TiB。所有任务、两个调度程序、每一个代理都停了，两块 GPU
+            闲了九个半小时。
+          </p>
+          <aside class="note measured">
+            <p class="tag">
+              <span data-lang="en">The last sample, 02:08:40</span
+              ><span data-lang="zh" lang="zh-Hans">最后一次采样，02:08:40</span>
+            </p>
+            <p data-lang="en">
+              The 4070 SUPER at 100%, the 4080 SUPER at 66%. Running: the
+              scoring of the stronger present dropout here, the adversary heads
+              there. The first had finished its scores and lost the turn's speed
+              and lag; the second had finished one run and lost the next at
+              about step 1,700.
+            </p>
+            <p data-lang="zh" lang="zh-Hans">
+              4070 SUPER 占用 100%，4080 SUPER 占用
+              66%。正在跑的：这边是更强的“遮住现在”的评分，那边是对抗头。前者的分数已经算完，转动速度和滞后没来得及算；后者跑完了一次，下一次在大约第
+              1,700 步时断掉。
+            </p>
+          </aside>
+          <p data-lang="en">
+            How does a pool fill with data that had been deleted? Both machines'
+            disks are thin ZFS volumes of 1.76 TiB, together as large as the
+            pool itself. Sanoid kept 30 daily snapshots of them and monthly ones
+            besides, and inside the Linux machine a timer took a read-only btrfs
+            snapshot of <code>/</code> and <code>/home</code> every day, kept
+            for 31 days. Everything the work wrote and then deleted
+            (checkpoints, token caches, Rust build folders, the network mount's
+            file cache, transcodes, agents' scratch) was still held by a
+            snapshot inside the machine, and the blocks it had filled were held
+            again by the pool's snapshots of the machine's disk.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            删掉的数据，怎么会把存储池填满？两台机器的磁盘都是 ZFS
+            上的精简卷，各 1.76 TiB，加起来和整个存储池一样大。sanoid 给它们留着
+            30 个每日快照，外加每月的；Linux 机器里面还有一个定时器，每天给
+            <code>/</code> 和 <code>/home</code> 拍一个只读的 btrfs 快照，留 31
+            天。工作中写了又删的所有东西（检查点、token 缓存、Rust
+            编译目录、网络挂载盘的文件缓存、转码文件、代理的临时文件），都还被机器里的快照留着；它们占过的块，又被存储池对这块虚拟磁盘的快照再留一遍。
+          </p>
+        </div>
+
+        <figure class="diagram wide">
+          <div class="scroll">
+            <svg
+              viewBox="0 0 1040 318"
+              style="min-width: 720px"
+              role="img"
+              aria-labelledby="pool-title"
+            >
+              <title id="pool-title">
+                Nested storage: the Proxmox host's rpool of 3.53 TiB holds two
+                thin volumes of 1.76 TiB, the Linux and Windows machines' disks,
+                with sanoid's snapshots of them; inside the Linux disk, btrfs
+                keeps a daily snapshot of / and /home for 31 days. A file
+                deleted inside the Linux machine stays in every snapshot below
+                it.
+              </title>
+              <rect
+                class="box"
+                x="20"
+                y="14"
+                width="1000"
+                height="292"
+                rx="14"
+              />
+              <text class="t-name" x="40" y="46">
+                <tspan data-lang="en">Proxmox host · rpool, 3.53 TiB</tspan>
+                <tspan data-lang="zh">Proxmox 主机 · rpool，3.53 TiB</tspan>
+              </text>
+              <text class="t-sub" x="40" y="68">
+                <tspan data-lang="en">
+                  sanoid: 30 daily snapshots of each disk, and monthly ones (now
+                  7 daily)
+                </tspan>
+                <tspan data-lang="zh">
+                  sanoid：每块盘 30 个每日快照，外加每月的（现在只留 7
+                  个每日的）
+                </tspan>
+              </text>
+
+              <rect
+                class="box-ghost"
+                x="40"
+                y="86"
+                width="612"
+                height="202"
+                rx="12"
+              />
+              <text class="t-small" x="58" y="110">
+                <tspan data-lang="en">
+                  Linux machine's disk · thin, 1.76 TiB
+                </tspan>
+                <tspan data-lang="zh">
+                  Linux 机器的磁盘 · 精简卷，1.76 TiB
+                </tspan>
+              </text>
+              <rect
+                class="box-ghost"
+                x="58"
+                y="122"
+                width="576"
+                height="150"
+                rx="10"
+              />
+              <text class="t-small" x="76" y="146">
+                <tspan data-lang="en">
+                  btrfs · / and /home: a read-only snapshot every day, kept 31
+                  days
+                </tspan>
+                <tspan data-lang="zh">
+                  btrfs · / 和 /home：每天一个只读快照，留 31 天
+                </tspan>
+              </text>
+              <rect class="box" x="76" y="160" width="540" height="94" rx="8" />
+              <text
+                class="t-sub"
+                x="94"
+                y="186"
+                style="text-decoration: line-through"
+              >
+                <tspan data-lang="en">
+                  checkpoints · token caches · Rust builds
+                </tspan>
+                <tspan data-lang="zh">
+                  检查点 · token 缓存 · Rust 编译目录
+                </tspan>
+              </text>
+              <text
+                class="t-sub"
+                x="94"
+                y="206"
+                style="text-decoration: line-through"
+              >
+                <tspan data-lang="en">
+                  the mount's file cache · transcodes · scratch
+                </tspan>
+                <tspan data-lang="zh">
+                  挂载盘的文件缓存 · 转码文件 · 临时文件
+                </tspan>
+              </text>
+              <text class="t-bad" x="94" y="238">
+                <tspan data-lang="en">
+                  rm: gone from the folders, still in every snapshot below
+                </tspan>
+                <tspan data-lang="zh">
+                  rm：从文件夹里消失了，下面每一层快照里都还在
+                </tspan>
+              </text>
+
+              <rect
+                class="box-ghost"
+                x="672"
+                y="86"
+                width="328"
+                height="202"
+                rx="12"
+              />
+              <text class="t-small" x="690" y="110">
+                <tspan data-lang="en">
+                  win11 machine's disk · thin, 1.76 TiB
+                </tspan>
+                <tspan data-lang="zh">
+                  win11 机器的磁盘 · 精简卷，1.76 TiB
+                </tspan>
+              </text>
+              <text class="t-sub" x="690" y="140">
+                <tspan data-lang="en">2 × 1.76 TiB of thin disks</tspan>
+                <tspan data-lang="zh">两块 1.76 TiB 的精简卷</tspan>
+              </text>
+              <text class="t-sub" x="690" y="160">
+                <tspan data-lang="en">on a pool of 3.53 TiB,</tspan>
+                <tspan data-lang="zh">放在 3.53 TiB 的存储池上，</tspan>
+              </text>
+              <text class="t-sub" x="690" y="180">
+                <tspan data-lang="en">snapshots on top</tspan>
+                <tspan data-lang="zh">上面还压着快照</tspan>
+              </text>
+            </svg>
+          </div>
+          <figcaption>
+            <span data-lang="en"
+              ><b>Why deleting freed nothing.</b> A file deleted inside the
+              Linux machine is still in its btrfs snapshots; the blocks it
+              filled on the machine's disk are still in the pool's snapshots of
+              that disk. Space comes back when the last snapshot holding it has
+              expired. Source: the working notes of 30 September.</span
+            ><span data-lang="zh" lang="zh-Hans"
+              ><b>为什么删了也腾不出地方。</b>在 Linux
+              机器里删掉的文件，还留在它的 btrfs
+              快照里；它在这块虚拟磁盘上占过的块，又留在存储池对这块盘的快照里。要等最后一个留着它的快照过期，空间才会回来。来源：9
+              月 30 日的工作笔记。</span
+            >
+          </figcaption>
+        </figure>
+
+        <div class="prose">
+          <p data-lang="en">
+            In the morning the player pruned the snapshots. Sanoid now keeps 7
+            dailies and no monthlies, and 16 GB are reserved for the host's own
+            system, so it keeps room to write when the pool fills. Then he said
+            what he wanted:
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            早上，玩家清理了快照：sanoid 现在只留 7
+            个每日快照、不留每月的；还给主机自己的系统预留了 16
+            GB，存储池再满，它也还有地方写。然后他说了他的要求：
+          </p>
+          <blockquote data-lang="en">
+            Next time I want you to take care of the zfs space as well and not
+            to overwhelm the disk size.
+          </blockquote>
+          <blockquote data-lang="zh" lang="zh-Hans">
+            下次 ZFS 的空间也要你们管起来，别把磁盘撑爆了。
+          </blockquote>
+          <aside class="note deadend">
+            <p class="tag">
+              <span data-lang="en">Lesson · deleted is not freed</span
+              ><span data-lang="zh" lang="zh-Hans"
+                >教训 · 删了不等于腾出来</span
+              >
+            </p>
+            <p data-lang="en">
+              Inside a virtual machine with snapshots, deleting a file is a
+              promise to free its space once the last snapshot holding it
+              expires: up to 31 days inside the machine, then the pool's own.
+            </p>
+            <p data-lang="zh" lang="zh-Hans">
+              在有快照的虚拟机里删一个文件，只是一个承诺：等最后一个留着它的快照过期，空间才会还回来。机器里面最长
+              31 天，外面还有存储池自己的快照。
+            </p>
+          </aside>
+          <p data-lang="en">
+            What it taught went into the rules and into the code. Every brief
+            now checks the pool before heavy writes: at least 300 GB free and
+            under 85% used, writers paused below 150 GB. Data that churns lives
+            outside the daily snapshots; agents' Rust builds go to a btrfs
+            subvolume of their own. At 11:55 the queue got a storage guard:
+            <code>agentzero-queue next</code> hands out nothing while the pool
+            runs low, running jobs on this host are frozen when it is critical
+            and resumed only by the guard that froze them, and the VM's runner
+            holds too while its C: drive has less than 50 GB free.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            学到的东西，写进了规矩，也写进了代码。现在每份任务说明都要求：大量写盘之前先看存储池，至少留
+            300 GB、使用率低于 85%，低于 150 GB
+            就让写盘的进程停下。频繁写删的数据放到每日快照之外，代理的 Rust
+            编译目录搬进了一个单独的 btrfs
+            子卷。11:55，队列多了一道存储守卫：存储池快不够时，<code
+              >agentzero-queue next</code
+            >
+            一个任务也不发；到了危急线，本机正在跑的任务会被冻结，也只由冻结它们的守卫来恢复；虚拟机那边的调度程序在
+            C: 盘剩余不足 50 GB 时同样停手。
+          </p>
+          <p data-lang="en">
+            At 11:31 the lab was sampling again, and by 11:51 both GPUs were
+            back on the night's unfinished work. By early afternoon the agents'
+            scratch folders and AgentZero's run folders had moved outside the
+            daily snapshots as well. The storage guard, and the runner's paths
+            through the new links, are on AgentZero's <code>dev</code>.
+          </p>
+          <p data-lang="zh" lang="zh-Hans">
+            11:31，实验室重新开始采样；到 11:51，两块 GPU
+            又接着做那一夜没做完的事。到了下午，代理们的临时文件夹和 AgentZero
+            的运行目录也都搬到了每日快照之外。存储守卫，以及调度程序改走新链接的路径，都在
+            AgentZero 的 <code>dev</code> 上。
+          </p>
+        </div>
+      </section>
+
+      <!-- ============================================================ 19 -->
+      <section class="chapter" id="ch-next" aria-labelledby="h-next">
+        <header class="ch-head">
+          <p class="ch-meta">
+            <span class="ch-no">19</span>
             <span>
-              <span data-lang="en">from 2026-09-28 on</span
-              ><span data-lang="zh" lang="zh-Hans">2026-09-28 以后</span>
+              <span data-lang="en">from 2026-09-30 on</span
+              ><span data-lang="zh" lang="zh-Hans">2026-09-30 以后</span>
             </span>
           </p>
           <h2 id="h-next">
@@ -6078,53 +7534,92 @@ LEAD_FRAMES = lead_frames()
         <div class="prose">
           <ul data-lang="en">
             <li>
-              The round-trip test on the new capture path: press, count frames
-              until the game shows it, and fix the lead with it.
+              The copycat, live: <code>pd25</code> left alone, to see whether it
+              starts acting. Beside it, buttons drawn from their probabilities
+              every frame instead of through a latch, and the adversary on the
+              buttons and sticks only.
             </li>
             <li>
-              The first play tests in the practice area: 10 to 30 seconds, v1 or
-              B2, the player's hands on the controller.
+              Learning from the takeovers (HG-DAgger): the states only the bot
+              reaches, labelled by the player's corrections. It needs about half
+              an hour of bot runs in real jobs first.
             </li>
             <li>
-              Practice blocks for the IDM, about 1.7 hours: 11 weapon classes
-              for 5 minutes each, 9 specials for 3 minutes each, the signals and
-              the techniques. The player's 15 jobs hold only 28 special
-              activations.
+              The round-trip test, still to do: press, count the frames until
+              the game shows it, and fix the lead with it. A sweep of leads of
+              2, 4 and 6 frames runs beside it.
             </li>
             <li>
-              More top players (12 channels are queued), and a predictor that
-              keeps several futures instead of their average.
+              More top players: the IDM's labels and the scene for the other
+              players' first videos, about 24 hours so far, then
+              <code>f12-yes</code> on Azu and them together. Does variety beat
+              more hours of one player?
             </li>
             <li>
-              The detector at 200 labels. Then localisation: heading from gyro
-              and stick works, while position needs landmarks and a particle
-              filter; about three weeks for a first version on Marooner's Bay.
+              AWR: the reward is the team's Golden Eggs, read off the HUD ten
+              times a second (on 32 of Azu's jobs all 92 wave totals match the
+              results screens). First a value head that has to beat simple
+              rules, which miss a wave's final count by 6 to 11 eggs where a
+              player misses by 2 to 5.
             </li>
             <li>
-              A HUD reader that reads Eggstra Work's fourth and fifth waves.
+              Weapons: each player's weapon and the stage, read per wave, then
+              an expert head per weapon class. The Studio's Techniques panel now
+              lists all 71 Salmon Run weapons and its 9 specials to practise,
+              with how often each was recorded.
+            </li>
+            <li>
+              From the old list, still open: the practice blocks for the IDM,
+              the detector at 200 labels, localisation on Marooner's Bay, and a
+              HUD reader for Eggstra Work's fourth and fifth waves.
+            </li>
+            <li>
+              Later, as the player put it: self-supervised next-frame prediction
+              on all video, as language models learn from text, with latent
+              actions mapped to the controller through the IDM. This time a
+              predictor that keeps several futures, since the averaged one of
+              chapter 9 added nothing.
             </li>
           </ul>
           <ul data-lang="zh" lang="zh-Hans">
             <li>
-              在新的采集路径上做往返测试：按一下键，数几帧之后游戏上才显示出来，用它来定提前量。
+              实机对付“学人精”：让 <code>pd25</code>
+              自己打，看它会不会动起来。同时试按键每帧按概率抽取、不经过锁存，以及只管按键和摇杆的对抗头。
             </li>
             <li>
-              在练习场做第一次实机测试：每次 10 到 30 秒，先试 v1 或
-              B2，玩家的手就放在手柄上。
+              从接管中学习（HG-DAgger）：只有 bot
+              才会走到的那些局面，由玩家的纠正来标注。先要在真实打工里攒下半小时左右的
+              bot 运行。
             </li>
             <li>
-              给 IDM 录练习片段，约 1.7 小时：11 类武器各 5 分钟，9 种大招各 3
-              分钟，再加信号和技巧。玩家的 15 局打工里只放过 28 次大招。
+              往返测试仍然没做：按一下键，数几帧之后游戏上才显示出来，用它来定提前量。旁边同时在测
+              2、4、6 帧三种提前量。
             </li>
             <li>
-              更多顶级玩家（还有 12
-              个频道在排队），以及一个能保留几种未来、而不是把它们平均掉的预测器。
+              更多顶级玩家：给其他玩家的第一批视频（目前约 24 小时）打上 IDM
+              标签、算好画面特征，再让 <code>f12-yes</code> 同时学 Azu
+              和他们。多样性能不能胜过同一个玩家的更多小时？
             </li>
             <li>
-              标满 200
-              帧，训练检测器。然后是定位：用陀螺仪和摇杆推算朝向已经可行，位置还需要地标和粒子滤波；在漂浮落难船上做出第一版，估计要三周左右。
+              AWR：奖励是全队交付的金鲑鱼卵，每秒从 HUD 上读 10 次（Azu 的 32
+              局里，92
+              个波次的最终数与结算画面全部一致）。先要一个价值头，它得胜过简单规则：简单规则预测一波的最终交付数要差
+              6 到 11 个蛋，而玩家凭观察只差 2 到 5 个。
             </li>
-            <li>让 HUD 读取器读懂团队打工竞赛的第四和第五波。</li>
+            <li>
+              武器：每一波读出每位玩家的武器和场地，再给每类武器一个专门的输出头。工作室的“技巧”面板现在列出了打工的全部
+              71 把武器和 9 种大招，可以照着练，并显示每样录了几次。
+            </li>
+            <li>
+              旧清单上还没完成的：给 IDM 录练习片段、标满 200
+              帧训练检测器、在漂浮落难船上做定位，以及让 HUD
+              读取器读懂团队打工竞赛的第四和第五波。
+            </li>
+            <li>
+              更远一些，照玩家的说法：像语言模型从文字里学那样，在所有视频上做自监督的下一帧预测，再通过
+              IDM 把潜在动作对应到手柄上。这一次预测器要能保留几种未来，因为第 9
+              章那个把未来平均掉的预测器什么也没带来。
+            </li>
           </ul>
         </div>
       </section>
@@ -6431,6 +7926,99 @@ LEAD_FRAMES = lead_frames()
                 </td>
                 <td class="src">b745c6b · 18f4ce1</td>
               </tr>
+              <tr>
+                <td>
+                  <span data-lang="en"
+                    >Scene features in training, GPU memory</span
+                  ><span data-lang="zh" lang="zh-Hans"
+                    >训练时画面特征占的显存</span
+                  >
+                </td>
+                <td class="num">
+                  <span data-lang="en">5.5 → 1.3 GiB, 39 ms a step both</span
+                  ><span data-lang="zh" lang="zh-Hans"
+                    >5.5 → 1.3 GiB，每步都是 39 ms</span
+                  >
+                </td>
+                <td>
+                  <span data-lang="en"
+                    >an int8 pack, read from disk a batch at a time</span
+                  ><span data-lang="zh" lang="zh-Hans"
+                    >int8 打包，每批从磁盘读</span
+                  >
+                </td>
+                <td class="src">62a6ad3</td>
+              </tr>
+              <tr>
+                <td>
+                  <span data-lang="en">A scene policy, live</span
+                  ><span data-lang="zh" lang="zh-Hans">加画面的策略，实时</span>
+                </td>
+                <td class="num">
+                  <span data-lang="en">not playable → 8.0 ms a frame</span
+                  ><span data-lang="zh" lang="zh-Hans"
+                    >没法上机 → 每帧 8.0 ms</span
+                  >
+                </td>
+                <td>
+                  <span data-lang="en"
+                    >SigLIP 2 inside the live stream, every third frame</span
+                  ><span data-lang="zh" lang="zh-Hans"
+                    >SigLIP 2 放进实时流，每三帧跑一次</span
+                  >
+                </td>
+                <td class="src">30427a3</td>
+              </tr>
+              <tr>
+                <td>
+                  <span data-lang="en">A bot run's start</span
+                  ><span data-lang="zh" lang="zh-Hans">bot 试玩的开头</span>
+                </td>
+                <td class="num">
+                  <span data-lang="en"
+                    >stall after 1 action (14 of 23) → the whole run</span
+                  ><span data-lang="zh" lang="zh-Hans"
+                    >发一个动作就卡住（23 次里 14 次）→ 完整跑完</span
+                  >
+                </td>
+                <td>
+                  <span data-lang="en">the action log behind its own lock</span
+                  ><span data-lang="zh" lang="zh-Hans">动作日志单独一把锁</span>
+                </td>
+                <td class="src">49c97eb</td>
+              </tr>
+              <tr>
+                <td>
+                  <span data-lang="en">Copycat: left-stick anticipation</span
+                  ><span data-lang="zh" lang="zh-Hans"
+                    >照抄检查：左摇杆预判</span
+                  >
+                </td>
+                <td class="num">0.007 → 0.046</td>
+                <td>
+                  <span data-lang="en"
+                    >present dropout: a quarter of the tokens masked</span
+                  ><span data-lang="zh" lang="zh-Hans"
+                    >遮住现在：四分之一的 token 换成遮罩</span
+                  >
+                </td>
+                <td class="src">f35f3fb (night)</td>
+              </tr>
+              <tr>
+                <td>
+                  <span data-lang="en">GPUs working the queue</span
+                  ><span data-lang="zh" lang="zh-Hans">给队列干活的 GPU</span>
+                </td>
+                <td class="num">1 → 2</td>
+                <td>
+                  <span data-lang="en"
+                    >a runner that feeds the Windows VM's 4080 SUPER</span
+                  ><span data-lang="zh" lang="zh-Hans"
+                    >一个给 Windows 虚拟机的 4080 SUPER 派活的调度程序</span
+                  >
+                </td>
+                <td class="src">743f9f7</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -6447,6 +8035,8 @@ LEAD_FRAMES = lead_frames()
               Copy a <code>&lt;section class="chapter"&gt;</code> block. Give it
               an id (<code>ch-…</code>), the next number, the dates and the
               commits it covers, and add it to the chapter list at the top.
+              “What comes next” stays the last chapter: move it down, renumber
+              it and bring it up to date.
             </li>
             <li>
               Tell it as a story: what happened, why, and how the idea came up
@@ -6494,7 +8084,7 @@ LEAD_FRAMES = lead_frames()
             <li>
               复制一个 <code>&lt;section class="chapter"&gt;</code>
               块。给它一个
-              id（<code>ch-…</code>）、下一个编号、涵盖的日期和提交，并把它加进顶部的目录。
+              id（<code>ch-…</code>）、下一个编号、涵盖的日期和提交，并把它加进顶部的目录。“接下来”始终是最后一章：把它挪到最后，改好编号，内容按现状更新。
             </li>
             <li>
               像讲故事一样写：发生了什么，为什么，这个想法是怎么冒出来的、是谁提的。每一段都写两遍：英文（<code>data-lang="en"</code>）和中文（<code
@@ -6576,6 +8166,27 @@ LEAD_FRAMES = lead_frames()
                   >
                 </td>
               </tr>
+              <tr>
+                <td class="num">2026-09-30</td>
+                <td class="num">14–19</td>
+                <td>
+                  <span data-lang="en"
+                    >Five chapters from 28 to 30 September (14–18; chapter 16's
+                    work is on AgentZero's night branch); “What comes next”
+                    moved to the end as 19 and brought up to date. The sprint
+                    chart runs to Wednesday noon with nine more moments,
+                    counting AgentZero's night branch too; the hero's numbers
+                    follow. One more scene rendered in English and Chinese (the
+                    copycat), four charts and two diagrams.</span
+                  ><span data-lang="zh" lang="zh-Hans"
+                    >新增 9 月 28 日到 30 日的五章（14–18；第 16 章的工作在
+                    AgentZero 的 night 分支上）；“接下来”挪到最后，成为第 19
+                    章，并按现状更新。冲刺图延长到周三中午，多标了九个时刻，也计入
+                    AgentZero 的 night
+                    分支；开头的数字随之更新。新增一个场景（学人精，英文和中文各渲染一段视频）、四张图表和两张示意图。</span
+                  >
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -6601,11 +8212,21 @@ LEAD_FRAMES = lead_frames()
               AgentZero: <code>README.md</code>, the IDM whiteboard
               (<code>doc/idm-whiteboard.html</code>, v0 to v4 and section 8 on
               effect-aware scores), the policy whiteboard
-              (<code>doc/agentzero-whiteboard.html</code>, v0 to v2),
-              <code>doc/vtext.md</code>, <code>out/*/eval.md</code> and
-              <code>README.txt</code>, <code>calibration.json</code> and
-              <code>sessions.json</code>, and the git history of
-              <code>dev</code>, <code>v2</code> and <code>latency</code>.
+              (<code>doc/agentzero-whiteboard.html</code>, v0 to v2, and section
+              11 up to the night of 29 September on the
+              <code>night</code> branch), <code>doc/vtext.md</code>,
+              <code>out/*/eval.md</code> and <code>README.txt</code>,
+              <code>calibration.json</code> and <code>sessions.json</code>, the
+              experiment queue <code>runs/queue.json</code>, and the git history
+              of <code>dev</code>, <code>v2</code>, <code>latency</code> and
+              <code>night</code>.
+            </li>
+            <li>
+              Grizzco Lab's records: the <code>session.json</code> of every bot
+              run of 29 September, the Pipeline's sample log
+              <code>pipeline-gpu.jsonl</code>, and the analysis of those bot
+              runs (the policy's outputs with and without the player's
+              takeovers), run again for chapter 16.
             </li>
             <li>
               Two research briefs of 27 and 28 September: where to train (home
@@ -6629,11 +8250,22 @@ LEAD_FRAMES = lead_frames()
               AgentZero：<code>README.md</code>、IDM
               白板（<code>doc/idm-whiteboard.html</code>，v0 到 v4，第 8
               节讲按效果评分）、策略白板（<code>doc/agentzero-whiteboard.html</code>，v0
-              到 v2）、<code>doc/vtext.md</code>、<code>out/*/eval.md</code> 和
+              到 v2，以及 <code>night</code> 分支上截至 9 月 29 日夜里的第 11
+              节）、<code>doc/vtext.md</code>、<code>out/*/eval.md</code> 和
               <code>README.txt</code>、<code>calibration.json</code> 和
-              <code>sessions.json</code>，以及
-              <code>dev</code>、<code>v2</code>、<code>latency</code>
+              <code>sessions.json</code>、实验队列
+              <code>runs/queue.json</code>，以及
+              <code>dev</code>、<code>v2</code>、<code>latency</code>、<code
+                >night</code
+              >
               分支的 git 历史。
+            </li>
+            <li>
+              熊商会实验室的记录：9 月 29 日每一次 bot 试玩的
+              <code>session.json</code>、生产流水线的采样日志
+              <code>pipeline-gpu.jsonl</code
+              >，以及对这些试玩的分析（有无玩家接管时策略的输出），为第 16
+              章重新跑过一遍。
             </li>
             <li>
               9 月 27、28 日的两份调研：在哪里训练（家用 GPU
@@ -6812,16 +8444,53 @@ LEAD_FRAMES = lead_frames()
               "v0features": "v0's frame features",
               "cellMotion": "cell motion alone",
               "frame": "frame"
+            },
+            "copycat": {
+              "eyebrow": "The copycat",
+              "title": "It does what the picture shows; the picture shows what it does",
+              "c1": "Offline, copying the present scores well: most of what is pressed now is still pressed four frames later.",
+              "c2": "Live, while the player plays, the picture moves and the bot's outputs follow it. They look like a job.",
+              "c3": "When he lets go, it carries on for a moment, then settles where nothing moves, and nothing moves because it settled.",
+              "c4": "Hiding the newest frames makes it foresee from older ones and the scene: the first remedy that moved the copycat scores.",
+              "policy": "Policy",
+              "sees": "the frames it sees",
+              "newest": "the action being done already shows here",
+              "target": "what it must predict",
+              "notYet": "not seen yet",
+              "copy": "copy",
+              "foresee": "foresee",
+              "mask": "masked: a learned mask token",
+              "sceneDot": "scene, every third frame",
+              "offTitle": "button F1 on the player's held-out jobs (chapter 8)",
+              "repeatLast": "repeat the action 4 frames back",
+              "v1": "the policy v1",
+              "hands": "the player's hands",
+              "screen": "the picture",
+              "bot": "the bot's outputs",
+              "letGo": "he lets go",
+              "withYou": "with the player: ZR p90 0.77 · stick pushed on 70% of frames · turn 1.7 px a frame",
+              "alone": "alone: 0.17 · 2% · 0.15",
+              "source": "f12-yes-s1 on the Switch, 29 September",
+              "still": "still",
+              "resTitle": "present dropout against f12-yes, the player's held-out jobs",
+              "kb": "keyframe buttons right",
+              "ant": "left-stick anticipation",
+              "speed": "turn speed, of the player's",
+              "before": "f12-yes",
+              "after": "present dropout 25%",
+              "zero": "A pure copy of the present scores 0 on the first two."
             }
           },
           "charts": {
             "metric": "measure",
-            "hb_aria": "Commits per hour in procon-rs and AgentZero from Thursday 24 September, 21:00, to Monday 28 September, 13:00, with ten moments marked.",
+            "hb_aria": "Commits per hour in procon-rs and AgentZero from Thursday 24 September, 21:00, to Wednesday 30 September, 12:00, with twenty moments marked.",
             "day24": "Thu 24",
             "day25": "Fri 25",
             "day26": "Sat 26",
             "day27": "Sun 27",
             "day28": "Mon 28",
+            "day29": "Tue 29",
+            "day30": "Wed 30",
             "hb_procon": "procon-rs",
             "hb_agentzero": "AgentZero",
             "hb_commits": "commits",
@@ -6953,7 +8622,105 @@ LEAD_FRAMES = lead_frames()
             "eg_size": "input",
             "page_title": "Shift Log",
             "lat_card": "own reader, the real card",
-            "m_v4l2": "The studio reads the capture card itself"
+            "m_v4l2": "The studio reads the capture card itself",
+            "m_scene": "SigLIP 2's view of the screen beside the IDM's tokens",
+            "m_firstplay": "The bot's first play on the Switch",
+            "m_pipeline": "The experiment queue and the Pipeline",
+            "m_f12": "On all of Azu the scene lifts the camera",
+            "m_plays": "23 plays, the player's hands on the controller",
+            "m_copycat": "Copycat scores",
+            "m_win11": "The second GPU takes jobs from the queue",
+            "m_zfs": "The ZFS pool is full; everything stops",
+            "m_guard": "Back, with a storage guard",
+            "sc_aria": "The scene features off and on: on 7 hours of Azu they help the buttons only; on all of him, 65 hours, they help the camera too, on your held-out jobs and on Azu's held-out stream.",
+            "sc_7h": "7 h of Azu, 2 s of memory",
+            "sc_65h": "all of Azu, 65 h, 8 s of memory",
+            "sc_buttons": "button F1, ±2 frames",
+            "sc_merged": "merged presses F1",
+            "sc_turn": "camera turn r, sideways",
+            "sc_turn05": "turn r over 0.5 s, sideways",
+            "sc_buttonsShort": "button F1 ±2",
+            "sc_mergedShort": "merged presses",
+            "sc_turnShort": "turn r",
+            "sc_turn05Short": "turn r, 0.5 s",
+            "sc_yours": "your held-out jobs",
+            "sc_his": "Azu's held-out stream",
+            "sc_off": "without the scene",
+            "sc_onYours": "with it: your jobs",
+            "sc_onHis": "with it: his stream",
+            "sc_recipe": "recipe",
+            "sc_set": "test set",
+            "sc_offWord": "off",
+            "sc_onWord": "on",
+            "pl_aria": "The bot's 23 plays of 29 September, 21:19 to 21:47: fourteen ended at once with one action sent; nine ran for 22 to 84 seconds, 7.6 minutes in all, with 53 takeovers.",
+            "pl_ran": "the bot playing",
+            "pl_takeover": "a takeover",
+            "pl_stallWord": "stall · 1 action",
+            "pl_seconds": "seconds into the play",
+            "pl_start": "start",
+            "pl_ckpt": "checkpoint",
+            "pl_length": "seconds",
+            "pl_ended": "ended",
+            "pl_sent": "actions sent",
+            "pl_takeovers": "takeovers",
+            "pl_end_stall": "stall",
+            "pl_end_you": "stopped by the player",
+            "pl_end_stopped": "the online mode stopped",
+            "rm_aria": "Remedies against the copycat on your held-out jobs: keyframe weights, present dropout, action chunks and the adversary heads raise the keyframe buttons; present dropout and chunks read at their first offset anticipate the stick and turn faster; every one costs merged presses.",
+            "rm_kb": "keyframe buttons right",
+            "rm_ant": "left-stick anticipation, x",
+            "rm_speed": "turn speed, of yours, x",
+            "rm_merged": "merged presses F1",
+            "rm_f12": "f12-yes (seed 0)",
+            "rm_kf": "keyframes ×5",
+            "rm_edge": "edge head",
+            "rm_both": "keyframes and edge head",
+            "rm_pd": "present dropout 25%",
+            "rm_ch1": "chunks, first offset",
+            "rm_chE": "chunks, ensembled",
+            "rm_pdk": "present dropout + keyframes",
+            "rm_adv": "adversary heads",
+            "rm_f12Short": "f12-yes",
+            "rm_kfShort": "keyframes",
+            "rm_edgeShort": "edge head",
+            "rm_bothShort": "both",
+            "rm_pdShort": "present dropout",
+            "rm_ch1Short": "chunks, first",
+            "rm_chEShort": "chunks, ens.",
+            "rm_pdkShort": "dropout + kf.",
+            "rm_advShort": "adversary",
+            "rm_base": "f12-yes, scored again",
+            "rm_remedy": "a remedy",
+            "rm_next": "the one to try live next",
+            "rm_who": "policy",
+            "nt_aria": "The queue's jobs on both GPUs from 22:00 on 29 September to 02:08 on 30 September, when the ZFS pool filled and the host hung; nothing was sampled again until 11:31.",
+            "nt_linux": "Linux · 4070 SUPER",
+            "nt_win11": "win11 · 4080 SUPER",
+            "nt_linuxShort": "Linux",
+            "nt_win11Short": "win11",
+            "nt_gap1": "9 h 22 min",
+            "nt_gap2": "without a sample",
+            "nt_crash": "02:08:40 · the pool is full",
+            "nt_died": "died with the host",
+            "nt_job": "a job from the queue",
+            "nt_where": "GPU",
+            "nt_from": "from",
+            "nt_to": "to",
+            "nt_id": "queue entry",
+            "nt_what": "what",
+            "nj_live": "the scene live",
+            "nj_reg": "regularisation sweep",
+            "nj_change": "keyframes, edge head",
+            "nj_pd": "present dropout",
+            "nj_chunkScore": "chunks, scored",
+            "nj_others": "other players' labels",
+            "nj_pdk": "dropout + keyframes",
+            "nj_pd2": "stronger dropout, scored",
+            "nj_chunk": "action chunks",
+            "nj_ld2": "lead 2",
+            "nj_pd2train": "stronger dropout",
+            "nj_pdc": "dropout + chunks",
+            "nj_adv": "adversary heads"
           }
         },
         "zh": {
@@ -7104,16 +8871,53 @@ LEAD_FRAMES = lead_frames()
               "v0features": "v0 的帧特征",
               "cellMotion": "只用格子位移",
               "frame": "帧"
+            },
+            "copycat": {
+              "eyebrow": "学人精",
+              "title": "画面上做什么，它就做什么；它做什么，画面上就是什么",
+              "c1": "离线时，照抄现在分数很好看：现在按着的键，4 帧之后多半还按着。",
+              "c2": "实机上，玩家在打的时候，画面在动，bot 的输出跟着画面走，看上去就像在打工。",
+              "c3": "他一松手，它把动作延续片刻，然后停在什么都不动的地方；而什么都不动，正是因为它停了。",
+              "c4": "遮住最新的几帧，它就只能从更早的帧和画面上去预见：这是第一个让照抄检查往对的方向走的办法。",
+              "policy": "策略",
+              "sees": "它看到的帧",
+              "newest": "正在做的动作，这里已经看得出来",
+              "target": "它要预测的",
+              "notYet": "还看不到",
+              "copy": "照抄",
+              "foresee": "预见",
+              "mask": "遮住：换成学出来的遮罩 token",
+              "sceneDot": "画面特征，每三帧一个",
+              "offTitle": "玩家留出打工上的按键 F1（第 8 章）",
+              "repeatLast": "照抄 4 帧前的动作",
+              "v1": "策略 v1",
+              "hands": "玩家的手",
+              "screen": "画面",
+              "bot": "bot 的输出",
+              "letGo": "他松手了",
+              "withYou": "玩家在打时：ZR p90 0.77 · 70% 的帧推着摇杆 · 每帧转 1.7 像素",
+              "alone": "只剩 bot 时：0.17 · 2% · 0.15",
+              "source": "f12-yes-s1，9 月 29 日在 Switch 上",
+              "still": "停住",
+              "resTitle": "遮住现在 对比 f12-yes，玩家的留出打工",
+              "kb": "关键帧按键猜对",
+              "ant": "左摇杆预判",
+              "speed": "转动速度（玩家的几倍）",
+              "before": "f12-yes",
+              "after": "遮住现在 25%",
+              "zero": "纯粹照抄现在，前两项都是 0。"
             }
           },
           "charts": {
             "metric": "指标",
-            "hb_aria": "从 9 月 24 日周四 21:00 到 9 月 28 日周一 13:00，procon-rs 和 AgentZero 每小时的提交数，标出了十个时刻。",
+            "hb_aria": "从 9 月 24 日周四 21:00 到 9 月 30 日周三 12:00，procon-rs 和 AgentZero 每小时的提交数，标出了二十个时刻。",
             "day24": "周四 24",
             "day25": "周五 25",
             "day26": "周六 26",
             "day27": "周日 27",
             "day28": "周一 28",
+            "day29": "周二 29",
+            "day30": "周三 30",
             "hb_procon": "procon-rs",
             "hb_agentzero": "AgentZero",
             "hb_commits": "个提交",
@@ -7245,7 +9049,105 @@ LEAD_FRAMES = lead_frames()
             "eg_size": "输入尺寸",
             "page_title": "打工日志",
             "lat_card": "自己的读取器，真实采集卡",
-            "m_v4l2": "工作室自己读取采集卡"
+            "m_v4l2": "工作室自己读取采集卡",
+            "m_scene": "SigLIP 2 看画面，放在 IDM 的 token 旁边",
+            "m_firstplay": "bot 第一次在 Switch 上试玩",
+            "m_pipeline": "实验队列和生产流水线",
+            "m_f12": "在 Azu 的全部对局上，画面特征带起了镜头",
+            "m_plays": "23 次试玩，玩家的手在手柄上",
+            "m_copycat": "照抄检查",
+            "m_win11": "第二块 GPU 开始从队列取活",
+            "m_zfs": "ZFS 存储池满了，一切停下",
+            "m_guard": "恢复，多了一道存储守卫",
+            "sc_aria": "画面特征关与开：在 7 小时 Azu 上只帮到按键；在他的全部对局（65 小时）上连镜头也带起来了，你的留出对局和 Azu 的留出直播都是如此。",
+            "sc_7h": "7 小时 Azu，2 秒记忆",
+            "sc_65h": "Azu 全部对局，65 小时，8 秒记忆",
+            "sc_buttons": "按键 F1（±2 帧）",
+            "sc_merged": "合并按键 F1",
+            "sc_turn": "镜头转动 r（左右）",
+            "sc_turn05": "0.5 秒累计转动 r（左右）",
+            "sc_buttonsShort": "按键 F1 ±2",
+            "sc_mergedShort": "合并按键",
+            "sc_turnShort": "转动 r",
+            "sc_turn05Short": "0.5 秒转动 r",
+            "sc_yours": "你的留出对局",
+            "sc_his": "Azu 的留出直播",
+            "sc_off": "不加画面",
+            "sc_onYours": "加画面：你的对局",
+            "sc_onHis": "加画面：他的直播",
+            "sc_recipe": "做法",
+            "sc_set": "测试集",
+            "sc_offWord": "关",
+            "sc_onWord": "开",
+            "pl_aria": "9 月 29 日 21:19 到 21:47 的 23 次试玩：14 次一开始就结束，只发出一个动作；9 次跑了 22 到 84 秒，合计 7.6 分钟，接管 53 次。",
+            "pl_ran": "bot 在打",
+            "pl_takeover": "一次接管",
+            "pl_stallWord": "卡住 · 1 个动作",
+            "pl_seconds": "试玩开始后的秒数",
+            "pl_start": "开始",
+            "pl_ckpt": "检查点",
+            "pl_length": "秒",
+            "pl_ended": "结束原因",
+            "pl_sent": "发出的动作",
+            "pl_takeovers": "接管",
+            "pl_end_stall": "卡住",
+            "pl_end_you": "玩家停下",
+            "pl_end_stopped": "在线模式停止",
+            "rm_aria": "在你的留出对局上对付“学人精”的几种办法：关键帧权重、遮住现在、动作块和对抗头都提高了关键帧按键；遮住现在和只读第一个偏移的动作块有了摇杆预判，转得也更快；每一种都以合并按键为代价。",
+            "rm_kb": "关键帧按键猜对",
+            "rm_ant": "左摇杆预判（x）",
+            "rm_speed": "转动速度，相对你（x）",
+            "rm_merged": "合并按键 F1",
+            "rm_f12": "f12-yes（种子 0）",
+            "rm_kf": "关键帧 ×5",
+            "rm_edge": "边沿头",
+            "rm_both": "关键帧加边沿头",
+            "rm_pd": "遮住现在 25%",
+            "rm_ch1": "动作块，只读第一个",
+            "rm_chE": "动作块，时间集成",
+            "rm_pdk": "遮住现在 + 关键帧",
+            "rm_adv": "对抗头",
+            "rm_f12Short": "f12-yes",
+            "rm_kfShort": "关键帧",
+            "rm_edgeShort": "边沿头",
+            "rm_bothShort": "两者",
+            "rm_pdShort": "遮住现在",
+            "rm_ch1Short": "动作块·首个",
+            "rm_chEShort": "动作块·集成",
+            "rm_pdkShort": "遮住+关键帧",
+            "rm_advShort": "对抗头",
+            "rm_base": "f12-yes，重新评分",
+            "rm_remedy": "一种办法",
+            "rm_next": "下一次上机要试的",
+            "rm_who": "策略",
+            "nt_aria": "9 月 29 日 22:00 到 9 月 30 日 02:08 两块 GPU 上的队列任务；02:08 ZFS 存储池满了，主机卡死，直到 11:31 才重新有采样。",
+            "nt_linux": "Linux · 4070 SUPER",
+            "nt_win11": "win11 · 4080 SUPER",
+            "nt_linuxShort": "Linux",
+            "nt_win11Short": "win11",
+            "nt_gap1": "9 小时 22 分钟",
+            "nt_gap2": "没有采样",
+            "nt_crash": "02:08:40 · 存储池满了",
+            "nt_died": "随主机一起死掉",
+            "nt_job": "队列里的一项任务",
+            "nt_where": "GPU",
+            "nt_from": "开始",
+            "nt_to": "结束",
+            "nt_id": "队列项",
+            "nt_what": "内容",
+            "nj_live": "画面特征上线",
+            "nj_reg": "正则化对照",
+            "nj_change": "关键帧、边沿头",
+            "nj_pd": "遮住现在",
+            "nj_chunkScore": "动作块评分",
+            "nj_others": "其他玩家的标签",
+            "nj_pdk": "遮住 + 关键帧",
+            "nj_pd2": "更强的遮住，评分",
+            "nj_chunk": "动作块",
+            "nj_ld2": "提前 2 帧",
+            "nj_pd2train": "更强的遮住",
+            "nj_pdc": "遮住 + 动作块",
+            "nj_adv": "对抗头"
           }
         }
       }
@@ -7434,11 +9336,12 @@ LEAD_FRAMES = lead_frames()
       /* ------------------------------------------------------------ the numbers */
 
       const DATA = {
-        /* Commits per hour on procon-rs main and AgentZero dev, from Thu 24 Sep
-     21:00 to Mon 28 Sep 13:00 (git log --date=format:%Y-%m-%dT%H) */
+        /* Commits per hour on procon-rs main and AgentZero dev and night, from
+     Thu 24 Sep 21:00 to Wed 30 Sep 12:00, by author time (git log
+     --date=format:%Y-%m-%dT%H) */
         heartbeat: {
           start: "2026-09-24T21",
-          hours: 89,
+          hours: 135,
           procon: {
             "2026-09-24T21": 1,
             "2026-09-24T22": 1,
@@ -7487,6 +9390,13 @@ LEAD_FRAMES = lead_frames()
             "2026-09-28T11": 1,
             "2026-09-28T12": 1,
             "2026-09-28T13": 2,
+            "2026-09-28T14": 1,
+            "2026-09-28T18": 2,
+            "2026-09-29T14": 1,
+            "2026-09-29T22": 1,
+            "2026-09-29T23": 3,
+            "2026-09-30T00": 2,
+            "2026-09-30T01": 7,
           },
           agentzero: {
             "2026-09-25T14": 1,
@@ -7517,8 +9427,27 @@ LEAD_FRAMES = lead_frames()
             "2026-09-28T06": 1,
             "2026-09-28T07": 1,
             "2026-09-28T10": 1,
-            "2026-09-28T12": 2,
-            "2026-09-28T13": 2,
+            "2026-09-28T11": 2,
+            "2026-09-28T12": 4,
+            "2026-09-28T13": 6,
+            "2026-09-28T14": 1,
+            "2026-09-28T15": 2,
+            "2026-09-28T18": 3,
+            "2026-09-28T20": 2,
+            "2026-09-29T09": 1,
+            "2026-09-29T10": 5,
+            "2026-09-29T13": 4,
+            "2026-09-29T14": 1,
+            "2026-09-29T15": 1,
+            "2026-09-29T16": 1,
+            "2026-09-29T18": 1,
+            "2026-09-29T19": 6,
+            "2026-09-29T20": 1,
+            "2026-09-29T22": 5,
+            "2026-09-29T23": 7,
+            "2026-09-30T00": 3,
+            "2026-09-30T01": 4,
+            "2026-09-30T11": 3,
           },
           /* What happened when: [hour, minute] after the start, key in the strings */
           marks: [
@@ -7533,6 +9462,15 @@ LEAD_FRAMES = lead_frames()
             ["2026-09-28T01", 24, "m_online"],
             ["2026-09-28T12", 40, "m_effect"],
             ["2026-09-28T13", 53, "m_v4l2"],
+            ["2026-09-28T15", 10, "m_scene"],
+            ["2026-09-28T17", 30, "m_firstplay"],
+            ["2026-09-29T14", 7, "m_pipeline"],
+            ["2026-09-29T15", 0, "m_f12"],
+            ["2026-09-29T21", 19, "m_plays"],
+            ["2026-09-29T22", 17, "m_copycat"],
+            ["2026-09-30T00", 32, "m_win11"],
+            ["2026-09-30T02", 8, "m_zfs"],
+            ["2026-09-30T11", 55, "m_guard"],
           ],
         },
         /* calibration.json (AgentZero, 2026-09-28): video delay per session in ms,
@@ -7776,6 +9714,267 @@ LEAD_FRAMES = lead_frames()
           ["320 × 180", 7.8, 18],
           ["256 × 144", 6.2, 14],
         ],
+        /* The scene features off and on, each [off, on]: v1's recipe on 7 h
+     of Azu (2 s of memory, 2 seeds each way) and rotary 8 s on all of him
+     (65 h of waves, 12,000 steps, 3 seeds each way), means over seeds:
+     agentzero-whiteboard section 11 (the evening's table, and "All of Azu
+     at 8 s") */
+        scene: {
+          metrics: ["sc_buttons", "sc_merged", "sc_turn", "sc_turn05"],
+          panels: [
+            [
+              "sc_7h",
+              {
+                yours: [
+                  [0.4, 0.42],
+                  [0.16, 0.17],
+                  [0.44, 0.44],
+                  [0.68, 0.67],
+                ],
+                his: [
+                  [0.51, 0.53],
+                  [0.2, 0.23],
+                  [0.48, 0.48],
+                  [0.69, 0.67],
+                ],
+              },
+            ],
+            [
+              "sc_65h",
+              {
+                yours: [
+                  [0.43, 0.44],
+                  [0.18, 0.19],
+                  [0.47, 0.48],
+                  [0.68, 0.71],
+                ],
+                his: [
+                  [0.53, 0.55],
+                  [0.23, 0.23],
+                  [0.53, 0.57],
+                  [0.72, 0.75],
+                ],
+              },
+            ],
+          ],
+        },
+        /* The bot's plays of 2026-09-29: start, seconds played, how it ended,
+     checkpoint, actions sent, and the takeovers as [from, to] in seconds
+     from the play's start (the session.json of each bot-2026-09-29_*
+     session; a takeover may begin just before its play) */
+        plays: [
+          ["21:19:40", 0, "stall", "f12-yes-s1", 1, []],
+          [
+            "21:19:51",
+            36.6,
+            "you",
+            "f12-yes-s1",
+            1113,
+            [
+              [5.0, 11.0],
+              [11.3, 11.3],
+              [15.1, 20.1],
+              [20.4, 21.0],
+              [21.4, 21.6],
+              [22.5, 22.6],
+              [24.9, 32.0],
+              [32.7, 36.0],
+            ],
+          ],
+          ["21:21:33", 0, "stall", "f12-yes-s1", 1, []],
+          ["21:21:41", 0, "stall", "f12-yes-s1", 1, []],
+          ["21:23:37", 0, "stall", "f12-yes-s1", 1, []],
+          ["21:23:42", 0, "stall", "f12-yes-s1", 1, []],
+          [
+            "21:25:47",
+            53.9,
+            "you",
+            "f12-yes-s1",
+            1632,
+            [
+              [-0.5, 1.0],
+              [4.5, 4.5],
+              [8.1, 11.3],
+              [13.9, 14.0],
+              [14.8, 22.1],
+              [23.2, 40.6],
+              [41.5, 41.6],
+              [44.6, 45.8],
+              [46.0, 49.4],
+              [50.7, 53.5],
+            ],
+          ],
+          ["21:29:01", 0, "stall", "f12-yes-s1", 1, []],
+          [
+            "21:29:25",
+            60.8,
+            "stopped",
+            "f12-yes-s1",
+            1840,
+            [
+              [2.1, 2.2],
+              [3.0, 3.4],
+              [21.0, 22.1],
+              [23.3, 26.8],
+              [27.9, 28.3],
+              [28.6, 28.8],
+              [29.2, 29.3],
+              [59.1, 59.3],
+            ],
+          ],
+          ["21:30:47", 0, "stall", "f12-no-s2-azu", 1, [[-0.7, -0.7]]],
+          ["21:30:50", 83.5, "you", "f12-no-s2-azu", 2521, []],
+          [
+            "21:32:32",
+            81.6,
+            "you",
+            "f12-no-s2",
+            2464,
+            [
+              [23.9, 24.0],
+              [32.1, 32.2],
+              [33.1, 34.7],
+              [63.2, 63.3],
+              [64.9, 65.0],
+              [65.2, 65.3],
+              [65.8, 66.2],
+            ],
+          ],
+          [
+            "21:34:18",
+            21.9,
+            "you",
+            "f8-yes-azu",
+            674,
+            [
+              [4.7, 5.4],
+              [6.1, 6.6],
+              [7.1, 7.3],
+              [7.6, 7.6],
+              [8.1, 8.3],
+            ],
+          ],
+          ["21:34:58", 0, "stall", "big-yes", 1, []],
+          ["21:35:03", 0, "stall", "big-yes", 1, []],
+          ["21:35:14", 0, "stall", "big-yes", 1, []],
+          [
+            "21:36:04",
+            29.2,
+            "you",
+            "big-yes",
+            893,
+            [
+              [-0.6, -0.6],
+              [0.0, 0.0],
+            ],
+          ],
+          ["21:37:11", 0, "stall", "v1-azu", 1, []],
+          ["21:37:21", 0, "stall", "v1-azu", 1, [[-0.6, -0.6]]],
+          ["21:38:01", 0, "stall", "f12-no-s2", 1, []],
+          ["21:39:22", 0, "stall", "f12-no-s2", 1, []],
+          [
+            "21:45:24",
+            39.4,
+            "you",
+            "f12-yes-s1",
+            1196,
+            [
+              [0.1, 0.2],
+              [1.0, 1.1],
+              [1.5, 1.6],
+              [8.9, 9.0],
+            ],
+          ],
+          [
+            "21:46:24",
+            49.3,
+            "stopped",
+            "f12-no-s1",
+            1492,
+            [
+              [-0.5, -0.5],
+              [3.5, 3.8],
+              [9.9, 10.2],
+              [10.4, 10.7],
+              [13.6, 13.6],
+              [14.0, 14.1],
+              [14.6, 14.7],
+              [15.6, 16.2],
+              [16.8, 17.8],
+            ],
+          ],
+        ],
+        /* Against the copycat on the player's three held-out jobs: keyframe
+     buttons right (through the latch), left-stick anticipation x, turn
+     speed x against the truth's (read by the mean), merged presses F1;
+     [words, values, colour]; each score with its scale and decimals:
+     agentzero-whiteboard on the night branch, section 11, and the last
+     two rows from the queue's results of 30 September (g-pdk, g-adv:
+     adv3) */
+        remedies: {
+          metrics: [
+            ["rm_kb", 0.5, 2],
+            ["rm_ant", 0.05, 3],
+            ["rm_speed", 1, 2],
+            ["rm_merged", 0.25, 2],
+          ],
+          rows: [
+            ["rm_f12", [0.36, 0.007, 0.56, 0.21], "base"],
+            ["rm_kf", [0.39, 0.021, 0.55, 0.16], "policy"],
+            ["rm_edge", [0.36, 0.009, 0.56, 0.18], "policy"],
+            ["rm_both", [0.4, 0.02, 0.55, 0.15], "policy"],
+            ["rm_pd", [0.4, 0.046, 0.66, 0.17], "idm"],
+            ["rm_ch1", [0.41, 0.041, 0.64, 0.18], "policy"],
+            ["rm_chE", [0.41, 0.008, 0.47, 0.11], "policy"],
+            ["rm_pdk", [0.42, 0.049, 0.65, 0.17], "policy"],
+            ["rm_adv", [0.43, 0.035, 0.55, 0.15], "policy"],
+          ],
+        },
+        /* The queue's jobs on both GPUs, the night of 29 to 30 September:
+     [GPU, from, to, words, queue entry, died with the host]. This host's
+     from the Pipeline's sample log (pipeline-gpu.jsonl, from 23:10:57), the
+     VM's and the earlier ones from runs/queue.json; the axis shows two
+     stretches and skips the one without a sample */
+        night: {
+          segments: [
+            ["22:00:00", "02:20:00"],
+            ["11:25:00", "12:00:00"],
+          ],
+          gap: ["02:08:40", "11:31:04"],
+          jobs: [
+            ["linux", "22:02:53", "22:10:04", "nj_live", "g-live-scene"],
+            ["linux", "22:10:05", "23:15:26", "nj_reg", "g-reg-sweep"],
+            ["linux", "23:23:57", "00:43:37", "nj_change", "g-change-weight"],
+            ["linux", "00:43:40", "01:05:46", "nj_pd", "g-present-dropout"],
+            ["linux", "01:05:50", "01:10:00", "nj_chunkScore", "g-chunk"],
+            ["linux", "01:10:05", "01:11:37", "nj_others", "g-label-others"],
+            ["linux", "01:12:42", "01:22:14", "nj_chunkScore", "g-chunk"],
+            ["linux", "01:22:17", "01:34:18", "nj_pdk", "g-pdk-train"],
+            [
+              "linux",
+              "01:34:19",
+              "02:08:40",
+              "nj_pd2",
+              "g-present-dropout-2",
+              true,
+            ],
+            ["linux", "11:50:11", "11:55:21", "nj_pd2", "g-present-dropout-2"],
+            ["linux", "11:55:26", "11:58:41", "nj_pdk", "g-pdk"],
+            ["linux", "11:58:51", "12:00:00", "nj_pdc", "g-pdc"],
+            ["win11", "00:41:55", "01:04:47", "nj_chunk", "g-chunk-train"],
+            ["win11", "01:05:48", "01:14:15", "nj_ld2", "g-lead-sweep-ld2"],
+            [
+              "win11",
+              "01:15:16",
+              "01:32:01",
+              "nj_pd2train",
+              "g-present-dropout-2-train",
+            ],
+            ["win11", "01:33:02", "01:56:48", "nj_pdc", "g-pdc-train"],
+            ["win11", "01:58:05", "02:08:40", "nj_adv", "g-adv-train", true],
+            ["win11", "11:51:21", "12:00:00", "nj_adv", "g-adv-train"],
+          ],
+        },
       };
 
       /* ------------------------------------------------------------- the charts */
@@ -7804,7 +10003,9 @@ LEAD_FRAMES = lead_frames()
           const right = 8;
           const laneH = 46;
           const top = 34;
-          const h = top + laneH * 2 + 66;
+          // Rows of pins: more where the hours are narrow
+          const pinRows = w < 560 ? 4 : 2;
+          const h = top + laneH * 2 + 26 + pinRows * 20;
           const x = scale(0, d.hours, left, w - right);
           const t0 = new Date(`${d.start}:00:00`);
           const hourAt = (key) => (new Date(`${key}:00:00`) - t0) / 3600000;
@@ -7835,16 +10036,19 @@ LEAD_FRAMES = lead_frames()
                 class: "rule",
               }),
             );
+            // A day cut short by the chart's end is named at its right edge,
+            // where there is room
             const end = Math.min(i + 24, d.hours);
-            if (end - i >= 10)
+            const cut = end < i + 24;
+            if (end - i >= 10 && !(cut && w < 560))
               root.append(
                 label(
-                  (x(i + 8) + x(end)) / 2,
+                  cut ? x(end) : (x(i + 8) + x(end)) / 2,
                   top - 10,
                   L(`day${at.getDate()}`),
                   "t-axis",
                   {
-                    "text-anchor": "middle",
+                    "text-anchor": cut ? "end" : "middle",
                   },
                 ),
               );
@@ -7887,15 +10091,15 @@ LEAD_FRAMES = lead_frames()
               );
             }
           });
-          // Moments, numbered; a pin too close to the one before drops a row
-          let prevX = -Infinity;
-          let prevRow = 0;
+          // Moments, numbered; a pin goes to the first row with room, else to
+          // the row whose last pin is furthest back
+          const lastX = Array(pinRows).fill(-Infinity);
           d.marks.forEach(([key, minute, word], k) => {
             const i = hourAt(key) + minute / 60;
             const cx = x(i);
-            const row = cx - prevX < 19 ? 1 - prevRow : 0;
-            prevX = cx;
-            prevRow = row;
+            let row = lastX.findIndex((last) => cx - last >= 19);
+            if (row < 0) row = lastX.indexOf(Math.min(...lastX));
+            lastX[row] = cx;
             const y = top + laneH * 2 + 22 + row * 20;
             root.append(
               svg("line", {
@@ -9067,6 +11271,563 @@ LEAD_FRAMES = lead_frames()
         table: (L) => ({
           head: [L("eg_size"), L("eg_small"), L("eg_typical")],
           rows: DATA.eggs.map(([s, a, b]) => [s, `${a} px`, `${b} px`]),
+        }),
+      };
+
+      /** The scene off and on: two recipes, each on both held-out sets */
+      CHARTS.scene = {
+        draw(w, L) {
+          const d = DATA.scene;
+          const narrow = w < 640;
+          const labelW = narrow ? 0 : 190;
+          const gap = 28;
+          const panelW = narrow ? w : (w - labelW - gap) / 2;
+          const rowH = 26;
+          const groupGap = 22;
+          const top = 44;
+          const sets = ["yours", "his"];
+          const n = d.metrics.length;
+          const rowY = (s, i) => top + s * (n * rowH + groupGap) + i * rowH;
+          const panelH = rowY(1, n) + 26;
+          const h = narrow ? panelH * 2 + 12 : panelH;
+          const root = svg("svg", {
+            viewBox: `0 0 ${w} ${h}`,
+            width: w,
+            height: h,
+            role: "img",
+            "aria-label": L("sc_aria"),
+          });
+          d.panels.forEach(([title, values], p) => {
+            const ox = narrow ? 0 : labelW + p * (panelW + gap);
+            const oy = narrow ? p * (panelH + 12) : 0;
+            const rowLabel = narrow ? 112 : 0;
+            const x = scale(0.1, 0.8, ox + rowLabel + 8, ox + panelW - 40);
+            root.append(label(ox + rowLabel + 8, oy + 14, L(title), "t-label"));
+            for (const v of [0.2, 0.4, 0.6, 0.8]) {
+              root.append(
+                svg("line", {
+                  x1: x(v),
+                  x2: x(v),
+                  y1: oy + top - 10,
+                  y2: oy + panelH - 20,
+                  class: "grid",
+                }),
+                label(x(v), oy + panelH - 6, v.toFixed(1), "t-axis", {
+                  "text-anchor": "middle",
+                }),
+              );
+            }
+            sets.forEach((set, s) => {
+              const words = L(set === "yours" ? "sc_yours" : "sc_his");
+              if (narrow || p === 0)
+                root.append(
+                  label(
+                    narrow ? ox : labelW - 12,
+                    oy + rowY(s, 0) - 6,
+                    words,
+                    "t-axis",
+                    { "text-anchor": narrow ? "start" : "end" },
+                  ),
+                );
+              values[set].forEach(([off, on], i) => {
+                const cy = oy + rowY(s, i) + rowH / 2;
+                if (narrow || p === 0)
+                  root.append(
+                    label(
+                      narrow ? ox + rowLabel : labelW - 12,
+                      cy + 4,
+                      L(narrow ? `${d.metrics[i]}Short` : d.metrics[i]),
+                      "t-label t-small",
+                      { "text-anchor": "end" },
+                    ),
+                  );
+                const tip = `${L(title)} · ${words} · ${L(d.metrics[i])} · ${fmt(off)} → ${fmt(on)}`;
+                root.append(
+                  svg("line", {
+                    x1: x(off),
+                    x2: x(on),
+                    y1: cy,
+                    y2: cy,
+                    class: `stem c-${set === "yours" ? "you" : "idm"}-stroke`,
+                  }),
+                  svg("circle", {
+                    cx: x(off),
+                    cy,
+                    r: 5,
+                    class: "old",
+                    "data-tip": tip,
+                  }),
+                  svg("circle", {
+                    cx: x(on),
+                    cy,
+                    r: 5.5,
+                    class: `dot c-${set === "yours" ? "you" : "idm"}`,
+                    "data-tip": tip,
+                  }),
+                  label(
+                    x(Math.max(off, on)) + 10,
+                    cy + 4,
+                    fmt(on),
+                    "t-value t-small",
+                  ),
+                );
+              });
+            });
+          });
+          return root;
+        },
+        legend: (L) =>
+          legend([
+            ["old", L("sc_off"), "ring"],
+            ["c-you", L("sc_onYours")],
+            ["c-idm", L("sc_onHis")],
+          ]),
+        table(L) {
+          const d = DATA.scene;
+          const rows = [];
+          for (const [title, values] of d.panels)
+            for (const set of ["yours", "his"])
+              values[set].forEach(([off, on], i) =>
+                rows.push([
+                  L(title),
+                  L(set === "yours" ? "sc_yours" : "sc_his"),
+                  L(d.metrics[i]),
+                  fmt(off),
+                  fmt(on),
+                ]),
+              );
+          return {
+            head: [
+              L("sc_recipe"),
+              L("sc_set"),
+              L("metric"),
+              L("sc_offWord"),
+              L("sc_onWord"),
+            ],
+            rows,
+          };
+        },
+      };
+
+      /** One evening's plays, a row each: how long, and the takeovers in it */
+      CHARTS.plays = {
+        draw(w, L) {
+          const d = DATA.plays;
+          const narrow = w < 560;
+          const left = narrow ? 52 : 196;
+          const right = 44;
+          const rowH = 17;
+          const top = 10;
+          const bottom = top + d.length * rowH;
+          const h = bottom + 40;
+          const x = scale(0, 90, left, w - right);
+          const root = svg("svg", {
+            viewBox: `0 0 ${w} ${h}`,
+            width: w,
+            height: h,
+            role: "img",
+            "aria-label": L("pl_aria"),
+          });
+          for (const v of [0, 30, 60, 90]) {
+            root.append(
+              svg("line", {
+                x1: x(v),
+                x2: x(v),
+                y1: top,
+                y2: bottom + 4,
+                class: v ? "grid" : "baseline",
+              }),
+              label(x(v), bottom + 20, `${v} s`, "t-axis", {
+                "text-anchor": "middle",
+              }),
+            );
+          }
+          root.append(
+            label(w - right, bottom + 36, L("pl_seconds"), "t-axis", {
+              "text-anchor": "end",
+            }),
+          );
+          d.forEach(([start, secs, ended, ckpt, sent, takeovers], r) => {
+            const cy = top + r * rowH + rowH / 2;
+            root.append(
+              label(
+                left - 8,
+                cy + 4,
+                narrow ? start.slice(0, 5) : `${start.slice(0, 5)} · ${ckpt}`,
+                "t-axis",
+                { "text-anchor": "end" },
+              ),
+            );
+            const tip = `${start} · ${ckpt} · ${secs} s · ${L(`pl_end_${ended}`)} · ${sent} ${L("pl_sent")} · ${takeovers.length} ${L("pl_takeovers")}`;
+            if (!secs) {
+              root.append(
+                svg("rect", {
+                  x: x(0),
+                  y: cy - 5,
+                  width: 2.5,
+                  height: 10,
+                  class: "c-policy",
+                  "data-tip": tip,
+                }),
+                label(x(0) + 8, cy + 4, L("pl_stallWord"), "t-note", {
+                  "data-tip": tip,
+                }),
+              );
+              return;
+            }
+            root.append(
+              svg("rect", {
+                x: x(0),
+                y: cy - 5,
+                width: x(secs) - x(0),
+                height: 10,
+                rx: 2,
+                class: "bar thin c-policy",
+                "data-tip": tip,
+              }),
+            );
+            for (const [a, b] of takeovers) {
+              const from = Math.max(0, a);
+              const to = Math.min(secs, Math.max(b, from + 0.4));
+              root.append(
+                svg("rect", {
+                  x: x(from),
+                  y: cy - 7,
+                  width: Math.max(2, x(to) - x(from)),
+                  height: 14,
+                  rx: 1.5,
+                  class: "c-you",
+                  "data-tip": `${L("pl_takeover")} · ${a.toFixed(1)}–${b.toFixed(1)} s · ${start} · ${ckpt}`,
+                }),
+              );
+            }
+            root.append(
+              label(x(secs) + 6, cy + 4, `${secs} s`, "t-axis t-small"),
+            );
+          });
+          return root;
+        },
+        legend: (L) =>
+          legend([
+            ["c-policy", L("pl_ran")],
+            ["c-you", L("pl_takeover")],
+          ]),
+        table: (L) => ({
+          head: [
+            L("pl_start"),
+            L("pl_ckpt"),
+            L("pl_length"),
+            L("pl_ended"),
+            L("pl_sent"),
+            L("pl_takeovers"),
+          ],
+          rows: DATA.plays.map(([start, secs, ended, ckpt, sent, tk]) => [
+            start,
+            ckpt,
+            secs,
+            L(`pl_end_${ended}`),
+            sent,
+            tk.length,
+          ]),
+        }),
+      };
+
+      /** Remedies against the copycat, one panel per score */
+      CHARTS.remedies = {
+        draw(w, L) {
+          const d = DATA.remedies;
+          const cols = w < 700 ? 1 : w < 980 ? 2 : 4;
+          const labelW = cols === 1 ? 0 : cols === 2 ? 170 : 190;
+          const gap = 20;
+          const perRow = cols === 2 ? 2 : cols;
+          const panelW = (w - labelW - (perRow - 1) * gap) / perRow;
+          const rowH = 26;
+          const top = 34;
+          const panelH = top + d.rows.length * rowH + 26;
+          const panelRows = Math.ceil(d.metrics.length / perRow);
+          const h = panelRows * panelH;
+          const root = svg("svg", {
+            viewBox: `0 0 ${w} ${h}`,
+            width: w,
+            height: h,
+            role: "img",
+            "aria-label": L("rm_aria"),
+          });
+          d.metrics.forEach(([metric, max, digits], m) => {
+            const ox = labelW + (m % perRow) * (panelW + gap);
+            const oy = Math.floor(m / perRow) * panelH;
+            const rowLabel = cols === 1 ? 118 : 0;
+            const x = scale(0, max, ox + rowLabel + 6, ox + panelW - 44);
+            root.append(
+              label(ox + rowLabel + 6, oy + 14, L(metric), "t-label"),
+            );
+            for (const v of [0, max / 2, max]) {
+              root.append(
+                svg("line", {
+                  x1: x(v),
+                  x2: x(v),
+                  y1: oy + top - 6,
+                  y2: oy + panelH - 20,
+                  class: v ? "grid" : "baseline",
+                }),
+                label(x(v), oy + panelH - 6, `${v}`, "t-axis", {
+                  "text-anchor": v ? "middle" : "start",
+                }),
+              );
+            }
+            // f12-yes, the recipe every remedy changes
+            const base = d.rows[0][1][m];
+            root.append(
+              svg("line", {
+                x1: x(base),
+                x2: x(base),
+                y1: oy + top - 6,
+                y2: oy + panelH - 20,
+                class: "refline",
+              }),
+            );
+            d.rows.forEach(([key, values, who], r) => {
+              const cy = oy + top + r * rowH + rowH / 2;
+              if ((m % perRow === 0 && labelW) || cols === 1)
+                root.append(
+                  label(
+                    cols === 1 ? ox + rowLabel - 4 : labelW - 12,
+                    cy + 4,
+                    L(cols === 1 ? `${key}Short` : key),
+                    "t-label t-small",
+                    { "text-anchor": "end" },
+                  ),
+                );
+              const v = values[m];
+              root.append(
+                svg("line", {
+                  x1: x(0),
+                  x2: x(v),
+                  y1: cy,
+                  y2: cy,
+                  class: `stem c-${who}-stroke`,
+                }),
+                svg("circle", {
+                  cx: x(v),
+                  cy,
+                  r: 5.5,
+                  class: `dot c-${who}`,
+                  "data-tip": `${L(key)} · ${L(metric)} ${v.toFixed(digits)}`,
+                }),
+                label(x(v) + 9, cy + 4, v.toFixed(digits), "t-value t-small"),
+              );
+            });
+          });
+          return root;
+        },
+        legend: (L) =>
+          legend([
+            ["c-base", L("rm_base")],
+            ["c-policy", L("rm_remedy")],
+            ["c-idm", L("rm_next")],
+          ]),
+        table: (L) => ({
+          head: [L("rm_who"), ...DATA.remedies.metrics.map(([m]) => L(m))],
+          rows: DATA.remedies.rows.map(([k, vs]) => [
+            L(k),
+            ...vs.map((v, m) => v.toFixed(DATA.remedies.metrics[m][2])),
+          ]),
+        }),
+      };
+
+      /** The night's jobs on both GPUs, the axis broken over the stretch
+   without a sample */
+      CHARTS.night = {
+        draw(w, L) {
+          const d = DATA.night;
+          const narrow = w < 600;
+          const left = narrow ? 58 : 150;
+          const right = 12;
+          const top = 44;
+          const laneH = 50;
+          const lanes = ["linux", "win11"];
+          const bottom = top + lanes.length * laneH;
+          const h = bottom + 34;
+          // Minutes after 22:00 on the 29th
+          const min = (hms) => {
+            const [hh, mm, ss] = hms.split(":").map(Number);
+            return ((hh + 2) % 24) * 60 + mm + ss / 60;
+          };
+          const [s0, s1] = d.segments.map(([a, b]) => [min(a), min(b)]);
+          const gapW = narrow ? 34 : 90;
+          const k = (w - left - right - gapW) / (s0[1] - s0[0] + s1[1] - s1[0]);
+          const x = (m) =>
+            m <= s0[1]
+              ? left + (m - s0[0]) * k
+              : left +
+                (s0[1] - s0[0]) * k +
+                gapW +
+                (Math.max(m, s1[0]) - s1[0]) * k;
+          const root = svg("svg", {
+            viewBox: `0 0 ${w} ${h}`,
+            width: w,
+            height: h,
+            role: "img",
+            "aria-label": L("nt_aria"),
+          });
+          // Nothing sampled: from the last sample to the first after
+          const [g0, g1] = d.gap.map(min);
+          root.append(
+            svg("rect", {
+              x: x(g0),
+              y: top - 8,
+              width: x(g1) - x(g0),
+              height: bottom - top + 16,
+              class: "night",
+            }),
+          );
+          // The stretch's length, where it fits
+          if (!narrow)
+            root.append(
+              label(
+                (x(s0[1]) + x(s1[0])) / 2,
+                bottom - 28,
+                L("nt_gap1"),
+                "t-note",
+                {
+                  "text-anchor": "middle",
+                },
+              ),
+              label(
+                (x(s0[1]) + x(s1[0])) / 2,
+                bottom - 12,
+                L("nt_gap2"),
+                "t-note",
+                {
+                  "text-anchor": "middle",
+                },
+              ),
+            );
+          // The break in the axis
+          const bx = x(s0[1]) + gapW / 2;
+          root.append(
+            svg("line", {
+              x1: bx - 5,
+              x2: bx + 1,
+              y1: bottom + 10,
+              y2: bottom - 2,
+              class: "rule",
+            }),
+            svg("line", {
+              x1: bx - 1,
+              x2: bx + 5,
+              y1: bottom + 10,
+              y2: bottom - 2,
+              class: "rule",
+            }),
+          );
+          for (const [tick, words] of [
+            ["22:00:00", "22:00"],
+            ["23:00:00", "23:00"],
+            ["00:00:00", "00:00"],
+            ["01:00:00", "01:00"],
+            ["02:00:00", "02:00"],
+            ["11:30:00", "11:30"],
+            ["12:00:00", "12:00"],
+          ]) {
+            const tx = x(min(tick));
+            if (narrow && tick === "11:30:00") continue;
+            root.append(
+              svg("line", {
+                x1: tx,
+                x2: tx,
+                y1: top - 6,
+                y2: bottom + 4,
+                class: "grid",
+              }),
+              label(tx, bottom + 20, words, "t-axis", {
+                "text-anchor": tick === "12:00:00" ? "end" : "middle",
+              }),
+            );
+          }
+          lanes.forEach((lane, l) => {
+            const cy = top + l * laneH + laneH / 2;
+            root.append(
+              label(
+                left - 8,
+                cy + 4,
+                L(`nt_${lane}${narrow ? "Short" : ""}`),
+                "t-label t-small",
+                {
+                  "text-anchor": "end",
+                },
+              ),
+              svg("line", {
+                x1: left,
+                x2: w - right,
+                y1: cy + 14,
+                y2: cy + 14,
+                class: "baseline",
+              }),
+            );
+            for (const [gpu, from, to, words, id, died] of d.jobs) {
+              if (gpu !== lane) continue;
+              const a = x(min(from));
+              const b = x(min(to));
+              const tip = `${L(words)} · ${id} · ${from.slice(0, 5)}–${to.slice(0, 5)}${died ? ` · ${L("nt_died")}` : ""}`;
+              root.append(
+                svg("rect", {
+                  x: a,
+                  y: cy - 12,
+                  width: Math.max(2, b - a - 1),
+                  height: 24,
+                  rx: 3,
+                  class: `bar thin ${died ? "c-policy" : "c-idm"}`,
+                  "data-tip": tip,
+                }),
+              );
+              // Named inside the bar when it fits (CJK characters are wider)
+              const text = L(words);
+              const wide = [...text].reduce(
+                (sum, c) => sum + (/[　-鿿＀-￯]/.test(c) ? 10.5 : 6.4),
+                0,
+              );
+              if (b - a - 10 > wide)
+                root.append(
+                  label(a + 5, cy + 4, text, "t-pin", { "data-tip": tip }),
+                );
+            }
+          });
+          // The last sample before the host hung, over the bars
+          root.append(
+            svg("line", {
+              x1: x(g0),
+              x2: x(g0),
+              y1: top - 30,
+              y2: bottom + 8,
+              class: "crash",
+            }),
+            label(x(g0) - 6, top - 20, L("nt_crash"), "t-note", {
+              "text-anchor": "end",
+            }),
+          );
+          return root;
+        },
+        legend: (L) =>
+          legend([
+            ["c-idm", L("nt_job")],
+            ["c-policy", L("nt_died")],
+          ]),
+        table: (L) => ({
+          head: [
+            L("nt_where"),
+            L("nt_what"),
+            L("nt_id"),
+            L("nt_from"),
+            L("nt_to"),
+          ],
+          rows: DATA.night.jobs.map(([gpu, from, to, words, id, died]) => [
+            L(`nt_${gpu}`),
+            `${L(words)}${died ? ` (${L("nt_died")})` : ""}`,
+            id,
+            from,
+            to,
+          ]),
         }),
       };
 
@@ -11107,6 +13868,436 @@ LEAD_FRAMES = lead_frames()
                 weight: 600,
                 alpha: nums * grow,
               });
+            });
+          }
+          drawFoot(ctx, t, this, T);
+          drawFade(ctx, t, this);
+        },
+      };
+
+      /* The copycat: the newest tokens already show the action being done, so
+   copying them scores well offline; live, with nobody at the controller,
+   nothing moves and nothing is predicted. Present dropout hides them. */
+      SCENES.copycat = {
+        duration: 15,
+        poster: 9.4,
+        captions: [
+          [0, 3.6, "c1"],
+          [3.6, 7.4, "c2"],
+          [7.4, 10.8, "c3"],
+          [10.8, 15, "c4"],
+        ],
+        draw(ctx, t, T) {
+          drawHead(ctx, T);
+          const VIOLET = "#9588ff";
+          const smooth = (a, b, u) => {
+            const v = clamp((u - a) / (b - a));
+            return v * v * (3 - 2 * v);
+          };
+
+          // The window the policy sees, and the action 4 frames on
+          const X0 = 300;
+          const P = 50;
+          const TY = 188;
+          const xOf = (o) => X0 + (o + 11) * P;
+          const strip = span(t, 0.2, 0.8);
+          const masked = span(t, 10.9, 11.5);
+          const newest = span(t, 0.9, 1.5) * (1 - masked);
+          put(ctx, T("policy"), 56, 186, {
+            face: "display",
+            size: 24,
+            weight: 700,
+            alpha: strip,
+          });
+          put(ctx, T("sees"), 56, 210, {
+            size: 15,
+            color: BOARD.ink3,
+            alpha: strip,
+          });
+          ctx.save();
+          ctx.globalAlpha = strip;
+          ctx.fillStyle = BOARD.idm;
+          ctx.beginPath();
+          ctx.arc(62, 232, 4.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          put(ctx, T("sceneDot"), 74, 237, {
+            size: 13,
+            color: BOARD.ink3,
+            alpha: strip,
+          });
+          for (let o = -11; o <= 4; o++) {
+            const x = xOf(o);
+            ctx.save();
+            ctx.globalAlpha = strip;
+            rrect(ctx, x - 17, TY - 17, 34, 34, 6);
+            if (o > 0) {
+              // Not seen yet; the target at t+4
+              ctx.setLineDash(o === 4 ? [] : [4, 3]);
+              ctx.strokeStyle = o === 4 ? BOARD.egg : BOARD.rule;
+              ctx.lineWidth = o === 4 ? 2.5 : 1.5;
+              ctx.stroke();
+              ctx.restore();
+              continue;
+            }
+            const hidden = o > -6 ? masked : 0;
+            ctx.fillStyle = mix("#27303c", "#4a5261", hidden);
+            ctx.fill();
+            if (hidden > 0) {
+              // The learned mask token, hatched
+              ctx.clip();
+              ctx.globalAlpha = strip * hidden;
+              ctx.strokeStyle = "rgba(236,238,242,0.35)";
+              ctx.lineWidth = 2;
+              for (let k = -34; k < 34; k += 8) {
+                ctx.beginPath();
+                ctx.moveTo(x - 17 + k, TY + 17);
+                ctx.lineTo(x + 17 + k, TY - 17);
+                ctx.stroke();
+              }
+            }
+            ctx.restore();
+            // The action being done shows in the newest three
+            if (o >= -2 && newest > 0) {
+              ctx.save();
+              ctx.globalAlpha = strip * newest;
+              ctx.strokeStyle = BOARD.egg;
+              ctx.lineWidth = 2.5;
+              rrect(ctx, x - 17, TY - 17, 34, 34, 6);
+              ctx.stroke();
+              ctx.restore();
+            }
+            // A scene sample every third frame, kept under the mask
+            if ((o + 12) % 3 === 0) {
+              ctx.save();
+              ctx.globalAlpha = strip;
+              ctx.fillStyle = BOARD.idm;
+              ctx.beginPath();
+              ctx.arc(x + 9, TY + 9, 4.5, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.restore();
+            }
+          }
+          for (const [o, words] of [
+            [-8, "t−8"],
+            [-4, "t−4"],
+            [0, "t"],
+            [4, "t+4"],
+          ])
+            put(ctx, words, xOf(o), TY + 38, {
+              face: "mono",
+              size: 13,
+              weight: o === 0 ? 600 : 400,
+              color: o === 0 ? BOARD.ink : BOARD.ink3,
+              align: "center",
+              alpha: strip,
+            });
+          put(ctx, T("notYet"), xOf(2), TY + 38, {
+            size: 13,
+            color: BOARD.ink3,
+            align: "center",
+            alpha: strip,
+          });
+          put(ctx, T("target"), xOf(4), TY + 62, {
+            size: 15,
+            color: BOARD.egg,
+            align: "center",
+            alpha: strip,
+          });
+          put(ctx, T("newest"), xOf(-1), TY + 62, {
+            size: 15,
+            color: BOARD.egg,
+            align: "center",
+            alpha: newest,
+          });
+          put(ctx, T("mask"), xOf(-2.5), TY + 62, {
+            size: 15,
+            color: BOARD.ink2,
+            align: "center",
+            alpha: masked,
+          });
+          // Copy: from the newest frame straight to the target
+          const copy = span(t, 1.4, 2.0) * (1 - masked);
+          if (copy > 0) {
+            const x1 = xOf(0);
+            const x2 = xOf(4);
+            ctx.save();
+            ctx.globalAlpha = copy;
+            ctx.strokeStyle = BOARD.policy;
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(x1, TY - 20);
+            ctx.quadraticCurveTo((x1 + x2) / 2, TY - 66, x2 - 7, TY - 23);
+            ctx.stroke();
+            arrow(
+              ctx,
+              x2 - 22,
+              TY - 31,
+              x2 - 6,
+              TY - 22,
+              BOARD.policy,
+              2.5,
+              11,
+            );
+            ctx.restore();
+            put(ctx, T("copy"), (x1 + x2) / 2, TY - 58, {
+              size: 17,
+              weight: 600,
+              color: BOARD.policy,
+              align: "center",
+              alpha: copy,
+            });
+          }
+          // Foresee: from the older frames and the scene, over the mask
+          const foresee = span(t, 11.4, 12.0);
+          if (foresee > 0) {
+            const x2 = xOf(4);
+            ctx.save();
+            ctx.globalAlpha = foresee;
+            ctx.strokeStyle = BOARD.idm;
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(xOf(-7), TY - 20);
+            ctx.quadraticCurveTo((xOf(-7) + x2) / 2, TY - 78, x2 - 7, TY - 23);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(xOf(0) + 13, TY + 14);
+            ctx.quadraticCurveTo(xOf(2), TY + 36, x2 - 13, TY + 15);
+            ctx.stroke();
+            arrow(ctx, x2 - 22, TY - 31, x2 - 6, TY - 22, BOARD.idm, 2.5, 11);
+            arrow(ctx, x2 - 28, TY + 22, x2 - 13, TY + 15, BOARD.idm, 2.5, 11);
+            ctx.restore();
+            put(ctx, T("foresee"), (xOf(-7) + x2) / 2, TY - 64, {
+              size: 17,
+              weight: 600,
+              color: BOARD.idm,
+              align: "center",
+              alpha: foresee,
+            });
+          }
+
+          // Offline: copying the action 4 frames back wins (chapter 8)
+          const off = span(t, 1.8, 2.4) * (1 - span(t, 3.2, 3.6));
+          if (off > 0) {
+            put(ctx, T("offTitle"), 300, 318, {
+              size: 16,
+              color: BOARD.ink3,
+              alpha: off,
+            });
+            [
+              [T("repeatLast"), 0.49, BOARD.rule],
+              [T("v1"), 0.31, BOARD.policy],
+            ].forEach(([name, v, color], i) => {
+              const y = 356 + i * 76;
+              const grow = easeOut(span(t, 2.0 + i * 0.25, 2.8 + i * 0.25));
+              const bw = Math.max(4, 700 * v * grow);
+              put(ctx, name, 300, y, {
+                size: 17,
+                color: BOARD.ink2,
+                alpha: off,
+              });
+              ctx.save();
+              ctx.globalAlpha = off;
+              ctx.fillStyle = BOARD.panel;
+              rrect(ctx, 300, y + 12, 700, 26, 4);
+              ctx.fill();
+              ctx.fillStyle = color;
+              rrect(ctx, 300, y + 12, bw, 26, 4);
+              ctx.fill();
+              ctx.restore();
+              put(ctx, v.toFixed(2), 300 + bw + 10, y + 32, {
+                face: "mono",
+                size: 18,
+                weight: 600,
+                alpha: off * grow,
+              });
+            });
+          }
+
+          // Live: the player's hands, the picture, the bot's outputs
+          const live = span(t, 3.5, 4.0) * (1 - span(t, 10.4, 10.8));
+          if (live > 0) {
+            const LX0 = 300;
+            const LX1 = 1180;
+            const lx = (u) => LX0 + u * (LX1 - LX0);
+            const s = span(t, 3.8, 10.2);
+            const wiggle = (u, k) =>
+              0.55 +
+              0.45 *
+                Math.abs(Math.sin(u * 53 + k * 1.7)) *
+                (0.75 + 0.25 * Math.sin(u * 17 + k));
+            const hands = (u) =>
+              smooth(0.05, 0.08, u) *
+              (1 - smooth(0.46, 0.48, u)) *
+              wiggle(u, 0);
+            // The picture follows the hands, then whatever the bot does
+            const picture = (u) =>
+              smooth(0.07, 0.1, u) *
+              (u < 0.5 ? 1 : 0.03 + 0.97 * Math.exp(-(u - 0.5) / 0.055)) *
+              wiggle(u, 1);
+            const bot = (u) => 0.95 * picture(u - 0.02);
+            [
+              [T("hands"), BOARD.you, hands, 330],
+              [T("screen"), VIOLET, picture, 400],
+              [T("bot"), BOARD.policy, bot, 470],
+            ].forEach(([name, color, f, base]) => {
+              put(ctx, name, 56, base - 8, {
+                size: 17,
+                weight: 600,
+                color,
+                alpha: live,
+              });
+              ctx.save();
+              ctx.globalAlpha = live;
+              ctx.fillStyle = BOARD.grid;
+              ctx.fillRect(LX0, base, LX1 - LX0, 1);
+              const end = lx(s);
+              if (end > LX0 + 1) {
+                ctx.beginPath();
+                ctx.moveTo(LX0, base);
+                for (let x = LX0; x <= end; x += 2) {
+                  const u = (x - LX0) / (LX1 - LX0);
+                  ctx.lineTo(x, base - 36 * f(u));
+                }
+                ctx.lineTo(end, base);
+                ctx.closePath();
+                ctx.fillStyle = color;
+                ctx.globalAlpha = live * 0.9;
+                ctx.fill();
+              }
+              ctx.restore();
+            });
+            ctx.save();
+            ctx.globalAlpha = live;
+            ctx.fillStyle = "rgba(236,238,242,0.5)";
+            ctx.fillRect(lx(s), 282, 1.5, 196);
+            ctx.restore();
+            // He lets go
+            const go = span(t, 6.8, 7.2) * live;
+            if (go > 0) {
+              ctx.save();
+              ctx.globalAlpha = go;
+              ctx.strokeStyle = BOARD.ink3;
+              ctx.setLineDash([4, 4]);
+              ctx.beginPath();
+              ctx.moveTo(lx(0.47), 284);
+              ctx.lineTo(lx(0.47), 476);
+              ctx.stroke();
+              ctx.restore();
+              put(ctx, T("letGo"), lx(0.47) + 8, 298, {
+                size: 14,
+                color: BOARD.ink3,
+                alpha: go,
+              });
+            }
+            // A still picture, a still bot
+            const still = span(t, 9.0, 9.5) * live;
+            if (still > 0) {
+              const cx = 1130;
+              const cy = 417;
+              const end = Math.PI * 1.35;
+              ctx.save();
+              ctx.globalAlpha = still;
+              ctx.strokeStyle = BOARD.ink2;
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.arc(cx, cy, 22, -Math.PI * 0.35, end);
+              ctx.stroke();
+              arrow(
+                ctx,
+                cx + 22 * Math.cos(end - 0.4),
+                cy + 22 * Math.sin(end - 0.4),
+                cx + 22 * Math.cos(end),
+                cy + 22 * Math.sin(end),
+                BOARD.ink2,
+                2,
+                9,
+              );
+              ctx.restore();
+              put(ctx, T("still"), cx, cy + 5, {
+                size: 13,
+                color: BOARD.ink2,
+                align: "center",
+                alpha: still,
+              });
+            }
+            // What the policy put out, with the player and alone
+            put(ctx, T("withYou"), 300, 506, {
+              size: 15,
+              color: BOARD.policy,
+              alpha: live * span(t, 5.4, 5.9),
+            });
+            put(ctx, T("alone"), 300, 532, {
+              size: 15,
+              color: BOARD.ink2,
+              alpha: live * span(t, 8.6, 9.1),
+            });
+            put(ctx, T("source"), SCENE_W - 56, 532, {
+              size: 13,
+              color: BOARD.ink3,
+              align: "right",
+              alpha: live * span(t, 5.4, 5.9),
+            });
+          }
+
+          // Present dropout against f12-yes, the player's held-out jobs
+          const res = span(t, 11.0, 11.6);
+          if (res > 0) {
+            put(ctx, T("resTitle"), 300, 300, {
+              size: 17,
+              color: BOARD.ink3,
+              alpha: res,
+            });
+            ctx.save();
+            ctx.globalAlpha = res;
+            key(ctx, 840, 300, BOARD.rule, T("before"));
+            key(ctx, 960, 300, BOARD.idm, T("after"));
+            ctx.restore();
+            [
+              [T("kb"), 0.36, 0.4, 0.5],
+              [T("ant"), 0.007, 0.046, 0.05],
+              [T("speed"), 0.56, 0.66, 1],
+            ].forEach(([name, a, b, max], i) => {
+              const y = 336 + i * 74;
+              const grow = easeOut(span(t, 11.3 + i * 0.3, 12.2 + i * 0.3));
+              const W = 640;
+              const wa = Math.max(3, (W * a) / max);
+              const wb = Math.max(3, ((W * b) / max) * grow);
+              const words = (v) => (v < 0.1 ? v.toFixed(3) : v.toFixed(2));
+              put(ctx, name, 300, y, {
+                size: 17,
+                color: BOARD.ink2,
+                alpha: res,
+              });
+              ctx.save();
+              ctx.globalAlpha = res;
+              ctx.fillStyle = BOARD.panel;
+              rrect(ctx, 300, y + 10, W, 36, 4);
+              ctx.fill();
+              ctx.fillStyle = BOARD.rule;
+              rrect(ctx, 300, y + 13, wa, 13, 3);
+              ctx.fill();
+              ctx.fillStyle = BOARD.idm;
+              rrect(ctx, 300, y + 30, wb, 13, 3);
+              ctx.fill();
+              ctx.restore();
+              put(ctx, words(a), 300 + wa + 8, y + 24, {
+                face: "mono",
+                size: 14,
+                color: BOARD.ink3,
+                alpha: res,
+              });
+              put(ctx, words(b), 300 + wb + 8, y + 42, {
+                face: "mono",
+                size: 15,
+                weight: 600,
+                alpha: res * grow,
+              });
+            });
+            put(ctx, T("zero"), 300, 572, {
+              size: 15,
+              color: BOARD.ink3,
+              alpha: span(t, 12.6, 13.1),
             });
           }
           drawFoot(ctx, t, this, T);
