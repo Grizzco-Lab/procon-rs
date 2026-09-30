@@ -574,14 +574,30 @@ for among this host's processes; it runs while that file, fresh (a
 minute), names it as the runner's job. A stale file makes the VM's GPU
 unknown, never 0, and its entries "no word" rather than "no process".
 
-A thread samples every 5 s: the GPU with `nvidia-smi` (one query for the
+The sampling runs in a process of its own, `grizzco-lab sample`
+(`pipeline::run_sampler`), so the timeline has no hole while the lab is
+stopped. One runs at a time: it holds an exclusive flock on
+`pipeline-sampler.lock` in the local cache, with its pid in it. The lab
+starts one whenever none holds the lock (at most every 30 s), detached in a
+session of its own with `setsid`, so the terminal's Ctrl-C and the lab's
+exit leave it running; its output goes to `pipeline-sampler.log`. It exits
+when its binary is rebuilt (its mtime changes), and the lab starts the new
+build. The lab samples nothing itself: it reads the sampler's snapshot,
+`pipeline-now.json` (rewritten after every sample: the GPUs, their
+processes, CPU, memory, each entry's processes and progress, the disks),
+and follows the history file's new lines (by inode and offset; all of it
+again once the compaction replaced the file). A snapshot older than 30 s
+says nothing of now: the state's GPU and processes are left out and its
+`gpu_error` names the sampler's log.
+
+The sampler samples every 5 s: the GPU with `nvidia-smi` (one query for the
 GPU, one for its compute processes), the VM's GPU from its file, the CPU,
 load, memory and every process from `/proc`, which processes belong to
 which entry (running entries claim theirs first), each live entry's CPU,
-RSS and GPU memory, and when each was seen running; it keeps 12 hours of
-samples in memory for the timeline, averaged down to 720 points for a
+RSS and GPU memory, and when each was seen running; the lab keeps 12 hours
+of samples in memory for the timeline, averaged down to 720 points for a
 window, each sample with the entries seen running and the cores each took.
-The same thread watches the disks (`Storage`): the Proxmox host's ZFS pools
+The sampler also watches the disks (`Storage`): the Proxmox host's ZFS pools
 (`[pipeline] storage_host`, default `pve`: every VM's disk is a thin zvol
 on `rpool`, and a full pool hangs the host and both VMs), read with `ssh
 <host> zpool list -Hp ...` once a minute by a `PoolProbe` the sampler looks
@@ -594,9 +610,9 @@ answer has the disks and the level; the `/ws` status carries them while
 `rpool` is not fine (`Pipeline::storage_alert`), for the top bar's chip in
 every app, and the page shows a banner.
 
-Each sample is also appended to `pipeline-gpu.jsonl` in the local cache
-(`~/.cache/procon-cuttlefish`) and read back at start, so a restart keeps
-the timeline; the log keeps a week, older than 12 hours one row a minute.
+Each sample is appended to `pipeline-gpu.jsonl` in the local cache
+(`~/.cache/procon-cuttlefish`), which the sampler compacts at its start and
+every hour; the log keeps a week, older than 12 hours one row a minute.
 Its lines keep the first version's layout (eight numbers, then the running
 ids) and add the VM's GPU, the load, each entry's cores and each disk's
 free space in GB after it, so every version reads the others' lines. Progress comes from the run

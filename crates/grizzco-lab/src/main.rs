@@ -4,6 +4,11 @@
 //! from `procon-proxy` (on the Raspberry Pi), captures video with ffmpeg and records both
 //! into session folders.
 //!
+//! `grizzco-lab sample` only samples the machine for the Pipeline app, until
+//! stopped: the lab starts it when none runs, detached, so the Pipeline's
+//! timeline has no hole while the lab is stopped (see
+//! [`grizzco_lab::pipeline`]).
+//!
 //! Ctrl-C stops it step by step, each logged: AgentZero, the recording
 //! (its video file finished), the services the page started, the capture,
 //! then the web server's requests, which get [`REQUESTS_PATIENCE`] before
@@ -46,8 +51,19 @@ const REQUESTS_PATIENCE: Duration = Duration::from_secs(2);
 #[command(about = "Dashboard, video capture and recording for the Pro Controller proxy")]
 struct Args {
     /// Path to configuration file; dashboard settings are saved next to it
-    #[arg(short, long, default_value = "config.toml")]
+    #[arg(short, long, default_value = "config.toml", global = true)]
     config: String,
+    #[command(subcommand)]
+    mode: Option<Mode>,
+}
+
+/// What runs instead of the lab
+#[derive(clap::Subcommand)]
+enum Mode {
+    /// Only sample the machine for the Pipeline app (its timeline and
+    /// history), until stopped; one at a time. The lab starts one when none
+    /// runs, and it outlives the lab
+    Sample,
 }
 
 /// Whether a log record is the web server reporting a client that went
@@ -106,6 +122,25 @@ fn main() -> anyhow::Result<()> {
         .build();
     log::set_max_level(logger.filter());
     log::set_boxed_logger(Box::new(Logger(logger)))?;
+
+    // Relative paths start at the config file's folder
+    let config_dir = Path::new(&args.config)
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    // The sampler: this binary, reading this config file
+    let sampler = std::env::current_exe()
+        .ok()
+        .zip(std::fs::canonicalize(&args.config).ok());
+    if let Some(Mode::Sample) = args.mode {
+        let agentzero =
+            predictor::Settings::from_config(config.predictor, &config_dir, PathBuf::new())
+                .agentzero;
+        let mut settings =
+            pipeline::Settings::from_config(config.pipeline, &config_dir, &agentzero);
+        settings.sampler = sampler;
+        return pipeline::run_sampler(settings);
+    }
 
     // Settings chosen on the dashboard win over the config file
     let state_path = Path::new(&args.config).with_extension("state.json");
@@ -176,11 +211,6 @@ fn main() -> anyhow::Result<()> {
     let restoring = Arc::clone(&studio);
     std::thread::spawn(move || restoring.player.restore());
 
-    // Relative Inspector paths start at the config file's folder
-    let config_dir = Path::new(&args.config)
-        .parent()
-        .unwrap_or(Path::new("."))
-        .to_path_buf();
     let follow_settings = follow::Settings::from_config(&config.inspect, &config_dir)?;
     let calibration = config
         .inspect
@@ -278,12 +308,12 @@ fn main() -> anyhow::Result<()> {
     ));
     let online = Online::new(Arc::clone(&predictor), Arc::clone(&studio));
     let follow = Arc::new(Follow::new(Arc::clone(&inspector), follow_settings));
-    // The GPU and the experiment queue, sampled from now on for the timeline
-    let pipeline = Pipeline::start(pipeline::Settings::from_config(
-        config.pipeline,
-        &config_dir,
-        &agentzero,
-    ));
+    // The GPU and the experiment queue, as the sampler writes them (one is
+    // started when none runs)
+    let mut pipeline_settings =
+        pipeline::Settings::from_config(config.pipeline, &config_dir, &agentzero);
+    pipeline_settings.sampler = sampler;
+    let pipeline = Pipeline::start(pipeline_settings);
 
     let rt = tokio::runtime::Runtime::new()?;
     // Tokio's SIGINT handler replaces the default (exit) for the rest of

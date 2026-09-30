@@ -30,12 +30,12 @@
 //! every other field kept as it was ([`write_order`]). Nothing else here
 //! writes.
 //!
-//! A thread samples the machine every [`SAMPLE_EVERY`], read-only, and
-//! keeps [`KEEP`] of it in memory for the timeline ([`Sample`]): this
-//! host's GPU through `nvidia-smi` (utilization, memory, temperature,
-//! power, and each compute process's memory), the VM's GPU from its file
-//! (unknown, never 0, while the file is stale), CPU, load and memory from
-//! `/proc`, the processes of each entry here with the CPU they took, and
+//! A sampler samples the machine every [`SAMPLE_EVERY`], read-only
+//! ([`Sample`]): this host's GPU through `nvidia-smi` (utilization,
+//! memory, temperature, power, and each compute process's memory), the
+//! VM's GPU from its file (unknown, never 0, while the file is stale),
+//! CPU, load and memory from `/proc`, the processes of each entry here
+//! with the CPU they took, and
 //! each live entry's progress from its run folder (`metrics.jsonl` rows
 //! with `step` and `split`, `args.json` with `steps`) or else its log (the
 //! last `N/M` in it), with the rate and ETA it saw. A run whose trainer
@@ -45,7 +45,7 @@
 //! something else now (an evaluation after training, say). Neither has an
 //! ETA.
 //!
-//! The same thread watches the disks the work lands on ([`Storage`]): the
+//! The sampler also watches the disks the work lands on ([`Storage`]): the
 //! Proxmox host's ZFS pools (`[pipeline] storage_host`, `pve`: every VM's
 //! disk is a thin zvol on its `rpool`, and a full pool hangs the host and
 //! both VMs), read once a minute over ssh without waiting for the answer
@@ -54,15 +54,27 @@
 //! thresholds of AgentZero's storage guard) goes to the page, which shows
 //! a banner here and a chip in every app while it is low.
 //!
-//! Each sample is also appended to a log on this machine,
-//! `pipeline-gpu.jsonl` in the local cache (`cuttlefish::store::cache_dir`,
-//! never the synced knowledge folder), with the entries seen running then
-//! and the CPU each took and the free space of each disk
-//! ([`Sample::line`]), so a restart keeps the
-//! timeline: the sampler reads back the last [`KEEP`] when it starts. The
-//! log is rewritten at start and every hour ([`compact`]): samples older
+//! The sampler is a process of its own, `grizzco-lab sample`
+//! ([`run_sampler`]), so the machine is followed while the lab is stopped
+//! too; one at a time (it holds [`LOCK_FILE`], its pid in it). It appends
+//! each sample to a log on this machine, [`HISTORY_FILE`] in the local
+//! cache (`cuttlefish::store::cache_dir`, never the synced knowledge
+//! folder), with the entries seen running then, the CPU each took and the
+//! free space of each disk ([`Sample::line`]), and rewrites
+//! [`SNAPSHOT_FILE`] beside it with what it saw of now ([`Snapshot`]: the
+//! GPUs, their processes, each entry's processes and progress, the disks).
+//! It rewrites the log at start and every hour ([`compact`]): samples older
 //! than [`KEEP`] thinned to one a minute, those older than
-//! [`HISTORY_KEEP`] dropped, a torn last line skipped.
+//! [`HISTORY_KEEP`] dropped, a torn last line skipped. It exits when its
+//! binary is built again, so the new build takes over.
+//!
+//! The lab samples nothing itself ([`Pipeline::start`]): it follows the
+//! log (the last [`KEEP`] of it in memory for the timeline, new lines as
+//! they come, all of it again once the compaction rewrote it) and the
+//! snapshot, and starts a sampler, detached in a session of its own
+//! (which outlives the lab, its Ctrl-C included; its log is [`SAMPLER_LOG`]),
+//! whenever none holds the lock, at most once a [`SAMPLER_RETRY`]. A
+//! snapshot older than [`SNAPSHOT_STALE`] says nothing of now.
 //!
 //! Endpoints under `/api/pipeline/`:
 //!
@@ -94,6 +106,7 @@ use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -116,6 +129,26 @@ const HISTORY_BUCKET_MS: u64 = 60_000;
 
 /// How often the log on disk is compacted
 const COMPACT_EVERY: Duration = Duration::from_secs(3600);
+
+/// The samples' log, in the cache folder
+pub const HISTORY_FILE: &str = "pipeline-gpu.jsonl";
+
+/// What the sampler saw last, in the cache folder, rewritten after every
+/// sample ([`Snapshot`])
+pub const SNAPSHOT_FILE: &str = "pipeline-now.json";
+
+/// The lock the sampler holds for its life, its pid in it, in the cache
+/// folder: one sampler at a time
+pub const LOCK_FILE: &str = "pipeline-sampler.lock";
+
+/// The log of a sampler the lab started, in the cache folder
+pub const SAMPLER_LOG: &str = "pipeline-sampler.log";
+
+/// A snapshot older than this says nothing of now: no sampler runs
+pub const SNAPSHOT_STALE: Duration = Duration::from_secs(30);
+
+/// The lab starts a sampler at most this often
+pub const SAMPLER_RETRY: Duration = Duration::from_secs(30);
 
 /// Most points in a timeline answer; longer windows are averaged down
 pub const MAX_POINTS: usize = 720;
@@ -239,8 +272,9 @@ const BODY_LIMIT: u64 = 64 << 10;
 pub struct Settings {
     /// The queue file agents keep
     pub queue: PathBuf,
-    /// The samples' log on disk, if any
-    pub history: Option<PathBuf>,
+    /// The folder of the sampler's files: [`HISTORY_FILE`],
+    /// [`SNAPSHOT_FILE`], [`LOCK_FILE`], [`SAMPLER_LOG`]
+    pub cache: PathBuf,
     /// The file the win11 runner writes the VM's GPU to: `win11/gpu.json`
     /// beside the queue file, as AgentZero's helper reads it
     pub remote: PathBuf,
@@ -248,6 +282,10 @@ pub struct Settings {
     /// command it runs for them
     pub storage_host: String,
     pub storage_command: String,
+    /// The sampler's binary and config file: the lab starts it when none
+    /// runs, and the sampler names the config in its snapshot; `None`: the
+    /// lab never starts one
+    pub sampler: Option<(PathBuf, PathBuf)>,
 }
 
 impl Settings {
@@ -269,7 +307,7 @@ impl Settings {
             .join("gpu.json");
         Self {
             queue,
-            history: Some(cuttlefish::store::cache_dir().join("pipeline-gpu.jsonl")),
+            cache: cuttlefish::store::cache_dir(),
             remote,
             storage_host: config
                 .storage_host
@@ -279,6 +317,7 @@ impl Settings {
             storage_command: config
                 .storage_command
                 .unwrap_or_else(|| String::from(STORAGE_COMMAND)),
+            sampler: None,
         }
     }
 }
@@ -676,7 +715,7 @@ pub fn parse_time(text: &str) -> Option<i64> {
 
 /// One reading of the (first) GPU, from `nvidia-smi`; readings it does not
 /// support are `None`
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Gpu {
     pub name: String,
     /// Busy, %
@@ -806,7 +845,7 @@ pub struct RemoteProc {
 
 /// A GPU on another machine as its runner last wrote it; what it says of
 /// the GPU and the job holds only while it is `fresh`
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Remote {
     /// The machine's name in the queue (`host`, `gpu:<host>`)
     pub host: String,
@@ -1042,7 +1081,7 @@ fn loadavg() -> Option<[f64; 3]> {
 // ---------------------------------------------------------------- storage
 
 /// A ZFS pool as `zpool list -Hp -o name,size,alloc,free,cap,frag` gives it
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Pool {
     pub name: String,
     /// Bytes
@@ -1099,7 +1138,7 @@ pub fn pool_level(pool: &Pool) -> &'static str {
 
 /// Free space where the lab's work lands, as last read: the storage host's
 /// pools, this host's `/` and the win11 VM's `C:`
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Storage {
     /// The host whose pools are read, empty for none
     pub host: String,
@@ -1856,7 +1895,7 @@ fn append_history(path: &Path, sample: &Sample) -> Result<()> {
 }
 
 /// A process the page is told about
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 struct ProcInfo {
     pid: u32,
     pgid: u32,
@@ -1869,7 +1908,7 @@ struct ProcInfo {
 }
 
 /// What the sampler saw of an entry's processes
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 struct Live {
     pids: Vec<u32>,
     /// CPU over the last interval, % of one core
@@ -1879,16 +1918,16 @@ struct Live {
     /// When its oldest process started, Unix ms
     since_ms: u64,
     /// How it was found: `pgid`, `pid` or `match`
-    found_by: &'static str,
+    found_by: String,
 }
 
 /// An entry's progress: steps done of the total, and the rate seen
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 struct Progress {
     step: f64,
     total: Option<f64>,
     /// `metrics` (its run folder) or `log`
-    source: &'static str,
+    source: String,
     /// The run has ended (its closing rows, [`END_SPLITS`]; with only a
     /// log, its stop lines, [`END_LINES`]), early when `step` is short of
     /// `total`; its kept checkpoint's step, when known
@@ -1911,7 +1950,37 @@ struct Progress {
     moved_ms: Option<u64>,
 }
 
-/// Everything the sampler keeps
+/// What the sampler saw of now, for the lab ([`SNAPSHOT_FILE`])
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct Snapshot {
+    /// When, Unix ms
+    t_ms: u64,
+    /// The sampler's pid, and the config file it reads (empty: unknown)
+    pid: u32,
+    #[serde(default)]
+    config: String,
+    gpu: Option<Gpu>,
+    gpu_error: Option<String>,
+    remote: Option<Remote>,
+    cpu: Option<f64>,
+    cores: usize,
+    load: Option<[f64; 3]>,
+    memory: Option<[u64; 4]>,
+    gpu_procs: Vec<ProcInfo>,
+    live: HashMap<String, Live>,
+    progress: HashMap<String, Progress>,
+    storage: Storage,
+}
+
+/// A sampler the lab started, and when it last started one
+#[derive(Default)]
+struct Started {
+    child: Option<Child>,
+    at: Option<Instant>,
+}
+
+/// Everything the sampler keeps; in the lab, what it read of the
+/// sampler's files
 #[derive(Default)]
 struct Inner {
     samples: VecDeque<Sample>,
@@ -1945,6 +2014,13 @@ struct Inner {
     cpu_before: Option<(u64, u64)>,
     ticks_before: HashMap<u32, u64>,
     sampled_at: Option<Instant>,
+    /// The lab: the log as read so far (its inode and the bytes read), the
+    /// snapshot's file time as last read and when the sampler wrote it
+    /// (Unix ms), and the sampler's config file it warned of
+    history_read: (u64, u64),
+    snapshot_seen: Option<SystemTime>,
+    snapshot_ms: Option<u64>,
+    other_config: Option<String>,
 }
 
 /// The Pipeline app: the sampler's findings and the queue
@@ -1959,9 +2035,8 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    /// Start sampling the machine on a thread of its own
-    pub fn start(settings: Settings) -> Arc<Self> {
-        let pipeline = Arc::new(Self {
+    fn new(settings: Settings) -> Self {
+        Self {
             storage: Mutex::new(Storage {
                 host: settings.storage_host.clone(),
                 ..Storage::default()
@@ -1972,31 +2047,205 @@ impl Pipeline {
                 ..Inner::default()
             }),
             probe: Mutex::default(),
-        });
-        let sampler = Arc::clone(&pipeline);
+        }
+    }
+
+    /// The lab's Pipeline: the sampler's files read back every
+    /// [`SAMPLE_EVERY`] on a thread of its own, which starts a sampler
+    /// whenever none runs (see the module docs)
+    pub fn start(settings: Settings) -> Arc<Self> {
+        let pipeline = Arc::new(Self::new(settings));
+        let lab = Arc::clone(&pipeline);
         std::thread::Builder::new()
             .name(String::from("pipeline"))
             .spawn(move || {
-                let mut compacted = None;
+                let mut started = Started::default();
                 loop {
-                    let started = Instant::now();
-                    if let Some(path) = &sampler.settings.history
-                        && compacted.is_none_or(|at: Instant| at.elapsed() >= COMPACT_EVERY)
-                    {
-                        sampler.load_history(path, compacted.is_none());
-                        compacted = Some(Instant::now());
-                    }
-                    let sample = sampler.sample();
-                    if let Some(path) = &sampler.settings.history
-                        && let Err(e) = append_history(path, &sample)
-                    {
-                        log::debug!("pipeline: cannot append to {}: {e:#}", path.display());
-                    }
-                    std::thread::sleep(SAMPLE_EVERY.saturating_sub(started.elapsed()));
+                    lab.keep_sampler(&mut started);
+                    lab.refresh();
+                    std::thread::sleep(SAMPLE_EVERY);
                 }
             })
             .expect("thread");
         pipeline
+    }
+
+    /// Start a sampler when none holds the lock, at most once a
+    /// [`SAMPLER_RETRY`]; reap the one started before once it ended
+    fn keep_sampler(&self, started: &mut Started) {
+        let Some((exe, config)) = &self.settings.sampler else {
+            return;
+        };
+        if let Some(child) = started.child.as_mut()
+            && let Ok(Some(status)) = child.try_wait()
+        {
+            log::warn!(
+                "The Pipeline's sampler (pid {}) ended: {status}",
+                child.id()
+            );
+            started.child = None;
+        }
+        let cache = &self.settings.cache;
+        if sampler_runs(&cache.join(LOCK_FILE))
+            || started.at.is_some_and(|at| at.elapsed() < SAMPLER_RETRY)
+        {
+            return;
+        }
+        started.at = Some(Instant::now());
+        match spawn_sampler(exe, config, cache) {
+            Ok(child) => {
+                log::info!(
+                    "Started the Pipeline's sampler (pid {}): {} sample --config {}; its log is {}",
+                    child.id(),
+                    exe.display(),
+                    config.display(),
+                    cache.join(SAMPLER_LOG).display()
+                );
+                started.child = Some(child);
+            }
+            Err(e) => log::warn!("Cannot start the Pipeline's sampler: {e:#}"),
+        }
+    }
+
+    /// Read what the sampler wrote since the last look
+    fn refresh(&self) {
+        let mut inner = self.inner();
+        self.read_snapshot(&mut inner);
+        self.read_history(&mut inner);
+    }
+
+    /// The sampler's snapshot, when it changed: now's readings, and the
+    /// disks
+    fn read_snapshot(&self, inner: &mut Inner) {
+        let path = self.settings.cache.join(SNAPSHOT_FILE);
+        let Ok(modified) = std::fs::metadata(&path).and_then(|meta| meta.modified()) else {
+            return;
+        };
+        if inner.snapshot_seen == Some(modified) {
+            return;
+        }
+        let read = std::fs::read(&path)
+            .map_err(anyhow::Error::from)
+            .and_then(|bytes| Ok(serde_json::from_slice::<Snapshot>(&bytes)?));
+        let snapshot = match read {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                log::debug!("pipeline: cannot read {}: {e:#}", path.display());
+                return;
+            }
+        };
+        inner.snapshot_seen = Some(modified);
+        // A sampler of another config (a test lab's, say) is told of once
+        let ours = self
+            .settings
+            .sampler
+            .as_ref()
+            .map(|(_, config)| config.display().to_string());
+        if let Some(ours) = ours
+            && !snapshot.config.is_empty()
+            && snapshot.config != ours
+            && inner.other_config.as_ref() != Some(&snapshot.config)
+        {
+            log::warn!(
+                "The Pipeline's sampler (pid {}) reads {}, not {ours}",
+                snapshot.pid,
+                snapshot.config
+            );
+            inner.other_config = Some(snapshot.config.clone());
+        }
+        inner.snapshot_ms = Some(snapshot.t_ms);
+        inner.gpu = snapshot.gpu;
+        inner.gpu_error = snapshot.gpu_error;
+        inner.remote = snapshot.remote;
+        inner.cpu = snapshot.cpu;
+        inner.cores = snapshot.cores;
+        inner.load = snapshot.load;
+        inner.memory = snapshot.memory;
+        inner.gpu_procs = snapshot.gpu_procs;
+        inner.live = snapshot.live;
+        inner.progress = snapshot.progress;
+        *self.storage() = snapshot.storage;
+    }
+
+    /// The log's lines written since the last look into the timeline, the
+    /// last [`KEEP`] of it; all of it again once the compaction rewrote it
+    /// (another file, or a shorter one)
+    fn read_history(&self, inner: &mut Inner) {
+        use std::os::unix::fs::MetadataExt;
+        let path = self.settings.cache.join(HISTORY_FILE);
+        let Ok(meta) = std::fs::metadata(&path) else {
+            return;
+        };
+        let (inode, mut offset) = inner.history_read;
+        if meta.ino() != inode || meta.len() < offset {
+            inner.samples.clear();
+            inner.spans.clear();
+            offset = 0;
+        }
+        if meta.len() > offset {
+            let mut bytes = Vec::new();
+            let read = File::open(&path).and_then(|mut file| {
+                file.seek(SeekFrom::Start(offset))?;
+                file.take(meta.len() - offset).read_to_end(&mut bytes)
+            });
+            if let Err(e) = read {
+                log::debug!("pipeline: cannot read {}: {e}", path.display());
+                return;
+            }
+            // A line still being written waits for the next look
+            let whole = bytes
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map_or(0, |end| end + 1);
+            offset += whole as u64;
+            let oldest = unix_ms().saturating_sub(KEEP.as_millis() as u64);
+            let text = String::from_utf8_lossy(&bytes[..whole]);
+            for sample in text.lines().filter_map(Sample::parse_line) {
+                let last = inner.samples.back().map_or(0, |s| s.t_ms);
+                if sample.t_ms < oldest || sample.t_ms <= last {
+                    continue;
+                }
+                for (id, _) in &sample.running {
+                    note_running(inner.spans.entry(id.clone()).or_default(), sample.t_ms);
+                }
+                inner.samples.push_back(sample);
+            }
+        }
+        inner.history_read = (meta.ino(), offset);
+        let oldest = unix_ms().saturating_sub(KEEP.as_millis() as u64);
+        while inner.samples.front().is_some_and(|s| s.t_ms < oldest) {
+            inner.samples.pop_front();
+        }
+        for spans in inner.spans.values_mut() {
+            spans.retain(|&(_, end)| end >= oldest);
+        }
+        inner.spans.retain(|_, spans| !spans.is_empty());
+    }
+
+    /// What the sampler saw of now, for the lab
+    fn snapshot(&self, now: u64) -> Snapshot {
+        let inner = self.inner();
+        Snapshot {
+            t_ms: now,
+            pid: std::process::id(),
+            config: self
+                .settings
+                .sampler
+                .as_ref()
+                .map(|(_, config)| config.display().to_string())
+                .unwrap_or_default(),
+            gpu: inner.gpu.clone(),
+            gpu_error: inner.gpu_error.clone(),
+            remote: inner.remote.clone(),
+            cpu: inner.cpu,
+            cores: inner.cores,
+            load: inner.load,
+            memory: inner.memory,
+            gpu_procs: inner.gpu_procs.clone(),
+            live: inner.live.clone(),
+            progress: inner.progress.clone(),
+            storage: self.storage().clone(),
+        }
     }
 
     fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -2127,9 +2376,8 @@ impl Pipeline {
         inner.runs.retain(|dir, _| dirs.contains(dir));
     }
 
-    /// Compact the log on disk ([`compact`]) and, the first time, take its
-    /// last [`KEEP`] as the timeline's start
-    fn load_history(&self, path: &Path, first: bool) {
+    /// Compact the log on disk ([`compact`])
+    fn compact_history(path: &Path) {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
@@ -2149,17 +2397,6 @@ impl Pipeline {
         }
         if let Err(e) = write_atomic(path, out.as_bytes()) {
             log::warn!("pipeline: cannot rewrite {}: {e:#}", path.display());
-        }
-        if !first {
-            return;
-        }
-        let oldest = unix_ms().saturating_sub(KEEP.as_millis() as u64);
-        let mut inner = self.inner();
-        for sample in samples.into_iter().filter(|s| s.t_ms >= oldest) {
-            for (id, _) in &sample.running {
-                note_running(inner.spans.entry(id.clone()).or_default(), sample.t_ms);
-            }
-            inner.samples.push_back(sample);
         }
     }
 
@@ -2285,7 +2522,7 @@ impl Pipeline {
                 continue;
             }
             let mut info = Live {
-                found_by,
+                found_by: found_by.to_string(),
                 since_ms: u64::MAX,
                 ..Live::default()
             };
@@ -2483,7 +2720,7 @@ impl Pipeline {
                 found = Some(Progress {
                     step,
                     total: series.total(),
-                    source: "metrics",
+                    source: String::from("metrics"),
                     ended: series.end.is_some(),
                     best_step: series.end,
                     updated_ms,
@@ -2529,7 +2766,7 @@ impl Pipeline {
             found = Some(Progress {
                 step,
                 total: Some(total),
-                source: "log",
+                source: String::from("log"),
                 ended: log_done(&text),
                 updated_ms: modified_ms(&log),
                 moved_ms: Some(moved.1),
@@ -2576,8 +2813,28 @@ impl Pipeline {
     /// The state the page shows; with `since`, the samples after it too
     fn state(&self, since: Option<u64>) -> Value {
         let mut inner = self.inner();
+        self.read_snapshot(&mut inner);
+        self.read_history(&mut inner);
         // A page asking right after a write sees it
         self.reload_queue(&mut inner);
+        // A stale snapshot says nothing of now: no sampler runs
+        let now = unix_ms();
+        let fresh = inner
+            .snapshot_ms
+            .is_some_and(|t| now.saturating_sub(t) <= SNAPSHOT_STALE.as_millis() as u64);
+        let log = self.settings.cache.join(SAMPLER_LOG);
+        let gpu_error = match inner.snapshot_ms {
+            _ if fresh => inner.gpu_error.clone(),
+            Some(t) => Some(format!(
+                "the sampler has written nothing for {} s (its log: {})",
+                now.saturating_sub(t) / 1000,
+                log.display()
+            )),
+            None => Some(format!(
+                "no sampler has written yet (its log: {})",
+                log.display()
+            )),
+        };
         let order = run_order(&inner.queue.entries);
         // What each runner takes next: this host's GPU and CPU, and the
         // VM's GPU when its runner has written a file
@@ -2592,7 +2849,7 @@ impl Pipeline {
                 Some((device, i))
             })
             .collect();
-        let remote = inner.remote.as_ref();
+        let remote = inner.remote.as_ref().filter(|_| fresh);
         let entries: Vec<Value> = inner
             .queue
             .entries
@@ -2655,7 +2912,7 @@ impl Pipeline {
                         "at_ms": parse_time(&note.at),
                         "text": note.text,
                     })).collect::<Vec<_>>(),
-                    "live": inner.live.get(&entry.id),
+                    "live": inner.live.get(&entry.id).filter(|_| fresh),
                     "progress": inner.progress.get(&entry.id),
                     "seen": spans.map(|spans| json!({
                         "first_ms": spans.first().map(|s| s.0),
@@ -2673,25 +2930,27 @@ impl Pipeline {
                 .collect()
         });
         json!({
-            "now_ms": unix_ms(),
+            "now_ms": now,
             "sample_ms": SAMPLE_EVERY.as_millis() as u64,
             "stall_ms": STALL.as_millis() as u64,
-            "gpu": inner.gpu,
-            "gpu_error": inner.gpu_error,
-            "gpu_procs": inner.gpu_procs,
-            "remote": inner.remote,
+            // When the sampler last wrote what it saw
+            "sampled_ms": inner.snapshot_ms,
+            "gpu": inner.gpu.as_ref().filter(|_| fresh),
+            "gpu_error": gpu_error,
+            "gpu_procs": if fresh { &inner.gpu_procs[..] } else { &[] },
+            "remote": remote,
             "cpu": {
-                "percent": inner.cpu,
+                "percent": inner.cpu.filter(|_| fresh),
                 "cores": inner.cores,
-                "load": inner.load,
+                "load": inner.load.filter(|_| fresh),
             },
-            "memory": inner.memory.map(|[total, available, swap_total, swap_free]| json!({
+            "memory": inner.memory.filter(|_| fresh).map(|[total, available, swap_total, swap_free]| json!({
                 "total": total,
                 "available": available,
                 "swap_total": swap_total,
                 "swap_free": swap_free,
             })),
-            "storage": self.storage().to_json(unix_ms()),
+            "storage": self.storage().to_json(now),
             "queue": {
                 "path": self.settings.queue,
                 "updated_ms": inner.queue.updated.as_deref().and_then(parse_time),
@@ -2707,7 +2966,8 @@ impl Pipeline {
     /// The samples of the last `minutes`, averaged down, and when each
     /// entry was seen running
     fn timeline(&self, minutes: u64) -> Value {
-        let inner = self.inner();
+        let mut inner = self.inner();
+        self.read_history(&mut inner);
         let now = unix_ms();
         let window = minutes.clamp(1, KEEP.as_secs() / 60) * 60_000;
         let from = now.saturating_sub(window);
@@ -2850,6 +3110,123 @@ impl Pipeline {
             )),
         }
     }
+}
+
+/// The sampler, `grizzco-lab sample` (see the module docs): the machine
+/// every [`SAMPLE_EVERY`] into the log ([`HISTORY_FILE`], compacted at
+/// start and every [`COMPACT_EVERY`]) and [`SNAPSHOT_FILE`], until it is
+/// stopped or its binary is built again (the lab then starts the new
+/// build); an error when another sampler runs
+pub fn run_sampler(settings: Settings) -> Result<()> {
+    let cache = settings.cache.clone();
+    std::fs::create_dir_all(&cache).with_context(|| format!("cannot make {}", cache.display()))?;
+    let _lock = hold_lock(&cache.join(LOCK_FILE))?;
+    let built = |exe: &Path| std::fs::metadata(exe).and_then(|meta| meta.modified()).ok();
+    let exe = std::env::current_exe().ok();
+    let exe_built = exe.as_deref().and_then(built);
+    let history = cache.join(HISTORY_FILE);
+    log::info!(
+        "Sampling the machine every {} s into {} (pid {})",
+        SAMPLE_EVERY.as_secs(),
+        history.display(),
+        std::process::id()
+    );
+    let pipeline = Pipeline::new(settings);
+    let mut compacted: Option<Instant> = None;
+    loop {
+        let started = Instant::now();
+        if compacted.is_none_or(|at| at.elapsed() >= COMPACT_EVERY) {
+            Pipeline::compact_history(&history);
+            compacted = Some(Instant::now());
+        }
+        let sample = pipeline.sample();
+        if let Err(e) = append_history(&history, &sample) {
+            log::warn!("pipeline: cannot append to {}: {e:#}", history.display());
+        }
+        let snapshot = serde_json::to_vec(&pipeline.snapshot(sample.t_ms))?;
+        if let Err(e) = write_atomic(&cache.join(SNAPSHOT_FILE), &snapshot) {
+            log::warn!("pipeline: cannot write the snapshot: {e:#}");
+        }
+        if let Some(exe) = &exe
+            && built(exe) != exe_built
+        {
+            log::info!(
+                "{} was built again: this sampler stops, for the lab to start the new build",
+                exe.display()
+            );
+            return Ok(());
+        }
+        std::thread::sleep(SAMPLE_EVERY.saturating_sub(started.elapsed()));
+    }
+}
+
+/// Take the sampler's lock at `path` for this process's life (the file
+/// returned holds it), its pid in it; an error naming the pid in it when
+/// another sampler holds it
+fn hold_lock(path: &Path) -> Result<File> {
+    use std::io::Write;
+    let mut file = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .with_context(|| format!("cannot open {}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => {
+            let pid = std::fs::read_to_string(path).unwrap_or_default();
+            bail!("a sampler runs already (pid {})", pid.trim());
+        }
+        Err(std::fs::TryLockError::Error(e)) => {
+            return Err(anyhow::Error::from(e).context("cannot lock the sampler's lock"));
+        }
+    }
+    file.set_len(0)?;
+    writeln!(file, "{}", std::process::id())?;
+    Ok(file)
+}
+
+/// Whether a sampler holds the lock at `path`: taking it for a moment tells
+fn sampler_runs(path: &Path) -> bool {
+    let opened = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path);
+    opened.is_ok_and(|file| matches!(file.try_lock(), Err(std::fs::TryLockError::WouldBlock)))
+}
+
+/// Start the sampler `exe` with `config`, detached in a session of its own
+/// (neither the terminal's Ctrl-C nor its hangup reaches it), its output
+/// appended to [`SAMPLER_LOG`] in `cache`
+fn spawn_sampler(exe: &Path, config: &Path, cache: &Path) -> Result<Child> {
+    std::fs::create_dir_all(cache).with_context(|| format!("cannot make {}", cache.display()))?;
+    let log = File::options()
+        .create(true)
+        .append(true)
+        .open(cache.join(SAMPLER_LOG))?;
+    let mut command = Command::new(exe);
+    command
+        .arg("sample")
+        .arg("--config")
+        .arg(config)
+        .stdin(Stdio::null())
+        .stdout(log.try_clone()?)
+        .stderr(log);
+    // SAFETY: setsid(2) is async-signal-safe and touches no memory
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    command
+        .spawn()
+        .with_context(|| format!("cannot run {}", exe.display()))
 }
 
 /// When a file was last written, Unix ms
@@ -3444,6 +3821,125 @@ mod tests {
                 (String::from("linux:/"), 800.0)
             ]
         );
+    }
+
+    /// A scratch folder for the sampler's files
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("pipeline-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_lab_follows_the_samplers_log_and_snapshot() {
+        let dir = scratch("follow");
+        let pipeline = Pipeline::new(Settings {
+            queue: dir.join("queue.json"),
+            cache: dir.clone(),
+            remote: dir.join("win11/gpu.json"),
+            storage_host: String::from("pve"),
+            storage_command: String::new(),
+            sampler: None,
+        });
+        let now = unix_ms();
+        let sample = |t_ms: u64, ids: &[&str]| Sample {
+            t_ms,
+            running: ids.iter().map(|id| (id.to_string(), 1.0)).collect(),
+            ..Sample::default()
+        };
+        let times = |pipeline: &Pipeline| -> Vec<u64> {
+            pipeline.inner().samples.iter().map(|s| s.t_ms).collect()
+        };
+        let path = dir.join(HISTORY_FILE);
+        // Older than KEEP left out; a line still being written waits
+        let old = sample(now - KEEP.as_millis() as u64 - 1000, &[]).line();
+        let last = sample(now - 5_000, &[]).line();
+        let (begun, rest) = last.split_at(20);
+        let first = sample(now - 10_000, &["a"]).line();
+        std::fs::write(&path, format!("{old}\n{first}\n{begun}")).unwrap();
+        pipeline.refresh();
+        assert_eq!(times(&pipeline), [now - 10_000]);
+        // The line finished, and one more: each read once
+        let more = sample(now - 1_000, &["a"]).line();
+        let mut file = File::options().append(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut file, format!("{rest}\n{more}\n").as_bytes()).unwrap();
+        pipeline.refresh();
+        pipeline.refresh();
+        assert_eq!(times(&pipeline), [now - 10_000, now - 5_000, now - 1_000]);
+        assert_eq!(pipeline.inner().spans["a"].len(), 1);
+        // Rewritten by the compaction (another file): read from the start
+        let compacted = format!("{}\n", sample(now - 2_000, &["b"]).line());
+        write_atomic(&path, compacted.as_bytes()).unwrap();
+        pipeline.refresh();
+        assert_eq!(times(&pipeline), [now - 2_000]);
+        assert!(pipeline.inner().spans.contains_key("b"));
+        assert!(!pipeline.inner().spans.contains_key("a"));
+
+        // The snapshot: now's readings, each entry's processes, the disks
+        let mut snapshot = Snapshot {
+            t_ms: now,
+            pid: 7,
+            gpu: Some(Gpu {
+                name: String::from("NVIDIA GeForce RTX 4070 SUPER"),
+                util: Some(50.0),
+                ..Gpu::default()
+            }),
+            cores: 16,
+            storage: Storage {
+                host: String::from("pve"),
+                pools: parse_pools("rpool\t3882650435584\t3700000000000\t120000000000\t97\t60"),
+                pools_ms: Some(now),
+                ..Storage::default()
+            },
+            ..Snapshot::default()
+        };
+        snapshot.live.insert(
+            String::from("a"),
+            Live {
+                pids: vec![42],
+                found_by: String::from("pgid"),
+                ..Live::default()
+            },
+        );
+        let write = |snapshot: &Snapshot| {
+            let bytes = serde_json::to_vec(snapshot).unwrap();
+            write_atomic(&dir.join(SNAPSHOT_FILE), &bytes).unwrap();
+        };
+        write(&snapshot);
+        let state = pipeline.state(None);
+        assert_eq!(state["gpu"]["util"], 50.0);
+        assert_eq!(state["gpu_error"], Value::Null);
+        assert_eq!(state["sampled_ms"], now);
+        assert_eq!(state["cpu"]["cores"], 16);
+        assert_eq!(state["storage"]["level"], "critical");
+        assert_eq!(pipeline.storage_alert()["level"], "critical");
+        assert_eq!(pipeline.inner().live["a"].found_by, "pgid");
+        // A stale one says nothing of now
+        snapshot.t_ms = now - 60_000;
+        write(&snapshot);
+        pipeline.inner().snapshot_seen = None;
+        let state = pipeline.state(None);
+        assert_eq!(state["gpu"], Value::Null);
+        assert!(state["gpu_error"].as_str().unwrap().contains("the sampler"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn one_sampler_at_a_time() {
+        let dir = scratch("lock");
+        let path = dir.join(LOCK_FILE);
+        assert!(!sampler_runs(&path));
+        let held = hold_lock(&path).unwrap();
+        assert!(sampler_runs(&path));
+        let refused = format!("{:#}", hold_lock(&path).unwrap_err());
+        assert!(
+            refused.contains(&std::process::id().to_string()),
+            "{refused}"
+        );
+        drop(held);
+        assert!(!sampler_runs(&path));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

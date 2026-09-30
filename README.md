@@ -830,8 +830,15 @@ runs now, what waits and why, and what came out.
   % (with this host's CPU over it), memory (the queue's jobs against the
   rest) and lanes of what ran on it when, each bar holding its job's CPU in
   cores, so a CPU-bound step of a GPU job stands out; stretches without a
-  reading are shaded. The lab samples every 5 s and keeps 12 hours in
-  memory, and a week on disk.
+  reading are shaded. A sampler samples every 5 s, 12 hours kept in
+  memory and a week on disk. It is a process of its own, so nothing is
+  missing while the lab is stopped: the lab starts it when none runs
+  (`grizzco-lab sample`, detached, logging to
+  `~/.cache/procon-cuttlefish/pipeline-sampler.log`), and it keeps running
+  after the lab exits, one at a time, until it is killed (its pid is in
+  `pipeline-sampler.lock` there) or the binary is rebuilt (the lab then
+  starts the new one). It can be started by hand too:
+  `target/release/grizzco-lab sample --config config.toml`.
 - **Queue**: the waiting entries in the order they run, with what each
   waits for and which runner takes it next ("Next · Linux, win11"). Drag
   one by its handle, or focus the handle and press ↑ ↓, to change what runs
