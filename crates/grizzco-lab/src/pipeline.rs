@@ -8,10 +8,21 @@
 //! the format). Each entry is one step of an experiment ([`Entry`]): what
 //! it is, why (the question it answers), its status (`queued`, `running`,
 //! `done`, `failed`, `paused`), its `priority` (queued entries run highest
-//! first, ties in file order: [`run_order`]), its processes (`pgid`,
-//! `pid`, or `match`, a piece of its command line), its `log` and
-//! `run_dir`, its times, and once it is over a one-line `result_summary`
-//! and the `next_step`. Relative paths start at the queue file's folder.
+//! first, ties in file order: [`run_order`]), the entries it waits for
+//! (`after`), where it can run (`device`), its processes (`pgid`, `pid`, or
+//! `match`, a piece of its command line), its `log` and `run_dir`, its
+//! times, and once it is over a one-line `result_summary` and the
+//! `next_step`. Relative paths start at the queue file's folder.
+//!
+//! Two GPUs take the entries: this host's (`device: gpu:linux`) and the
+//! win11 VM's (`gpu:win11`; `gpu` is either, `cpu` none). AgentZero's win11
+//! runner (`agentzero-win11 run`) feeds the VM: it marks the entries it
+//! takes `host: win11`, writes the VM's GPU to `win11/gpu.json` beside the
+//! queue file every 10 s ([`Remote`]), and copies each job's log and
+//! metrics back into the same paths here every minute. An entry on the VM
+//! has no process here: whether it runs is what that file says, while it
+//! is fresh ([`REMOTE_STALE`]). Each runner takes the first queued entry
+//! that fits its device and waits for nothing ([`next_for`]).
 //!
 //! The page reorders the waiting entries by dragging them: `POST order`
 //! writes their priorities into the file, holding the lock the helper takes
@@ -20,26 +31,34 @@
 //! writes.
 //!
 //! A thread samples the machine every [`SAMPLE_EVERY`], read-only, and
-//! keeps [`KEEP`] of it in memory for the timeline: the GPU through
-//! `nvidia-smi` (utilization, memory, temperature, power, and each compute
-//! process's memory), CPU and memory from `/proc`, the processes of each
-//! entry, and each live entry's progress from its run folder
-//! (`metrics.jsonl` rows with `step` and `split`, `args.json` with `steps`)
-//! or else its log (the last `N/M` in it), with the rate and ETA it saw.
+//! keeps [`KEEP`] of it in memory for the timeline ([`Sample`]): this
+//! host's GPU through `nvidia-smi` (utilization, memory, temperature,
+//! power, and each compute process's memory), the VM's GPU from its file
+//! (unknown, never 0, while the file is stale), CPU, load and memory from
+//! `/proc`, the processes of each entry here with the CPU they took, and
+//! each live entry's progress from its run folder (`metrics.jsonl` rows
+//! with `step` and `split`, `args.json` with `steps`) or else its log (the
+//! last `N/M` in it), with the rate and ETA it saw. A run whose trainer
+//! wrote its closing rows ([`END_SPLITS`]; for a run known only by its
+//! log, printed that it stops, [`END_LINES`]) has ended, early when before
+//! its last step; a live entry whose step has not moved for [`STALL`] does
+//! something else now (an evaluation after training, say). Neither has an
+//! ETA.
 //!
 //! Each sample is also appended to a log on this machine,
 //! `pipeline-gpu.jsonl` in the local cache (`cuttlefish::store::cache_dir`,
-//! never the synced knowledge folder), with the entries seen running then,
-//! so a restart keeps the timeline: the sampler reads back the last
-//! [`KEEP`] when it starts. The log is rewritten at start and every hour
-//! ([`compact`]): samples older than [`KEEP`] thinned to one a minute,
-//! those older than [`HISTORY_KEEP`] dropped, a torn last line skipped.
+//! never the synced knowledge folder), with the entries seen running then
+//! and the CPU each took ([`Sample::line`]), so a restart keeps the
+//! timeline: the sampler reads back the last [`KEEP`] when it starts. The
+//! log is rewritten at start and every hour ([`compact`]): samples older
+//! than [`KEEP`] thinned to one a minute, those older than
+//! [`HISTORY_KEEP`] dropped, a torn last line skipped.
 //!
 //! Endpoints under `/api/pipeline/`:
 //!
-//! - `GET state[?since=<ms>]`: the machine now, the GPU's processes, the
-//!   queue with each entry's processes and progress, and with `since` the
-//!   samples taken after it
+//! - `GET state[?since=<ms>]`: the machine now, both GPUs and their
+//!   processes, the queue with each entry's processes, progress and
+//!   runner, and with `since` the samples taken after it
 //! - `GET timeline?minutes=<n>`: the samples of the last `n` minutes (at
 //!   most [`KEEP`]), averaged down to [`MAX_POINTS`], and when each entry
 //!   was seen running
@@ -93,8 +112,12 @@ pub const MAX_POINTS: usize = 720;
 /// Most points of a loss curve sent to the page
 const MAX_CURVE: usize = 500;
 
-/// The numbers of a validation row the page shows: its loss and scores
-const VAL_KEYS: [&str; 7] = [
+/// The numbers of a validation row the page shows: its loss, its scores,
+/// and the copycat scores of AgentZero's policy (what it gets right beyond
+/// repeating the action the frame seen shows: `keyframe_*` over the button
+/// changes, `anticipation_*` as partial correlations given the present;
+/// with the press, tolerant and half-second scores of its evaluation)
+const VAL_KEYS: [&str; 20] = [
     "loss_total",
     "button_f1",
     "onset_f1",
@@ -102,7 +125,48 @@ const VAL_KEYS: [&str; 7] = [
     "turn_corr_y",
     "gyro_corr",
     "stick_bin_accuracy",
+    "keyframe_button_acc",
+    "keyframe_onset_recall",
+    "keyframe_release_recall",
+    "anticipation_left_x",
+    "anticipation_left_y",
+    "anticipation_turn_x",
+    "anticipation_turn_y",
+    "press_f1",
+    "frame_f1_tolerant",
+    "onset_f1_wide",
+    "hold_iou",
+    "turn_corr_x_500ms",
+    "turn_corr_y_500ms",
 ];
+
+/// Splits of the rows a trainer writes once its loop is over, stopped
+/// early or not: the policy's tuned `thresholds`, the IDM's `val-tuned`
+pub const END_SPLITS: [&str; 2] = ["thresholds", "val-tuned"];
+
+/// What the trainers print once their loop is over: why they stop early
+/// (the policy's, the IDM's), and the line both print last
+const END_LINES: [&str; 3] = [
+    "no better loss in",
+    "stopping: no new best in",
+    "done; best validation loss",
+];
+
+/// A live entry whose step has not moved for this long does something else
+/// now (an evaluation after training, a stuck loader): it has no ETA
+pub const STALL: Duration = Duration::from_secs(5 * 60);
+
+/// This host's name in the queue's devices (`gpu:linux`)
+pub const LOCAL: &str = "linux";
+
+/// The machine of the second GPU, the win11 VM: `host` of the entries its
+/// runner takes, `gpu:win11` their device, `win11/gpu.json` beside the
+/// queue file its GPU
+pub const REMOTE_HOST: &str = "win11";
+
+/// A remote GPU file older than this says nothing of now: its runner
+/// writes it every 10 s, but not while it copies a job's data over
+pub const REMOTE_STALE: Duration = Duration::from_secs(60);
 
 /// Largest queue file read
 const MAX_QUEUE_BYTES: u64 = 1 << 20;
@@ -132,6 +196,9 @@ pub struct Settings {
     pub queue: PathBuf,
     /// The samples' log on disk, if any
     pub history: Option<PathBuf>,
+    /// The file the win11 runner writes the VM's GPU to: `win11/gpu.json`
+    /// beside the queue file, as AgentZero's helper reads it
+    pub remote: PathBuf,
 }
 
 impl Settings {
@@ -142,12 +209,19 @@ impl Settings {
         config_dir: &Path,
         agentzero: &Path,
     ) -> Self {
+        let queue = config.queue.map_or_else(
+            || agentzero.join("runs").join("queue.json"),
+            |queue| config_dir.join(queue),
+        );
+        let remote = queue
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(REMOTE_HOST)
+            .join("gpu.json");
         Self {
-            queue: config.queue.map_or_else(
-                || agentzero.join("runs").join("queue.json"),
-                |queue| config_dir.join(queue),
-            ),
+            queue,
             history: Some(cuttlefish::store::cache_dir().join("pipeline-gpu.jsonl")),
+            remote,
         }
     }
 }
@@ -183,21 +257,35 @@ pub struct Entry {
     /// Queued entries run highest first, ties in file order; none is 0
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<i64>,
+    /// The entries it waits for: no runner takes it until each is done (a
+    /// list of ids, or one id; kept as written)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<Value>,
     /// The experiment it belongs to (`D`), shared by its steps
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
     /// Who runs it (an agent's name)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
-    /// `gpu` or `cpu`
+    /// Where it can run: `cpu`, `gpu:linux` (this host's GPU), `gpu:win11`
+    /// (the VM's) or `gpu` (either)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device: Option<String>,
+    /// The machine it runs on (`win11`); none is this one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// The command line a runner starts it with
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     /// Its process, with its children
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     /// Its process group (a job started with `setsid`)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pgid: Option<u32>,
+    /// Its process on `host`, never looked up here
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_pid: Option<u64>,
     /// A piece of its command line, to find its processes without a pid
     #[serde(default, rename = "match", skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
@@ -249,6 +337,72 @@ impl Entry {
     fn active(&self) -> bool {
         matches!(self.status().as_str(), "queued" | "paused" | "running")
     }
+
+    /// The machine it runs on when that is not this one: its `host`, else
+    /// the one its `device` names (`gpu:win11`)
+    pub fn machine(&self) -> Option<&str> {
+        let here = |name: &str| name.is_empty() || name == LOCAL;
+        match self.host.as_deref().map(str::trim) {
+            Some(host) => (!here(host)).then_some(host),
+            None => self
+                .device
+                .as_deref()?
+                .trim()
+                .strip_prefix("gpu:")
+                .filter(|host| !here(host)),
+        }
+    }
+}
+
+/// Whether an entry of `device` (none: `gpu`, either GPU) can run on
+/// `runner`, a runner's device: `cpu` on `cpu`, a machine's GPU on that
+/// machine, either's on any GPU (AgentZero's `queue.fits`)
+pub fn fits(device: Option<&str>, runner: &str) -> bool {
+    let have = device.map(str::trim).filter(|d| !d.is_empty());
+    let have = have.unwrap_or("gpu");
+    if have == "cpu" || runner == "cpu" {
+        return have == runner;
+    }
+    have == "gpu" || have == runner
+}
+
+/// The ids in `entry`'s `after` still in the queue and not done: what holds
+/// it back (AgentZero's `queue.waits_for`)
+pub fn waits_for(entries: &[Entry], entry: &Entry) -> Vec<String> {
+    let ids: Vec<&str> = match &entry.after {
+        Some(Value::String(id)) => vec![id.as_str()],
+        Some(Value::Array(ids)) => ids.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    ids.into_iter()
+        .filter(|id| {
+            entries
+                .iter()
+                .any(|other| other.id == *id && other.status() != "done")
+        })
+        .map(String::from)
+        .collect()
+}
+
+/// The entry a runner of `device` (`cpu`, `gpu:linux`, `gpu:win11`) takes
+/// next, as an index into `entries`: the first queued one in the run order
+/// that fits it and waits for nothing; another machine's GPU takes only
+/// entries with a `command` (AgentZero's `queue.next_entry`)
+pub fn next_for(entries: &[Entry], device: &str) -> Option<usize> {
+    let remote = device
+        .strip_prefix("gpu:")
+        .is_some_and(|host| host != LOCAL);
+    run_order(entries).into_iter().find(|&i| {
+        let entry = &entries[i];
+        let command = entry
+            .command
+            .as_deref()
+            .is_some_and(|c| !c.trim().is_empty());
+        entry.status() == "queued"
+            && fits(entry.device.as_deref(), device)
+            && (command || !remote)
+            && waits_for(entries, entry).is_empty()
+    })
 }
 
 /// The queue file: `entries` and whatever else it holds
@@ -530,6 +684,150 @@ fn nvidia_smi(args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// A remote GPU's file as its runner writes it (AgentZero's
+/// `win11.Runner.status_file`): when it read the GPU, whether it could,
+/// the GPU, its compute processes, the job it runs, and the runner
+#[derive(Debug, Default, Deserialize)]
+struct RemoteFile {
+    #[serde(default)]
+    at: String,
+    #[serde(default)]
+    ok: bool,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    gpu: Option<RemoteGpu>,
+    #[serde(default)]
+    processes: Vec<RemoteProc>,
+    #[serde(default)]
+    job: Option<RemoteJob>,
+    #[serde(default)]
+    runner: Option<RemoteRunner>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RemoteGpu {
+    #[serde(default)]
+    name: String,
+    utilization_percent: Option<f64>,
+    memory_used_mib: Option<f64>,
+    memory_total_mib: Option<f64>,
+    temperature_c: Option<f64>,
+    power_w: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RemoteJob {
+    #[serde(default)]
+    id: String,
+    host_pid: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RemoteRunner {
+    pid: Option<u32>,
+    #[serde(default)]
+    hold: bool,
+}
+
+/// A compute process on a remote GPU (Windows does not tell its memory)
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct RemoteProc {
+    #[serde(default)]
+    pub pid: Option<u64>,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub memory_mib: Option<f64>,
+}
+
+/// A GPU on another machine as its runner last wrote it; what it says of
+/// the GPU and the job holds only while it is `fresh`
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Remote {
+    /// The machine's name in the queue (`host`, `gpu:<host>`)
+    pub host: String,
+    /// When its runner read the GPU, Unix ms
+    pub at_ms: Option<u64>,
+    /// Written within [`REMOTE_STALE`]
+    pub fresh: bool,
+    /// The reading, when the runner could take one (`name`, `util`,
+    /// `mem_used_mib`, `mem_total_mib`, `temp_c`, `power_w`)
+    pub gpu: Option<Gpu>,
+    /// Why there is no reading: the runner could not reach the machine, or
+    /// the file does not read
+    pub error: Option<String>,
+    pub processes: Vec<RemoteProc>,
+    /// The entry its runner runs there, and that job's process there
+    pub job: Option<String>,
+    pub job_pid: Option<u64>,
+    /// Whether its runner still runs here (its pid is alive), and whether
+    /// it holds new entries back (`HOLD`)
+    pub runner: bool,
+    pub hold: bool,
+}
+
+impl Remote {
+    /// The entry its runner runs now, while the file is fresh
+    pub fn running(&self) -> Option<&str> {
+        self.job.as_deref().filter(|_| self.fresh)
+    }
+}
+
+/// Read a remote GPU file's `text` for `host`, as of `now` (Unix ms);
+/// `alive` tells whether a pid of this host runs
+pub fn parse_remote(host: &str, text: &str, now: u64, alive: impl Fn(u32) -> bool) -> Remote {
+    let file = match serde_json::from_str::<RemoteFile>(text) {
+        Ok(file) => file,
+        Err(e) => {
+            return Remote {
+                host: host.to_string(),
+                error: Some(format!("gpu.json does not read: {e}")),
+                ..Remote::default()
+            };
+        }
+    };
+    let at_ms = parse_time(&file.at).and_then(|t| u64::try_from(t).ok());
+    let stale = REMOTE_STALE.as_millis() as u64;
+    let gpu = file.gpu.filter(|_| file.ok).map(|gpu| Gpu {
+        name: gpu.name,
+        util: gpu.utilization_percent,
+        mem_used_mib: gpu.memory_used_mib,
+        mem_total_mib: gpu.memory_total_mib,
+        temp_c: gpu.temperature_c,
+        power_w: gpu.power_w,
+        ..Gpu::default()
+    });
+    let runner = file.runner.unwrap_or_default();
+    Remote {
+        host: host.to_string(),
+        at_ms,
+        fresh: at_ms.is_some_and(|at| now.saturating_sub(at) <= stale),
+        error: if file.ok {
+            None
+        } else {
+            Some(file.error.unwrap_or_else(|| String::from("unreachable")))
+        },
+        gpu,
+        processes: file.processes,
+        job: file
+            .job
+            .as_ref()
+            .map(|job| job.id.clone())
+            .filter(|id| !id.is_empty()),
+        job_pid: file.job.and_then(|job| job.host_pid),
+        runner: runner.pid.is_some_and(alive),
+        hold: runner.hold,
+    }
+}
+
+/// The remote GPU file at `path` now, `None` without one
+fn read_remote(path: &Path, now: u64) -> Option<Remote> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let alive = |pid: u32| Path::new(&format!("/proc/{pid}")).exists();
+    Some(parse_remote(REMOTE_HOST, &text, now, alive))
+}
+
 /// What `/proc/<pid>/stat` says of a process
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProcStat {
@@ -693,6 +991,9 @@ pub struct RunSeries {
     /// missing)
     pub train: Vec<[f64; 4]>,
     pub val: Vec<ValRow>,
+    /// The step of the first closing row ([`END_SPLITS`]) after the last
+    /// train row: the run has ended, and kept its checkpoint of that step
+    pub end: Option<f64>,
     pub args: Option<Value>,
     args_modified: Option<SystemTime>,
 }
@@ -758,14 +1059,22 @@ impl RunSeries {
             return;
         };
         let number = |key: &str| row.get(key).and_then(Value::as_f64).unwrap_or(f64::NAN);
-        match row.get("split").and_then(Value::as_str) {
-            Some("train") => self.train.push([
+        let split = row.get("split").and_then(Value::as_str).unwrap_or_default();
+        if split == "train" {
+            self.train.push([
                 step,
                 number("loss_total"),
                 number("lr"),
                 number("s_per_step"),
-            ]),
-            Some(split) if split.starts_with("val") => self.val.push(ValRow {
+            ]);
+            // Training again after a closing row: resumed
+            self.end = None;
+        }
+        if END_SPLITS.contains(&split) && self.end.is_none() {
+            self.end = Some(step);
+        }
+        if split.starts_with("val") {
+            self.val.push(ValRow {
                 step,
                 split: split.to_string(),
                 values: row
@@ -773,8 +1082,7 @@ impl RunSeries {
                     .filter(|(key, _)| *key != "step")
                     .filter_map(|(key, value)| Some((key.clone(), value.as_f64()?)))
                     .collect(),
-            }),
-            _ => {}
+            });
         }
     }
 
@@ -881,6 +1189,21 @@ pub fn log_progress(text: &str) -> Option<(f64, f64)> {
     })
 }
 
+/// Whether a trainer said its loop is over ([`END_LINES`]) after the last
+/// `N/M` in `text`: that run has ended, whether or not it reached `M`
+pub fn log_done(text: &str) -> bool {
+    for line in text.lines().rev() {
+        let line = clean_line(line);
+        if END_LINES.iter().any(|end| line.contains(end)) {
+            return true;
+        }
+        if log_progress(&line).is_some() {
+            return false;
+        }
+    }
+    false
+}
+
 /// The last `max` bytes of a file, from a line's start
 fn tail(path: &Path, max: u64) -> Option<String> {
     let mut file = File::open(path).ok()?;
@@ -922,105 +1245,242 @@ fn clean_line(line: &str) -> String {
 
 // ------------------------------------------------------------------ state
 
-/// One sample of the machine; `NAN` for what was not read
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Sample {
-    pub t_ms: u64,
-    /// GPU busy, %
+/// One GPU's numbers in a [`Sample`]; `NAN` for what was not read
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GpuSample {
+    /// Busy, %
     pub util: f64,
-    /// GPU memory used, MiB, and the part of it the queue's entries hold
+    /// Memory used, MiB, and the part of it the queue's entries hold (known
+    /// on this host only)
     pub mem_mib: f64,
     pub jobs_mib: f64,
     pub temp_c: f64,
     pub power_w: f64,
-    /// CPU busy over all cores, %
+}
+
+impl GpuSample {
+    /// Nothing read
+    pub const UNKNOWN: Self = Self {
+        util: f64::NAN,
+        mem_mib: f64::NAN,
+        jobs_mib: f64::NAN,
+        temp_c: f64::NAN,
+        power_w: f64::NAN,
+    };
+}
+
+impl Default for GpuSample {
+    fn default() -> Self {
+        Self::UNKNOWN
+    }
+}
+
+/// One sample of the machine; `NAN` for what was not read
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sample {
+    pub t_ms: u64,
+    /// This host's GPU
+    pub gpu: GpuSample,
+    /// The win11 VM's GPU, unknown while its runner's file is stale
+    pub remote: GpuSample,
+    /// CPU busy over all threads, %
     pub cpu: f64,
+    /// Load average over the last minute
+    pub load: f64,
     /// Memory in use (total less available), MiB
     pub ram_mib: f64,
+    /// The entries seen running, each with the CPU its processes here took,
+    /// in cores (`NAN` for one on another machine)
+    pub running: Vec<(String, f64)>,
+}
+
+impl Default for Sample {
+    fn default() -> Self {
+        Self {
+            t_ms: 0,
+            gpu: GpuSample::UNKNOWN,
+            remote: GpuSample::UNKNOWN,
+            cpu: f64::NAN,
+            load: f64::NAN,
+            ram_mib: f64::NAN,
+            running: Vec::new(),
+        }
+    }
+}
+
+/// A number rounded to `digits` decimals for JSON, `null` when not read
+fn rounded(v: f64, digits: i32) -> Value {
+    match (v.is_finite(), digits) {
+        (false, _) => Value::Null,
+        (true, 0) => json!(v.round() as i64),
+        (true, _) => {
+            let scale = 10f64.powi(digits);
+            json!((v * scale).round() / scale)
+        }
+    }
 }
 
 impl Sample {
-    /// As a row for the page: t, util, memory, the jobs' memory,
-    /// temperature, power, CPU, RAM
+    /// Its numbers: t; this host's GPU busy, memory, the jobs' memory,
+    /// temperature, power; CPU, RAM; the remote GPU's busy, memory,
+    /// temperature, power; load
+    fn numbers(&self) -> Vec<Value> {
+        let (gpu, remote) = (&self.gpu, &self.remote);
+        vec![
+            json!(self.t_ms),
+            rounded(gpu.util, 0),
+            rounded(gpu.mem_mib, 0),
+            rounded(gpu.jobs_mib, 0),
+            rounded(gpu.temp_c, 0),
+            rounded(gpu.power_w, 1),
+            rounded(self.cpu, 1),
+            rounded(self.ram_mib, 0),
+            rounded(remote.util, 0),
+            rounded(remote.mem_mib, 0),
+            rounded(remote.temp_c, 0),
+            rounded(remote.power_w, 1),
+            rounded(self.load, 2),
+        ]
+    }
+
+    /// The CPU each entry took, in cores, where known: `{id: cores}`
+    fn cores(&self) -> Value {
+        let cores: Map<String, Value> = self
+            .running
+            .iter()
+            .filter(|(_, cores)| cores.is_finite())
+            .map(|(id, cores)| (id.clone(), rounded(*cores, 2)))
+            .collect();
+        Value::Object(cores)
+    }
+
+    /// As a row for the page: its [`Self::numbers`], then the CPU of each
+    /// entry ([`Self::cores`])
     fn row(&self) -> Value {
-        let round = |v: f64, digits: i32| match (v.is_finite(), digits) {
-            (false, _) => Value::Null,
-            (true, 0) => json!(v.round() as i64),
-            (true, _) => {
-                let scale = 10f64.powi(digits);
-                json!((v * scale).round() / scale)
-            }
-        };
-        json!([
-            self.t_ms,
-            round(self.util, 0),
-            round(self.mem_mib, 0),
-            round(self.jobs_mib, 0),
-            round(self.temp_c, 0),
-            round(self.power_w, 1),
-            round(self.cpu, 1),
-            round(self.ram_mib, 0),
-        ])
+        let mut values = self.numbers();
+        values.push(self.cores());
+        Value::Array(values)
+    }
+
+    /// As a line of the log on disk: its row with the ids of the entries
+    /// seen running at index 8, where the log's first lines have them after
+    /// their eight numbers, so each version reads the other's lines
+    pub fn line(&self) -> String {
+        let mut values = self.numbers();
+        let ids: Vec<&str> = self.running.iter().map(|(id, _)| id.as_str()).collect();
+        values.insert(8, json!(ids));
+        values.push(self.cores());
+        Value::Array(values).to_string()
+    }
+
+    /// A line of the log on disk back ([`Self::line`], or a first version's
+    /// line, whose remote GPU, load and CPU per entry are not known);
+    /// `None` for a torn or foreign line
+    pub fn parse_line(line: &str) -> Option<Self> {
+        let values: Vec<Value> = serde_json::from_str(line).ok()?;
+        let number = |i: usize| values.get(i).and_then(Value::as_f64).unwrap_or(f64::NAN);
+        let cores = values.get(14).and_then(Value::as_object);
+        let running = values
+            .get(8)
+            .and_then(Value::as_array)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| {
+                        let id = id.as_str()?;
+                        let cores = cores.and_then(|c| c.get(id)?.as_f64());
+                        Some((id.to_string(), cores.unwrap_or(f64::NAN)))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(Sample {
+            t_ms: values.first()?.as_u64()?,
+            gpu: GpuSample {
+                util: number(1),
+                mem_mib: number(2),
+                jobs_mib: number(3),
+                temp_c: number(4),
+                power_w: number(5),
+            },
+            cpu: number(6),
+            ram_mib: number(7),
+            remote: GpuSample {
+                util: number(9),
+                mem_mib: number(10),
+                temp_c: number(11),
+                power_w: number(12),
+                ..GpuSample::UNKNOWN
+            },
+            load: number(13),
+            running,
+        })
+    }
+}
+
+/// Samples as one, at the last one's time: the mean utilization, power,
+/// CPU and load, the most memory, temperature and RAM, and every entry
+/// seen running with its mean CPU while it ran
+pub fn merge(bucket: &[Sample]) -> Sample {
+    let Some(last) = bucket.last() else {
+        return Sample::default();
+    };
+    let finite = |f: &dyn Fn(&Sample) -> f64| -> Vec<f64> {
+        bucket.iter().map(f).filter(|v| v.is_finite()).collect()
+    };
+    let mean = |f: &dyn Fn(&Sample) -> f64| {
+        let values = finite(f);
+        if values.is_empty() {
+            f64::NAN
+        } else {
+            values.iter().sum::<f64>() / values.len() as f64
+        }
+    };
+    let most = |f: &dyn Fn(&Sample) -> f64| finite(f).into_iter().fold(f64::NAN, f64::max);
+    let gpu = |pick: fn(&Sample) -> &GpuSample| GpuSample {
+        util: mean(&|s| pick(s).util),
+        mem_mib: most(&|s| pick(s).mem_mib),
+        jobs_mib: most(&|s| pick(s).jobs_mib),
+        temp_c: most(&|s| pick(s).temp_c),
+        power_w: mean(&|s| pick(s).power_w),
+    };
+    let mut running: Vec<(String, f64)> = Vec::new();
+    for (id, _) in bucket.iter().flat_map(|s| &s.running) {
+        if !running.iter().any(|(seen, _)| seen == id) {
+            let cores = mean(&|s| {
+                s.running
+                    .iter()
+                    .find(|(other, _)| other == id)
+                    .map_or(f64::NAN, |(_, cores)| *cores)
+            });
+            running.push((id.clone(), cores));
+        }
+    }
+    running.sort_by(|a, b| a.0.cmp(&b.0));
+    Sample {
+        t_ms: last.t_ms,
+        gpu: gpu(|s| &s.gpu),
+        remote: gpu(|s| &s.remote),
+        cpu: mean(&|s| s.cpu),
+        load: mean(&|s| s.load),
+        ram_mib: most(&|s| s.ram_mib),
+        running,
     }
 }
 
 /// The samples at most `max` of them: buckets of the same width (aligned,
-/// so asking again gives the same buckets), each at its last sample's time
-/// with the mean utilization, power and CPU and the most memory,
-/// temperature and RAM
+/// so asking again gives the same buckets), each [`merge`]d
 pub fn downsample(samples: &[Sample], max: usize) -> Vec<Sample> {
     let (Some(first), Some(last)) = (samples.first(), samples.last()) else {
         return Vec::new();
     };
-    let span = last.t_ms - first.t_ms;
     if samples.len() <= max || max == 0 {
         return samples.to_vec();
     }
-    let width = (span / max as u64 + 1).max(1);
-    let mut out: Vec<Sample> = Vec::with_capacity(max + 1);
-    let mut bucket: Vec<Sample> = Vec::new();
-    let flush = |bucket: &mut Vec<Sample>, out: &mut Vec<Sample>| {
-        let Some(end) = bucket.last().copied() else {
-            return;
-        };
-        let mean = |f: fn(&Sample) -> f64| {
-            let values: Vec<f64> = bucket.iter().map(f).filter(|v| v.is_finite()).collect();
-            if values.is_empty() {
-                f64::NAN
-            } else {
-                values.iter().sum::<f64>() / values.len() as f64
-            }
-        };
-        let most = |f: fn(&Sample) -> f64| {
-            bucket
-                .iter()
-                .map(f)
-                .filter(|v| v.is_finite())
-                .fold(f64::NAN, f64::max)
-        };
-        out.push(Sample {
-            t_ms: end.t_ms,
-            util: mean(|s| s.util),
-            mem_mib: most(|s| s.mem_mib),
-            jobs_mib: most(|s| s.jobs_mib),
-            temp_c: most(|s| s.temp_c),
-            power_w: mean(|s| s.power_w),
-            cpu: mean(|s| s.cpu),
-            ram_mib: most(|s| s.ram_mib),
-        });
-        bucket.clear();
-    };
-    let mut current = None;
-    for sample in samples {
-        let key = sample.t_ms / width;
-        if current.is_some_and(|k| k != key) {
-            flush(&mut bucket, &mut out);
-        }
-        current = Some(key);
-        bucket.push(*sample);
-    }
-    flush(&mut bucket, &mut out);
-    out
+    let width = ((last.t_ms - first.t_ms) / max as u64 + 1).max(1);
+    samples
+        .chunk_by(|a, b| a.t_ms / width == b.t_ms / width)
+        .map(merge)
+        .collect()
 }
 
 /// Extend an entry's spans of running with a sighting at `t_ms`
@@ -1031,78 +1491,25 @@ fn note_running(spans: &mut Vec<(u64, u64)>, t_ms: u64) {
     }
 }
 
-/// A line of the log on disk: the sample's row ([`Sample::row`]) with the
-/// entries seen running appended
-fn history_line((sample, running): &(Sample, Vec<String>)) -> String {
-    let mut row = sample.row();
-    if let Value::Array(values) = &mut row {
-        values.push(json!(running));
-    }
-    row.to_string()
-}
-
-/// A line of the log on disk back; `None` for a torn or foreign line
-fn parse_history(line: &str) -> Option<(Sample, Vec<String>)> {
-    let values: Vec<Value> = serde_json::from_str(line).ok()?;
-    let number = |i: usize| values.get(i).and_then(Value::as_f64).unwrap_or(f64::NAN);
-    let sample = Sample {
-        t_ms: values.first()?.as_u64()?,
-        util: number(1),
-        mem_mib: number(2),
-        jobs_mib: number(3),
-        temp_c: number(4),
-        power_w: number(5),
-        cpu: number(6),
-        ram_mib: number(7),
-    };
-    let running = values
-        .get(8)
-        .and_then(Value::as_array)
-        .map(|ids| {
-            ids.iter()
-                .filter_map(|id| id.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    Some((sample, running))
-}
-
-/// The log's rows as kept: in time order, none older than
-/// [`HISTORY_KEEP`], those older than [`KEEP`] averaged into buckets of
-/// [`HISTORY_BUCKET_MS`] ([`downsample`]'s rules) with every entry seen
-/// running in the bucket
-fn compact(mut rows: Vec<(Sample, Vec<String>)>, now: u64) -> Vec<(Sample, Vec<String>)> {
-    rows.sort_by_key(|(s, _)| s.t_ms);
+/// The log's samples as kept: in time order, none older than
+/// [`HISTORY_KEEP`], those older than [`KEEP`] [`merge`]d into buckets of
+/// [`HISTORY_BUCKET_MS`]
+fn compact(mut samples: Vec<Sample>, now: u64) -> Vec<Sample> {
+    samples.sort_by_key(|s| s.t_ms);
     let dropped = now.saturating_sub(HISTORY_KEEP.as_millis() as u64);
     let thinned = now.saturating_sub(KEEP.as_millis() as u64);
-    rows.retain(|(s, _)| s.t_ms >= dropped);
-    let recent = rows.split_off(rows.partition_point(|(s, _)| s.t_ms < thinned));
-    let mut out = Vec::with_capacity(rows.len() / 12 + recent.len());
-    for bucket in rows.chunk_by(|a, b| a.0.t_ms / HISTORY_BUCKET_MS == b.0.t_ms / HISTORY_BUCKET_MS)
-    {
-        // Times from the bucket's first, so `downsample` sees one bucket
-        let first = bucket[0].0.t_ms;
-        let samples: Vec<Sample> = bucket
-            .iter()
-            .map(|(s, _)| Sample {
-                t_ms: s.t_ms - first,
-                ..*s
-            })
-            .collect();
-        let mut running: Vec<String> = bucket.iter().flat_map(|(_, ids)| ids.clone()).collect();
-        running.sort_unstable();
-        running.dedup();
-        for sample in downsample(&samples, 1) {
-            let t_ms = sample.t_ms + first;
-            out.push((Sample { t_ms, ..sample }, running.clone()));
-        }
-    }
+    samples.retain(|s| s.t_ms >= dropped);
+    let recent = samples.split_off(samples.partition_point(|s| s.t_ms < thinned));
+    let mut out: Vec<Sample> = samples
+        .chunk_by(|a, b| a.t_ms / HISTORY_BUCKET_MS == b.t_ms / HISTORY_BUCKET_MS)
+        .map(merge)
+        .collect();
     out.extend(recent);
     out
 }
 
-/// Append a row to the log on disk, creating its folder
-fn append_history(path: &Path, row: &(Sample, Vec<String>)) -> Result<()> {
+/// Append a sample to the log on disk, creating its folder
+fn append_history(path: &Path, sample: &Sample) -> Result<()> {
     use std::io::Write;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -1111,7 +1518,7 @@ fn append_history(path: &Path, row: &(Sample, Vec<String>)) -> Result<()> {
         .create(true)
         .append(true)
         .open(path)?;
-    file.write_all(format!("{}\n", history_line(row)).as_bytes())?;
+    file.write_all(format!("{}\n", sample.line()).as_bytes())?;
     Ok(())
 }
 
@@ -1149,9 +1556,16 @@ struct Progress {
     total: Option<f64>,
     /// `metrics` (its run folder) or `log`
     source: &'static str,
+    /// The run has ended (its closing rows, [`END_SPLITS`]; with only a
+    /// log, its stop lines, [`END_LINES`]), early when `step` is short of
+    /// `total`; its kept checkpoint's step, when known
+    ended: bool,
+    best_step: Option<f64>,
     /// Steps per second, as seen lately (else from `s_per_step`)
     rate: Option<f64>,
     s_per_step: Option<f64>,
+    /// When it should reach `total`: only while it runs, and neither ended
+    /// nor stalled
     eta_ms: Option<u64>,
     /// The last train and validation losses, and the learning rate
     loss: Option<f64>,
@@ -1159,6 +1573,9 @@ struct Progress {
     lr: Option<f64>,
     /// When the run folder or log was last written, Unix ms
     updated_ms: Option<u64>,
+    /// When its step last moved, Unix ms: the run folder's last write, or
+    /// when the sampler first saw the log's step
+    moved_ms: Option<u64>,
 }
 
 /// Everything the sampler keeps
@@ -1167,6 +1584,8 @@ struct Inner {
     samples: VecDeque<Sample>,
     gpu: Option<Gpu>,
     gpu_error: Option<String>,
+    /// The win11 VM's GPU as its runner last wrote it, if it has a file
+    remote: Option<Remote>,
     cpu: Option<f64>,
     cores: usize,
     load: Option<[f64; 3]>,
@@ -1182,6 +1601,8 @@ struct Inner {
     progress: HashMap<String, Progress>,
     /// (Unix ms, step) seen of each entry, for its rate
     seen: HashMap<String, VecDeque<(u64, f64)>>,
+    /// The step of each entry's log and when the sampler first saw it
+    moved: HashMap<String, (f64, u64)>,
     /// When each entry was seen running: spans of Unix ms
     spans: HashMap<String, Vec<(u64, u64)>>,
     /// Each run folder's metrics, by folder
@@ -1222,9 +1643,9 @@ impl Pipeline {
                         sampler.load_history(path, compacted.is_none());
                         compacted = Some(Instant::now());
                     }
-                    let row = sampler.sample();
+                    let sample = sampler.sample();
                     if let Some(path) = &sampler.settings.history
-                        && let Err(e) = append_history(path, &row)
+                        && let Err(e) = append_history(path, &sample)
                     {
                         log::debug!("pipeline: cannot append to {}: {e:#}", path.display());
                     }
@@ -1301,10 +1722,13 @@ impl Pipeline {
                 return;
             }
         };
-        let rows = compact(text.lines().filter_map(parse_history).collect(), unix_ms());
+        let samples = compact(
+            text.lines().filter_map(Sample::parse_line).collect(),
+            unix_ms(),
+        );
         let mut out = String::new();
-        for row in &rows {
-            out.push_str(&history_line(row));
+        for sample in &samples {
+            out.push_str(&sample.line());
             out.push('\n');
         }
         if let Err(e) = write_atomic(path, out.as_bytes()) {
@@ -1315,17 +1739,17 @@ impl Pipeline {
         }
         let oldest = unix_ms().saturating_sub(KEEP.as_millis() as u64);
         let mut inner = self.inner();
-        for (sample, running) in rows.into_iter().filter(|(s, _)| s.t_ms >= oldest) {
-            for id in running {
-                note_running(inner.spans.entry(id).or_default(), sample.t_ms);
+        for sample in samples.into_iter().filter(|s| s.t_ms >= oldest) {
+            for (id, _) in &sample.running {
+                note_running(inner.spans.entry(id.clone()).or_default(), sample.t_ms);
             }
             inner.samples.push_back(sample);
         }
     }
 
-    /// One sample of the machine, the queue's processes and their progress;
-    /// answers the sample and the entries seen running
-    fn sample(&self) -> (Sample, Vec<String>) {
+    /// One sample of the machine, both GPUs, the queue's processes and
+    /// their progress
+    fn sample(&self) -> Sample {
         let now = unix_ms();
         // The slow parts first, without the lock
         let gpu = nvidia_smi(&[
@@ -1345,6 +1769,7 @@ impl Pipeline {
             })
             .map(|text| parse_apps(&text))
             .unwrap_or_default();
+        let remote = read_remote(&self.settings.remote, now);
         let (clk_tck, page) = clock();
         let cpu = cpu_ticks();
         let memory = meminfo();
@@ -1388,13 +1813,19 @@ impl Pipeline {
 
         // Which processes belong to which entry: its process group, its
         // process and children, or the processes its pattern names (with
-        // their groups when they lead them)
+        // their groups when they lead them); an entry of another machine
+        // has none here
         let by_pid: HashMap<u32, &ProcStat> = procs.iter().map(|p| (p.pid, p)).collect();
         let boot_ms = cpu.map_or(0, |(_, _, boot)| boot * 1000);
         let mut owner: HashMap<u32, String> = HashMap::new();
         let mut live: HashMap<String, Live> = HashMap::new();
         // Running entries claim processes before waiting ones
-        let mut entries: Vec<&Entry> = inner.queue.entries.iter().filter(|e| e.active()).collect();
+        let mut entries: Vec<&Entry> = inner
+            .queue
+            .entries
+            .iter()
+            .filter(|e| e.active() && e.machine().is_none())
+            .collect();
         entries.sort_by_key(|entry| entry.status() != "running");
         for entry in entries {
             let mut members: Vec<u32> = Vec::new();
@@ -1504,25 +1935,59 @@ impl Pipeline {
         inner.load = load;
         inner.memory = memory;
 
+        // The entries seen running: those with processes here, with the
+        // CPU they took (not known of the first sample), and the one the
+        // win11 runner runs, while its file is fresh
+        let mut running: Vec<(String, f64)> = live
+            .iter()
+            .map(|(id, info)| {
+                let cores = elapsed.map_or(f64::NAN, |_| info.cpu_percent / 100.0);
+                (id.clone(), cores)
+            })
+            .collect();
+        if let Some(id) = remote.as_ref().and_then(Remote::running)
+            && inner.queue.entries.iter().any(|entry| entry.id == id)
+            && !live.contains_key(id)
+        {
+            running.push((id.to_string(), f64::NAN));
+        }
+        running.sort_by(|a, b| a.0.cmp(&b.0));
+
         let reading = gpu.as_ref().ok().and_then(Option::as_ref);
         let number = |v: Option<f64>| v.unwrap_or(f64::NAN);
+        let remote_reading = remote
+            .as_ref()
+            .filter(|remote| remote.fresh)
+            .and_then(|remote| remote.gpu.as_ref());
         let sample = Sample {
             t_ms: now,
-            util: number(reading.and_then(|g| g.util)),
-            mem_mib: number(reading.and_then(|g| g.mem_used_mib)),
-            jobs_mib: if reading.is_some() {
-                jobs_mib
-            } else {
-                f64::NAN
+            gpu: GpuSample {
+                util: number(reading.and_then(|g| g.util)),
+                mem_mib: number(reading.and_then(|g| g.mem_used_mib)),
+                jobs_mib: if reading.is_some() {
+                    jobs_mib
+                } else {
+                    f64::NAN
+                },
+                temp_c: number(reading.and_then(|g| g.temp_c)),
+                power_w: number(reading.and_then(|g| g.power_w)),
             },
-            temp_c: number(reading.and_then(|g| g.temp_c)),
-            power_w: number(reading.and_then(|g| g.power_w)),
+            remote: GpuSample {
+                util: number(remote_reading.and_then(|g| g.util)),
+                mem_mib: number(remote_reading.and_then(|g| g.mem_used_mib)),
+                temp_c: number(remote_reading.and_then(|g| g.temp_c)),
+                power_w: number(remote_reading.and_then(|g| g.power_w)),
+                ..GpuSample::UNKNOWN
+            },
             cpu: number(cpu_percent),
+            load: load.map_or(f64::NAN, |[one, ..]| one),
             ram_mib: memory.map_or(f64::NAN, |[total, available, ..]| {
                 total.saturating_sub(available) as f64 / (1 << 20) as f64
             }),
+            running,
         };
-        inner.samples.push_back(sample);
+        inner.samples.push_back(sample.clone());
+        inner.remote = remote;
         let oldest = now.saturating_sub(KEEP.as_millis() as u64);
         while inner.samples.front().is_some_and(|s| s.t_ms < oldest) {
             inner.samples.pop_front();
@@ -1544,9 +2009,7 @@ impl Pipeline {
         inner.gpu_procs = gpu_procs;
 
         // When each entry was seen running
-        let mut seen_running: Vec<String> = live.keys().cloned().collect();
-        seen_running.sort_unstable();
-        for id in &seen_running {
+        for (id, _) in &sample.running {
             note_running(inner.spans.entry(id.clone()).or_default(), now);
         }
         for spans in inner.spans.values_mut() {
@@ -1570,30 +2033,43 @@ impl Pipeline {
             .collect();
         let mut progress = HashMap::new();
         for entry in &running {
-            if let Some(found) = self.progress_of(&mut inner, entry, now) {
+            let alive = sample.running.iter().any(|(id, _)| *id == entry.id);
+            if let Some(found) = self.progress_of(&mut inner, entry, alive, now) {
                 progress.insert(entry.id.clone(), found);
             }
         }
         let ids: HashSet<&String> = running.iter().map(|entry| &entry.id).collect();
         inner.seen.retain(|id, _| ids.contains(id));
+        inner.moved.retain(|id, _| ids.contains(id));
         inner.progress = progress;
-        (sample, seen_running)
+        sample
     }
 
     /// An entry's progress now, from its run folder or its log, with the
-    /// rate over what was seen of it lately
-    fn progress_of(&self, inner: &mut Inner, entry: &Entry, now: u64) -> Option<Progress> {
+    /// rate over what was seen of it lately; `alive`: its processes run
+    /// (here, or on the machine whose runner runs it)
+    fn progress_of(
+        &self,
+        inner: &mut Inner,
+        entry: &Entry,
+        alive: bool,
+        now: u64,
+    ) -> Option<Progress> {
         let mut found = None;
         if let Some(dir) = entry.run_dir.as_deref() {
             let dir = self.resolve(dir);
             let series = inner.runs.entry(dir.clone()).or_default();
             series.refresh(&dir);
             if let Some(step) = series.step() {
+                let updated_ms = modified_ms(&dir.join("metrics.jsonl"));
                 found = Some(Progress {
                     step,
                     total: series.total(),
                     source: "metrics",
-                    updated_ms: modified_ms(&dir.join("metrics.jsonl")),
+                    ended: series.end.is_some(),
+                    best_step: series.end,
+                    updated_ms,
+                    moved_ms: updated_ms,
                     s_per_step: series.s_per_step(),
                     loss: series
                         .train
@@ -1617,19 +2093,28 @@ impl Pipeline {
                 });
             }
         }
-        // A log only tells of a live entry: an old one may be anything's
-        let live = entry.status() == "running" || inner.live.contains_key(&entry.id);
+        // A log only tells of a live entry: an old one may be anything's.
+        // Its end lines count only here, where its `N/M` is the progress: a
+        // job's log holds each of its steps, so a run folder's run may be
+        // after the end line of the step before it
         if found.is_none()
-            && live
+            && (entry.status() == "running" || alive)
             && let Some(log) = entry.log.as_deref().map(|log| self.resolve(log))
             && let Some(text) = tail(&log, LOG_TAIL_BYTES)
             && let Some((step, total)) = log_progress(&text)
         {
+            // It moved when the sampler first saw this step
+            let moved = inner.moved.entry(entry.id.clone()).or_insert((step, now));
+            if moved.0 != step {
+                *moved = (step, now);
+            }
             found = Some(Progress {
                 step,
                 total: Some(total),
                 source: "log",
+                ended: log_done(&text),
                 updated_ms: modified_ms(&log),
+                moved_ms: Some(moved.1),
                 ..Progress::default()
             });
         }
@@ -1654,10 +2139,16 @@ impl Pipeline {
             }
             _ => progress.s_per_step.map(|s| 1.0 / s),
         };
+        // No ETA for a run that is over, or that does something else now
+        let stalled = progress
+            .moved_ms
+            .is_some_and(|t| now.saturating_sub(t) > STALL.as_millis() as u64);
         if let (Some(total), Some(rate)) = (progress.total, progress.rate)
             && rate > 0.0
             && total >= progress.step
-            && inner.live.contains_key(&entry.id)
+            && alive
+            && !progress.ended
+            && !stalled
         {
             progress.eta_ms = Some(now + ((total - progress.step) / rate * 1000.0) as u64);
         }
@@ -1670,10 +2161,20 @@ impl Pipeline {
         // A page asking right after a write sees it
         self.reload_queue(&mut inner);
         let order = run_order(&inner.queue.entries);
-        let next = order
-            .iter()
-            .copied()
-            .find(|&i| inner.queue.entries[i].status() == "queued");
+        // What each runner takes next: this host's GPU and CPU, and the
+        // VM's GPU when its runner has written a file
+        let mut runners = vec![format!("gpu:{LOCAL}"), String::from("cpu")];
+        if inner.remote.is_some() {
+            runners.push(format!("gpu:{REMOTE_HOST}"));
+        }
+        let next: Vec<(String, usize)> = runners
+            .into_iter()
+            .filter_map(|device| {
+                let i = next_for(&inner.queue.entries, &device)?;
+                Some((device, i))
+            })
+            .collect();
+        let remote = inner.remote.as_ref();
         let entries: Vec<Value> = inner
             .queue
             .entries
@@ -1682,6 +2183,7 @@ impl Pipeline {
             .map(|(i, entry)| {
                 let time = |t: &Option<String>| t.as_deref().and_then(parse_time);
                 let spans = inner.spans.get(&entry.id);
+                let machine = entry.machine();
                 json!({
                     "id": entry.id,
                     "title": entry.title,
@@ -1689,10 +2191,37 @@ impl Pipeline {
                     "status": entry.status(),
                     "priority": entry.priority,
                     "rank": order.iter().position(|&j| j == i).map(|r| r + 1),
-                    "next": next == Some(i),
+                    "next_on": next
+                        .iter()
+                        .filter(|(_, j)| *j == i)
+                        .map(|(device, _)| device)
+                        .collect::<Vec<_>>(),
+                    "waits": waits_for(&inner.queue.entries, entry),
                     "group": entry.group,
                     "owner": entry.owner,
                     "device": entry.device,
+                    "host": entry.host,
+                    "host_pid": entry.host_pid,
+                    "command": entry.command,
+                    // Another machine: whether its runner's file tells of
+                    // it (fresh, and written since it started: a runner
+                    // copies a job's data over before it writes again), and
+                    // says it runs it
+                    "remote": machine.map(|host| {
+                        let file = remote.filter(|remote| remote.host == host);
+                        let started = time(&entry.started);
+                        let known = file.is_some_and(|remote| {
+                            remote.fresh
+                                && remote.at_ms.zip(started).is_none_or(|(at, started)| {
+                                    i64::try_from(at).is_ok_and(|at| at >= started)
+                                })
+                        });
+                        json!({
+                            "host": host,
+                            "known": known,
+                            "running": file.and_then(Remote::running) == Some(entry.id.as_str()),
+                        })
+                    }),
                     "pid": entry.pid,
                     "pgid": entry.pgid,
                     "match": entry.pattern,
@@ -1728,9 +2257,11 @@ impl Pipeline {
         json!({
             "now_ms": unix_ms(),
             "sample_ms": SAMPLE_EVERY.as_millis() as u64,
+            "stall_ms": STALL.as_millis() as u64,
             "gpu": inner.gpu,
             "gpu_error": inner.gpu_error,
             "gpu_procs": inner.gpu_procs,
+            "remote": inner.remote,
             "cpu": {
                 "percent": inner.cpu,
                 "cores": inner.cores,
@@ -1765,7 +2296,7 @@ impl Pipeline {
             .samples
             .iter()
             .filter(|s| s.t_ms >= from)
-            .copied()
+            .cloned()
             .collect();
         let rows: Vec<Value> = downsample(&samples, MAX_POINTS)
             .iter()
@@ -1997,7 +2528,8 @@ mod tests {
     {"id": "b", "title": "B", "status": "queued", "custom": [1, 2]},
     {"id": "c", "title": "C", "status": "Queued", "priority": 5},
     {"id": "d", "title": "D", "status": "paused"},
-    {"id": "e", "title": "E", "status": "running", "pgid": 12},
+    {"id": "e", "title": "E", "status": "running", "pgid": 12, "host_pid": 5,
+     "command": "python -m x", "host": "win11", "after": ["a"]},
     {"id": "f", "pid": "not a number"}
   ],
   "owner": "day agent"
@@ -2060,6 +2592,11 @@ mod tests {
         // Fields in the helper's order: id first, then title, status
         let b = text.find(r#""id": "b""#).unwrap();
         assert!(text[b..].find("\"title\"").unwrap() < text[b..].find("\"status\"").unwrap());
+        // The runners' fields too: after, host, command, pgid, host_pid
+        let e = &text[text.find(r#""id": "e""#).unwrap()..];
+        let at = |field: &str| e.find(&format!("\"{field}\"")).unwrap();
+        assert!(at("after") < at("host") && at("host") < at("command"));
+        assert!(at("command") < at("pgid") && at("pgid") < at("host_pid"));
         // The same order again changes nothing; running and unknown ids
         // are left out
         assert!(
@@ -2257,54 +2794,279 @@ mod tests {
         let samples: Vec<Sample> = (0..1000)
             .map(|i| Sample {
                 t_ms: i * 5000,
-                util: if i % 2 == 0 { 100.0 } else { 0.0 },
-                mem_mib: i as f64,
+                gpu: GpuSample {
+                    util: if i % 2 == 0 { 100.0 } else { 0.0 },
+                    mem_mib: i as f64,
+                    ..GpuSample::UNKNOWN
+                },
                 ..Sample::default()
             })
             .collect();
         let down = downsample(&samples, 100);
         assert!(down.len() <= 101, "{}", down.len());
         assert_eq!(down.last().unwrap().t_ms, 999 * 5000);
-        // The mean utilization, the most memory
-        assert!(down.iter().all(|s| (s.util - 50.0).abs() <= 10.0));
-        assert_eq!(down.last().unwrap().mem_mib, 999.0);
+        // The mean utilization, the most memory; nothing read stays unknown
+        assert!(down.iter().all(|s| (s.gpu.util - 50.0).abs() <= 10.0));
+        assert_eq!(down.last().unwrap().gpu.mem_mib, 999.0);
+        assert!(down.iter().all(|s| s.remote.util.is_nan()));
         assert_eq!(downsample(&samples[..10], 100).len(), 10);
+    }
+
+    #[test]
+    fn merged_samples_keep_each_entry_and_its_cpu() {
+        let sample = |t_ms: u64, running: &[(&str, f64)]| Sample {
+            t_ms,
+            cpu: 20.0,
+            running: running
+                .iter()
+                .map(|(id, cores)| (String::from(*id), *cores))
+                .collect(),
+            ..Sample::default()
+        };
+        let merged = merge(&[
+            sample(0, &[("b", 1.0)]),
+            sample(5000, &[("a", f64::NAN), ("b", 3.0)]),
+            sample(10000, &[]),
+        ]);
+        assert_eq!(merged.t_ms, 10000);
+        assert_eq!(merged.cpu, 20.0);
+        // Every entry seen, with its mean CPU while it ran; one on another
+        // machine stays unknown
+        assert_eq!(merged.running.len(), 2);
+        assert_eq!(merged.running[0].0, "a");
+        assert!(merged.running[0].1.is_nan());
+        assert_eq!(merged.running[1], (String::from("b"), 2.0));
     }
 
     #[test]
     fn history_survives_the_disk_and_is_compacted() {
         let hour = 3_600_000;
         let now = 30 * 24 * hour;
-        let row = |t_ms: u64, ids: &[&str]| {
-            (
-                Sample {
-                    t_ms,
-                    util: 40.0,
-                    mem_mib: 1000.0,
-                    power_w: f64::NAN,
-                    ..Sample::default()
-                },
-                ids.iter().map(|id| String::from(*id)).collect::<Vec<_>>(),
-            )
+        let sample = |t_ms: u64, ids: &[&str]| Sample {
+            t_ms,
+            gpu: GpuSample {
+                util: 40.0,
+                mem_mib: 1000.0,
+                ..GpuSample::UNKNOWN
+            },
+            running: ids.iter().map(|id| (String::from(*id), 1.5)).collect(),
+            ..Sample::default()
         };
-        let line = history_line(&row(5, &["a"]));
-        let back = parse_history(&line).unwrap();
-        assert_eq!(back.0.t_ms, 5);
-        assert!(back.0.power_w.is_nan());
-        assert_eq!(back.1, ["a"]);
+        let line = sample(5, &["a"]).line();
+        let back = Sample::parse_line(&line).unwrap();
+        assert_eq!(back.t_ms, 5);
+        assert!(back.gpu.power_w.is_nan());
+        assert_eq!(back.running, [(String::from("a"), 1.5)]);
         // A torn last line is skipped
-        assert!(parse_history(&line[..line.len() - 3]).is_none());
+        assert!(Sample::parse_line(&line[..line.len() - 3]).is_none());
 
-        let mut rows = vec![row(now - 8 * 24 * hour, &[])];
-        // Two minutes a day ago, every 5 s: one row a minute
+        let mut samples = vec![sample(now - 8 * 24 * hour, &[])];
+        // Two minutes a day ago, every 5 s: one sample a minute
         let old = now - 24 * hour;
-        rows.extend((0..24).map(|i| row(old + i * 5000, if i == 3 { &["b"] } else { &[] })));
-        rows.extend((0..10).map(|i| row(now - i * 5000, &[])));
-        let kept = compact(rows, now);
+        samples.extend((0..24).map(|i| sample(old + i * 5000, if i == 3 { &["b"] } else { &[] })));
+        samples.extend((0..10).map(|i| sample(now - i * 5000, &[])));
+        let kept = compact(samples, now);
         assert_eq!(kept.len(), 2 + 10);
-        assert_eq!(kept[0].1, ["b"]);
-        assert!(kept.windows(2).all(|w| w[0].0.t_ms <= w[1].0.t_ms));
-        assert_eq!(kept.last().unwrap().0.t_ms, now);
+        assert_eq!(kept[0].running, [(String::from("b"), 1.5)]);
+        assert!(kept.windows(2).all(|w| w[0].t_ms <= w[1].t_ms));
+        assert_eq!(kept.last().unwrap().t_ms, now);
+    }
+
+    #[test]
+    fn history_lines_of_both_versions_read() {
+        // A line of the first version: eight numbers, then the ids
+        let old = r#"[1790754500728,86,4774,1916,73,188.2,60.6,21551,["g-present-dropout"]]"#;
+        let sample = Sample::parse_line(old).unwrap();
+        assert_eq!(sample.gpu.util, 86.0);
+        assert_eq!(sample.gpu.jobs_mib, 1916.0);
+        assert_eq!(sample.cpu, 60.6);
+        assert_eq!(sample.ram_mib, 21551.0);
+        assert!(sample.remote.util.is_nan() && sample.load.is_nan());
+        assert_eq!(sample.running.len(), 1);
+        assert!(sample.running[0].1.is_nan());
+        // A line of this version keeps the ids at index 8, so the first
+        // version's reader still finds its numbers and running entries
+        let new = Sample {
+            t_ms: 7,
+            gpu: GpuSample {
+                util: 90.0,
+                ..GpuSample::UNKNOWN
+            },
+            remote: GpuSample {
+                util: 37.0,
+                mem_mib: 3011.0,
+                temp_c: 70.0,
+                power_w: 105.0,
+                ..GpuSample::UNKNOWN
+            },
+            cpu: 34.2,
+            load: 6.68,
+            ram_mib: 20000.0,
+            running: vec![
+                (String::from("g-chunk-train"), f64::NAN),
+                (String::from("g-present-dropout"), 1.61),
+            ],
+        };
+        let line = new.line();
+        let values: Vec<Value> = serde_json::from_str(&line).unwrap();
+        assert_eq!(values[1], json!(90));
+        assert_eq!(values[8], json!(["g-chunk-train", "g-present-dropout"]));
+        assert_eq!(values[14], json!({"g-present-dropout": 1.61}));
+        let back = Sample::parse_line(&line).unwrap();
+        assert_eq!(back.remote.util, 37.0);
+        assert_eq!(back.remote.power_w, 105.0);
+        assert!(back.remote.jobs_mib.is_nan());
+        assert_eq!(back.load, 6.68);
+        assert!(back.running[0].1.is_nan());
+        assert_eq!(back.running[1].1, 1.61);
+        // The page's row: the numbers, then the CPU of each entry
+        let row = new.row();
+        assert_eq!(row[8], json!(37));
+        assert_eq!(row[12], json!(6.68));
+        assert_eq!(row[13], json!({"g-present-dropout": 1.61}));
+    }
+
+    #[test]
+    fn remote_gpu_files_tell_only_while_fresh() {
+        let text = r#"{
+  "host": "win11",
+  "at": "2026-09-30T00:46:45-07:00",
+  "ok": true,
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 4080 SUPER",
+    "utilization_percent": 37.0,
+    "memory_used_mib": 3011.0,
+    "memory_total_mib": 16376.0,
+    "temperature_c": 70.0,
+    "power_w": 105.0
+  },
+  "processes": [{"pid": 20832, "name": "python.exe", "memory_mib": null}],
+  "job": {"id": "g-chunk-train", "host_pid": 12128},
+  "runner": {"pid": 2115117, "hold": false}
+}"#;
+        let at = parse_time("2026-09-30T00:46:45-07:00").unwrap() as u64;
+        let remote = parse_remote("win11", text, at + 8_000, |pid| pid == 2115117);
+        assert!(remote.fresh && remote.runner && !remote.hold);
+        assert_eq!(remote.at_ms, Some(at));
+        let gpu = remote.gpu.as_ref().unwrap();
+        assert_eq!(gpu.name, "NVIDIA GeForce RTX 4080 SUPER");
+        assert_eq!(gpu.util, Some(37.0));
+        assert_eq!(gpu.mem_total_mib, Some(16376.0));
+        assert_eq!(remote.processes[0].name, "python.exe");
+        assert_eq!(remote.processes[0].memory_mib, None);
+        assert_eq!(remote.running(), Some("g-chunk-train"));
+        assert_eq!(remote.job_pid, Some(12128));
+        // Stale: the job it names says nothing of now
+        let stale = parse_remote("win11", text, at + 10 * 60_000, |_| false);
+        assert!(!stale.fresh && !stale.runner);
+        assert_eq!(stale.running(), None);
+        // The runner could not reach the VM
+        let unreachable = r#"{"host": "win11", "at": "2026-09-30T00:46:45-07:00",
+            "ok": false, "error": "ssh: connect timed out", "job": null}"#;
+        let remote = parse_remote("win11", unreachable, at, |_| true);
+        assert!(remote.fresh && remote.gpu.is_none());
+        assert_eq!(remote.error.as_deref(), Some("ssh: connect timed out"));
+        assert_eq!(remote.running(), None);
+        // A file that does not read
+        let broken = parse_remote("win11", "{", at, |_| true);
+        assert!(!broken.fresh && broken.error.is_some());
+    }
+
+    #[test]
+    fn entries_run_where_their_host_or_device_says() {
+        let entry = |host: Option<&str>, device: Option<&str>| Entry {
+            id: String::from("x"),
+            host: host.map(String::from),
+            device: device.map(String::from),
+            ..Entry::default()
+        };
+        assert_eq!(entry(Some("win11"), None).machine(), Some("win11"));
+        assert_eq!(entry(None, Some("gpu:win11")).machine(), Some("win11"));
+        assert_eq!(entry(Some("linux"), Some("gpu:win11")).machine(), None);
+        assert_eq!(entry(None, Some("gpu:linux")).machine(), None);
+        assert_eq!(entry(None, Some("gpu")).machine(), None);
+        assert_eq!(entry(None, None).machine(), None);
+        assert!(fits(None, "gpu:win11") && fits(Some("gpu"), "gpu:linux"));
+        assert!(fits(Some("gpu:win11"), "gpu:win11"));
+        assert!(!fits(Some("gpu:win11"), "gpu:linux"));
+        assert!(!fits(Some("cpu"), "gpu:linux") && fits(Some("cpu"), "cpu"));
+        assert!(!fits(Some("gpu"), "cpu"));
+    }
+
+    #[test]
+    fn each_runner_takes_the_first_entry_it_can() {
+        let queue = parse_queue(
+            r#"{"entries": [
+              {"id": "held", "status": "queued", "priority": 9, "device": "gpu:linux",
+               "after": ["train"]},
+              {"id": "train", "status": "running", "device": "gpu:win11", "host": "win11"},
+              {"id": "no-command", "status": "queued", "priority": 8, "device": "gpu"},
+              {"id": "anywhere", "status": "queued", "priority": 7, "device": "gpu",
+               "command": "python -m x"},
+              {"id": "cpu-job", "status": "queued", "priority": 6, "device": "cpu"},
+              {"id": "gone-after", "status": "queued", "priority": 5, "after": "missing"},
+              {"id": "paused", "status": "paused", "priority": 10}
+            ]}"#,
+        )
+        .unwrap();
+        let entries = &queue.entries;
+        let id = |i: Option<usize>| i.map(|i| entries[i].id.as_str());
+        // `held` waits for a running entry; the VM's GPU needs a command
+        assert_eq!(waits_for(entries, &entries[0]), ["train"]);
+        assert_eq!(id(next_for(entries, "gpu:linux")), Some("no-command"));
+        assert_eq!(id(next_for(entries, "gpu:win11")), Some("anywhere"));
+        assert_eq!(id(next_for(entries, "cpu")), Some("cpu-job"));
+        // An id no longer in the queue holds nothing back
+        assert!(waits_for(entries, &entries[5]).is_empty());
+    }
+
+    #[test]
+    fn runs_end_by_their_closing_rows() {
+        let mut series = RunSeries::default();
+        for line in [
+            r#"{"step": 500, "split": "train", "loss_total": 3.5}"#,
+            r#"{"step": 600, "split": "train", "loss_total": 3.4}"#,
+            r#"{"step": 600, "split": "val", "loss_total": 5.0, "keyframe_button_acc": 0.4}"#,
+        ] {
+            series.add_line(line.as_bytes());
+        }
+        assert_eq!(series.end, None);
+        // The policy's trainer stopped early: its tuned thresholds, at the
+        // best checkpoint's step
+        series.add_line(br#"{"step": 100, "split": "thresholds", "zr": 0.55}"#);
+        assert_eq!(series.end, Some(100.0));
+        assert_eq!(series.step(), Some(600.0));
+        assert_eq!(series.val[0].values["keyframe_button_acc"], 0.4);
+        // Trained again in the same folder: not over any more
+        series.add_line(br#"{"step": 650, "split": "train", "loss_total": 3.3}"#);
+        assert_eq!(series.end, None);
+        // The IDM's trainer: its tuned validations of best.pt, then last.pt
+        let mut idm = RunSeries::default();
+        idm.add_line(br#"{"step": 7555, "split": "train", "loss_total": 1.0}"#);
+        idm.add_line(br#"{"step": 7000, "split": "val-tuned", "file": "best.pt"}"#);
+        idm.add_line(br#"{"step": 7555, "split": "val-tuned", "file": "last.pt"}"#);
+        assert_eq!(idm.end, Some(7000.0));
+    }
+
+    #[test]
+    fn logs_tell_when_a_trainer_is_done() {
+        let early = "step   500/2000  loss 3.5\n  val   600: loss 5.0\n\
+                     no better loss in 5 validations; stopping\n\
+                     done; best validation loss 4.399 (step 100); runs/policy/x\n";
+        assert!(log_done(early));
+        assert_eq!(log_progress(early), Some((500.0, 2000.0)));
+        // A later run's steps after an earlier one's end
+        let again = format!("{early}step   250/12000  loss 3.4\n");
+        assert!(!log_done(&again));
+        assert!(!log_done("step 250/2000\n"));
+        // Stopping early, before the last line: its best checkpoint is
+        // validated again meanwhile (the IDM's words too)
+        assert!(log_done(
+            "step 500/2000\nno better loss in 5 validations; stopping\n"
+        ));
+        assert!(log_done(
+            "step 5000/7555\nstopping: no new best in 4 validations\n"
+        ));
     }
 
     #[test]

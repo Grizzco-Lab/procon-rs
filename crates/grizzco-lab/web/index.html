@@ -4100,12 +4100,13 @@
       </dialog>
     </div>
 
-    <!-- Pipeline app: the GPU and the experiment queue agents keep in
-         AgentZero's runs/queue.json, live: what runs with its progress and
-         loss, the machine, the GPU over the last hours with what ran when,
-         what waits in the order it runs (drag by the handle to reorder,
-         written back as priorities), what came out and the history.
-         pipeline.js draws it all from /api/pipeline (src/pipeline.rs). -->
+    <!-- Pipeline app: the GPUs (this host's and the win11 VM's) and the
+         experiment queue agents keep in AgentZero's runs/queue.json, live:
+         what runs with its progress and loss, the machine, each GPU over
+         the last hours with its CPU and what ran on it when, what waits in
+         the order it runs (drag by the handle to reorder, written back as
+         priorities), what came out and the history. pipeline.js draws it
+         all from /api/pipeline (src/pipeline.rs). -->
     <div data-app-section="pipeline" hidden>
       <main class="layout" id="pipeline-layout">
         <section class="panel p-pl-now" aria-labelledby="h-pl-now">

@@ -9337,6 +9337,9 @@ button.cf-cite {
   --pl-c8: #e66767;
   --pl-jobs: var(--s1);
   --pl-other: color-mix(in oklab, var(--text-3) 42%, transparent);
+  /* A job's CPU (the CPU's series colour), and no reading */
+  --pl-cpu: color-mix(in oklab, var(--s3) 78%, transparent);
+  --pl-none: color-mix(in oklab, var(--text) 5%, transparent);
   width: 100%;
   max-width: 1760px;
   margin: 0 auto;
@@ -9514,8 +9517,23 @@ button.cf-cite {
 }
 
 .pl-state[data-state="finished"],
-.pl-state[data-state="stopped"] {
+.pl-state[data-state="stopped"],
+.pl-state[data-state="early"],
+.pl-state[data-state="unknown"] {
   --st: var(--text-3);
+}
+
+/* No word from its machine's runner: a question, not an alarm */
+.pl-state[data-state="unknown"] {
+  color: var(--text);
+}
+
+.pl-state[data-state="unknown"] i::before {
+  content: "?";
+  width: auto;
+  height: auto;
+  background: none;
+  font-weight: 800;
 }
 
 .pl-state[data-state="stopped"] i::before {
@@ -9525,7 +9543,8 @@ button.cf-cite {
 }
 
 .pl-state[data-state="done"] i::before,
-.pl-state[data-state="finished"] i::before {
+.pl-state[data-state="finished"] i::before,
+.pl-state[data-state="early"] i::before {
   content: "✓";
   width: auto;
   height: auto;
@@ -9663,12 +9682,14 @@ button.cf-cite {
   background: var(--warning);
 }
 
-.pl-run[data-state="finished"]::before {
+.pl-run[data-state="finished"]::before,
+.pl-run[data-state="unknown"]::before {
   background: var(--text-3);
 }
 
 .pl-run[data-state="gone"],
-.pl-run[data-state="finished"] {
+.pl-run[data-state="finished"],
+.pl-run[data-state="unknown"] {
   --pl-bar: var(--text-3);
 }
 
@@ -9682,6 +9703,31 @@ button.cf-cite {
 .pl-meta {
   color: var(--text-3);
   font-size: 12px;
+}
+
+/* The machine and GPU an entry runs on */
+.pl-where {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--text) 7%, transparent);
+  color: var(--text-2);
+  font:
+    600 11px/1.5 var(--font-num),
+    var(--font-cjk);
+  white-space: nowrap;
+}
+
+/* A chip's outline: the card the GPU sits on */
+.pl-where::before {
+  content: "";
+  width: 9px;
+  height: 7px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  opacity: 0.7;
 }
 
 .pl-elapsed {
@@ -9762,6 +9808,21 @@ button.cf-cite {
 .pl-bar[data-unknown]:not([data-live]) .pl-fill {
   width: 0;
   animation: none;
+}
+
+/* Where a run's step stopped moving, or where it ended: still */
+.pl-bar[data-phase="stalled"] .pl-fill {
+  opacity: 0.5;
+}
+
+.pl-bar[data-phase="ended"] {
+  --pl-bar: var(--text-3);
+}
+
+/* What a run does now that it no longer counts steps */
+.pl-phase {
+  color: var(--text);
+  font-weight: 600;
 }
 
 @keyframes pl-sheen {
@@ -10125,6 +10186,28 @@ button.cf-cite {
   font-size: 11px;
 }
 
+/* The copycat scores under their own heading, which explains them */
+.pl-scores-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  grid-column: 1 / -1;
+  margin: 4px 0 -2px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: help;
+}
+
+.pl-scores-head .pl-dim {
+  font-weight: 400;
+}
+
+.pl-score[title] {
+  cursor: help;
+}
+
 /* Sparklines: a thin line with a faint area, the last point marked */
 .pl-spark {
   display: block;
@@ -10344,6 +10427,35 @@ button.cf-cite {
   background: var(--pl-other);
 }
 
+.key.pl-k-cpu i {
+  height: 8px;
+  background: var(--pl-cpu);
+}
+
+.key.pl-k-none i {
+  height: 8px;
+  background: var(--pl-none);
+  box-shadow: inset 0 0 0 1px var(--grid);
+}
+
+/* A GPU's name over its rows, in the tooltip too */
+.pl-svg .pl-section-title {
+  fill: var(--text-2);
+  font:
+    600 11px var(--font-num),
+    var(--font-cjk);
+  letter-spacing: 0.04em;
+  dominant-baseline: middle;
+}
+
+.pl-tip .tip-head {
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .pl-chart {
   position: relative;
   min-height: 200px;
@@ -10381,9 +10493,9 @@ button.cf-cite {
   stroke: color-mix(in oklab, var(--grid) 70%, transparent);
 }
 
-/* Before the lab started sampling */
+/* No reading: before the lab sampled, or while a GPU was not read */
 .pl-svg .pl-nodata {
-  fill: color-mix(in oklab, var(--text) 3%, transparent);
+  fill: var(--pl-none);
 }
 
 .pl-svg .pl-row-label {
@@ -10414,8 +10526,15 @@ button.cf-cite {
 }
 
 .pl-lane[data-state="gone"] rect,
-.pl-lane[data-state="finished"] rect {
+.pl-lane[data-state="unknown"] rect,
+.pl-lane[data-state="finished"] rect,
+.pl-lane[data-state="early"] rect {
   fill: color-mix(in oklab, var(--text-3) 40%, var(--panel));
+}
+
+/* Its job's CPU, rising from the bar's foot */
+.pl-lane .pl-lane-cpu {
+  fill: var(--pl-cpu);
 }
 
 .pl-lane-label {
@@ -10586,6 +10705,11 @@ button.cf-cite {
 
 .pl-q .pl-why {
   margin-top: 3px;
+}
+
+/* The entries it waits for */
+.pl-waits {
+  color: var(--text-2);
 }
 
 .pl-next {

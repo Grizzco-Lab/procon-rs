@@ -1316,8 +1316,14 @@ const I18N = {
     "pl.idleBusy":
       "The GPU is {util}% busy with work the queue does not list (see Machine).",
     "pl.startedAt": "Started {clock}",
-    "pl.device.gpu": "GPU",
+    "pl.device.gpu": "either GPU",
     "pl.device.cpu": "CPU",
+    "pl.device.gpu:linux": "Linux GPU",
+    "pl.device.gpu:win11": "win11 GPU",
+    "pl.device.host": "{host} GPU",
+    "pl.where.local": "Linux · {gpu}",
+    "pl.where.remote": "{host} · {gpu}",
+    "pl.where.device": "Queued for {device}",
     "pl.progress.steps": "step {step} of {total}",
     "pl.progress.step": "step {step}",
     "pl.progress.items": "{done} of {total}",
@@ -1389,7 +1395,7 @@ const I18N = {
       "Sampled every {s} s since the lab started, {clock}; earlier lanes come from the queue's own times.",
     "pl.timeline.empty": "No samples yet.",
     "pl.timeline.aria":
-      "The GPU over the last {hours} h: busy {util}% now, its memory, and what ran when",
+      "The GPUs over the last {hours} h: this host's busy {util}% now, their memory, this host's CPU, and what ran on each when",
     "pl.queue.count": ({ n }) => (n === 1 ? "1 waiting" : `${n} waiting`),
     "pl.queue.updated": "updated {ago}",
     "pl.queue.empty":
@@ -1420,6 +1426,88 @@ const I18N = {
     "pl.dur.s": "{s} s",
     "pl.dur.m": "{m} min",
     "pl.dur.h": "{h} h {m} min",
+    "pl.state.early": "Stopped early, not marked",
+    "pl.state.unknown": "No word",
+    "pl.state.goneRemote":
+      "The queue says it runs on {host}, but the {host} runner runs nothing.",
+    "pl.state.goneRemoteJob":
+      "The queue says it runs on {host}, but the {host} runner runs {job}.",
+    "pl.state.unknownSince":
+      "No word from the {host} runner since {clock} ({ago}): whether it still runs is unknown.",
+    "pl.state.unknownNever":
+      "The {host} runner has written no GPU file: whether it runs is unknown.",
+    "pl.state.runnerStopped": "Its runner is not running.",
+    "pl.state.unknownStarting":
+      "The {host} runner has taken it and has not written since: it copies the code and data over before the job starts.",
+    "pl.phase.after": "Another step, running for {time}",
+    "pl.phase.afterNow": "Another step is running",
+    "pl.phase.trained": "its training ran all {total} steps",
+    "pl.phase.trainedEarly":
+      "its training stopped early at step {step} of {total}",
+    "pl.phase.trainedAt": "its training ended at step {step}",
+    "pl.phase.ended": "Ran all {total} steps",
+    "pl.phase.endedEarly": "Stopped early at step {step} of {total}",
+    "pl.phase.endedAt": "Ended at step {step}",
+    "pl.phase.best": "best at step {step}",
+    "pl.phase.stalled": "no new step for {time}",
+    "pl.proc.gpuBusy": "GPU busy",
+    "pl.proc.wholeGpu":
+      "The whole {host} GPU: Windows does not tell a process's share",
+    "pl.proc.read": "last read",
+    "pl.log.lastAgo": "Latest line, {ago}",
+    "pl.files.hostPid": "process on {host}",
+    "pl.files.command": "command",
+    "pl.copycat": "Copycat check",
+    "pl.copycat.sub": "beyond repeating the present",
+    "pl.copycat.note":
+      "Actions persist, so a policy can score well by repeating what the frame seen shows, and still never act on its own. These scores count what it gets right beyond the present.",
+    "pl.score.keyframe_button_acc": "keyframe buttons",
+    "pl.score.keyframe_onset_recall": "presses caught",
+    "pl.score.keyframe_release_recall": "releases caught",
+    "pl.score.anticipation_left_x": "anticipation, left x",
+    "pl.score.anticipation_left_y": "left y",
+    "pl.score.anticipation_turn_x": "turn x",
+    "pl.score.anticipation_turn_y": "turn y",
+    "pl.score.turn_corr_x_500ms": "turn r 0.5 s, x",
+    "pl.score.turn_corr_y_500ms": "y",
+    "pl.score.press_f1": "press F1",
+    "pl.score.frame_f1_tolerant": "frame F1 ±2",
+    "pl.score.onset_f1_wide": "onset F1 ±4",
+    "pl.score.hold_iou": "hold IoU",
+    "pl.score.tip.keyframe_button_acc":
+      "Of the moments the target changes a button (ZR, ZL, B, A, R, Y) from the frame seen, the share it gets right. Repeating the present scores 0.",
+    "pl.score.tip.anticipation_left_x":
+      "What its left stick (x) says of the target beyond the frame seen: the partial correlation given the present. A copy of the present scores 0.",
+    "pl.score.tip.turn_corr_x_500ms":
+      "The camera turn summed over half a second, correlated with the player's (x): does the aim go the right way over a moment, not frame by frame.",
+    "pl.score.tip.press_f1":
+      "F1 of presses, a burst counted as one press, averaged over the buttons pressed: does it press when the player does, and as often.",
+    "pl.tile.cpuJobs": "queue {cores} cores",
+    "pl.tile.noReading": "no reading",
+    "pl.tile.unreachable": "unreachable",
+    "pl.tile.remoteSince": "last read {ago}",
+    "pl.tile.runnerStopped": "runner not running",
+    "pl.tile.hold": "on hold",
+    "pl.procs.remoteNote":
+      "Its runner lists the Python processes on the {host} GPU; Windows does not tell their memory",
+    "pl.procs.noReading": "The {host} runner last read its GPU {ago}",
+    "pl.timeline.cpu": "CPU",
+    "pl.timeline.cpuLoad": "CPU · load {load}",
+    "pl.timeline.used": "memory used",
+    "pl.timeline.jobCpu": "job's CPU",
+    "pl.timeline.noReading": "no reading",
+    "pl.timeline.cores": "{cores} cores",
+    "pl.timeline.strip":
+      "Inside each bar, its job's CPU: full height is {cores} cores.",
+    "pl.queue.after": "after {ids}",
+    "pl.queue.afterNote":
+      "Waits for these entries: no runner takes it until they are done",
+    "pl.queue.nextOn": "Next · {on}",
+    "pl.queue.nextNote":
+      "The entry this runner takes next: the first queued one that fits it and waits for nothing",
+    "pl.chip.remote": "{host} {util}%",
+    "pl.results.early":
+      "Stopped early at step {step} of {total} (no better validation); no result written yet.",
   },
 };
 

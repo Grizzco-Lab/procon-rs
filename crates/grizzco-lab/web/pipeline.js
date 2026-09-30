@@ -1,24 +1,37 @@
-// Pipeline app: the GPU and the experiment queue, live. The queue is a file
-// the agents keep, AgentZero's runs/queue.json (agentzero-queue writes it;
-// AgentZero's README has the format): what runs, what waits in the order it
-// runs, why each entry runs (the question it answers) and what came out.
-// The lab samples the GPU and the machine every 5 s and follows each
-// entry's processes and run folder (src/pipeline.rs). The page shows:
+// Pipeline app: the GPUs and the experiment queue, live. The queue is a
+// file the agents keep, AgentZero's runs/queue.json (agentzero-queue writes
+// it; AgentZero's README has the format): what runs, what waits in the order
+// it runs, why each entry runs (the question it answers) and what came out.
+// Two GPUs take its entries: this host's (Linux) and the win11 VM's, whose
+// runner (agentzero-win11 run) runs the entries it takes there (host: win11)
+// and writes the VM's GPU to runs/win11/gpu.json. The lab samples both GPUs,
+// the CPU and the machine every 5 s and follows each entry's processes here
+// or its runner there, and its run folder (src/pipeline.rs). The page shows:
 //
-// - Running: a card per running entry, with its progress and ETA, the loss
-//   curve of its run folder, its latest validation scores, its processes
+// - Running: a card per running entry, labelled with the GPU it runs on,
+//   with its progress and ETA (or, once its training ended or its step
+//   stopped moving, what it does now and for how long), the loss curve of
+//   its run folder, its latest validation and copycat scores, its processes
 //   and its log; also entries whose processes run although the queue still
-//   says queued, and entries the queue says run but whose processes are
-//   gone;
-// - Machine: the GPU, CPU and memory as tiles with the last half hour, and
-//   the GPU's processes with the entries they belong to;
-// - GPU timeline: busy %, memory (the queue's jobs against the rest) and
-//   what ran when, over the last 1 to 12 hours;
-// - Queue: the waiting entries in the order they run, reordered by dragging
-//   the handle (or ↑ ↓ on it), written back as priorities (POST order),
-//   which agents follow (`agentzero-queue next`);
+//   says queued, entries the queue says run but whose processes are gone,
+//   and entries on the VM whose runner has gone quiet;
+// - Machine: this host's GPU, CPU and memory and the VM's GPU as tiles with
+//   the last half hour, and each GPU's processes with their entries;
+// - GPU timeline: per GPU, busy % (this host's with its CPU over it),
+//   memory, and lanes of what ran on it when (each bar with its job's CPU),
+//   over the last 1 to 12 hours; stretches without a reading shaded;
+// - Queue: the waiting entries in the order they run, what each waits for
+//   and which runner takes it next, reordered by dragging the handle (or
+//   ↑ ↓ on it), written back as priorities (POST order), which agents
+//   follow (`agentzero-queue next`);
 // - Results and History: what came out, newest first, and entries whose run
-//   folder reached its last step before the queue said so.
+//   folder reached its last step (or stopped early) before the queue said
+//   so.
+//
+// Timeline rows (GET timeline, and state's samples) are arrays: 0 t, 1 busy
+// %, 2 memory MiB, 3 the queue's jobs' memory, 4 °C, 5 W, 6 CPU %, 7 RAM
+// MiB, 8 the remote GPU's busy %, 9 its memory, 10 its °C, 11 its W, 12
+// load, 13 {entry id: its CPU in cores}; null where nothing was read.
 //
 // It polls while shown (the state every 5 s, the running entries' curves
 // every 10 s) and stops while another app is shown or the tab is hidden.
@@ -54,6 +67,23 @@
     "gyro_corr",
     "stick_bin_accuracy",
   ];
+  /** Copycat scores of AgentZero's policy (what it gets right beyond
+   * repeating the present), the headline ones, each with the companions
+   * its tooltip lists */
+  const COPYCAT = [
+    [
+      "keyframe_button_acc",
+      ["keyframe_onset_recall", "keyframe_release_recall"],
+    ],
+    [
+      "anticipation_left_x",
+      ["anticipation_left_y", "anticipation_turn_x", "anticipation_turn_y"],
+    ],
+    ["turn_corr_x_500ms", ["turn_corr_y_500ms"]],
+    ["press_f1", ["frame_f1_tolerant", "onset_f1_wide", "hold_iou"]],
+  ];
+  /** A step unmoved this long means another phase, if the lab does not say */
+  const STALL_MS = 5 * 60 * 1000;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
   const pl = {
@@ -90,6 +120,8 @@
     orderNote: "",
     /** Opened results' details by entry id, kept so their charts stay */
     details: new Map(),
+    /** The remote GPU's name, kept while its runner cannot read it */
+    remoteName: "",
   };
 
   /** Whether a list's content changed since it was drawn: its signature,
@@ -215,6 +247,21 @@
     return `${day} ${time}`;
   }
 
+  /** A time axis's label: 13:05, or the date where a day starts */
+  function tickLabel(ms) {
+    const date = new Date(ms);
+    if (date.getHours() === 0 && date.getMinutes() === 0)
+      return date.toLocaleDateString(locale(), {
+        month: "short",
+        day: "numeric",
+      });
+    return date.toLocaleTimeString(locale(), {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+
   /** A duration: "1 h 12 min", "12 min", "45 s" */
   function duration(ms) {
     if (ms == null || !Number.isFinite(ms)) return "–";
@@ -276,35 +323,106 @@
 
   // ------------------------------------------------------------ the entries
 
+  /** Whether an entry's work runs: its processes here, or, on another
+   * machine, its runner says so; null while that runner's file tells
+   * nothing of it (stale, or older than the entry's start) */
+  function aliveOf(entry) {
+    const remote = entry.remote;
+    if (remote) return remote.running || (remote.known ? false : null);
+    return Boolean(entry.live?.pids?.length);
+  }
+
+  /** Whether a run is over: its trainer closed it, or all its steps ran */
+  const completeOf = (p) =>
+    Boolean(p && (p.ended || (p.total != null && p.step >= p.total)));
+
+  /** Whether a run ended before its last step (no better validation) */
+  const earlyOf = (p) =>
+    Boolean(p?.ended && p.total != null && p.step < p.total);
+
   /**
    * What the page makes of an entry: its place (running, waiting, finished)
    * and its state word, from the queue's status and what the lab saw:
-   * processes alive (`live`), and a run folder at its last step
+   * processes alive (`live`, or its runner's word on another machine), and
+   * a run folder that ended or reached its last step
    */
   function view(entry) {
-    const alive = Boolean(entry.live?.pids?.length);
+    const alive = aliveOf(entry);
     const progress = entry.progress;
-    const complete = progress?.total != null && progress.step >= progress.total;
+    const complete = completeOf(progress);
+    const ended = earlyOf(progress) ? "early" : "finished";
     const status = entry.status;
     if (alive)
       return {
         place: "running",
         state: status === "running" ? "running" : "detected",
       };
-    // Said to run, nothing of it runs: over if its steps are all done,
-    // else something to look at
-    if (status === "running")
-      return complete
-        ? { place: "finished", state: "finished" }
-        : { place: "running", state: "gone" };
+    // Said to run, nothing of it runs: over if its run ended; unknown while
+    // its machine's runner is quiet; else something to look at
+    if (status === "running") {
+      if (complete) return { place: "finished", state: ended };
+      return { place: "running", state: alive === null ? "unknown" : "gone" };
+    }
     // Waiting, yet its run folder has rows and nothing of it runs: it ran
-    // (to the end, or stopped early) before the queue was told
+    // (to the end, stopped early, or broke off) before the queue was told
     if ((status === "queued" || status === "paused") && progress)
-      return { place: "finished", state: complete ? "finished" : "stopped" };
+      return { place: "finished", state: complete ? ended : "stopped" };
     if (status === "queued" || status === "paused")
       return { place: "waiting", state: status };
     // Done, failed, or a word of the owner's own: over
     return { place: "finished", state: status ?? "done" };
+  }
+
+  /**
+   * What a run does now: `steps` (training, counted), `stalled` (live, its
+   * step unmoved for a while), `after` (live, its training over: another
+   * step of its job runs), `ended` (over, nothing runs), or null without
+   * progress to read
+   */
+  function phaseOf(entry, state) {
+    const p = entry.progress;
+    if (!p) return null;
+    const live = state === "running" || state === "detected";
+    if (p.ended) return live ? "after" : "ended";
+    const stall = pl.state?.stall_ms ?? STALL_MS;
+    if (live && p.moved_ms != null && Date.now() - p.moved_ms > stall)
+      return "stalled";
+    return completeOf(p) && !live ? "ended" : "steps";
+  }
+
+  /** A GPU's name without its maker's words: "RTX 4080 SUPER" */
+  const gpuName = (name) =>
+    (name ?? "").replace(/^NVIDIA\s+/i, "").replace(/^GeForce\s+/i, "");
+
+  /** A machine and its GPU in words: "Linux · RTX 4070 SUPER" */
+  function machineTitle(host, gpu) {
+    const name = gpuName(gpu);
+    if (!host) return t("pl.where.local", { gpu: name || "GPU" });
+    return name ? t("pl.where.remote", { host, gpu: name }) : host;
+  }
+
+  /** The remote GPU's name, or the last one seen */
+  const remoteGpu = () => pl.state?.remote?.gpu?.name || pl.remoteName;
+
+  /** Where an entry runs, in words: its machine and GPU, or the CPU */
+  function whereOf(entry) {
+    if (entry.remote)
+      return machineTitle(
+        entry.remote.host,
+        pl.state?.remote?.host === entry.remote.host ? remoteGpu() : "",
+      );
+    if (entry.device === "cpu") return t("pl.device.cpu");
+    return machineTitle(null, pl.state?.gpu?.name);
+  }
+
+  /** A device in words: "either GPU", "win11 GPU", "CPU" */
+  function deviceWord(device) {
+    if (!device) return null;
+    const key = `pl.device.${device}`;
+    const word = t(key);
+    if (word !== key) return word;
+    const host = device.startsWith("gpu:") ? device.slice(4) : null;
+    return host ? t("pl.device.host", { host }) : device;
   }
 
   /** When an entry ended, as well as the page knows */
@@ -389,6 +507,7 @@
       );
       pl.error = null;
       pl.state = state;
+      if (state.remote?.gpu?.name) pl.remoteName = state.remote.gpu.name;
       addSamples(state.samples ?? []);
       pl.samplingSince = state.sampling_since_ms ?? pl.samplingSince;
       render();
@@ -536,11 +655,16 @@
 
   function renderChip(state) {
     const chip = $("pl-chip");
-    const running = state.queue.entries.filter((e) => e.live?.pids?.length);
+    const running = state.queue.entries.filter((e) => aliveOf(e));
     const gone = state.queue.entries.filter((e) => view(e).state === "gone");
+    const remote = state.remote;
     const parts = [];
     if (state.gpu?.util != null)
       parts.push(t("pl.chip.gpu", { util: num(state.gpu.util) }));
+    if (remote?.fresh && remote.gpu?.util != null)
+      parts.push(
+        t("pl.chip.remote", { host: remote.host, util: num(remote.gpu.util) }),
+      );
     parts.push(
       running.length
         ? t("pl.chip.running", { n: running.length })
@@ -553,7 +677,11 @@
         ? "good"
         : "off";
     chip.querySelector(".chip-text").textContent = parts.join(" · ");
-    chip.title = [state.gpu?.name, ...running.map((e) => `${e.id}: ${e.title}`)]
+    chip.title = [
+      state.gpu?.name,
+      remote ? machineTitle(remote.host, remoteGpu()) : null,
+      ...running.map((e) => `${e.id}: ${e.title}`),
+    ]
       .filter(Boolean)
       .join("\n");
   }
@@ -564,10 +692,11 @@
   function renderRunning(entries, slots) {
     const box = $("pl-running");
     const running = entries.filter((e) => view(e).place === "running");
+    // Those that run first, the ones to look at after them
+    const doubtful = (e) => ["gone", "unknown"].includes(view(e).state);
     running.sort(
       (a, b) =>
-        (view(a).state === "gone") - (view(b).state === "gone") ||
-        (startedAt(a) ?? 0) - (startedAt(b) ?? 0),
+        doubtful(a) - doubtful(b) || (startedAt(a) ?? 0) - (startedAt(b) ?? 0),
     );
     const note = $("pl-now-note");
     note.classList.remove("level-critical");
@@ -578,7 +707,7 @@
       for (const card of box.querySelectorAll(".pl-run"))
         sized.unobserve(card.parts.chart.plot);
       const next = entries
-        .filter((e) => view(e).place === "waiting" && e.status === "queued")
+        .filter((e) => view(e).place === "waiting" && e.next_on?.length)
         .sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9))[0];
       box.replaceChildren(
         el(
@@ -655,12 +784,6 @@
       title: since ? t("pl.startedAt", { clock: clock(since, true) }) : null,
     });
     clockSpan.textContent = since ? stopwatch(Date.now() - since) : "";
-    const meta = [
-      entry.owner,
-      entry.device ? t(`pl.device.${entry.device}`) : null,
-    ]
-      .filter(Boolean)
-      .join(" · ");
     part.head.replaceChildren(
       stateBadge(
         state,
@@ -670,23 +793,27 @@
       ),
       groupChip(entry, slots),
       el("code", { class: "pl-id", text: entry.id }),
-      meta ? el("span", { class: "pl-meta", text: meta }) : null,
+      el("span", {
+        class: "pl-where",
+        "data-remote": entry.remote ? "1" : null,
+        text: whereOf(entry),
+        title: entry.device
+          ? t("pl.where.device", { device: deviceWord(entry.device) })
+          : null,
+      }),
+      entry.owner ? el("span", { class: "pl-meta", text: entry.owner }) : null,
       clockSpan,
     );
     part.title.textContent = entry.title || entry.id;
     part.why.textContent = entry.why;
     part.why.hidden = !entry.why;
-    const warning =
-      state === "gone"
-        ? t("pl.state.goneNote")
-        : state === "detected"
-          ? t("pl.state.detectedNote", { status: entry.status })
-          : state === "finished"
-            ? t("pl.state.finishedNote", { status: entry.status })
-            : "";
-    part.warn.textContent = warning;
-    part.warn.hidden = !warning;
-    part.warn.dataset.level = state === "gone" ? "warning" : "note";
+    part.warn.textContent = warningOf(entry, state);
+    part.warn.hidden = !part.warn.textContent;
+    // A quiet runner that still runs is busy (copying a job's data over);
+    // one that stopped is worth a warning
+    const runnerDown = state === "unknown" && !pl.state?.remote?.runner;
+    part.warn.dataset.level =
+      state === "gone" || runnerDown ? "warning" : "note";
     fillProgress(part.progress, entry, state);
     part.chart.hidden = !entry.run_dir;
     if (entry.run_dir) part.scores.redraw();
@@ -696,11 +823,45 @@
     fillMore(part.more, entry);
   }
 
-  /** The log's last line under a live entry without a run folder: often
-   * the best word on how far it got */
+  /** What a card warns of: nothing of it runs, its runner has gone quiet,
+   * it runs unmarked */
+  function warningOf(entry, state) {
+    const host = entry.remote?.host;
+    const file = pl.state?.remote?.host === host ? pl.state.remote : null;
+    if (state === "gone" && host)
+      return file?.job
+        ? t("pl.state.goneRemoteJob", { host, job: file.job })
+        : t("pl.state.goneRemote", { host });
+    if (state === "gone") return t("pl.state.goneNote");
+    // A fresh file older than the entry: its runner took it and copies its
+    // code and data over before it writes again
+    if (state === "unknown" && file?.fresh)
+      return t("pl.state.unknownStarting", { host });
+    if (state === "unknown") {
+      const said = file?.at_ms
+        ? t("pl.state.unknownSince", {
+            host,
+            clock: clock(file.at_ms),
+            ago: ago(file.at_ms),
+          })
+        : t("pl.state.unknownNever", { host });
+      return file && !file.runner
+        ? `${said} ${t("pl.state.runnerStopped")}`
+        : said;
+    }
+    if (state === "detected")
+      return t("pl.state.detectedNote", { status: entry.status });
+    return "";
+  }
+
+  /** The log's last line under a live entry with no step to count, or
+   * whose training is over or stalled: often the best word on what it does */
   function fillLastLine(box, entry, state) {
     const live = state === "running" || state === "detected";
-    const wanted = Boolean(live && entry.log && !entry.progress);
+    const phase = phaseOf(entry, state);
+    const wanted = Boolean(
+      live && entry.log && (!phase || phase === "after" || phase === "stalled"),
+    );
     box.hidden = !wanted;
     if (!wanted) {
       if (pl.logs.has(entry.id)) pl.logs.get(entry.id).tail = false;
@@ -716,15 +877,24 @@
   function showLastLine(box, log) {
     const last = [...(log.lines ?? [])].reverse().find((line) => line.trim());
     box.replaceChildren(
-      el("span", { class: "pl-stat-label", text: t("pl.log.last") }),
-      el("code", { text: last ?? "…" }),
+      el("span", {
+        class: "pl-stat-label",
+        text: log.modified
+          ? t("pl.log.lastAgo", { ago: ago(log.modified) })
+          : t("pl.log.last"),
+      }),
+      el("code", { text: last ?? "…", title: last ?? null }),
     );
   }
 
-  /** The bar, the step and the ETA */
+  /** The bar, the step and the ETA; or, once the training is over or its
+   * step has stopped moving, what runs now and for how long */
   function fillProgress(box, entry, state) {
     const p = entry.progress;
     const live = state === "running" || state === "detected";
+    const phase = phaseOf(entry, state);
+    if (phase === "after" || phase === "stalled" || phase === "ended")
+      return fillPhase(box, p, phase, live);
     const fraction =
       p?.total > 0 ? Math.min(1, Math.max(0, p.step / p.total)) : null;
     const bar = el(
@@ -799,7 +969,86 @@
     box.replaceChildren(bar, el("div", { class: "pl-progress-row" }, facts));
   }
 
-  /** Its processes: GPU memory, CPU, RAM */
+  /**
+   * A run no longer counting steps: `after` (its training is over and
+   * another step of its job runs: a band that keeps going, and for how
+   * long), `stalled` (the bar where its step stopped, and for how long) or
+   * `ended` (the bar where it stopped, early or at its last step)
+   */
+  function fillPhase(box, p, phase, live) {
+    const fraction =
+      p.total > 0 ? Math.min(1, Math.max(0, p.step / p.total)) : null;
+    const counted = phase !== "after" && fraction != null;
+    const bar = el(
+      "div",
+      {
+        class: "pl-bar",
+        "data-phase": phase,
+        "data-live": phase === "after" ? "1" : null,
+        "data-unknown": counted ? null : "1",
+        role: "progressbar",
+        "aria-valuemin": "0",
+        "aria-valuemax": "100",
+        "aria-valuenow": counted ? Math.round(fraction * 100) : null,
+      },
+      el("div", {
+        class: "pl-fill",
+        style: counted ? `width: ${(fraction * 100).toFixed(2)}%` : "",
+      }),
+    );
+    const since = p.moved_ms != null ? duration(Date.now() - p.moved_ms) : "";
+    const steps = { step: num(p.step), total: num(p.total) };
+    const how =
+      p.total == null ? "At" : earlyOf(p) ? "Early" : completeOf(p) ? "" : "At";
+    const facts = [];
+    if (phase === "after") {
+      facts.push(
+        el("b", {
+          class: "pl-phase",
+          text: since
+            ? t("pl.phase.after", { time: since })
+            : t("pl.phase.afterNow"),
+        }),
+        el("span", { text: t(`pl.phase.trained${how}`, steps) }),
+      );
+    } else if (phase === "stalled") {
+      if (fraction != null)
+        facts.push(
+          el("b", { class: "pl-pct", text: `${num(fraction * 100)}%` }),
+        );
+      facts.push(
+        el("span", {
+          text:
+            p.source === "log"
+              ? t("pl.progress.items", { done: steps.step, total: steps.total })
+              : t("pl.progress.steps", steps),
+        }),
+        el("b", {
+          class: "pl-phase",
+          text: t("pl.phase.stalled", { time: since }),
+        }),
+      );
+    } else {
+      facts.push(
+        el("b", { class: "pl-phase", text: t(`pl.phase.ended${how}`, steps) }),
+      );
+    }
+    if (p.best_step != null && phase !== "stalled")
+      facts.push(
+        el("span", { text: t("pl.phase.best", { step: num(p.best_step) }) }),
+      );
+    if (!live && p.updated_ms)
+      facts.push(
+        el("span", {
+          class: "pl-dim",
+          text: t("pl.progress.written", { ago: ago(p.updated_ms) }),
+        }),
+      );
+    box.replaceChildren(bar, el("div", { class: "pl-progress-row" }, facts));
+  }
+
+  /** Its processes: GPU memory, CPU, RAM; on another machine, that
+   * machine's GPU as its runner reads it */
   function fillStats(box, entry) {
     const live = entry.live;
     const cells = [];
@@ -810,6 +1059,29 @@
         el("span", { class: "pl-stat-label", text: label }),
         el("b", { class: "num", text: value }),
       );
+    const remote = pl.state?.remote;
+    if (entry.remote?.running && remote?.host === entry.remote.host) {
+      const gpu = remote.gpu;
+      const whole = t("pl.proc.wholeGpu", { host: remote.host });
+      if (gpu?.util != null)
+        cells.push(cell(t("pl.proc.gpuBusy"), `${num(gpu.util)}%`, whole));
+      if (gpu?.mem_used_mib != null)
+        cells.push(
+          cell(
+            t("pl.proc.gpu"),
+            `${num(gpu.mem_used_mib / 1024, 1)} / ${gib(gpu.mem_total_mib ?? 0)}`,
+            whole,
+          ),
+        );
+      cells.push(
+        cell(
+          t("pl.proc.procs"),
+          num(remote.processes.length),
+          remote.processes.map((p) => `${p.name} ${p.pid ?? ""}`).join(", "),
+        ),
+        cell(t("pl.proc.read"), ago(remote.at_ms)),
+      );
+    }
     if (live) {
       if (live.gpu_mib > 0)
         cells.push(cell(t("pl.proc.gpu"), gib(live.gpu_mib)));
@@ -836,6 +1108,9 @@
       entry.run_dir,
       entry.pgid,
       entry.match,
+      entry.host,
+      entry.host_pid,
+      entry.command,
       entry.notes,
       Boolean(args),
     ];
@@ -896,6 +1171,10 @@
       entry.log ? [t("pl.files.log"), entry.log] : null,
       entry.pgid ? ["pgid", String(entry.pgid)] : null,
       entry.match ? [t("pl.files.match"), entry.match] : null,
+      entry.host_pid && entry.host
+        ? [t("pl.files.hostPid", { host: entry.host }), String(entry.host_pid)]
+        : null,
+      entry.command ? [t("pl.files.command"), entry.command] : null,
     ].filter(Boolean);
     if (entry.notes?.length || files.length)
       parts.push(
@@ -1075,6 +1354,14 @@
     const x = (step) => pad.l + (step / total) * w;
     const y = (v) => pad.t + ((hi - v) / (hi - lo)) * h;
     const clipId = `pl-clip-${id.replace(/[^a-z0-9_-]/gi, "")}`;
+    // Whether it trains now: then the steps to its total are still to run
+    const entry = pl.state?.queue.entries.find((e) => e.id === id);
+    const { state } = entry ? view(entry) : {};
+    const training =
+      entry &&
+      (state === "running" || state === "detected") &&
+      phaseOf(entry, state) === "steps";
+    const ended = Boolean(entry?.progress?.ended);
     const root = svg("svg", {
       class: "pl-svg",
       width,
@@ -1098,8 +1385,8 @@
         ),
       ),
     );
-    // Steps still to run
-    if (lastStep < total)
+    // Steps still to run, unless the run ended before them
+    if (lastStep < total && !ended)
       root.append(
         svg("rect", {
           class: "pl-future",
@@ -1174,13 +1461,10 @@
           );
     }
     root.append(lines);
-    // The newest point of the train loss, breathing while it runs
+    // The newest point of the train loss, breathing while it trains
     const train = series[0];
     const [lastX, lastV] = train.points[train.points.length - 1];
-    const running =
-      view(pl.state?.queue.entries.find((e) => e.id === id) ?? {}).place ===
-      "running";
-    if (running && lastV >= lo && lastV <= hi)
+    if (training && lastV >= lo && lastV <= hi)
       root.append(
         svg("circle", {
           class: `pl-now ${train.cls}`,
@@ -1266,40 +1550,75 @@
   function drawScores(box, id) {
     const data = pl.runs.get(id)?.data;
     const rows = (data?.val ?? []).filter((row) => row.split === "val");
-    const keys = SCORES.filter((key) =>
-      rows.some((row) => row.values[key] != null),
-    ).slice(0, 4);
-    box.hidden = !keys.length;
-    if (!keys.length) return box.replaceChildren();
-    box.replaceChildren(
-      ...keys.map((key) => {
-        const points = rows
-          .filter((row) => row.values[key] != null)
-          .map((row) => [row.step, row.values[key]]);
-        const [bestStep, best] = points.reduce((a, b) => (b[1] > a[1] ? b : a));
-        const last = points[points.length - 1][1];
-        return el(
-          "div",
-          { class: "pl-score" },
-          el("span", { class: "pl-score-label", text: t(`pl.score.${key}`) }),
-          el("b", { class: "pl-score-value", text: num(last, 3) }),
-          sparkline(points, { cls: "s2", best: [bestStep, best] }),
-          el("span", {
-            class: "pl-score-note",
-            text: t("pl.score.best", {
-              value: num(best, 3),
-              step: steps(bestStep),
-            }),
+    const has = (key) => rows.some((row) => row.values[key] != null);
+    const keys = SCORES.filter(has).slice(0, 4);
+    const copycat = COPYCAT.filter(([key]) => has(key));
+    box.hidden = !keys.length && !copycat.length;
+    if (box.hidden) return box.replaceChildren();
+    const latest = rows[rows.length - 1]?.values ?? {};
+    /** A score's tile: its latest value, its course and its best */
+    const tile = (key, title) => {
+      const points = rows
+        .filter((row) => row.values[key] != null)
+        .map((row) => [row.step, row.values[key]]);
+      const [bestStep, best] = points.reduce((a, b) => (b[1] > a[1] ? b : a));
+      const last = points[points.length - 1][1];
+      return el(
+        "div",
+        { class: "pl-score", title: title ?? null },
+        el("span", { class: "pl-score-label", text: t(`pl.score.${key}`) }),
+        el("b", { class: "pl-score-value", text: num(last, 3) }),
+        sparkline(points, { cls: "s2", best: [bestStep, best] }),
+        el("span", {
+          class: "pl-score-note",
+          text: t("pl.score.best", {
+            value: num(best, 3),
+            step: steps(bestStep),
           }),
-        );
-      }),
+        }),
+      );
+    };
+    // The copycat scores explain themselves, their companions' latest
+    // values after
+    const copycatTip = (key, companions) =>
+      [
+        t(`pl.score.tip.${key}`),
+        companions
+          .filter((other) => latest[other] != null)
+          .map((other) => `${t(`pl.score.${other}`)} ${num(latest[other], 3)}`)
+          .join(" · "),
+      ]
+        .filter(Boolean)
+        .join("\n");
+    box.replaceChildren(
+      ...keys.map((key) => tile(key)),
+      copycat.length
+        ? el(
+            "p",
+            { class: "pl-scores-head", title: t("pl.copycat.note") },
+            el("span", { text: t("pl.copycat") }),
+            el("span", { class: "pl-dim", text: t("pl.copycat.sub") }),
+          )
+        : null,
+      ...copycat.map(([key, companions]) =>
+        tile(key, copycatTip(key, companions)),
+      ),
     );
   }
 
-  /** A small line of points [[x, y]], its last point marked */
+  /** A small line of points [[x, y]], its last point marked; over `span`
+   * ([x0, x1], else its points' own), broken where a point is missing or
+   * the next is more than `gap` further */
   function sparkline(
     points,
-    { cls = "s1", best = null, lo = null, hi = null } = {},
+    {
+      cls = "s1",
+      best = null,
+      lo = null,
+      hi = null,
+      span = null,
+      gap = Infinity,
+    } = {},
   ) {
     const width = 120;
     const height = 28;
@@ -1309,29 +1628,42 @@
       preserveAspectRatio: "none",
       "aria-hidden": "true",
     });
-    const finite = points.filter(([, v]) => v != null && Number.isFinite(v));
+    const has = (v) => v != null && Number.isFinite(v);
+    const finite = points.filter(([, v]) => has(v));
     if (finite.length < 2) return root;
     const xs = finite.map(([x]) => x);
     const vs = finite.map(([, v]) => v);
-    const x0 = Math.min(...xs);
-    const x1 = Math.max(...xs);
+    const [x0, x1] = span ?? [Math.min(...xs), Math.max(...xs)];
     const v0 = lo ?? Math.min(...vs);
     const v1 = hi ?? Math.max(...vs);
     const sx = (v) => 2 + ((v - x0) / (x1 - x0 || 1)) * (width - 6);
     const sy = (v) => 3 + ((v1 - v) / (v1 - v0 || 1)) * (height - 6);
-    const d = finite
-      .map(
-        ([x, v], i) =>
-          `${i ? "L" : "M"}${sx(x).toFixed(1)},${sy(v).toFixed(1)}`,
-      )
-      .join("");
-    root.append(
-      svg("path", {
-        class: `pl-spark-area ${cls}`,
-        d: `${d}L${sx(x1).toFixed(1)},${height}L${sx(x0).toFixed(1)},${height}Z`,
-      }),
-      svg("path", { class: `pl-spark-line ${cls}`, d }),
-    );
+    const segments = [];
+    let current = null;
+    for (const [x, v] of points) {
+      const previous = current?.[current.length - 1];
+      if (!has(v) || (previous && x - previous[0] > gap)) current = null;
+      if (!has(v)) continue;
+      if (!current) segments.push((current = []));
+      current.push([x, v]);
+    }
+    for (const segment of segments) {
+      const d = segment
+        .map(
+          ([x, v], i) =>
+            `${i ? "L" : "M"}${sx(x).toFixed(1)},${sy(v).toFixed(1)}`,
+        )
+        .join("");
+      const [first] = segment[0];
+      const [last] = segment[segment.length - 1];
+      root.append(
+        svg("path", {
+          class: `pl-spark-area ${cls}`,
+          d: `${d}L${sx(last).toFixed(1)},${height}L${sx(first).toFixed(1)},${height}Z`,
+        }),
+        svg("path", { class: `pl-spark-line ${cls}`, d }),
+      );
+    }
     // Dots as round-capped strokes of no length: round however the line
     // is stretched to its tile
     const dot = (px, py, name) =>
@@ -1347,12 +1679,23 @@
   function renderMachine(state) {
     const gpu = state.gpu;
     $("pl-gpu-name").textContent = gpu
-      ? `${gpu.name.replace(/^NVIDIA /, "")}${gpu.pstate ? ` · ${gpu.pstate}` : ""}`
+      ? `${machineTitle(null, gpu.name)}${gpu.pstate ? ` · ${gpu.pstate}` : ""}`
       : "";
+    // The last half hour's course of row index `i`, missing readings as
+    // gaps
+    const now = Date.now();
     const recent = pl.samples.filter(
-      (row) => row[0] >= Date.now() - SPARK_MINUTES * 60000,
+      (row) => row[0] >= now - SPARK_MINUTES * 60000,
     );
-    const course = (i) => recent.map((row) => [row[0], row[i]]);
+    const course = (i, options) =>
+      sparkline(
+        recent.map((row) => [row[0], row[i]]),
+        {
+          span: [now - SPARK_MINUTES * 60000, now],
+          gap: Math.max(20000, ((pl.minutes * 60000) / 720) * 3),
+          ...options,
+        },
+      );
     const tiles = [];
     const tile = (label, value, { spark, meter, note, level, title } = {}) =>
       el(
@@ -1367,7 +1710,7 @@
     if (gpu) {
       tiles.push(
         tile(t("pl.tile.gpuBusy"), `${num(gpu.util)}%`, {
-          spark: sparkline(course(1), { cls: "s1", lo: 0, hi: 100 }),
+          spark: course(1, { cls: "s1", lo: 0, hi: 100 }),
           note: t("pl.tile.last", { minutes: SPARK_MINUTES }),
         }),
       );
@@ -1395,7 +1738,7 @@
       );
       tiles.push(
         tile(t("pl.tile.temp"), `${num(gpu.temp_c)} °C`, {
-          spark: sparkline(course(4), { cls: "s2" }),
+          spark: course(4, { cls: "s2" }),
           note:
             gpu.fan != null ? t("pl.tile.fan", { fan: num(gpu.fan) }) : null,
           level: gpu.temp_c >= 83 ? "warning" : null,
@@ -1415,13 +1758,25 @@
       );
     }
     const cpu = state.cpu;
+    // The queue's share of it, in cores
+    const jobCores = state.queue.entries.reduce(
+      (sum, e) => sum + (e.live?.cpu_percent ?? 0) / 100,
+      0,
+    );
     tiles.push(
       tile(t("pl.tile.cpu"), `${num(cpu.percent)}%`, {
-        spark: sparkline(course(6), { cls: "s3", lo: 0, hi: 100 }),
-        note: t("pl.tile.cpuNote", {
-          cores: cpu.cores,
-          load: cpu.load ? num(cpu.load[0], 1) : "–",
-        }),
+        spark: course(6, { cls: "s3", lo: 0, hi: 100 }),
+        note: [
+          t("pl.tile.cpuNote", {
+            cores: cpu.cores,
+            load: cpu.load ? num(cpu.load[0], 1) : "–",
+          }),
+          jobCores > 0
+            ? t("pl.tile.cpuJobs", { cores: num(jobCores, 1) })
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
       }),
     );
     const memory = state.memory;
@@ -1459,6 +1814,56 @@
         ),
       );
     }
+    // The VM's GPU as its runner last read it: its numbers while that is
+    // fresh, else when it last did and whether the runner still runs
+    const remote = state.remote;
+    if (remote) {
+      const reading = remote.fresh ? remote.gpu : null;
+      // An entry the queue says runs there: then no reading is a warning
+      const expected = state.queue.entries.some(
+        (e) => e.remote?.host === remote.host && e.status === "running",
+      );
+      const since = remote.at_ms
+        ? t("pl.tile.remoteSince", { ago: ago(remote.at_ms) })
+        : null;
+      const down = remote.runner ? null : t("pl.tile.runnerStopped");
+      tiles.push(
+        tile(
+          machineTitle(remote.host, remoteGpu()),
+          reading?.util != null
+            ? `${num(reading.util)}%`
+            : remote.fresh
+              ? t("pl.tile.unreachable")
+              : t("pl.tile.noReading"),
+          {
+            spark: course(8, { cls: "s1", lo: 0, hi: 100 }),
+            meter: reading
+              ? stackedMeter(
+                  [{ value: reading.mem_used_mib ?? 0, cls: "pl-m-other" }],
+                  reading.mem_total_mib ?? 0,
+                )
+              : null,
+            note: reading
+              ? [
+                  `${num((reading.mem_used_mib ?? 0) / 1024, 1)} / ${gib(reading.mem_total_mib ?? 0)}`,
+                  reading.temp_c != null ? `${num(reading.temp_c)} °C` : null,
+                  reading.power_w != null ? `${num(reading.power_w)} W` : null,
+                  remote.hold ? t("pl.tile.hold") : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : [remote.fresh ? remote.error : since, down]
+                  .filter(Boolean)
+                  .join(" · "),
+            level:
+              (!reading && expected) || reading?.temp_c >= 83
+                ? "warning"
+                : null,
+            title: remote.error ?? null,
+          },
+        ),
+      );
+    }
     $("pl-tiles").replaceChildren(...tiles);
     renderProcesses(state);
   }
@@ -1479,24 +1884,13 @@
     return track;
   }
 
-  /** The GPU's compute processes: memory, name, entry */
+  /** Each GPU's compute processes: memory, name, entry */
   function renderProcesses(state) {
     const box = $("pl-procs");
     const gpu = state.gpu;
-    if (!gpu) {
-      box.replaceChildren(
-        el("p", {
-          class: "panel-note",
-          text: t("pl.noGpu", { error: state.gpu_error ?? "" }),
-        }),
-      );
-      return;
-    }
-    const total = gpu.mem_total_mib || 1;
-    const procs = state.gpu_procs ?? [];
-    const counted = procs.reduce((sum, p) => sum + (p.gpu_mib ?? 0), 0);
-    const rest = Math.max(0, (gpu.mem_used_mib ?? 0) - counted);
-    const row = (mib, name, detail, entry, title) =>
+    const remote = state.remote;
+    // A process's row: its share of the GPU's memory (unknown on Windows)
+    const row = (mib, total, name, detail, entry, title) =>
       el(
         "li",
         {
@@ -1507,30 +1901,94 @@
         el(
           "span",
           { class: "pl-proc-bar", "aria-hidden": "true" },
-          el("i", {
-            style: `width: ${Math.max(1.5, (mib / total) * 100).toFixed(2)}%`,
-          }),
+          mib == null
+            ? null
+            : el("i", {
+                style: `width: ${Math.max(1.5, (mib / (total || 1)) * 100).toFixed(2)}%`,
+              }),
         ),
-        el("b", { class: "pl-proc-mem num", text: gib(mib) }),
+        el("b", {
+          class: "pl-proc-mem num",
+          text: mib == null ? "–" : gib(mib),
+        }),
         el("span", { class: "pl-proc-name", text: name }),
         entry ? el("code", { class: "pl-proc-entry", text: entry }) : null,
         detail
           ? el("span", { class: "pl-proc-detail num", text: detail })
           : null,
       );
-    const rows = procs.map((p) =>
-      row(p.gpu_mib ?? 0, p.name, `pid ${p.pid}`, p.entry, p.command),
-    );
-    if (rest > 0)
-      rows.push(
-        row(rest, t("pl.procs.other"), null, null, t("pl.procs.otherNote")),
+    const parts = [];
+    if (!gpu) {
+      parts.push(
+        el("p", {
+          class: "panel-note",
+          text: t("pl.noGpu", { error: state.gpu_error ?? "" }),
+        }),
       );
-    box.replaceChildren(
-      el("h3", { class: "pl-sub", text: t("pl.procs.title") }),
-      rows.length
-        ? el("ul", { class: "pl-proc-list" }, rows)
-        : el("p", { class: "panel-note", text: t("pl.procs.none") }),
-    );
+    } else {
+      const total = gpu.mem_total_mib || 1;
+      const procs = state.gpu_procs ?? [];
+      const counted = procs.reduce((sum, p) => sum + (p.gpu_mib ?? 0), 0);
+      const rest = Math.max(0, (gpu.mem_used_mib ?? 0) - counted);
+      const rows = procs.map((p) =>
+        row(p.gpu_mib ?? 0, total, p.name, `pid ${p.pid}`, p.entry, p.command),
+      );
+      if (rest > 0)
+        rows.push(
+          row(
+            rest,
+            total,
+            t("pl.procs.other"),
+            null,
+            null,
+            t("pl.procs.otherNote"),
+          ),
+        );
+      parts.push(
+        el("h3", {
+          class: "pl-sub",
+          text: remote ? machineTitle(null, gpu.name) : t("pl.procs.title"),
+        }),
+        rows.length
+          ? el("ul", { class: "pl-proc-list" }, rows)
+          : el("p", { class: "panel-note", text: t("pl.procs.none") }),
+      );
+    }
+    // The VM's: the Python processes its runner lists, the runner's job
+    // on them
+    if (remote) {
+      const job = remote.fresh ? remote.job : null;
+      const rows = remote.fresh
+        ? remote.processes.map((p) =>
+            row(
+              p.memory_mib,
+              remote.gpu?.mem_total_mib,
+              p.name,
+              p.pid != null ? `pid ${p.pid}` : null,
+              /^python/i.test(p.name) ? job : null,
+              t("pl.procs.remoteNote", { host: remote.host }),
+            ),
+          )
+        : [];
+      parts.push(
+        el("h3", {
+          class: "pl-sub",
+          text: machineTitle(remote.host, remoteGpu()),
+        }),
+        rows.length
+          ? el("ul", { class: "pl-proc-list" }, rows)
+          : el("p", {
+              class: "panel-note",
+              text: remote.fresh
+                ? t("pl.procs.none")
+                : t("pl.procs.noReading", {
+                    host: remote.host,
+                    ago: ago(remote.at_ms),
+                  }),
+            }),
+      );
+    }
+    box.replaceChildren(...parts);
   }
 
   // ------------------------------------------------------------ timeline
@@ -1549,10 +2007,11 @@
   });
   sized.observe(timelineBox);
 
-  /** The entries' bars over [from, to]: the spans the lab saw them
-   * running, else the queue's own times, packed into lanes */
-  function laneBars(from, to) {
-    const entries = pl.state?.queue.entries ?? [];
+  /** The entries' bars over [from, to] of the entries `keep` takes: the
+   * spans the lab saw them running, else the queue's own times, packed
+   * into lanes */
+  function laneBars(from, to, keep) {
+    const entries = (pl.state?.queue.entries ?? []).filter(keep);
     const bars = [];
     for (const entry of entries) {
       const seen = pl.spans[entry.id];
@@ -1588,34 +2047,82 @@
     return { bars, lanes: lanes.length };
   }
 
+  /** The timeline's sections, top to bottom: this host's GPU, its CPU
+   * over its busy row, and the entries that ran here (GPU and CPU alike);
+   * then the remote GPU and its entries, while its runner has a file or
+   * the window holds its readings or its entries. Each names its row
+   * indexes: busy, memory, the jobs' memory (this host's only), °C, W */
+  function timelineSections(rows, from, to) {
+    const state = pl.state;
+    const remote = state.remote;
+    const host =
+      remote?.host ?? state.queue.entries.find((e) => e.remote)?.remote.host;
+    const there = (e) => Boolean(host) && e.remote?.host === host;
+    const sections = [
+      {
+        key: "local",
+        title: machineTitle(null, state.gpu?.name),
+        busy: 1,
+        mem: 2,
+        jobs: 3,
+        temp: 4,
+        power: 5,
+        total: state.gpu?.mem_total_mib,
+        cpu: true,
+        ...laneBars(from, to, (e) => !there(e)),
+      },
+    ];
+    if (host) {
+      const far = {
+        key: "remote",
+        title: machineTitle(host, remoteGpu()),
+        busy: 8,
+        mem: 9,
+        jobs: null,
+        temp: 10,
+        power: 11,
+        total: remote?.gpu?.mem_total_mib,
+        cpu: false,
+        ...laneBars(from, to, there),
+      };
+      if (remote || far.bars.length || rows.some((row) => row[8] != null))
+        sections.push(far);
+    }
+    return sections;
+  }
+
   function renderTimeline() {
     const box = timelineBox;
     const width = Math.round(box.clientWidth);
     if (!width || !pl.state) return;
-    const gpu = pl.state.gpu;
     const to = Date.now();
     const from = to - pl.minutes * 60000;
     const rows = pl.samples.filter((row) => row[0] >= from);
-    const { bars, lanes } = laneBars(from, to);
+    const sections = timelineSections(rows, from, to);
     const narrow = width < 560;
     // Room on the right for each row's latest value
-    const pad = { l: narrow ? 40 : 52, r: 46, t: 8 };
-    const busyH = narrow ? 56 : 72;
-    const memH = narrow ? 64 : 86;
+    const pad = { l: narrow ? 40 : 52, r: 46, t: 2 };
+    const titleH = 18;
+    const busyH = narrow ? 50 : 62;
+    const memH = narrow ? 40 : 54;
     const laneH = 18;
-    const gapH = 14;
-    const lanesH = Math.max(1, lanes) * (laneH + 4);
+    const gapH = 10;
+    const sectionGap = 18;
     const axisH = 22;
-    const height = pad.t + busyH + gapH + memH + gapH + lanesH + axisH;
+    let top = pad.t;
+    for (const s of sections) {
+      s.titleY = top + 9;
+      s.busyTop = top + titleH;
+      s.memTop = s.busyTop + busyH + gapH;
+      s.laneTop = s.memTop + memH + gapH;
+      s.bottom = s.laneTop + Math.max(1, s.lanes) * (laneH + 4);
+      top = s.bottom + sectionGap;
+    }
+    const lastSection = sections[sections.length - 1];
+    const height = lastSection.bottom + axisH;
     const w = width - pad.l - pad.r;
     const x = (t) => pad.l + ((t - from) / (to - from)) * w;
-    const busyTop = pad.t;
-    const memTop = busyTop + busyH + gapH;
-    const laneTop = memTop + memH + gapH;
-    const memTotal =
-      gpu?.mem_total_mib ?? Math.max(1, ...rows.map((row) => row[2] ?? 0));
-    const yBusy = (v) => busyTop + busyH - (v / 100) * busyH;
-    const yMem = (v) => memTop + memH - (v / memTotal) * memH;
+    const gpu = pl.state.gpu;
     const root = svg("svg", {
       class: "pl-svg pl-timeline-svg",
       width,
@@ -1627,77 +2134,27 @@
         util: gpu?.util != null ? num(gpu.util) : "–",
       }),
     });
-    // Before the lab sampled: nothing to show but the queue's lanes
-    const since = pl.samplingSince;
-    if (since != null && since > from)
-      root.append(
-        svg("rect", {
-          class: "pl-nodata",
-          x: pad.l,
-          y: busyTop,
-          width: Math.max(0, x(since) - pad.l),
-          height: memTop + memH - busyTop,
-        }),
-      );
-    // Row labels and grids
-    const rowLabel = (text, y) =>
-      svg("text", { class: "tick pl-row-label", x: pad.l - 6, y }, text);
-    root.append(
-      svg("line", {
-        class: "grid",
-        x1: pad.l,
-        x2: pad.l + w,
-        y1: yBusy(50),
-        y2: yBusy(50),
-      }),
-      svg("line", {
-        class: "grid baseline",
-        x1: pad.l,
-        x2: pad.l + w,
-        y1: yBusy(0),
-        y2: yBusy(0),
-      }),
-      rowLabel("100%", yBusy(100) + 4),
-      rowLabel("50%", yBusy(50)),
-      svg("line", {
-        class: "grid pl-cap",
-        x1: pad.l,
-        x2: pad.l + w,
-        y1: yMem(memTotal),
-        y2: yMem(memTotal),
-      }),
-      svg("line", {
-        class: "grid baseline",
-        x1: pad.l,
-        x2: pad.l + w,
-        y1: yMem(0),
-        y2: yMem(0),
-      }),
-      rowLabel(gib(memTotal).replace(" GiB", "G"), yMem(memTotal) + 4),
-      rowLabel("0", yMem(0) - 4),
-    );
-    // Time axis: its grid under the rows, its labels under the lanes
+    const defs = svg("defs");
+    root.append(defs);
+    // The time grid: every few minutes, its labels under the last lanes
     const spanMin = (to - from) / 60000;
     const stepMin =
       [5, 10, 15, 30, 60, 120, 180].find((m) => (spanMin / m) * 70 <= w) ?? 240;
-    const axisY = laneTop + lanesH + 14;
     const firstTick = Math.ceil(from / (stepMin * 60000)) * stepMin * 60000;
-    for (let tick = firstTick; tick <= to; tick += stepMin * 60000) {
-      const tx = x(tick);
+    const gridTimes = [];
+    for (let tick = firstTick; tick <= to; tick += stepMin * 60000)
+      gridTimes.push(tick);
+    for (const tick of gridTimes)
       root.append(
-        svg("line", {
-          class: "grid pl-vgrid",
-          x1: tx,
-          x2: tx,
-          y1: busyTop,
-          y2: memTop + memH,
-        }),
-        svg("text", { class: "tick tick-x", x: tx, y: axisY }, clock(tick)),
+        svg(
+          "text",
+          { class: "tick tick-x", x: x(tick), y: lastSection.bottom + 14 },
+          tickLabel(tick),
+        ),
       );
-    }
     // A series as a path, broken where samples are missing or far apart
     const gapMs = Math.max(20000, ((to - from) / 720) * 3);
-    const pathOf = (index, yOf, base = null) => {
+    const pathOf = (value, yOf, base = null) => {
       let d = "";
       let open = false;
       let startX = 0;
@@ -1709,7 +2166,7 @@
         open = false;
       };
       for (const row of rows) {
-        const v = typeof index === "function" ? index(row) : row[index];
+        const v = value(row);
         if (v == null || (prevT != null && row[0] - prevT > gapMs)) close();
         if (v == null) {
           prevT = row[0];
@@ -1725,74 +2182,243 @@
       close();
       return d;
     };
-    root.append(
-      svg("path", { class: "pl-area s1", d: pathOf(1, yBusy, yBusy(0)) }),
-      svg("path", { class: "series s1 pl-thin", d: pathOf(1, yBusy) }),
-      // Memory: all of it, then the queue's jobs over it
-      svg("path", { class: "pl-mem-other", d: pathOf(2, yMem, yMem(0)) }),
-      svg("path", {
-        class: "pl-mem-jobs",
-        d: pathOf(
-          (row) => (row[3] == null ? null : Math.min(row[3], row[2] ?? row[3])),
-          yMem,
-          yMem(0),
-        ),
-      }),
-      svg("path", { class: "pl-mem-line", d: pathOf(2, yMem) }),
+    // The stretches without a reading of row index `i`: before the first,
+    // between two far apart, after the last
+    const gapsOf = (i) => {
+      const gaps = [];
+      let prev = null;
+      for (const row of rows) {
+        if (row[i] == null) continue;
+        if (row[0] - (prev ?? from) > gapMs) gaps.push([prev ?? from, row[0]]);
+        prev = row[0];
+      }
+      if (prev == null) gaps.push([from, to]);
+      else if (to - prev > gapMs) gaps.push([prev, to]);
+      return gaps;
+    };
+    // Each entry's CPU in cores, from the rows: the strip inside its bar,
+    // on one scale for all (at least a core)
+    const cores = new Map();
+    for (const row of rows)
+      for (const [id, value] of Object.entries(row[13] ?? {}))
+        if (value != null) {
+          if (!cores.has(id)) cores.set(id, []);
+          cores.get(id).push([row[0], value]);
+        }
+    const coreScale = Math.max(
+      1,
+      ...[...cores.values()].flat().map(([, value]) => value),
     );
-    // The newest sample, breathing, and each row's value at its end
+    let stripped = false;
     const last = rows[rows.length - 1];
-    if (last && last[1] != null && to - last[0] < 30000)
-      root.append(
-        svg("circle", {
-          class: "pl-now s1",
-          cx: x(last[0]),
-          cy: yBusy(last[1]),
-          r: 4,
-        }),
-      );
-    if (last && to - last[0] < 60000) {
-      const endLabel = (y, text) =>
-        svg("text", { class: "pl-end", x: pad.l + w + 8, y }, text);
-      if (last[1] != null)
-        root.append(endLabel(yBusy(last[1]), `${num(last[1])}%`));
-      if (last[2] != null)
-        root.append(endLabel(yMem(last[2]), gib(last[2]).replace(" GiB", "G")));
-    }
-    // Lanes: what ran when
-    for (const bar of bars) {
-      const bx = x(bar.a);
-      const bw = Math.max(3, x(bar.b) - bx);
-      const by = laneTop + bar.lane * (laneH + 4);
-      const group = svg("g", { class: "pl-lane", "data-state": bar.state });
-      group.append(
-        svg("rect", { x: bx, y: by, width: bw, height: laneH, rx: 4 }),
-      );
-      const label = bar.entry.id;
-      if (bw > label.length * 6.4 + 12)
-        group.append(
-          svg(
-            "text",
-            { class: "pl-lane-label", x: bx + 6, y: by + laneH / 2 },
-            label,
-          ),
-        );
-      group.append(svg("title", {}, `${bar.entry.id}: ${bar.entry.title}`));
-      root.append(group);
-    }
-    if (!bars.length)
+    const fresh = last && to - last[0] < 60000;
+    const rowLabel = (text, y) =>
+      svg("text", { class: "tick pl-row-label", x: pad.l - 6, y }, text);
+    const endLabel = (y, text) =>
+      svg("text", { class: "pl-end", x: pad.l + w + 8, y }, text);
+    sections.forEach((s, si) => {
+      const busyBase = s.busyTop + busyH;
+      s.yBusy = (v) => busyBase - (Math.min(v, 100) / 100) * busyH;
+      s.memTotal =
+        s.total ?? Math.max(1, ...rows.map((row) => row[s.mem] ?? 0));
+      s.yMem = (v) =>
+        s.memTop + memH - (Math.min(v, s.memTotal) / s.memTotal) * memH;
+      const { yBusy, yMem } = s;
       root.append(
         svg(
           "text",
-          {
-            class: "tick pl-lanes-empty",
-            x: pad.l + 4,
-            y: laneTop + laneH / 2,
-          },
-          t("pl.timeline.noLanes"),
+          { class: "pl-section-title", x: pad.l, y: s.titleY },
+          s.title,
         ),
       );
-    // Crosshair: the sample nearest the pointer, and what ran then
+      // No reading: shaded, never drawn as 0
+      for (const [a, b] of gapsOf(s.busy))
+        root.append(
+          svg("rect", {
+            class: "pl-nodata",
+            x: x(a),
+            y: s.busyTop,
+            width: Math.max(0, x(b) - x(a)),
+            height: s.memTop + memH - s.busyTop,
+          }),
+        );
+      // Grids and row labels
+      root.append(
+        svg("line", {
+          class: "grid",
+          x1: pad.l,
+          x2: pad.l + w,
+          y1: yBusy(50),
+          y2: yBusy(50),
+        }),
+        svg("line", {
+          class: "grid baseline",
+          x1: pad.l,
+          x2: pad.l + w,
+          y1: yBusy(0),
+          y2: yBusy(0),
+        }),
+        rowLabel("100%", yBusy(100) + 4),
+        rowLabel("50%", yBusy(50)),
+        svg("line", {
+          class: "grid pl-cap",
+          x1: pad.l,
+          x2: pad.l + w,
+          y1: yMem(s.memTotal),
+          y2: yMem(s.memTotal),
+        }),
+        svg("line", {
+          class: "grid baseline",
+          x1: pad.l,
+          x2: pad.l + w,
+          y1: yMem(0),
+          y2: yMem(0),
+        }),
+        rowLabel(gib(s.memTotal).replace(" GiB", "G"), yMem(s.memTotal) + 4),
+        rowLabel("0", yMem(0) - 4),
+      );
+      for (const tick of gridTimes)
+        root.append(
+          svg("line", {
+            class: "grid pl-vgrid",
+            x1: x(tick),
+            x2: x(tick),
+            y1: s.busyTop,
+            y2: s.memTop + memH,
+          }),
+        );
+      // Busy, and this host's CPU over it (the same 0-100% scale)
+      root.append(
+        svg("path", {
+          class: "pl-area s1",
+          d: pathOf((row) => row[s.busy], yBusy, busyBase),
+        }),
+        svg("path", {
+          class: "series s1 pl-thin",
+          d: pathOf((row) => row[s.busy], yBusy),
+        }),
+      );
+      if (s.cpu)
+        root.append(
+          svg("path", {
+            class: "series s3 pl-thin",
+            d: pathOf((row) => row[6], yBusy),
+          }),
+        );
+      // Memory: all of it, then the queue's jobs over it where known
+      root.append(
+        svg("path", {
+          class: "pl-mem-other",
+          d: pathOf((row) => row[s.mem], yMem, yMem(0)),
+        }),
+      );
+      if (s.jobs != null)
+        root.append(
+          svg("path", {
+            class: "pl-mem-jobs",
+            d: pathOf(
+              (row) =>
+                row[s.jobs] == null
+                  ? null
+                  : Math.min(row[s.jobs], row[s.mem] ?? row[s.jobs]),
+              yMem,
+              yMem(0),
+            ),
+          }),
+        );
+      root.append(
+        svg("path", {
+          class: "pl-mem-line",
+          d: pathOf((row) => row[s.mem], yMem),
+        }),
+      );
+      // The newest sample, breathing, and each row's value at its end
+      if (fresh && last[s.busy] != null) {
+        root.append(
+          svg("circle", {
+            class: "pl-now s1",
+            cx: x(last[0]),
+            cy: yBusy(last[s.busy]),
+            r: 4,
+          }),
+          endLabel(yBusy(last[s.busy]), `${num(last[s.busy])}%`),
+        );
+        // The CPU's too, where it does not sit on the busy one
+        if (
+          s.cpu &&
+          last[6] != null &&
+          Math.abs(yBusy(last[6]) - yBusy(last[s.busy])) >= 12
+        )
+          root.append(endLabel(yBusy(last[6]), `${num(last[6])}%`));
+      }
+      if (fresh && last[s.mem] != null)
+        root.append(
+          endLabel(yMem(last[s.mem]), gib(last[s.mem]).replace(" GiB", "G")),
+        );
+      // Lanes: what ran when, each bar with its job's CPU inside
+      s.bars.forEach((bar, bi) => {
+        const bx = x(bar.a);
+        const bw = Math.max(3, x(bar.b) - bx);
+        const by = s.laneTop + bar.lane * (laneH + 4);
+        const group = svg("g", { class: "pl-lane", "data-state": bar.state });
+        group.append(
+          svg("rect", { x: bx, y: by, width: bw, height: laneH, rx: 4 }),
+        );
+        const points = (cores.get(bar.entry.id) ?? []).filter(
+          ([t]) => t >= bar.a && t <= bar.b,
+        );
+        if (points.length) {
+          const clip = `pl-lane-clip-${si}-${bi}`;
+          defs.append(
+            svg(
+              "clipPath",
+              { id: clip },
+              svg("rect", { x: bx, y: by, width: bw, height: laneH, rx: 4 }),
+            ),
+          );
+          const yOf = (value) =>
+            by + laneH - (Math.min(value, coreScale) / coreScale) * laneH;
+          const first = x(points[0][0]);
+          let d = `M${first.toFixed(1)},${by + laneH}`;
+          for (const [t, value] of points)
+            d += `L${x(t).toFixed(1)},${yOf(value).toFixed(1)}`;
+          d += `L${x(points[points.length - 1][0]).toFixed(1)},${by + laneH}Z`;
+          group.append(
+            svg("path", {
+              class: "pl-lane-cpu",
+              d,
+              "clip-path": `url(#${clip})`,
+            }),
+          );
+          stripped = true;
+        }
+        const label = bar.entry.id;
+        if (bw > label.length * 6.4 + 12)
+          group.append(
+            svg(
+              "text",
+              { class: "pl-lane-label", x: bx + 6, y: by + laneH / 2 },
+              label,
+            ),
+          );
+        group.append(svg("title", {}, `${bar.entry.id}: ${bar.entry.title}`));
+        root.append(group);
+      });
+      if (!s.bars.length)
+        root.append(
+          svg(
+            "text",
+            {
+              class: "tick pl-lanes-empty",
+              x: pad.l + 4,
+              y: s.laneTop + laneH / 2,
+            },
+            t("pl.timeline.noLanes"),
+          ),
+        );
+    });
+    // Crosshair: the sample nearest the pointer, and what ran then, on
+    // each GPU
     const tip =
       box.querySelector(".pl-tip") ?? el("div", { class: "chart-tip pl-tip" });
     tip.hidden = true;
@@ -1813,15 +2439,10 @@
             class: "crosshair",
             x1: cx,
             x2: cx,
-            y1: busyTop,
-            y2: laneTop + lanesH,
+            y1: sections[0].busyTop,
+            y2: lastSection.bottom,
           }),
         );
-        if (row[1] != null)
-          root.append(
-            svg("circle", { class: "dot s1", cx, cy: yBusy(row[1]), r: 4 }),
-          );
-        const ran = bars.filter((bar) => bar.a <= row[0] && bar.b >= row[0]);
         const line = (cls, value, label) =>
           el(
             "div",
@@ -1830,39 +2451,88 @@
             el("b", { text: value }),
             ` ${label}`,
           );
+        const lines = [];
+        for (const s of sections) {
+          if (row[s.busy] != null)
+            root.append(
+              svg("circle", {
+                class: "dot s1",
+                cx,
+                cy: s.yBusy(row[s.busy]),
+                r: 4,
+              }),
+            );
+          lines.push(el("div", { class: "tip-head", text: s.title }));
+          if (row[s.busy] == null) {
+            lines.push(
+              el("div", {
+                class: "tip-note",
+                text: t("pl.timeline.noReading"),
+              }),
+            );
+          } else {
+            lines.push(
+              line("s1", `${num(row[s.busy])}%`, t("pl.timeline.busy")),
+            );
+            if (s.cpu && row[6] != null)
+              lines.push(
+                line(
+                  "s3",
+                  `${num(row[6])}%`,
+                  row[12] != null
+                    ? t("pl.timeline.cpuLoad", { load: num(row[12], 1) })
+                    : t("pl.timeline.cpu"),
+                ),
+              );
+            if (s.jobs != null)
+              lines.push(
+                line(
+                  "pl-k-jobs",
+                  row[s.jobs] == null ? "–" : gib(row[s.jobs]),
+                  t("pl.timeline.jobs"),
+                ),
+                line(
+                  "pl-k-other",
+                  row[s.mem] == null
+                    ? "–"
+                    : gib(Math.max(0, row[s.mem] - (row[s.jobs] ?? 0))),
+                  t("pl.timeline.other"),
+                ),
+              );
+            else
+              lines.push(
+                line(
+                  "pl-k-other",
+                  row[s.mem] == null ? "–" : gib(row[s.mem]),
+                  t("pl.timeline.used"),
+                ),
+              );
+            const heat = [
+              row[s.temp] != null ? `${num(row[s.temp])} °C` : null,
+              row[s.power] != null ? `${num(row[s.power])} W` : null,
+            ].filter(Boolean);
+            if (heat.length)
+              lines.push(
+                el("div", { class: "tip-note", text: heat.join(" · ") }),
+              );
+          }
+          for (const bar of s.bars) {
+            if (bar.a > row[0] || bar.b < row[0]) continue;
+            const used = row[13]?.[bar.entry.id];
+            lines.push(
+              el("div", {
+                class: "tip-note pl-tip-entry",
+                text:
+                  used != null
+                    ? `▸ ${bar.entry.id} · ${t("pl.timeline.cores", { cores: num(used, 1) })}`
+                    : `▸ ${bar.entry.id}`,
+              }),
+            );
+          }
+        }
         tip.replaceChildren(
-          line(
-            "s1",
-            row[1] == null ? "–" : `${num(row[1])}%`,
-            t("pl.timeline.busy"),
-          ),
-          line(
-            "pl-k-jobs",
-            row[3] == null ? "–" : gib(row[3]),
-            t("pl.timeline.jobs"),
-          ),
-          line(
-            "pl-k-other",
-            row[2] == null ? "–" : gib(Math.max(0, row[2] - (row[3] ?? 0))),
-            t("pl.timeline.other"),
-          ),
-          el("div", {
-            class: "tip-note",
-            text: [
-              row[4] != null ? `${num(row[4])} °C` : null,
-              row[5] != null ? `${num(row[5])} W` : null,
-              row[6] != null ? `CPU ${num(row[6])}%` : null,
-            ]
-              .filter(Boolean)
-              .join(" · "),
-          }),
-          ...ran.map((bar) =>
-            el("div", {
-              class: "tip-note pl-tip-entry",
-              text: `▸ ${bar.entry.id}`,
-            }),
-          ),
           el("div", { class: "tip-note", text: clock(row[0], true) }),
+          ...lines,
         );
         tip.hidden = false;
         box.append(tip);
@@ -1880,17 +2550,29 @@
     // The legend and the note under it
     $("pl-legend").replaceChildren(
       el("span", { class: "key s1" }, el("i"), t("pl.timeline.busy")),
+      el("span", { class: "key s3" }, el("i"), t("pl.timeline.cpu")),
       el("span", { class: "key pl-k-jobs" }, el("i"), t("pl.timeline.jobs")),
       el("span", { class: "key pl-k-other" }, el("i"), t("pl.timeline.other")),
+      el("span", { class: "key pl-k-cpu" }, el("i"), t("pl.timeline.jobCpu")),
+      el(
+        "span",
+        { class: "key pl-k-none" },
+        el("i"),
+        t("pl.timeline.noReading"),
+      ),
     );
-    const note = $("pl-timeline-note");
-    note.textContent =
+    const since = pl.samplingSince;
+    $("pl-timeline-note").textContent = [
       since != null
         ? t("pl.timeline.since", {
             s: num((pl.state.sample_ms ?? 5000) / 1000),
             clock: clock(since, true),
           })
-        : t("pl.timeline.empty");
+        : t("pl.timeline.empty"),
+      stripped ? t("pl.timeline.strip", { cores: num(coreScale, 1) }) : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
 
   for (const button of $("pl-range").querySelectorAll("[data-minutes]")) {
@@ -1958,6 +2640,7 @@
     $("pl-queue-hint").textContent = list.length > 1 ? t("pl.queue.hint") : "";
     const box = $("pl-queue");
     // Drawn again only when it changed, so a focused handle stays focused
+    const twoGpus = Boolean(state.remote);
     const content = list.map((e) => [
       e.id,
       e.status,
@@ -1967,6 +2650,9 @@
       e.owner,
       e.device,
       e.eta_ms,
+      e.next_on,
+      e.waits,
+      twoGpus,
       slots.get(e.group),
     ]);
     if (!changed(box, content)) return;
@@ -1976,7 +2662,29 @@
       );
       return;
     }
-    const nextId = list.find((e) => e.status === "queued")?.id;
+    /** Which runners take it next: "Next", or "Next · Linux, win11" when
+     * there is more than one to take it */
+    const nextBadge = (entry) => {
+      const on = entry.next_on ?? [];
+      if (!on.length) return null;
+      const names = on.map((device) =>
+        device === "cpu"
+          ? t("pl.device.cpu")
+          : device.startsWith("gpu:")
+            ? device.slice(4) === "linux"
+              ? "Linux"
+              : device.slice(4)
+            : device,
+      );
+      const plain = !twoGpus && on.length === 1 && on[0] !== "cpu";
+      return el("span", {
+        class: "pl-next",
+        text: plain
+          ? t("pl.queue.next")
+          : t("pl.queue.nextOn", { on: names.join(", ") }),
+        title: t("pl.queue.nextNote"),
+      });
+    };
     let previous = null;
     const items = list.map((entry, i) => {
       const sameGroup =
@@ -2031,7 +2739,7 @@
             { class: "pl-q-meta" },
             el("code", { class: "pl-id", text: entry.id }),
             entry.device
-              ? el("span", { text: t(`pl.device.${entry.device}`) })
+              ? el("span", { text: deviceWord(entry.device) })
               : null,
             entry.owner ? el("span", { text: entry.owner }) : null,
             entry.eta_ms
@@ -2039,16 +2747,19 @@
                   text: t("pl.progress.eta", { clock: clock(entry.eta_ms) }),
                 })
               : null,
+            entry.waits?.length
+              ? el("span", {
+                  class: "pl-waits",
+                  text: t("pl.queue.after", { ids: entry.waits.join(", ") }),
+                  title: t("pl.queue.afterNote"),
+                })
+              : null,
           ),
           entry.why && !sameWhy
             ? el("p", { class: "pl-why", text: entry.why })
             : null,
         ),
-        entry.status === "paused"
-          ? stateBadge("paused")
-          : entry.id === nextId
-            ? el("span", { class: "pl-next", text: t("pl.queue.next") })
-            : null,
+        entry.status === "paused" ? stateBadge("paused") : nextBadge(entry),
       );
     });
     box.replaceChildren(...items);
@@ -2276,17 +2987,23 @@
               "span",
               { class: "pl-r-summary" },
               entry.result_summary ||
-                (entry.progress && (state === "finished" || state === "stopped")
-                  ? t(
-                      entry.progress.source === "log"
-                        ? "pl.results.unmarkedLog"
-                        : "pl.results.unmarked",
-                      {
-                        step: num(entry.progress.step),
-                        total: num(entry.progress.total),
-                      },
-                    )
-                  : t("pl.results.noSummary")),
+                (entry.progress && state === "early"
+                  ? t("pl.results.early", {
+                      step: num(entry.progress.step),
+                      total: num(entry.progress.total),
+                    })
+                  : entry.progress &&
+                      (state === "finished" || state === "stopped")
+                    ? t(
+                        entry.progress.source === "log"
+                          ? "pl.results.unmarkedLog"
+                          : "pl.results.unmarked",
+                        {
+                          step: num(entry.progress.step),
+                          total: num(entry.progress.total),
+                        },
+                      )
+                    : t("pl.results.noSummary")),
             ),
             entry.next_step
               ? el(
