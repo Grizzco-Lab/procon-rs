@@ -224,6 +224,24 @@ status tells what it read last. Likewise the Studio's weapons and specials
 (`GET /api/cuttlefish/game-items`) come at once from a copy kept in the
 local cache, made again on a thread when their files change.
 
+A click never freezes the page. The page shares six connections to the lab
+(HTTP/1.1) between every app, so every `fetch` takes its turn in one queue
+in `web/app.js`: at most four at a time, changes first, then the open
+app's data, then its pictures (frames and thumbnails load through it too,
+`imageUrl`); a GET belongs to the app open when it was asked, and leaving
+that app aborts it, so the next app never waits for the one left (a loader
+treats `isAbort(error)` as nothing and runs again when shown). The lab
+answers at once: slow data is made on a thread and kept (`Kept` in
+`src/cuttlefish/kept.rs` for the glossary and the game items, the Knowledge
+view's panels, the reviews list, the Pedia), `refreshing` while made again,
+`202` while it never was, which the queue asks again every second; every
+request answered in more than 300 ms is logged at debug level (`Slow
+request:`). On the main thread, no long task of ours runs in an app switch:
+long lists are built as one HTML string, laid out once they come into view
+(`content-visibility: auto`), and the 3D controller builds after the
+Studio's first paint, step by step, only while the Studio is open.
+CLAUDE.md's Dashboard section has the same rules in short.
+
 Ctrl-C stops the lab in steps, each logged (`exit::step`): AgentZero (the
 controller first), the recording (ffmpeg finishes the file,
 `session.json` gets its end), the tracker, detector and prediction the page
