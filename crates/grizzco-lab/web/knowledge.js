@@ -1523,7 +1523,8 @@
         } else if (note) {
           const marked =
             entry.verdict === "wrong" ? ` · ${t("k.deep.markedWrong")}` : "";
-          answers = `<details class="k-deep-model"><summary>${escapeHtml(t("k.deep.modelAnswer") + marked)}</summary>${first}</details>`;
+          // The summary names it; the block inside only says when and who
+          answers = `<details class="k-deep-model"><summary>${escapeHtml(t("k.deep.modelAnswer") + marked)}</summary>${answerBlock(entry, null, "")}</details>`;
         } else {
           answers = first;
         }
