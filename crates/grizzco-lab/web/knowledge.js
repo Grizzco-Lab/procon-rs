@@ -216,6 +216,7 @@
       );
     } catch (error) {
       list.replaceChildren();
+      if (isAbort(error)) return;
       return note("k-search-error", error.message);
     }
     list.replaceChildren();
@@ -736,6 +737,7 @@
       k.report = await api(`report?${new URLSearchParams({ id })}`);
       drawReport();
     } catch (error) {
+      if (isAbort(error)) return;
       k.report = null;
       box.innerHTML = `<p class="notice">${escapeHtml(error.message)}</p>`;
     }
