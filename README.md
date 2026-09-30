@@ -303,7 +303,13 @@ start with the moment (**Comment on this moment**, **What goes wrong in this
 range?**). The chat keeps its whole history; Cuttlefish's answers cite the
 knowledge (`[S1]`, listed under **Sources**) and name moments as times that
 seek the video when clicked, and when asked about the video they can add
-timed comments with drawings, linked from the answer. **With the video**
+timed comments with drawings, linked from the answer. On the Claude Code CLI
+Cuttlefish looks the knowledge store up himself before he answers (a search
+in English and in Chinese, a Pedia entry, a #vod-review conversation, the
+passages he cites opened whole), and **What it looked up** (查了什么), folded
+under the answer, lists each search with its filters and how much it found,
+and each thing he opened; an answer of a minute or more never holds up the
+rest of the page. **With the video**
 chooses what a message takes along: the frames around the playhead (**this
 moment**), a **range**, or **no frames**; **Comment on this moment** sends a
 review request for the playhead. Beside the choice, the page estimates the
@@ -479,8 +485,12 @@ While reviewing:
   (general notes, rants), which can be edited and deleted.
 
 The chat sends the message, the conversation so far, the frames it takes along
-and the nearby comments to Claude with knowledge retrieved from the store for
-it. About a moment it also sends the moment as text: the HUD (wave, timer and
+and the nearby comments to Claude. On the Claude Code CLI, Claude then looks
+the store up itself with five read-only tools (search, open, pedia, thread,
+names; told to search in English and Chinese, to open what it cites, and to
+trust your notes, then #vod-review, game data, Inkipedia, other Discord
+channels, RedNote and X, in that order); on the API, knowledge retrieved from
+the store for the message goes along instead. About a moment it also sends the moment as text: the HUD (wave, timer and
 golden eggs, when the video has a wave table), the controller input (recorded
 for a session, else the Predictor's latest prediction for the video, as an
 estimate) and the objects labelled on that frame; and with the knowledge come

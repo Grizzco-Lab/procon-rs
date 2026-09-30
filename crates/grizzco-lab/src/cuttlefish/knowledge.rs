@@ -113,6 +113,7 @@
 //! history): the glossary terms a text uses, and the model's translation
 //! when a backend is there.
 
+use super::answers::Answers;
 use super::kept::{self, Kept};
 use crate::inspect::objects::write_atomic;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -741,6 +742,8 @@ pub struct Knowledge {
     panels: Panels,
     /// What the knowledge tools read besides the store, kept between answers
     library: Library,
+    /// The model's answers made on threads, which the page asks for
+    answers: Arc<Answers>,
 }
 
 /// Auto-apply of slang suggestions by default: suggestions the model is at
@@ -795,6 +798,7 @@ impl Knowledge {
                 state: Mutex::default(),
             },
             library: Library::new(&root, None),
+            answers: Arc::default(),
             root,
             cache,
             settings,
@@ -839,6 +843,12 @@ impl Knowledge {
             library: Library::new(&self.root, Some(sessions)),
             ..self
         }
+    }
+
+    /// The model's answers made on threads (the chat, translations, eval
+    /// questions asked again), which the page asks for
+    pub fn answers(&self) -> &Arc<Answers> {
+        &self.answers
     }
 
     /// The crate's data folder
@@ -2296,13 +2306,26 @@ impl Knowledge {
         Ok(json!(entry))
     }
 
-    /// Asks an eval question again (`POST eval/ask` with `{"file", "id"}`),
-    /// as it was asked, over the store as it is now, the expert notes first;
-    /// the answer joins the entry's `again` and the entry is answered. The
-    /// model is asked outside the eval lock.
-    pub fn eval_ask(&self, body: &Value) -> Result<Value, Status> {
-        let text = |key: &str| body[key].as_str().unwrap_or_default();
+    /// Starts asking an eval question again (`POST eval/ask` with `{"file",
+    /// "id"}`) on a thread (`{"job"}`: the page asks `GET answer?job=`):
+    /// the entry and a model backend are checked at once, the rest is
+    /// [`Knowledge::ask_again`]
+    pub fn eval_ask(self: &Arc<Self>, body: Value) -> Result<Value, Status> {
+        let text = |key: &str| String::from(body[key].as_str().unwrap_or_default());
         let (file, id) = (text("file"), text("id"));
+        deep_eval::entry(&self.root, &file, &id)?;
+        self.client()?;
+        let knowledge = Arc::clone(self);
+        let what = format!("Cuttlefish asking {id} of {file} again");
+        Ok(self
+            .answers
+            .start(what, move || knowledge.ask_again(&file, &id)))
+    }
+
+    /// Asks an eval question again, as it was asked, over the store as it is
+    /// now, the expert notes first; the answer joins the entry's `again`
+    /// and the entry is answered. The model is asked outside the eval lock.
+    fn ask_again(&self, file: &str, id: &str) -> Result<Value, Status> {
         let entry = deep_eval::entry(&self.root, file, id)?;
         let client = self.client()?;
         let loaded = self.loaded()?;
@@ -2402,7 +2425,7 @@ impl Knowledge {
             }
             "eval/deep" => self.eval_deep(body),
             "eval/mark" => Ok(self.eval_mark(&json_body()?)?),
-            "eval/ask" => self.eval_ask(&json_body()?),
+            "eval/ask" => self.eval_ask(json_body()?),
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
                 anyhow::anyhow!("no endpoint POST knowledge/{path}"),

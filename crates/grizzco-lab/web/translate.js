@@ -4,7 +4,9 @@
 // mentor's avatar, a target-language picker and Send. A bare term shows its
 // glossary entry at once (GET knowledge/glossary, no key needed), then the
 // model's explanation; a sentence gets the terms it uses and the model's
-// translation (POST translate, see src/cuttlefish.rs). The history is
+// translation (POST translate, made on a thread of the lab and asked for
+// until made, cuttlefish.js's window.cuttlefishAnswer; see
+// src/cuttlefish.rs). The history is
 // kept by the server in <reviews>/translations.jsonl. A term shows its
 // slang too, with "Add alias"; a sentence has "Teach a word" (select it,
 // pick its term as you type); the Slang panel lists what was taught and
@@ -463,10 +465,12 @@
         // The translation brings the terms too
       });
     try {
-      const entry = await api("translate", "POST", {
+      // Made on a thread of the lab; its answer is asked for until made
+      const started = await api("translate", "POST", {
         text,
         target: targetCode,
       });
+      const entry = await window.cuttlefishAnswer(started.job);
       tr.entries.splice(tr.entries.indexOf(pending), 1, entry);
       redraw(entry, pending.id);
       $("cf-translations")

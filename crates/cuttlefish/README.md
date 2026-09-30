@@ -4,8 +4,10 @@ Knowledge store and model backend for Cuttlefish, Grizzco Lab's AI reviewer
 for Splatoon 3 Salmon Run. It imports guides, wikis, video transcripts and
 Discord VOD-review discussions into a local store; retrieves what matters for
 a moment of gameplay or a question; and asks Claude (Anthropic Messages API)
-with the frames, the retrieved knowledge and a jargon glossary. Library
-(`cuttlefish`) plus a CLI of the same name.
+with the frames, the retrieved knowledge and a jargon glossary. On the Claude
+Code CLI the model looks the store up itself instead, with read-only
+knowledge tools (see [Knowledge tools](#knowledge-tools-the-model-looks-things-up)).
+Library (`cuttlefish`) plus a CLI of the same name.
 
 ## Quick start
 
@@ -56,7 +58,9 @@ export ANTHROPIC_API_KEY=...               # only ever from the environment, or 
                                            # scripts/run.sh loads (~/.config/procon/env)
 # ...or none: with the Claude Code CLI installed and logged in, `auto` (the
 # default) runs `claude -p` on your own subscription; --backend claude-cli forces it
-cuttlefish ask "When should I leave the basket to kill a Stinger?"
+cuttlefish ask "When should I leave the basket to kill a Stinger?"   # on the CLI the model looks it up itself
+cuttlefish ask "绿帽怪的炸弹多久爆炸？" --no-tools   # the one-shot way: retrieved excerpts go with it
+cuttlefish mcp                             # the knowledge tools on stdio, for any MCP client
 cuttlefish translate "Kill the Steelhead before the Flyfish" --to ja
 cuttlefish eval eval.example.toml --answer
 cuttlefish eval deep --lang zh --max 5       # the deep question bank; answers into <data>/eval/, reviewed in the lab
@@ -1262,7 +1266,21 @@ language's names first.
 The lab keeps one `Store` and `E5Embedder` for everything (search, imports
 and the chat) instead of a `Reviewer`: `review::chat(&store, &embedder,
 &client, k, &request)`, `review::review(...)` and `review::ask(...)` take the
-parts separately, with a `Client::from_env` made per request;
+parts separately, with a `Client::from_env` made per request. With a client
+that has the knowledge tools (`Client::has_tools`: the CLI backend and
+`Settings::mcp_relay`, the lab's own binary) it asks the agentic way:
+
+```rust
+use cuttlefish::tools::{Library, Session};
+let library = Library::new(&knowledge, Some(sessions));   // kept: the corpus, the markers
+let store = std::sync::RwLock::new(store);                 // read-locked per lookup
+let tools = Session::new(&store, &embedder, &library, review::first_source_id(&request.history));
+let reply = review::chat_with_tools(&tools, &client, &request)?;   // reply.lookups: what it looked up
+let answer = review::ask_with_tools(&Session::new(&store, &embedder, &library, 1), &client, "...")?;
+```
+
+and for the one-shot path's two-pass chat over a long range
+`review::key_moments` gives the second call's request;
 `review::translate(&client, &glossary, text, target)` and
 `review::explain(...)` take only the glossary. Imports go
 through `ingest` (`web`, `youtube`, `files`, `discord_export`, `discord_bot`),
@@ -1570,3 +1588,57 @@ meant for personal testing. At most eight runs at once; a run is stopped after
 ten minutes. A missing `claude` or a missing login are reported as such. The
 CLI's own usage figures are logged like the API's; there is no prompt cache
 to manage. Tests run a fake instead of the process.
+
+### Knowledge tools: the model looks things up
+
+Twelve excerpts retrieved beforehand leave the model stuck when retrieval
+picks the wrong ones, and a question in Chinese barely reaches the English
+wiki or Lean's fact cards (keywords match their own language only). So on
+the Claude CLI (`Client::has_tools`), questions (`review::ask_with_tools`,
+`cuttlefish ask`, the deep eval) and chats (`review::chat_with_tools`, the
+lab) retrieve nothing beforehand: the model gets the question (with a
+video's frames, comments and moment), a system prompt of its own
+(`review::tools_system_prompt`: look things up first; search in English and
+in Simplified Chinese with the official names; open what you cite; trust
+the player's notes, then #vod-review expert comments, then game data, then
+Inkipedia, then other Discord channels, then RedNote and X; say in one line
+when nothing covers the question; with a video, the review rules and how
+far estimated input can be trusted; then the official names and the digest)
+and five read-only tools (`tools.rs`):
+
+| Tool | Takes | Gives |
+| --- | --- | --- |
+| `search` | `query` (any language), `kinds` (source kinds), `era` (`S3`: no Splatoon 2 material; `S2`: only that), `limit` (8, at most 20) | hybrid results (E5 and BM25, the query expanded with the other-language names of the terms it mentions), at most two passages a document, never a name table: id, kind, era, place, snippet |
+| `open` | `id`, `around` (1, at most 3) | the passage whole with the passages before and after it (each with its id), its link, licence and video; a #vod-review message with the message it replies to and its replies |
+| `pedia` | `term` (a name in any language, a nickname or an id) | the term's entry: names in every language, slang, relations both ways, its game-data fact cards (numbers in players' units, the raw parameters one `open` away), the player's expert notes, the #vod-review comments that mention it (the best five) and the examples the player recorded (the sessions' technique markers) |
+| `thread` | `id` of a #vod-review result, a message link or a VOD id | the conversation of the corpus: the VOD, then every message with its moments in the video |
+| `names` | `text` (a name or a sentence) | the terms it refers to with their English, Japanese and Chinese names and slang, and possible short forms |
+
+A `Session` serves one answer: every source a tool shows gets an id `S<n>`
+in the order first shown, starting past the highest id the conversation
+cited (`review::first_source_id`), so an old answer's `[S3]` never names
+another source; the answer's citations resolve against what was shown
+(`Session::cited`), and every call is kept as a `Lookup` (tool, arguments,
+the ids and titles it showed, its error, how long it took), which answers,
+chat messages and eval rows carry and the lab shows folded under the
+answer. The store is read-locked per call, never for a whole answer; a
+`Library` keeps what the tools read besides the store (the corpus, read
+again when its file changes; the sessions' markers, for five minutes). An
+answer may make 40 lookups; the next are told to answer.
+
+The tools reach the CLI as an MCP server (`mcp.rs`, JSON-RPC lines:
+`initialize`, `tools/list`, `tools/call`, `ping`). The process that asks
+(the lab, or `cuttlefish ask`) has the store and the embedder loaded
+already, so it serves the tools itself on a Unix socket in the run's
+private folder (`mcp::Listener`), and the MCP server the CLI starts is its
+own binary as `<program> mcp --socket <path>` (`Settings::mcp_relay`), a
+relay of bytes that starts at once and loads nothing. The CLI gets
+`--mcp-config` with that one server, `--strict-mcp-config`, `--tools ""`
+(no built-in tool at all) and `--allowedTools` naming the five, which run
+without asking; anything else would ask and `--permission-prompts none`
+denies it. `cuttlefish mcp` without `--socket` serves the same tools on its
+stdin and stdout over the store it opens (read only), for any MCP client:
+`claude mcp add cuttlefish -- /path/to/cuttlefish mcp --data /path/to/Knowledge`.
+The one-shot path stays for the API backend, `--no-tools`, the translator
+and the reviews of a stretch; the scout pass of a long range
+(`review::key_moments`) has no tools either.

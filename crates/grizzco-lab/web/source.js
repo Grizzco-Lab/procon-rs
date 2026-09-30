@@ -11,7 +11,10 @@
 // phone; Escape, a click outside or leaving the view closes it. Shared as
 // window.cuttlefishSource.open(anchor, ref) by cuttlefish.js and pedia.js;
 // uses the helpers of i18n.js, app.js and player.js (t, escapeHtml,
-// clock).
+// clock). window.cuttlefishSource.lookups(list) is what an answer looked
+// up in the knowledge store (the tools' calls: searches with their
+// filters, ids opened, Pedia entries, conversations, names), folded under
+// it in the chat and the deep questions (cuttlefish.js, knowledge.js).
 "use strict";
 
 (() => {
@@ -209,5 +212,56 @@
   window.addEventListener("app-route", close);
   window.addEventListener("resize", close);
 
-  window.cuttlefishSource = { open, close };
+  /** One call of what an answer looked up, as a line: what it asked (the
+   * query with its filters, the id opened, the term, the conversation, the
+   * names) and what it showed; the titles shown are its tooltip */
+  function lookupItem(l) {
+    const input = l.input ?? {};
+    const found = l.found ?? [];
+    let asked;
+    switch (l.tool) {
+      case "search": {
+        const filters = [...(input.kinds ?? []), input.era].filter(Boolean);
+        asked = escapeHtml(t("cf.look.search", { query: input.query ?? "" }));
+        if (filters.length)
+          asked += ` <span class="cf-kind">${escapeHtml(filters.join(", "))}</span>`;
+        break;
+      }
+      case "open":
+        asked = escapeHtml(t("cf.look.open", { id: input.id ?? "" }));
+        break;
+      case "pedia":
+        asked = escapeHtml(t("cf.look.pedia", { term: input.term ?? "" }));
+        break;
+      case "thread":
+        asked = escapeHtml(t("cf.look.thread", { id: input.id ?? "" }));
+        break;
+      case "names":
+        asked = escapeHtml(t("cf.look.names", { text: input.text ?? "" }));
+        break;
+      default:
+        asked = escapeHtml(`${l.tool} ${JSON.stringify(input)}`);
+    }
+    let shown;
+    if (l.error) {
+      shown = `<span class="level-critical">${escapeHtml(t("cf.look.failed", { error: l.error }))}</span>`;
+    } else if (!found.length) {
+      shown = escapeHtml(t("cf.look.nothing"));
+    } else if (l.tool === "search") {
+      shown = escapeHtml(t("cf.look.found", { n: found.length }));
+    } else {
+      shown = escapeHtml(found.map((f) => f.title).join(" · "));
+    }
+    const titles = found.map((f) => `${f.id} ${f.title}`).join("\n");
+    return `<li${titles ? ` title="${escapeHtml(titles)}"` : ""}>${asked} → ${shown}</li>`;
+  }
+
+  /** What an answer looked up in the knowledge store (its `lookups`, the
+   * agentic path), folded under it; nothing for an answer without them */
+  function lookups(list) {
+    if (!list?.length) return "";
+    return `<details class="cf-sources cf-lookups"><summary>${escapeHtml(t("cf.look.title", { n: list.length }))}</summary><ol class="k-sources">${list.map(lookupItem).join("")}</ol></details>`;
+  }
+
+  window.cuttlefishSource = { open, close, lookups };
 })();

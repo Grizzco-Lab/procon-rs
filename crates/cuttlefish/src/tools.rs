@@ -383,7 +383,7 @@ fn clip(text: &str, max: usize) -> String {
 
 /// The words a snippet centres on: the query's Latin words of three
 /// letters or more, and every name of the glossary terms it mentions
-fn query_words<'g>(query: &str, glossary: &'g Glossary) -> Vec<String> {
+fn query_words(query: &str, glossary: &Glossary) -> Vec<String> {
     let mut words: Vec<String> = query
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| w.is_ascii() && w.len() >= 3)

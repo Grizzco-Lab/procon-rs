@@ -18,7 +18,12 @@
 // folder of its own with its YouTube (or copied) video and its chat; the
 // format is in src/cuttlefish.rs. The page owns the review: a chat message
 // goes to /api/cuttlefish/chat with the conversation so far, and both turns
-// are saved with the review by the page.
+// are saved with the review by the page. The model's answers (the chat's,
+// the translator's, an eval question asked again) are made on a thread of
+// the lab: the POST answers with a job at once and the page asks for its
+// answer until it is made (`modelAnswer`, shared as window.cuttlefishAnswer),
+// so a long answer holds none of the page's connections. An answer shows
+// what Cuttlefish looked up, folded under it (source.js).
 "use strict";
 
 (() => {
@@ -1847,6 +1852,7 @@
             <span class="cf-meta panel-note num">${escapeHtml(when)}</span>
           </div>
           <div class="cf-msg-text">${messageHtml(message)}</div>
+          ${window.cuttlefishSource?.lookups(message.lookups) ?? ""}
           ${sources ? `<details class="cf-sources"><summary>${escapeHtml(t("cf.chat.sources"))} (${message.sources.length})</summary><ol class="k-sources">${sources}</ol></details>` : ""}
           ${experts ? `<details class="cf-sources"><summary>${escapeHtml(t("cf.chat.experts"))} (${message.experts.length})</summary><ol class="k-sources">${experts}</ol></details>` : ""}
           ${comments}
@@ -2024,6 +2030,43 @@
     return { t_s: from, t_end_s: to };
   }
 
+  /** An error with the lab's message and the status it answered, when it
+   * answered */
+  async function labError(response) {
+    const data = await response.json().catch(() => ({}));
+    const error = new Error(data.error ?? response.statusText);
+    error.status = response.status;
+    return error;
+  }
+
+  /** POST a JSON body; the lab's JSON answer, or it throws (`status` on
+   * the error when the lab answered) */
+  async function askLab(url, body) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw await labError(response);
+    return response.json();
+  }
+
+  /** The answer of a model call the lab makes on a thread (POST chat,
+   * translate, knowledge/eval/ask answer `{job}`), asked for until it is
+   * made: the request queue asks again while the lab answers 202. It is
+   * the page's own request (`keep`), like the change that started it, so
+   * leaving the app never loses the answer. Throws with the lab's error
+   * and its status. */
+  async function modelAnswer(job) {
+    const response = await fetch(
+      `/api/cuttlefish/answer?${new URLSearchParams({ job })}`,
+      { keep: true },
+    );
+    if (!response.ok) throw await labError(response);
+    return response.json();
+  }
+  window.cuttlefishAnswer = modelAnswer;
+
   /** Send a message in the open review: the user's turn is saved at once,
    * Cuttlefish's when it comes, even if the review was left meanwhile; his
    * timed comments join the review */
@@ -2066,29 +2109,26 @@
         height: parseInt($("cf-chat-height").value, 10),
       }),
     };
-    let response;
+    // The lab answers on a thread; the answer is asked for until made
     let data;
+    let failed = null;
     try {
-      response = await fetch("/api/cuttlefish/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      data = await response.json();
+      const started = await askLab("/api/cuttlefish/chat", body);
+      data = await modelAnswer(started.job);
     } catch (error) {
-      data = { error: error.message, unreachable: true };
+      failed = error;
     }
     chat.sending = false;
     $("cf-chat-send").disabled = false;
-    if (!response?.ok) {
+    if (failed) {
       if (cf.review !== review) return;
-      if (data.unreachable)
-        return chatNote(t("cf.chat.failed", { error: data.error }), true);
-      if (response.status === 501) {
+      if (!failed.status)
+        return chatNote(t("cf.chat.failed", { error: failed.message }), true);
+      if (failed.status === 501) {
         chat.key = false;
         return markKey();
       }
-      return chatNote(t("cf.chat.error", { error: data.error }), true);
+      return chatNote(t("cf.chat.error", { error: failed.message }), true);
     }
     // His comments join the review like the user's
     const added = [];
@@ -2111,6 +2151,7 @@
       text: data.text ?? "",
       ...(data.sources?.length && { sources: data.sources }),
       ...(data.experts?.length && { experts: data.experts }),
+      ...(data.lookups?.length && { lookups: data.lookups }),
       ...(added.length && { comments: added }),
       ...(data.model && {
         backend: data.backend,

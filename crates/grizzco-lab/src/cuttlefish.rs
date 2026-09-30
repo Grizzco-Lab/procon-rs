@@ -132,6 +132,7 @@
 //!
 //! Errors are `{"error": "..."}` with status 400 (404 for a missing review).
 
+pub mod answers;
 mod frames;
 mod kept;
 pub mod knowledge;
@@ -1745,9 +1746,40 @@ impl Cuttlefish {
             .unwrap_or_default())
     }
 
-    /// Answer a chat message (`POST chat`, see the module doc): the reply's
-    /// text, its sources and its comments as the page stores them
-    fn chat(&self, body: &Value) -> Result<Value, Status> {
+    /// Start answering a chat message (`POST chat`, see the module doc):
+    /// checked at once (a message; a model backend, else `501`), answered
+    /// on a thread ([`Knowledge::answers`], `{"job"}`: the page asks `GET
+    /// answer?job=` for [`Cuttlefish::answer_chat`]'s reply)
+    fn chat(self: &Arc<Self>, body: Value) -> Result<Value, Status> {
+        if body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            return Err(Status(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("say something"),
+            ));
+        }
+        self.knowledge.client()?;
+        let cuttlefish = Arc::clone(self);
+        let what = format!(
+            "Cuttlefish chat{}",
+            body["review"]
+                .as_str()
+                .map(|r| format!(" in review {r}"))
+                .unwrap_or_default()
+        );
+        Ok(self
+            .knowledge
+            .answers()
+            .start(what, move || cuttlefish.answer_chat(&body)))
+    }
+
+    /// Answer a chat message: the reply's text, its sources, what it
+    /// looked up and its comments as the page stores them
+    fn answer_chat(&self, body: &Value) -> Result<Value, Status> {
         let bad = |e: anyhow::Error| Status(StatusCode::BAD_REQUEST, e);
         let message = body["message"].as_str().unwrap_or_default().trim();
         if message.is_empty() {
@@ -1886,14 +1918,19 @@ impl Cuttlefish {
         Ok(json!({ "file": self.translations_path(), "entries": entries }))
     }
 
-    /// Translate (`POST translate`, see the module doc) and remember the
-    /// result: the entry as written into the history
-    fn translate(&self, body: &Value) -> Result<Value, Status> {
-        let translation = self.knowledge.translate(
-            body["text"].as_str().unwrap_or_default(),
-            body["target"].as_str().unwrap_or("en"),
-        )?;
-        Ok(self.record_translation(&translation)?)
+    /// Start a translation (`POST translate`, see the module doc) on a
+    /// thread ([`Knowledge::answers`], `{"job"}`): the answer, `GET
+    /// answer?job=`, is the entry as written into the history
+    fn translate(self: &Arc<Self>, body: Value) -> Result<Value, Status> {
+        let cuttlefish = Arc::clone(self);
+        let what = String::from("Cuttlefish translation");
+        Ok(self.knowledge.answers().start(what, move || {
+            let translation = cuttlefish.knowledge.translate(
+                body["text"].as_str().unwrap_or_default(),
+                body["target"].as_str().unwrap_or("en"),
+            )?;
+            Ok(cuttlefish.record_translation(&translation)?)
+        }))
     }
 
     /// Append a translation to the history, keeping the last
@@ -1956,6 +1993,11 @@ impl Cuttlefish {
                 let arg = |name: &str| query.get(name).map_or("", String::as_str);
                 self.stage_map(arg("stage"), arg("tide")).map_err(bad)
             }
+            None if path == "answer" => Ok(Reply::json(
+                self.knowledge
+                    .answers()
+                    .get(query.get("job").map_or("", String::as_str))?,
+            )),
             None if path == "game-items" => Ok(Reply::json(self.game_items()?)),
             None if path == "game-icon" => self
                 .game_icon(query.get("path").map_or("", String::as_str))
@@ -2009,7 +2051,7 @@ impl Cuttlefish {
     }
 
     /// Answer a `POST`, `PUT` or `DELETE` under `/api/cuttlefish/`
-    fn change(&self, method: &Method, path: &str, body: &[u8]) -> Result<Reply, Status> {
+    fn change(self: &Arc<Self>, method: &Method, path: &str, body: &[u8]) -> Result<Reply, Status> {
         let bad = |e: anyhow::Error| Status(StatusCode::BAD_REQUEST, e);
         let json_body = || -> Result<Value, Status> {
             serde_json::from_slice(body).map_err(|e| bad(anyhow::anyhow!("bad JSON: {e}")))
@@ -2042,13 +2084,17 @@ impl Cuttlefish {
                     .map_err(bad)?;
                 Ok(Reply::json(json!(download)))
             }
-            (&Method::POST, None) if path == "chat" => Ok(Reply::json(self.chat(&json_body()?)?)),
+            (&Method::POST, None) if path == "chat" => Ok(Reply::status(
+                StatusCode::ACCEPTED,
+                self.chat(json_body()?)?,
+            )),
             (&Method::POST, None) if path == "community-reviews" => {
                 Ok(Reply::json(self.community_reviews()?))
             }
-            (&Method::POST, None) if path == "translate" => {
-                Ok(Reply::json(self.translate(&json_body()?)?))
-            }
+            (&Method::POST, None) if path == "translate" => Ok(Reply::status(
+                StatusCode::ACCEPTED,
+                self.translate(json_body()?)?,
+            )),
             (&Method::DELETE, None) if path == "translations" => {
                 self.clear_translations().map_err(bad)?;
                 Ok(Reply::json(json!({ "cleared": true })))

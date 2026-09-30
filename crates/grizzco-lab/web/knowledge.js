@@ -1229,7 +1229,8 @@
     try {
       notes.list = (await api("notes")).notes;
     } catch (error) {
-      $("k-notes-count").textContent = error.message;
+      // Left the app: asked again when shown
+      if (!isAbort(error)) $("k-notes-count").textContent = error.message;
       return;
     }
     drawNotes();
@@ -1388,7 +1389,7 @@
     try {
       deep.bank = await api("questions");
     } catch (error) {
-      $("k-deep-count").textContent = error.message;
+      if (!isAbort(error)) $("k-deep-count").textContent = error.message;
       return;
     }
     drawBank();
@@ -1432,7 +1433,7 @@
     try {
       data = await api("eval");
     } catch (error) {
-      $("k-deep-file-note").textContent = error.message;
+      if (!isAbort(error)) $("k-deep-file-note").textContent = error.message;
       return;
     }
     deep.files = data.files;
@@ -1468,7 +1469,7 @@
         await api(`eval?${new URLSearchParams({ file: deep.file })}`)
       ).entries;
     } catch (error) {
-      $("k-deep-file-note").textContent = error.message;
+      if (!isAbort(error)) $("k-deep-file-note").textContent = error.message;
       return;
     }
     drawEntries();
@@ -1526,6 +1527,7 @@
       <div class="k-deep-reply" ${again == null ? "" : `data-again="${again}"`} ${a.verdict ? `data-mark="${a.verdict}"` : ""}>
         <div class="k-deep-meta"><b>${escapeHtml(heading)}</b> <span class="panel-note" title="${escapeHtml(a.backend ?? "")}">${escapeHtml(meta)}</span></div>
         ${text}
+        ${window.cuttlefishSource?.lookups(a.lookups) ?? ""}
         ${sourcesList(a.sources)}
         <div class="cf-alias-actions">
           <button type="button" class="mode-toggle" data-verdict="good" ${pressed("good")}>${escapeHtml(t("k.deep.good"))}</button>
@@ -1621,14 +1623,17 @@
     loadEvalFiles();
   }
 
-  /** Asks an entry's question again; the answer joins it when it comes */
+  /** Asks an entry's question again; the answer joins it when it comes (made
+   * on a thread of the lab and asked for until made, cuttlefish.js's
+   * window.cuttlefishAnswer) */
   async function askAgain(entry) {
     const file = deep.file;
     deep.asking.add(entry.id);
     delete deep.askErrors[entry.id];
     drawEntries();
     try {
-      const asked = await api("eval/ask", { file, id: entry.id });
+      const started = await api("eval/ask", { file, id: entry.id });
+      const asked = await window.cuttlefishAnswer(started.job);
       if (file === deep.file)
         deep.entries = deep.entries.map((e) => (e.id === asked.id ? asked : e));
     } catch (error) {

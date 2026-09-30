@@ -117,7 +117,7 @@ stays there), and `uv` rebuilds it when the Rust sources change.
 | **Libraries and CLIs** | |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration, the camera turn from AgentZero's fits; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
-| `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, inbox, name tables, assets, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
+| `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, inbox, name tables, assets, embeddings, search, glossary), `Reviewer` for the Anthropic API or the Claude Code CLI, and the knowledge tools the model looks the store up with on the CLI (`tools`, served as an MCP server by `mcp`; see its README) |
 | `doc/` | Setup and dashboard write-up with screenshots (`index.html`), and the project's story (`story.html`; its videos rendered from the page's canvas scenes by `story/render.mjs`), published to GitHub Pages |
 
 ## How it works
@@ -386,18 +386,36 @@ neighbours strip.
 
 The chat: `POST chat` takes the message, the earlier turns (the page owns the
 review and sends its `messages`), the video and the moment or range it is
-about; `Cuttlefish::video_context` extracts the frames with ffmpeg and picks
-the review's comments near them, and `cuttlefish::review::chat` retrieves
-knowledge for the message plus the last user turns, sends the conversation
-with the frames and a JSON schema, and answers text (citing `[S1]`, naming
-moments as times), sources and timed comments. The page appends both turns to
-the review and saves it (Cuttlefish's turn even after the review was left),
-and adds his comments as its own. `src/cuttlefish/knowledge.rs` holds the `cuttlefish`
-crate's `Store` and `E5Embedder`, loaded once on first use and shared by the
-chat (`Knowledge::chat` over the borrowed store, embedder and a client made
-per request), the Knowledge view's search, and imports; `GET knowledge/model`
+about. It checks the message and the model backend at once and answers with
+a job (`src/cuttlefish/answers.rs`: the work on a thread named for the exit,
+`{"job"}`); the page asks `GET answer?job=` until it is made (`202` meanwhile,
+which the request queue asks again), so a minute of the model holds none of
+the page's connections, and the answer is the page's own request, never
+aborted by leaving the app. `Cuttlefish::video_context` extracts the frames
+with ffmpeg and picks the review's comments near them. On the Claude CLI
+backend the model then looks the knowledge up itself
+(`cuttlefish::review::chat_with_tools`): no excerpts go with the message;
+the lab serves the crate's knowledge tools (`cuttlefish::tools`: `search`,
+`open`, `pedia`, `thread`, `names`, a `Session` per answer over the loaded
+store, read-locked per call, with the corpus and the sessions' markers kept
+in `Knowledge`'s `Library`) on a socket in the run's private folder for the
+length of the answer, and the CLI starts this binary as `grizzco-lab mcp
+--socket <path>` (`cuttlefish::mcp::relay`), their MCP server, with no other
+tool. The sources the tools show are numbered `S<n>` from the first id the
+conversation has not cited, and the answer keeps every call (`lookups`,
+shown folded under it). On the API, `cuttlefish::review::chat` retrieves
+knowledge for the message plus the last user turns and sends it along. Both
+send the conversation with the frames and a JSON schema, and answer text
+(citing `[S1]`, naming moments as times), sources and timed comments. The
+page appends both turns to the review and saves it (Cuttlefish's turn even
+after the review was left), and adds his comments as its own.
+`src/cuttlefish/knowledge.rs` holds the `cuttlefish` crate's `Store` and
+`E5Embedder`, loaded once on first use and shared by the chat
+(`Knowledge::chat` over the borrowed store, embedder and a client made per
+request), the Knowledge view's search, and imports; `GET knowledge/model`
 tells the page whether the key is set without loading the store. The Translate
-view (`web/translate.js`) posts `translate` with `{text, target}`:
+view (`web/translate.js`) posts `translate` with `{text, target}` (a job too,
+whose answer is the entry written into the history):
 `Knowledge::translate` reads the glossary (no store, no model) for the terms
 the text uses, or the entry of a bare term with its name in the target
 language, and with a client the crate's `review::translate` for a sentence
@@ -435,9 +453,11 @@ question bank (`cuttlefish::questions`, `GET knowledge/questions`) feeds the
 chat's chips and the eval (`cuttlefish::deep_eval`: `POST knowledge/eval/deep`
 runs it as a job when the player starts it, `GET knowledge/eval[?file=]`
 lists and reads `<knowledge>/eval/deep-<date>.jsonl`, each answer with the
-backend, model and effort that gave it, `POST knowledge/eval/mark` records a
+backend, model and effort that gave it and, on the Claude CLI, what it
+looked up, `POST knowledge/eval/mark` records a
 verdict on the first answer or one asked again and the note made, `POST
-knowledge/eval/ask` asks a question again over the store as it is now). Imports use `cuttlefish::ingest`
+knowledge/eval/ask` asks a question again over the store as it is now, as a
+job the page asks `GET answer?job=` for). Imports use `cuttlefish::ingest`
 (the same code as the CLI) with a `Sink` that writes the job's log; one runs
 at a time, and the index is written every fifty documents and at the end (it
 may live in a synced folder, where each write uploads it whole). The

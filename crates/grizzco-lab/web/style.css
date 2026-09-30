@@ -5556,6 +5556,13 @@ body {
   color: var(--accent);
 }
 
+/* What an answer looked up: one quiet line per lookup, what it showed in
+   the line's tooltip */
+.cf-lookups li {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
 .cf-msg-comments {
   display: flex;
   flex-wrap: wrap;

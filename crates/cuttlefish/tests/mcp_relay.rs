@@ -94,7 +94,6 @@ impl Runner for FakeClaude {
             let answer = ask("tools/call", json!({"name": name, "arguments": arguments}))?;
             seen.answers.push(answer);
         }
-        drop(ask);
         // The relay ends with its input
         drop(to_server);
         let status = relay.wait()?;
