@@ -237,15 +237,22 @@ pub fn learn_video(
     Ok(countdowns)
 }
 
-/// `base` with the templates of `game` replaced by `learned`
-pub fn replace_game(base: &Templates, game: &str, learned: Vec<Template>) -> Templates {
+/// `base` with `learned` in place of its templates of the same game, role
+/// and character; the others are kept, so characters a video does not show
+/// (wave digits 4 and 5 outside Eggstra Work) stay as learned before
+pub fn merge(base: &Templates, learned: Vec<Template>) -> Templates {
     let mut list: Vec<Template> = base
         .list
         .iter()
-        .filter(|t| t.game != game)
+        .filter(|t| {
+            !learned
+                .iter()
+                .any(|l| (&l.game, l.role, l.ch) == (&t.game, t.role, t.ch))
+        })
         .cloned()
         .collect();
     list.extend(learned);
+    list.sort_by(|a, b| (&a.game, a.role, a.ch).cmp(&(&b.game, b.role, b.ch)));
     Templates { list }
 }
 

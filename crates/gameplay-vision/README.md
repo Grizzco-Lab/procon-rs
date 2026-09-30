@@ -179,12 +179,19 @@ returns the table and the samples; `hud::read(&HudCrop)` reads one crop
    blobs; the timer is the leftmost row of one to three digit-sized blobs
    in the lower half, the wave digit the rightmost tall blob (23 px or more)
    just above it, the egg counter the smaller blobs on the timer's row to the
-   right, split by `/`.
+   right: the `/`, and on either side the glyphs next to it, each within 0.85
+   of the `/`'s height of the one before (the round egg icon is left out).
 3. **Templates**: each blob is scaled to 20x24 by its height (a `1` stays
    narrow) and compared with mean glyphs per character (score: 1 minus the
-   mean absolute difference, at least 0.8). `src/hud/templates.txt` (7 KB)
-   holds timer digits 0-9, wave digits 1-3 and `/`, from session
-   2026-09-25_11-26-22 (360p, Chinese UI).
+   mean absolute difference, at least 0.8). `src/hud/templates.txt` (8 KB)
+   holds timer digits 0-9, wave digits 1-5 and `/`: all but the wave digits 4
+   and 5 from session 2026-09-25_11-26-22 (360p, Chinese UI), those from
+   eleven Eggstra Work waves of each number in Azu's streams (720p, Japanese
+   UI). The counter's digits are matched with the timer's, at 0.85: once the
+   quota is met, sparkles swarm around the counter, and one stuck to a digit
+   lowers its score, which leaves the counter unread rather than read short or
+   wrong. A count of 100 or more is set in narrower digits (10 px wide at
+   720p, the others 13), stretched sideways by 1.25 before matching.
 4. **Physics** (`hud::waves`): within a wave, every right reading `T` at
    `t` gives the same `t + T` (within the second a value stays shown).
    Readings are grouped by that sum (within 1.5 s); a wave needs 4 readings
@@ -202,8 +209,12 @@ digit is the wave's order, `--first-wave` for the first; the counter's `/` is
 its third glyph from the right). As a check, the drop from two digits to one
 (10 to 9) came exactly 90.000 s later in all five waves. `--fit` labels frames
 with the wave table read by the current templates instead, for footage
-without a wave start (for example Splatoon 2 clips, `--game s2`); templates
-of other games in the file are kept.
+without a wave start (for example Splatoon 2 clips, `--game s2`). Learned
+templates replace those of the same game, role and character; the others in
+the file are kept, and `--only` keeps only some of the learned ones: the wave
+digits 4 and 5 came from clips of single Eggstra Work waves, from 4 s before
+the countdown to 30 s into it (`hud learn w4/*.mkv --first-wave 4 --only
+wave:4`, then the same for 5 with `--templates` the result).
 
 ### Accuracy and speed
 
@@ -240,16 +251,34 @@ layout and close enough digits that the Splatoon 3 templates read it;
 templates learned from two S2 clips (`--fit --game s2`) read the four S2
 clips exactly as well, so none are shipped yet.
 
+**Top players' streams** (AgentZero's corpus, 720p, Japanese and Chinese UI;
+2026-09-30; labels are the counter as AgentZero's `eggs` cleaned it, frames
+where it holds half a second either side). The egg counter, frames read right
+/ unread / wrong, before and after the counter's reading was reworked:
+
+| | Frames | Before | After |
+|---|---|---|---|
+| Before the quota is met (42 waves) | 2,288 | 97.4 / 2.0 / 0.6% | 97.3 / 2.7 / 0.0% |
+| After it: sparkles, flashes (83 waves) | 4,813 | 94.8 / 2.0 / 3.2% | 94.1 / 5.7 / 0.3% |
+| Our sessions 11-26-22 and 13-06-16 (360p) | 4,283 | 97.2 / 2.5 / 0.3% | 97.1 / 2.8 / 0.0% |
+
+Counts of 100 or more: 0 and 6 were read as 8 in most frames (106 as 108,
+100 as 108 or 188); 100 random frames read with three digits now, checked by
+eye, all show the count read. The wrong reads left after the quota are mostly
+a digit a sparkle hides whole (32 read as 3), which the counter's cleaning
+drops as it only rises. Eggstra Work's waves (50 clips of 8 s, other jobs than
+the learning's): wave 4 read in 97.2% of frames (before: none), wave 5 in
+90.1% (before: 86% as 3), 1 to 3 as before (88-97%, the rest unread).
+
 **Speed**: decoding is almost all of it. 0.6 s per minute of 360p video
 (7 min in 4.0 s) and about 1.8 s per minute of 720p60 or 1080p30 (86 s of
 1080p in 2.6 s; ffmpeg uses about eight cores), finding the black bars
 included (about 0.5 s). Short clips are dominated by ffmpeg's start-up.
 
 **Left to do**: Splatoon 2 templates from longer S2 footage (YouTube);
-Eggstra Work (five waves, wave digits 4-5 not learned yet); egg digits have
-no templates of their own (the timer's are used, and sparkles often break the
-counter); locating the HUD when the picture is cropped, shifted or has an
-overlay (facecam, stream layout) instead of `--region`.
+locating the HUD when the picture is cropped, shifted or has an overlay
+(facecam, stream layout, a call's name tag over the wave label) instead of
+`--region`.
 
 ## What pretrained models see in Salmon Run
 

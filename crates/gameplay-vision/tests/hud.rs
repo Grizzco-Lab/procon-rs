@@ -1,6 +1,8 @@
 //! The HUD reader on stored crops: text masks of real HUD corners (400x120,
 //! binary PBM, 6 KB each) from our 360p sessions, 720p Discord clips of
-//! Splatoon 3 and Splatoon 2, an extra wave and the lobby.
+//! Splatoon 3 and Splatoon 2, an extra wave and the lobby, and 720p streams
+//! of top players (counts of 100 and more, sparkles once the quota is met,
+//! Eggstra Work's waves 4 and 5).
 
 use gameplay_vision::hud::{self, CROP_H, CROP_W, Hud, HudCrop};
 
@@ -47,6 +49,37 @@ fn reads_720p_clips_of_both_games() {
     assert_eq!(read(orange), Some((Some(1), Some(22), Some((25, 27)))));
     let s2 = include_bytes!("hud/s2_720p.pbm");
     assert_eq!(read(s2), Some((Some(2), Some(14), Some((19, 20)))));
+}
+
+#[test]
+fn reads_counts_of_100_and_more_in_their_narrow_digits() {
+    // Read as 108 before: a narrow 0 or 6 taken for an 8
+    let c106 = include_bytes!("hud/s3_720p_narrow_106.pbm");
+    assert_eq!(read(c106), Some((Some(3), Some(2), Some((106, 26)))));
+    let c100 = include_bytes!("hud/s3_720p_narrow_100.pbm");
+    assert_eq!(read(c100), Some((Some(2), Some(10), Some((100, 18)))));
+}
+
+#[test]
+fn sparkles_around_a_met_quota_are_not_digits() {
+    // A sparkle right of the quota was read as a third digit (41/291)
+    let apart = include_bytes!("hud/s3_720p_sparkles.pbm");
+    assert_eq!(read(apart), Some((Some(1), Some(28), Some((41, 29)))));
+    // One stuck to the quota's 2 made it an 8 (33/38): unread now
+    let stuck = include_bytes!("hud/s3_720p_sparkle_stuck.pbm");
+    assert_eq!(read(stuck), Some((Some(2), Some(15), None)));
+    // A burst over both numbers left a digit of each (38/32 read as 3/3)
+    let over = include_bytes!("hud/s3_720p_sparkles_over.pbm");
+    assert_eq!(read(over), Some((Some(2), Some(47), None)));
+}
+
+#[test]
+fn reads_eggstra_works_waves_4_and_5() {
+    // Not read, and read as 3, before their digits were learned
+    let w4 = include_bytes!("hud/s3_720p_wave4.pbm");
+    assert_eq!(read(w4), Some((Some(4), Some(50), Some((18, 30)))));
+    let w5 = include_bytes!("hud/s3_720p_wave5.pbm");
+    assert_eq!(read(w5), Some((Some(5), Some(46), Some((23, 31)))));
 }
 
 #[test]

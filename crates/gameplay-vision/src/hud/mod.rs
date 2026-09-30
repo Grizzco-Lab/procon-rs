@@ -14,9 +14,11 @@
 //!    connected blobs ([`glyph`]). The timer is the leftmost row of one to
 //!    three digit-sized blobs in the lower half; the wave digit is the last
 //!    tall blob of the label above it; the egg counter is the row of smaller
-//!    blobs right of the timer, split by `/`.
+//!    blobs right of the timer, split by `/` ([`Reader::read_counter`]).
 //! 3. Each blob is scaled to a small grid and matched against templates
-//!    built from real frames ([`learn`]), shipped in `templates.txt`.
+//!    built from real frames ([`learn`]), shipped in `templates.txt`: the
+//!    timer's digits (also read in the counter), the wave digits and the
+//!    `/`.
 //!
 //! [`waves`] turns per-second readings into a wave table using the timer's
 //! physics; [`video`] decodes the crops from a video file with ffmpeg.
@@ -27,7 +29,7 @@ pub mod video;
 pub mod waves;
 
 use anyhow::Result;
-use glyph::{Blob, Blobs, Cells, Templates};
+use glyph::{Blob, Blobs, Cells, Role, Templates};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -49,6 +51,18 @@ pub const BRIGHT: u8 = 170;
 pub const WAVE_DIGIT_H: usize = 23;
 /// Lowest template score for a digit to count as read
 pub const MIN_SCORE: f32 = 0.80;
+/// Lowest template score for a digit of the egg counter: once the quota is
+/// met, sparkles swarm around the counter, and one stuck to a digit lowers
+/// its score (right digits score about 0.9)
+pub const COUNTER_MIN_SCORE: f32 = 0.85;
+/// A count of 100 or more is set in narrower digits (about 10 pixels wide
+/// in a 1280x720 picture, the others 13): they are stretched sideways by
+/// this before matching
+pub const NARROW_STRETCH: f32 = 1.25;
+/// Farthest apart two neighbouring glyphs of the egg counter are, center to
+/// center, as a share of the height of its `/`: the digits and the `/` sit
+/// about 0.7 apart, the egg icon before a three-digit count 0.95
+pub const COUNTER_PITCH: f32 = 0.85;
 
 /// The templates shipped with the crate (see [`learn`] to rebuild them)
 const TEMPLATES: &str = include_str!("templates.txt");
@@ -119,7 +133,10 @@ pub struct Parts {
     pub timer: Vec<Blob>,
     /// The wave label's last tall blob (its digit)
     pub wave: Option<Blob>,
-    /// Egg counter glyphs, left to right, `/` included
+    /// Egg counter glyphs by their centers, left to right, `/` included:
+    /// blobs across the timer's middle row, right of it, of the counter's
+    /// height, narrower than tall (not the round egg icon before them) but
+    /// possibly wider than a digit (a sparkle stuck to it)
     pub eggs: Vec<Blob>,
 }
 
@@ -181,11 +198,11 @@ impl Parts {
                     && b.y + b.h > center
                     && b.h * 20 >= h * 11
                     && b.h * 20 <= h * 19
-                    && b.w * 20 <= b.h * 17
+                    && b.w < b.h
             })
             .copied()
             .collect();
-        eggs.sort_by_key(|b| b.x);
+        eggs.sort_by_key(|b| 2 * b.x + b.w);
         Some(Self {
             blobs,
             timer,
@@ -229,7 +246,7 @@ impl Reader {
         for b in &parts.timer {
             let (ch, score) = self
                 .templates
-                .best(&parts.cells(b), |t| t.role == glyph::Role::Timer)?;
+                .best(&parts.cells(b), |t| t.role == Role::Timer)?;
             confidence = confidence.min(score);
             value = value * 10 + ch.to_digit(10)?;
         }
@@ -241,24 +258,11 @@ impl Reader {
         let wave = parts.wave.as_ref().and_then(|b| {
             let (ch, score) = self
                 .templates
-                .best(&parts.cells(b), |t| t.role == glyph::Role::Wave)?;
+                .best(&parts.cells(b), |t| t.role == Role::Wave)?;
             let d = ch.to_digit(10)?;
             (score >= MIN_SCORE && d >= 1).then_some(d as u8)
         });
-        // Egg counter: digits, `/`, digits
-        let chars: Vec<char> = parts
-            .eggs
-            .iter()
-            .map(|b| {
-                self.templates
-                    .best(&parts.cells(b), |t| {
-                        t.role == glyph::Role::Timer || t.role == glyph::Role::Slash
-                    })
-                    .filter(|(_, score)| *score >= MIN_SCORE)
-                    .map_or('?', |(ch, _)| ch)
-            })
-            .collect();
-        let eggs = parse_eggs(&chars);
+        let eggs = self.read_counter(parts);
         if timer_s.is_none() && wave.is_none() {
             return None;
         }
@@ -268,6 +272,64 @@ impl Reader {
             eggs,
             confidence,
         })
+    }
+
+    /// The glyphs of the egg counter's two numbers, `(count, quota)`: the
+    /// `/`, and on either side the glyphs next to it, each within
+    /// [`COUNTER_PITCH`] of the one before; `None` without a `/`
+    pub fn counter_runs(&self, parts: &Parts) -> Option<(Vec<Blob>, Vec<Blob>)> {
+        let glyphs = &parts.eggs;
+        let slash = glyphs.iter().position(|b| {
+            self.templates
+                .best(&parts.cells(b), |t| {
+                    t.role == Role::Timer || t.role == Role::Slash
+                })
+                .is_some_and(|(ch, score)| ch == '/' && score >= MIN_SCORE)
+        })?;
+        let pitch = glyphs[slash].h as f32 * COUNTER_PITCH;
+        let run = |side: &mut dyn Iterator<Item = &Blob>| {
+            let mut out: Vec<Blob> = Vec::new();
+            let mut last = glyphs[slash];
+            for b in side {
+                let apart = (2 * last.x + last.w).abs_diff(2 * b.x + b.w) as f32 / 2.0;
+                if apart > pitch || out.len() > 3 {
+                    break;
+                }
+                out.push(*b);
+                last = *b;
+            }
+            out
+        };
+        let mut count = run(&mut glyphs[..slash].iter().rev());
+        count.reverse();
+        let quota = run(&mut glyphs[slash + 1..].iter());
+        Some((count, quota))
+    }
+
+    /// The egg counter `delivered/quota` ([`Reader::counter_runs`]), its
+    /// digits matched with the timer's. A count of three digits is set in
+    /// narrower ones ([`NARROW_STRETCH`]). A glyph that matches no digit
+    /// well ([`COUNTER_MIN_SCORE`]: a sparkle stuck to it, a flash) leaves
+    /// the counter unread rather than read shorter or wrong.
+    pub fn read_counter(&self, parts: &Parts) -> Option<(u16, u16)> {
+        let (count, quota) = self.counter_runs(parts)?;
+        let read = |run: &[Blob], stretch: f32| -> Option<u16> {
+            let chars = run
+                .iter()
+                .map(|b| {
+                    let cells = glyph::stretched(&parts.blobs, b, stretch);
+                    let (ch, score) = self.templates.best(&cells, |t| t.role == Role::Timer)?;
+                    (score >= COUNTER_MIN_SCORE).then_some(ch)
+                })
+                .collect::<Option<Vec<char>>>()?;
+            counter_number(&chars)
+        };
+        let narrow = if count.len() == 3 {
+            NARROW_STRETCH
+        } else {
+            1.0
+        };
+        Some((read(&count, narrow)?, read(&quota, 1.0)?))
     }
 }
 
@@ -313,28 +375,15 @@ pub fn scan(
     Ok((table, samples))
 }
 
-/// `delivered/quota` from the egg counter's characters (`?` unread)
-fn parse_eggs(chars: &[char]) -> Option<(u16, u16)> {
-    let slash = chars.iter().position(|&c| c == '/')?;
-    let number = |s: &[char]| -> Option<u16> {
-        if s.is_empty() || s.len() > 3 {
-            return None;
-        }
-        s.iter()
-            .try_fold(0u16, |n, c| Some(n * 10 + c.to_digit(10)? as u16))
-    };
-    // Digits right before the slash, back to the first non-digit
-    let before = &chars[..slash];
-    let start = before
+/// A number of the egg counter from its digits: one to three, no leading
+/// zero
+fn counter_number(chars: &[char]) -> Option<u16> {
+    if chars.is_empty() || chars.len() > 3 || (chars.len() > 1 && chars[0] == '0') {
+        return None;
+    }
+    chars
         .iter()
-        .rposition(|c| !c.is_ascii_digit())
-        .map_or(0, |i| i + 1);
-    let after = &chars[slash + 1..];
-    let end = after
-        .iter()
-        .position(|c| !c.is_ascii_digit())
-        .unwrap_or(after.len());
-    Some((number(&before[start..])?, number(&after[..end])?))
+        .try_fold(0u16, |n, c| Some(n * 10 + c.to_digit(10)? as u16))
 }
 
 #[cfg(test)]
@@ -342,12 +391,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn eggs_are_parsed_around_the_slash() {
+    fn counter_numbers_are_one_to_three_digits() {
         let c = |s: &str| s.chars().collect::<Vec<_>>();
-        assert_eq!(parse_eggs(&c("32/27")), Some((32, 27)));
-        assert_eq!(parse_eggs(&c("?0/27")), Some((0, 27)));
-        assert_eq!(parse_eggs(&c("??5/31?")), Some((5, 31)));
-        assert_eq!(parse_eggs(&c("32?27")), None);
-        assert_eq!(parse_eggs(&c("/27")), None);
+        assert_eq!(counter_number(&c("32")), Some(32));
+        assert_eq!(counter_number(&c("0")), Some(0));
+        assert_eq!(counter_number(&c("108")), Some(108));
+        assert_eq!(counter_number(&c("05")), None);
+        assert_eq!(counter_number(&c("3/")), None);
+        assert_eq!(counter_number(&c("1234")), None);
+        assert_eq!(counter_number(&c("")), None);
     }
 }

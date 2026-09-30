@@ -113,14 +113,21 @@ impl Blobs {
 /// Blob `b` on the grid: scaled so its height fills [`GH`], centered
 /// horizontally (a narrow `1` stays narrow), sampled bilinearly
 pub fn cells(blobs: &Blobs, b: &Blob) -> Cells {
+    stretched(blobs, b, 1.0)
+}
+
+/// Blob `b` on the grid as [`cells`] puts it, then stretched sideways by
+/// `stretch` (a glyph of a narrower font, scaled to the usual width)
+pub fn stretched(blobs: &Blobs, b: &Blob, stretch: f32) -> Cells {
     let scale = GH as f32 / b.h as f32;
-    let offset = (GW as f32 - b.w as f32 * scale) / 2.0;
+    let scale_x = scale * stretch;
+    let offset = (GW as f32 - b.w as f32 * scale_x) / 2.0;
     let mut out = [0.0; GW * GH];
     for gy in 0..GH {
         let sy = b.y as f32 + (gy as f32 + 0.5) / scale - 0.5;
         let (y0, ty) = (sy.floor(), sy - sy.floor());
         for gx in 0..GW {
-            let sx = b.x as f32 + (gx as f32 + 0.5 - offset) / scale - 0.5;
+            let sx = b.x as f32 + (gx as f32 + 0.5 - offset) / scale_x - 0.5;
             let (x0, tx) = (sx.floor(), sx - sx.floor());
             let (xi, yi) = (x0 as isize, y0 as isize);
             let p = |dx: isize, dy: isize| blobs.inside(b.id, xi + dx, yi + dy);
@@ -159,7 +166,8 @@ impl Role {
         }
     }
 
-    fn parse(s: &str) -> Result<Self> {
+    /// The role named `s` in the templates file
+    pub fn parse(s: &str) -> Result<Self> {
         Ok(match s {
             "timer" => Self::Timer,
             "wave" => Self::Wave,

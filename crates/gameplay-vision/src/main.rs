@@ -9,7 +9,7 @@
 //! gameplay-vision hud scan  <video> [--every 0.5s] [--out wave_starts.json]
 //! gameplay-vision hud read  <video> --at 12.5,30 [--png DIR]
 //! gameplay-vision hud time  <wave_starts.json> <wave> <timer_s>
-//! gameplay-vision hud learn <video>... [--fit] [--game s3] --out templates.txt
+//! gameplay-vision hud learn <video>... [--fit] [--game s3] [--only wave:45] --out templates.txt
 //! ```
 //!
 //! `detect` and `prelabel` print each frame's timings (decode, preprocess,
@@ -19,7 +19,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 use gameplay_vision::detect::{self, Detector, Timing, Weights};
 use gameplay_vision::frames::{FrameRange, FrameReader, Segment};
-use gameplay_vision::hud::glyph::{Blob, Templates};
+use gameplay_vision::hud::glyph::{Blob, Role, Templates};
 use gameplay_vision::hud::learn::{self, Anchor, Learner};
 use gameplay_vision::hud::video::{self as hud_video, Region, VideoInfo};
 use gameplay_vision::hud::waves::WaveTable;
@@ -163,7 +163,12 @@ enum HudCmd {
         /// Number of each video's first wave (without `--fit`)
         #[arg(long, default_value_t = 1)]
         first_wave: u8,
-        /// Game tag of the templates; templates of other games are kept
+        /// Keep only these of the learned templates, `<role>` or
+        /// `<role>:<chars>` (`wave:45`, `timer`), comma-separated; the
+        /// others stay as they were
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
+        /// Game tag of the learned templates
         #[arg(long, default_value = "s3")]
         game: String,
         /// Output templates file
@@ -681,11 +686,19 @@ fn run_hud(command: HudCmd) -> Result<()> {
             videos,
             fit,
             first_wave,
+            only,
             game,
             out,
             hud,
         } => {
             let reader = hud.reader()?;
+            let only = only
+                .iter()
+                .map(|s| {
+                    let (role, chars) = s.split_once(':').unwrap_or((s, ""));
+                    Ok((Role::parse(role)?, chars.to_string()))
+                })
+                .collect::<Result<Vec<_>>>()?;
             let mut learner = Learner::default();
             let anchor = if fit {
                 Anchor::Fit
@@ -713,7 +726,17 @@ fn run_hud(command: HudCmd) -> Result<()> {
             for (role, ch, n) in learner.counts() {
                 println!("  {} {ch}: {n} glyphs", role.name());
             }
-            let templates = learn::replace_game(&reader.templates, &game, learner.templates(&game));
+            let learned = learner
+                .templates(&game)
+                .into_iter()
+                .filter(|t| {
+                    only.is_empty()
+                        || only.iter().any(|(role, chars)| {
+                            *role == t.role && (chars.is_empty() || chars.contains(t.ch))
+                        })
+                })
+                .collect();
+            let templates = learn::merge(&reader.templates, learned);
             std::fs::write(&out, templates.to_text())
                 .with_context(|| format!("cannot write {}", out.display()))?;
             println!(
