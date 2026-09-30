@@ -6,36 +6,37 @@ the project does and how to run it, see the [README](README.md).
 ## Development
 
 ```bash
-cargo build --release                  # both binaries for this machine
-cargo test --workspace                 # procon and every crate's unit tests
+cargo build --release                  # every crate for this machine
+cargo test --workspace                 # every crate's unit tests
 cargo clippy --workspace --all-targets
 cargo fmt
 
-cargo run --example fake_proxy [port] [--still]  # synthetic controller, no Pi needed (default port 7331, replay on the next)
-./scripts/run.sh                       # the studio with config.toml
+cargo run -p procon-proxy --example fake_proxy [port] [--still]  # synthetic controller, no Pi needed (default port 7331, replay on the next)
+./scripts/run.sh                       # Grizzco Lab with config.toml (builds -p grizzco-lab)
 ./scripts/deploy.sh [ssh-host]         # cross-compile, copy and restart the proxy on the Pi
 ./scripts/run-proxy.sh                 # build and run the proxy on the Pi itself
 ```
 
 The proxy is cross-compiled for `aarch64-unknown-linux-musl`: a static binary
 linked by Rust's bundled `rust-lld` (`.cargo/config.toml`), so no C cross
-toolchain or Pi sysroot is needed. `rust-toolchain.toml` adds the target. The
-proxy is built with `--no-default-features`: the `studio` feature (on by
-default) holds the studio's crates (tokio, warp, the model and knowledge
-crates), which the proxy has no use for and which need a C compiler for the
-target.
+toolchain or Pi sysroot is needed. `rust-toolchain.toml` adds the target.
+The root `Cargo.toml` is a virtual workspace, every package a crate under
+`crates/`, and the proxy is a package of its own (`cargo build -p
+procon-proxy`): of ours it builds only `procon` and `gameplay-data`, never the
+lab's crates (tokio, warp, the model and knowledge crates), which it has no
+use for and which need a C compiler for the target.
 
-To work on the studio without hardware, run `fake_proxy` on a free port, point
+To work on the lab without hardware, run `fake_proxy` on a free port, point
 a copy of `config.toml` at it (`[proxy] address`, and `replay_address` at the
 next port, a different `[web] port`, `[video] input = "screen"`, `""` or a
 recorded video file, which plays in a loop as if live) and run
-`target/release/procon --config <copy>`. Dashboard settings are saved next to
+`target/release/grizzco-lab --config <copy>`. Dashboard settings are saved next to
 that copy (`<name>.state.json`). The fake proxy applies replayed actions like
 the proxy; `--still` keeps its synthetic controller at rest, so AgentZero's
 actions can be sent to it without a "person" taking over.
 
 After changing the page's layout or styles, run the layout check against
-such a test studio (Node 22 or later and Chrome; no packages):
+such a test lab (Node 22 or later and Chrome; no packages):
 
 ```bash
 node scripts/layout-check.mjs http://127.0.0.1:<port>   # --only joy,salmon for some themes
@@ -51,13 +52,15 @@ exit code is 1. `CHROME` names another Chrome binary. The profile lives in a
 temporary folder and is removed afterwards.
 
 `scripts/gadget_procon.sh` and `scripts/cleanup_gadget.sh` set up and remove
-the USB gadget by hand; the proxy does this itself (`src/gadget.rs`).
+the USB gadget by hand; the proxy does this itself
+(`crates/procon-proxy/src/gadget.rs`).
 
 ### Python bindings
 
 `crates/gameplay-data` builds a Python module, `gameplay_data`, with maturin
 (`pyproject.toml`, the `python` feature). AgentZero depends on it as an
-editable path dependency, so `uv` rebuilds it when the Rust sources change.
+editable path dependency (`../procon-rs/crates/gameplay-data`, so the crate
+stays there), and `uv` rebuilds it when the Rust sources change.
 
 ## Conventions
 
@@ -67,52 +70,61 @@ editable path dependency, so `uv` rebuilds it when the Rust sources change.
   what cargo cannot do; never edit `Cargo.lock` by hand.
 - Prefer `core` and `alloc` over `std` where possible.
 - Run `cargo fmt` after editing Rust, and `prettier --write` for HTML (the
-  dashboard in `web/` and the write-up in `doc/`).
+  dashboard in `crates/grizzco-lab/web/` and the write-up in `doc/`).
 - Keep it simple.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `src/bin/procon-proxy.rs` | USB proxy binary (`proxy.toml`): reset the controller, set up the gadget, stream frames, forward |
-| `src/bin/main.rs` | Studio binary `procon` (`config.toml`): frame receiver, video, recorder, replay player, dashboard |
-| `src/config.rs` | Both configuration files |
+| `Cargo.toml` | The workspace (virtual): every package is a crate under `crates/` |
+| **`crates/procon-proxy/`** | **The USB proxy on the Pi** |
+| `src/main.rs` | Binary `procon-proxy` (`proxy.toml`, read by `src/config.rs`): reset the controller, set up the gadget, stream frames, forward |
 | `src/device.rs` | The physical controller through hidapi; `reset()` replugs it through sysfs |
 | `src/gadget.rs` | USB gadget with the Pro Controller's IDs (usb-gadget crate) |
 | `src/proxy.rs` | Forwarding between controller and Switch, on two threads |
 | `src/wake.rs` | USB remote wakeup on Home, through the DWC2 registers |
 | `src/priority.rs` | Real-time priority and optional CPU affinity |
+| `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy (or one at rest, `--still`) and applies replayed actions |
+| **`crates/procon/`** | **What the proxy and the lab share** |
 | `src/dump.rs` | `Dumper` trait, `AsyncDumper` (own thread), `FileDumper`, `MultiDumper` |
-| `src/stream.rs` | Frame link: `FrameStreamer` on the proxy, `receive_frames` in the studio |
+| `src/stream.rs` | Frame link: `FrameStreamer` on the proxy, `receive_frames` in the lab |
 | `src/replay.rs` | Replay `Action`s, loading them, and the proxy's replay port |
-| `src/player.rs` | The studio's Replay panel: plays actions to the replay port |
-| `src/parser.rs`, `src/keystate.rs` | Input reports parsed into buttons, sticks and IMU samples |
-| `src/motion.rs` | Controller orientation from the IMU for Splatoon mode |
 | `src/recorder.rs` | Session folders and `controller.bin`: start/pause/resume/stop |
-| `src/video.rs` | ffmpeg capture: input list, grabber, preview and recording encoders |
-| `src/audio.rs` | Capture card sound from PulseAudio, for recordings |
-| `src/studio.rs` | Coordinator: sessions, `session.json`, dashboard commands, saved settings, technique markers (open span, mark last N s, undo; `web/techniques.js` is their panel) |
-| `src/web.rs` | Dashboard server (warp): page, WebSocket, command API, Inkspector API |
+| `src/config.rs` | The TOML loader and the `[logging]` section both config files have |
+| **`crates/grizzco-lab/`** | **Grizzco Lab on the PC, one module per app** |
+| `src/main.rs` | Binary `grizzco-lab` (`config.toml`, read by `src/config.rs`): frame receiver, video, recorder, replay player, dashboard |
+| `src/web.rs` | Dashboard server (warp): page, WebSocket, command API, and every app's routes under its prefix |
+| `src/studio.rs` | The Studio app's coordinator: sessions, `session.json`, dashboard commands, saved settings, technique markers (open span, mark last N s, undo; `web/techniques.js` is their panel) |
+| `src/studio/player.rs` | The Studio's Replay panel: plays actions to the replay port |
+| `src/studio/parser.rs`, `src/studio/keystate.rs` | Input reports parsed into buttons, sticks and IMU samples |
+| `src/studio/motion.rs` | Controller orientation from the IMU for Splatoon mode |
+| `src/studio/video.rs`, `src/studio/v4l2.rs` | ffmpeg capture: input list, grabber, preview and recording encoders; a YUYV capture card read directly (`v4l2.rs`) |
+| `src/studio/audio.rs` | Capture card sound from PulseAudio, for recordings |
 | `src/inspect.rs` | Inkspector backend: sessions, frames, labels, delays, technique markers (read, replace, every session's) |
-| `src/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes, Follow's write rules |
-| `src/follow.rs` | Follow: boxes carried over the next frames by AgentZero's SAM 2 tracker, proxied from a thread; starts the tracker |
+| `src/inspect/objects.rs` | Object labels of the Inkspector's labeling mode: `classes.json`, `<session>/<segment>.objects.jsonl`, atomic writes, Follow's write rules |
+| `src/inspect/follow.rs` | Follow: boxes carried over the next frames by AgentZero's SAM 2 tracker, proxied from a thread; starts the tracker |
 | `src/cuttlefish.rs` | Cuttlefish app backend: review folders (`review.json` with the chat, and the video, optional), video bytes with ranges, yt-dlp downloads into new or existing reviews, migration of the older flat layout, the chat endpoint over the shared knowledge store |
-| `src/knowledge.rs` | Cuttlefish's Knowledge view: the store and embedder loaded once (the chat's retrieval too), search, glossary lookups and `Knowledge::translate` for the Translate view, import jobs, inbox uploads, overview, assets and thumbnails, document deletion |
-| `src/pedia.rs` | Cuttlefish's Overfishing Pedia: the terms in scope with sections, games and facets (`cuttlefish::pedia`), their #vod-review mentions searched once and cached until the corpus or the names change, entries with quotes, fact cards, notes and deep questions; `GET source`, the context of a cited source or a quote for the page's source popover (`web/source.js`) |
+| `src/cuttlefish/knowledge.rs` | Cuttlefish's Knowledge view: the store and embedder loaded once (the chat's retrieval too), search, glossary lookups and `Knowledge::translate` for the Translate view, import jobs, inbox uploads, overview, assets and thumbnails, document deletion |
+| `src/cuttlefish/pedia.rs` | Cuttlefish's Overfishing Pedia: the terms in scope with sections, games and facets (`cuttlefish::pedia`), their #vod-review mentions searched once and cached until the corpus or the names change, entries with quotes, fact cards, notes and deep questions; `GET source`, the context of a cited source or a quote for the page's source popover (`web/source.js`) |
 | `src/vision.rs` | Vision app backend: detection runs on a thread, timings, stored results through our classes, dataset overview, send to labels |
+| `src/vision/detector.rs` | The Salmon Run detector's client: AgentZero's `agentzero-detect-serve`, its health, runs streamed as JSON lines, and starting it |
 | `src/predictor.rs` | Predictor app backend: `agentzero-predict` runs as a child process, stored predictions, windows of predictions and truth, agreement numbers |
-| `src/pipeline.rs` | Pipeline app backend: the experiment queue file (read, reordered under its lock), the GPU and the machine sampled on a thread, each entry's processes and progress, the timeline |
 | `src/predictor/online.rs` | The Predictor's online mode: `agentzero-play --json` on a paced video or the live capture's piped frames, the loop's latency, and the bot (`Bot`) that plays the Switch through the replay port with a person's input taking over |
+| `src/pipeline.rs` | Pipeline app backend: the experiment queue file (read, reordered under its lock), the GPU and the machine sampled on a thread, each entry's processes and progress, the timeline |
+| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `translate.js`, `vision.js`, `predictor.js`, `pipeline.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
+| **Libraries and CLIs** | |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration, the camera turn from AgentZero's fits; Python bindings |
 | `crates/gameplay-vision` | Object detection (YOLOv8 in candle) and tracking on session video; object labels and prelabels; CLI `gameplay-vision` (see its README) |
 | `crates/cuttlefish` | AI reviewer backend and CLI `cuttlefish`: knowledge store (importers, inbox, name tables, assets, embeddings, search, glossary) and `Reviewer` for the Anthropic API (see its README) |
-| `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `translate.js`, `vision.js`, `predictor.js`, `pipeline.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
-| `examples/fake_proxy.rs` | Streams a synthetic controller like the proxy (or one at rest, `--still`) and applies replayed actions |
 | `doc/` | Setup and dashboard write-up with screenshots (`index.html`), and the project's story (`story.html`; its videos rendered from the page's canvas scenes by `story/render.mjs`), published to GitHub Pages |
 
 ## How it works
 
 ### Proxy (on the Pi)
+
+`crates/procon-proxy`, with the dumpers, the recorder, the link and the replay
+port of `crates/procon`:
 
 1. `device::reset()` replugs the controller through sysfs (`authorized` 0/1).
    A controller the console knows over Bluetooth connects to it wirelessly
@@ -141,12 +153,15 @@ output endpoint and the Switch's handshake.
 
 ### Frame link
 
-The proxy sends an 8-byte header, then 80-byte frames (the `controller.bin`
-record, `gameplay_data::frame`), and an empty frame (a heartbeat) after a second
-without reports. The studio counts sequence gaps as dropped frames and keeps
-the smallest `host_now - proxy_timestamp` over 10 s as the clock offset.
+`crates/procon/src/stream.rs`: the proxy sends an 8-byte header, then 80-byte
+frames (the `controller.bin` record, `gameplay_data::frame`), and an empty
+frame (a heartbeat) after a second without reports. The lab counts sequence
+gaps as dropped frames and keeps the smallest `host_now - proxy_timestamp`
+over 10 s as the clock offset.
 
-### Studio (on the PC)
+### Grizzco Lab (on the PC)
+
+Paths in this and the following sections are in `crates/grizzco-lab/`.
 
 - Frames from the link go through a `MultiDumper` to the `Recorder` and the
   dashboard's live feed.
@@ -157,10 +172,10 @@ the smallest `host_now - proxy_timestamp` over 10 s as the clock offset.
   kernel capture time (`-ts mono2abs -copyts` + `showinfo`); a recording starts
   at its first frame's capture time, and frames reach it at a constant rate. A
   queue of late frames (over 120 ms for 3 s while idle) restarts the grabber.
-  A capture card in YUYV is read by the studio itself instead
-  (`src/v4l2.rs`, `[video] v4l2_direct`): memory-mapped, four buffers, each
+  A capture card in YUYV is read by the lab itself instead
+  (`src/studio/v4l2.rs`, `[video] v4l2_direct`): memory-mapped, four buffers, each
   frame taken as the kernel has it, with the kernel's timestamp; `pump` in
-  `src/video.rs` hands the newest frame to the live policy, then puts every
+  `src/studio/video.rs` hands the newest frame to the live policy, then puts every
   frame on the constant rate itself (`ConstantRate`, the fps filter's rule
   without its wait for the next frame) and writes it into a converter
   ffmpeg whose 1080p frames go on as the grabber's. ffmpeg's v4l2 input asks
@@ -187,7 +202,7 @@ the smallest `host_now - proxy_timestamp` over 10 s as the clock offset.
 `state` message per input report, `status` twice a second, preview fMP4
 fragments as binary), `POST /api/command` (a `studio::Command` such as
 `{"action":"start"}`) and `/api/inspect/...` (see `src/inspect.rs`), `/api/cuttlefish/...` (see
-`src/cuttlefish.rs` and `src/knowledge.rs`), `/api/vision/...` (see
+`src/cuttlefish.rs` and `src/cuttlefish/knowledge.rs`), `/api/vision/...` (see
 `src/vision.rs`), `/api/predictor/...` (see `src/predictor.rs`) and
 `/api/pipeline/...` (see `src/pipeline.rs`). Everything
 that reads files, runs ffmpeg or a model is kept off the async workers
@@ -200,8 +215,8 @@ may sit on a network mount; the knowledge store, detectors and the
 `agentzero-predict` options load on first use. Browsers abort requests all the
 time (a video's range request when seeking, a frame it no longer needs, a
 reload during a slow request); warp reports each as a connection error
-(`IncompleteMessage`, connection reset, broken pipe), which the studio's logger
-lowers to debug (`is_client_abort` in `src/bin/main.rs`). `scripts/run.sh`
+(`IncompleteMessage`, connection reset, broken pipe), which the lab's logger
+lowers to debug (`is_client_abort` in `src/main.rs`). `scripts/run.sh`
 builds first (15–45 s after a code update, over a minute after a dependency
 change) and then runs the binary.
 
@@ -230,7 +245,7 @@ blurs over the live video) or expanded to icons with names (`data-rail`,
 `procon-rail`; the View menu's Rail row or the chevron at the rail's foot);
 each theme sets the rail's surface, tile and mark through `--rail-*` tokens. The top bar keeps three looks apart:
 navigation (the switch), status (passive indicators, a dot and a word, the
-details in their title; the open app's first, then the studio's) and actions
+details in their title; the open app's first, then the lab's) and actions
 (buttons: language, View). It stays one row down to about 1060 px of page
 width (healthy link indicators drop to their dot first when an app adds its
 own status), then the status takes a row of its own. The View menu sets
@@ -288,9 +303,9 @@ segment's sound is served as WebM with byte ranges. `POST
 `web/inspect.js` opens the segment in the player and keeps its state in the
 URL (`/inspect/<session>?seg=&n=&delay=&pred=`).
 
-The labeling mode (`src/objects.rs`, `web/label.js`) saves boxes frame by
+The labeling mode (`src/inspect/objects.rs`, `web/label.js`) saves boxes frame by
 frame; the scrubber marks labeled frames on one canvas (`drawMarks`). Follow
-(`src/follow.rs`) sends a frame's boxes and the video path to the tracker
+(`src/inspect/follow.rs`) sends a frame's boxes and the video path to the tracker
 (`agentzero-track-serve` in AgentZero: SAM 2.1 tiny through transformers,
 streaming, JSON lines per frame) from a thread and writes its boxes every ten
 frames under the labeling lock. `follow_span` is the count up to the ends of
@@ -301,7 +316,7 @@ line a person left empty; Accept up to here (Shift+A) saves several frames in
 one write (`save_frames`, `frames` in `POST /api/inspect/objects`); `follow_ids` gives boxes
 without an id a new one and writes it on the start frame. The page polls
 `GET follow/job`; `POST follow/start` runs `[inspect] tracker_command` in its
-own process group, stopped with the studio.
+own process group, stopped with the lab.
 
 ### Cuttlefish and its knowledge
 
@@ -330,7 +345,7 @@ knowledge for the message plus the last user turns, sends the conversation
 with the frames and a JSON schema, and answers text (citing `[S1]`, naming
 moments as times), sources and timed comments. The page appends both turns to
 the review and saves it (Cuttlefish's turn even after the review was left),
-and adds his comments as its own. `src/knowledge.rs` holds the `cuttlefish`
+and adds his comments as its own. `src/cuttlefish/knowledge.rs` holds the `cuttlefish`
 crate's `Store` and `E5Embedder`, loaded once on first use and shared by the
 chat (`Knowledge::chat` over the borrowed store, embedder and a client made
 per request), the Knowledge view's search, and imports; `GET knowledge/model`
@@ -390,14 +405,14 @@ our entries there (`DATA_DIRS`, `DATA_FILES`, `models`), copies their data into
 the knowledge folder, checks the copy (every file with its size) and only then
 moves them into `procon-migrated-<date>.safe-to-delete/` inside it; the
 overview lists such folders. `Store::open` refuses that folder. The CLI resolves
-the knowledge folder like the studio from `--config` (default `./config.toml`),
+the knowledge folder like the lab from `--config` (default `./config.toml`),
 else `$CUTTLEFISH_DATA`, else fails. Structured files without names in several
 languages become small text documents (`tables::as_text`, under 1 MB).
 
 The inbox (`cuttlefish::inbox`) is `<knowledge>/inbox/`. `POST
 knowledge/upload?path=` streams a file into it (a bounded channel to a blocking
 writer, `.name.upload` then renamed; hidden or `..` paths refused, 4 GB at
-most); `routes` in `src/knowledge.rs` serves that and `GET thumb` before the JSON
+most); `routes` in `src/cuttlefish/knowledge.rs` serves that and `GET thumb` before the JSON
 routes of `src/cuttlefish.rs`. The import walks the inbox (no hidden folders,
 no `node_modules`/build output), classifies each file (`inbox::classify`),
 unpacks archives with `bsdtar` into the cache, and routes prose to documents
@@ -422,12 +437,12 @@ lock. The results shown go through the same renaming and keep only our classes
 counts the labeled boxes per class (by people and by models) and the frames
 people labeled, against the 200 the Salmon Run detector waits for.
 
-The Salmon Run detector (model `salmon`) runs outside the studio, in
-AgentZero's `agentzero-detect-serve`; `src/detector.rs` is its client, like
+The Salmon Run detector (model `salmon`) runs outside the lab, in
+AgentZero's `agentzero-detect-serve`; `src/vision/detector.rs` is its client, like
 Follow's for the tracker: `GET /health` (checkpoint, training summary, device,
 free GPU memory, busy) for `GET /api/vision/detector`, with the checkpoint's
 modification time as `saved_ms`; `POST /api/vision/detector/start` runs
-`[vision] detector_command` in its own process group, stopped with the studio.
+`[vision] detector_command` in its own process group, stopped with the lab.
 A run posts `/detect` and reads its JSON lines (`start`, one `frame` per frame
 with boxes in the label format and decode/network/total ms, `end` or `error`)
 into the same job, tracker and results file as a candle run; Cancel drops the
@@ -448,7 +463,7 @@ CUDA running out of memory is told apart. The predictions go to
 on success) with `run.json`. The command runs in its own process group, since
 `uv run` starts Python as its child and a signal to `uv` alone would leave
 Python predicting: Cancel sends the group SIGTERM, then SIGKILL after five
-seconds, and keeps nothing; a run under way stops with the studio. The page
+seconds, and keeps nothing; a run under way stops with the lab. The page
 asks for windows of predictions (and, for sessions, the truth through the
 Inkspector's alignment, with the camera turn where AgentZero fitted the
 session) and for the agreement over a range; videos play through
@@ -458,12 +473,12 @@ The online mode (`src/predictor/online.rs`) runs AgentZero's policy
 (`runs/policy/*/best.pt`) with `uv run agentzero-play --dry-run --json`, in
 its own process group like a run: on a video with `--realtime` (paced at
 30 fps, frames skipped while the model is busy, as live), or on the live
-capture with `--shared-frames`. For the latter the studio hands over the
+capture with `--shared-frames`. For the latter the lab hands over the
 frames the capture card delivers, as it delivers them (YUYV): the newest,
 30 a second, split off before the constant rate (which holds every frame
 until the next one arrives), from its own V4L2 reader or from ffmpeg's
-second output (`src/video.rs`, `pipe:3`), each with its capture time. The
-studio writes each into shared memory (`SharedFrames`: a memfd
+second output (`src/studio/video.rs`, `pipe:3`), each with its capture time. The
+lab writes each into shared memory (`SharedFrames`: a memfd
 `agentzero-play` inherits as fd 3, a ring of four slots) and announces it
 with a 40-byte notice on its stdin (number, slot, times, size); AgentZero
 takes the newest notice's frame whenever the model is free, with no ffmpeg
@@ -471,10 +486,10 @@ and no reader thread of its own, copies it into pinned memory and scales it
 on its GPU to 640 x 360 RGB as training's frames were (4:2:0 chroma,
 anti-aliased bilinear, BT.601 limited range; within 1.6 levels on average
 of torchcodec's own frame of a recording). Every JSON line comes back with
-the studio's number of the frame seen and the moments the policy took it,
+the lab's number of the frame seen and the moments the policy took it,
 had it on the model's device and had the action, on `CLOCK_MONOTONIC` like
-the studio's, so each stage is timed on one clock: the grabber (capture to
-the frame in hand), the pipe into the studio (ffmpeg's only), shared
+the lab's, so each stage is timed on one clock: the grabber (capture to
+the frame in hand), the pipe into the lab (ffmpeg's only), shared
 memory, the wait for the model, the upload and scaling, the model and the
 send. Where the time went before: ffmpeg's rawvideo encoder is frame
 threaded, which held one or two frames back at every raw output (all now
@@ -488,14 +503,14 @@ Studio's live preview, lent to the Predictor by
 `lendScreen` in `app.js`); a video's actions are kept as labels (for frame
 seen + lead, the frame whose input they predict) and stored as a run
 `policy-<checkpoint>` when it ends. `agentzero-play` never sends anything:
-the `Bot` does (the studio holds it, beside the Replay panel's `Player`),
+the `Bot` does (the `Studio` holds it, beside the Replay panel's `Player`),
 only after `POST online/play` (a confirmation on the page each time, for a
 set time), writing each action to the replay port with `mix`, so a person
 corrects it live and it never pauses: the proxy ORs the buttons and takes
 each stick and the gyro from the controller while it is pushed past
 `STICK_DEADZONE` (300 raw units from 2048, past where a resting stick reads
 its calibrated centre) or turned faster than `GYRO_DEADZONE_DPS` (10 °/s),
-else from the line (`src/replay.rs`; a person's turn replaces the bot's
+else from the line (`crates/procon/src/replay.rs`; a person's turn replaces the bot's
 rather than adding to it, since both raw readings carry the controller's
 rest bias and a policy aiming by the picture would double a shared turn).
 Before a line goes out, a `Limiter` holds its buttons to the page's
@@ -510,7 +525,7 @@ frames, which measures a person tapping ZR (`Tapping`: 10 s from the first
 press, the fastest six in a row, 1.1 times that offered as the cap). A
 watchdog thread ends sending at the time's end, when the policy stalls
 (500 ms), when no dashboard page has been connected for 5 s, when the Replay
-panel plays and when the proxy's frames stop; the studio's exit and Ctrl-C
+panel plays and when the proxy's frames stop; the lab's exit and Ctrl-C
 stop it first. The bot's status goes out with every `status` message on
 `/ws`, so every app shows Stop bot while it plays and Esc stops it anywhere.
 

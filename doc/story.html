@@ -1380,15 +1380,15 @@
           <p class="lede" data-lang="en">
             A Salmon Run player wanted a bot that works a shift the way he does.
             This is how a Pro Controller, a Raspberry Pi and a capture card
-            became a recording studio, how a model learned to read his hands off
-            the screen, and how the first policies were trained and wired to the
-            controller. It is told in the order things happened, with the
-            numbers, the ideas and where they came from, and the roads that led
-            nowhere.
+            became a recording studio (now Grizzco Lab), how a model learned to
+            read his hands off the screen, and how the first policies were
+            trained and wired to the controller. It is told in the order things
+            happened, with the numbers, the ideas and where they came from, and
+            the roads that led nowhere.
           </p>
           <p class="lede" data-lang="zh" lang="zh-Hans">
             一位鲑鱼跑玩家想要一个像他一样打工的 bot。这里记下的是：一只 Pro
-            手柄、一块树莓派和一张采集卡怎样变成录制工作室，一个模型怎样学会从画面上读出他的手在做什么，最初的几个策略又怎样训练出来、接上了手柄。按事情发生的顺序来讲，带着数字，带着每个想法的来历，也带着那些走不通的路。
+            手柄、一块树莓派和一张采集卡怎样变成录制工作室（如今的熊商会实验室），一个模型怎样学会从画面上读出他的手在做什么，最初的几个策略又怎样训练出来、接上了手柄。按事情发生的顺序来讲，带着数字，带着每个想法的来历，也带着那些走不通的路。
           </p>
         </div>
 
@@ -1403,7 +1403,7 @@
               <title id="loop-title">
                 The loop: the Pro Controller's reports go through the Raspberry
                 Pi to the Switch; its picture goes through the capture card to
-                the studio; recordings and live frames go to AgentZero, whose
+                Grizzco Lab; recordings and live frames go to AgentZero, whose
                 actions return to the Pi's replay port and on to the Switch.
               </title>
               <path
@@ -1556,8 +1556,8 @@
               />
               <use href="#g-pc" x="429" y="310" width="40" height="28" />
               <text class="t-name" x="429" y="366">
-                <tspan data-lang="en">Linux PC · the studio</tspan>
-                <tspan data-lang="zh">Linux 电脑 · 工作室</tspan>
+                <tspan data-lang="en">Linux PC · Grizzco Lab</tspan>
+                <tspan data-lang="zh">Linux 电脑 · 熊商会实验室</tspan>
               </text>
               <text class="t-sub" x="429" y="386">
                 <tspan data-lang="en">records sessions, runs the apps</tspan>
@@ -1589,7 +1589,7 @@
           >
             <title id="loop-title-narrow">
               The loop, top to bottom: controller, Pi and Switch on the left;
-              capture card, studio and AgentZero on the right; AgentZero's
+              capture card, Grizzco Lab and AgentZero on the right; AgentZero's
               actions return to the Pi.
             </title>
             <path
@@ -1706,8 +1706,8 @@
             />
             <use href="#g-pc" x="214" y="238" width="40" height="28" />
             <text class="t-name" x="214" y="292">
-              <tspan data-lang="en">The studio</tspan>
-              <tspan data-lang="zh">工作室</tspan>
+              <tspan data-lang="en">Grizzco Lab</tspan>
+              <tspan data-lang="zh">熊商会实验室</tspan>
             </text>
             <text class="t-sub" x="214" y="312">
               <tspan data-lang="en">Linux PC</tspan>
@@ -1785,13 +1785,13 @@
               frames for the models. Orange: the bot's actions, which enter the
               same proxy and reach the Switch as if from the controller. The rig
               itself is photographed and explained in
-              <a href="index.html">the ProCon Studio write-up</a>.</span
+              <a href="index.html">the Grizzco Lab write-up</a>.</span
             ><span data-lang="zh" lang="zh-Hans"
               ><b>整个回路。</b
               >蓝色：玩家的输入，在去往主机的路上被记录下来。紫色：画面。绿色：交给模型的录像和实时画面。橙色：bot
               的动作，进入同一个代理，像是从手柄发出的一样到达
               Switch。设备本身的照片和说明见
-              <a href="index.html">ProCon Studio 的介绍页</a>。</span
+              <a href="index.html">熊商会实验室的介绍页</a>。</span
             >
           </figcaption>
         </figure>
@@ -2354,11 +2354,13 @@
               The Pi stays small: it proxies and streams, and the desktop does
               everything else. Two later regressions came from the other
               direction, when studio libraries leaked into the Pi's build; a
-              <code>studio</code> feature now keeps them out.
+              <code>studio</code> feature kept them out, and since 29 September
+              the proxy is a crate of its own that never builds them.
             </p>
             <p data-lang="zh" lang="zh-Hans">
-              树莓派保持精简：只做代理和推流，其余都交给台式机。后来有两次出问题，恰恰是反方向：工作室用的库混进了树莓派的构建。现在用一个
-              <code>studio</code> feature 把它们挡在外面。
+              树莓派保持精简：只做代理和推流，其余都交给台式机。后来有两次出问题，恰恰是反方向：工作室用的库混进了树莓派的构建。当时加了一个
+              <code>studio</code> feature 把它们挡在外面；9 月 29
+              日起，代理是一个单独的 crate，根本不会构建它们。
             </p>
           </aside>
           <p data-lang="en">
@@ -2371,7 +2373,8 @@
             Elgato 4K X capture card and an RTX 4070 SUPER: capture, encoding,
             the dashboard and the session folders. At 23:17 there were two
             programs, <code>procon-proxy</code> for the Pi and
-            <code>procon</code>, the studio, for the PC.
+            <code>procon</code>, the studio, for the PC (since 29 September
+            <code>grizzco-lab</code>, Grizzco Lab).
           </p>
           <p data-lang="zh" lang="zh-Hans">
             第一个决定是活该在哪儿干。树莓派 4 做 USB
@@ -2380,7 +2383,8 @@
             TCP 发出去。所有重活都搬到了旁边那台 Linux 台式机上：它接着 Elgato
             4K X 采集卡，装着一块 RTX 4070
             SUPER，负责采集、编码、网页控制台和录像文件夹。23:17，程序拆成了两个：树莓派上的
-            <code>procon-proxy</code>，和电脑上的工作室 <code>procon</code>。
+            <code>procon-proxy</code>，和电脑上的工作室 <code>procon</code>（9
+            月 29 日起改名 <code>grizzco-lab</code>，熊商会实验室）。
           </p>
           <p data-lang="en">
             The first evening also produced things that were not strictly needed
@@ -6587,7 +6591,7 @@ LEAD_FRAMES = lead_frames()
             <li>
               procon-rs: <code>README.md</code>, <code>CONTRIBUTING.md</code>,
               <code>CLAUDE.md</code>,
-              <a href="index.html">the ProCon Studio write-up</a>,
+              <a href="index.html">the Grizzco Lab write-up</a>,
               <code>doc/recording-checklist.md</code>,
               <code>doc/open-questions.md</code>,
               <code>doc/maintenance.md</code>
@@ -6617,7 +6621,7 @@ LEAD_FRAMES = lead_frames()
             <li>
               procon-rs：<code>README.md</code>、<code>CONTRIBUTING.md</code>、<code>CLAUDE.md</code>、<a
                 href="index.html"
-                >ProCon Studio 介绍页</a
+                >熊商会实验室介绍页</a
               >、<code>doc/recording-checklist.md</code>、<code>doc/open-questions.md</code>、<code>doc/maintenance.md</code>，以及
               git 历史。
             </li>

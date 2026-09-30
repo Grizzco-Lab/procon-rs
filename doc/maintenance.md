@@ -5,16 +5,19 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
 
 ## Workspace layout
 
-- **Virtual workspace.** The root `Cargo.toml` becomes a virtual workspace and
-  every package lives under `crates/`, as in rustc: `procon-proxy`,
-  `procon-studio` (or `procon`), `gameplay-data`, `gameplay-vision`,
-  `cuttlefish`, … The proxy then cannot pick up studio dependencies by
-  accident: today a `studio` feature on the root package keeps them out of the
-  Pi build (`d2703bc`). Before that, `cb7b2d5` and `f13bc86` broke
-  `scripts/deploy.sh` by making the musl build compile candle and tokenizers.
-- **Name.** An umbrella name for the whole repository (Grizzco Lab, Grizzco
-  Studio…), while procon (the proxy and the studio) keeps its own name and
-  credit as a finished, self-contained project.
+- [x] **Virtual workspace.** The root `Cargo.toml` is a virtual workspace
+  and every package lives under `crates/`: `procon-proxy`, `procon` (what
+  the proxy and the lab share: frames, the link, replay, the recorder),
+  `grizzco-lab` (one module per app), `gameplay-data`, `gameplay-vision`,
+  `cuttlefish`. The proxy's package cannot pick up the lab's dependencies,
+  so the `studio` feature that kept them out of the Pi build (`d2703bc`,
+  after `cb7b2d5` and `f13bc86` broke `scripts/deploy.sh` by making the musl
+  build compile candle and tokenizers) is gone.
+- [x] **Name.** The lab on the capture host is Grizzco Lab (the binary
+  `grizzco-lab`, ProCon Studio before), its first app keeps the name Studio,
+  and the proxy keeps `procon-proxy`. Names the user's data lives under stay
+  (`procon-*` in `localStorage`, `~/.config/procon/`,
+  `~/.cache/procon-cuttlefish`). The repository directory is renamed later.
 
 ## Web
 
@@ -31,7 +34,7 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
 - **Load apps on first use.** All 16 scripts and styles (about 730 KB
   uncompressed) load with the page today. Hidden apps do no work, but the
   first load grows with each app; load an app's script the first time it is
-  opened. Big models in the studio stay loaded (the user's call); if memory
+  opened. Big models in the lab stay loaded (the user's call); if memory
   ever gets tight, decide from the machine's free memory rather than an idle
   timer.
 - [x] **Layout regression checks.** `scripts/layout-check.mjs` (see
@@ -45,7 +48,8 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
 - [x] **Unknown paths answer 405, not 404**, because the POST-only routes
   reject every other path first. Routes now check their path before their
   method, and the apps' method-first routes are gated by their prefix;
-  `/favicon.ico` and the page's icon link are the Studio's app icon.
+  `/favicon.ico` and the page's icon link are the brand's icon
+  (`web/icons/brand.svg`; the Studio's app icon until the rename).
 - [x] **Inkspector frames sometimes fail with 400** ("non monotonically
   increasing dts", 25 of 60 random windows, not only after a restart): the
   encoder's default 1/fps time base rounded neighbouring frames onto one
@@ -61,5 +65,5 @@ flight. Each item says why it matters; tick it off (or delete it) once done.
 
 ## Process
 
-- Test studios use `[video] input = ""` and scratch on disk
+- Test labs use `[video] input = ""` and scratch on disk
   (`~/.cache/claude-scratch/`), never long screen grabs or big files in /tmp.

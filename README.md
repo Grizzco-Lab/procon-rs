@@ -1,7 +1,9 @@
-# ProCon Studio
+# Grizzco Lab
 
 Records Nintendo Switch gameplay for training datasets: every Pro Controller
-report, timestamped, next to the console's video and sound.
+report, timestamped, next to the console's video and sound. (In the Chinese
+interface: 熊商会实验室. It was called ProCon Studio until September 2026;
+the proxy on the Pi keeps its name, `procon-proxy`.)
 
 A Raspberry Pi 4 sits between the Pro Controller and the Switch as a USB proxy
 and streams the controller's reports over the network. A Linux PC with a
@@ -18,7 +20,7 @@ trains the models: what runs, what waits and why, and what came out.
 > [!TIP]
 > **[See the setup guide and dashboard tour →](https://htmlpreview.github.io/?https://github.com/Grizzco-Lab/procon-rs/blob/main/doc/index.html)**
 >
-> The hardware you need, how it is wired, and what the studio does, with
+> The hardware you need, how it is wired, and what the lab does, with
 > screenshots. Source: [doc/index.html](doc/index.html).
 >
 > How it all came about, from the rig to the first policies: the ideas, the
@@ -33,18 +35,21 @@ trains the models: what runs, what waits and why, and what came out.
 Pro Controller ──USB──> Raspberry Pi 4 (procon-proxy) ──USB gadget──> Nintendo Switch
                               │ TCP :7331 frames, :7332 replay
                               v
-Switch HDMI ──capture card──> Linux PC (procon) ──> dashboard :8090
-                                         └──> <prefix>YYYY-MM-DD_HH-MM-SS/
+Switch HDMI ──capture card──> Linux PC (grizzco-lab) ──> dashboard :8090
+                                              └──> <prefix>YYYY-MM-DD_HH-MM-SS/
 ```
 
 - **`procon-proxy`** (on the Pi): presents itself to the Switch as a wired Pro
   Controller and forwards reports both ways (input to the Switch; rumble, LEDs
   and subcommands to the controller). Each input report is stamped with the
-  Pi's clock and a sequence number and streamed to the studio on
+  Pi's clock and a sequence number and streamed to the lab on
   `[stream] port`, with a heartbeat each second while the controller is quiet.
   Actions sent to its `[replay] port` replace (or mix with) the controller's.
-- **`procon`** (on the PC): the studio. Connects to the proxy, captures video
-  and sound with ffmpeg, serves the dashboard and records sessions.
+- **`grizzco-lab`** (on the PC): Grizzco Lab. Connects to the proxy,
+  captures video and sound with ffmpeg, serves the dashboard and records
+  sessions.
+- **`crates/procon`**: what the two share: the frames, the link between
+  them, the replayed actions and the session folders.
 - **`crates/gameplay-data`**: the recording format and the per-frame alignment
   of controller input to video, shared with the training code through Python
   bindings.
@@ -75,23 +80,25 @@ Everything runs from the PC.
    To build on the Pi instead, run `./scripts/run-proxy.sh` there.
 
 2. Set the proxy's address in `config.toml` (`[proxy] address` and
-   `replay_address`), then start the studio:
+   `replay_address`), then start Grizzco Lab:
 
    ```bash
    ./scripts/run.sh
    ```
 
-   It builds the studio first (`cargo run --release`): after an update of the
-   code that takes about 15–45 s, after a change of dependencies or a
-   toolchain update over a minute; the dashboard answers once it is built.
+   It builds it first (`cargo build --release -p grizzco-lab`): after an
+   update of the code that takes about 15–45 s, after a change of
+   dependencies or a toolchain update over a minute; the dashboard answers
+   once it is built.
 
 3. Open `http://<pc>:8090`.
 
-Without a Pi, `cargo run --example fake_proxy [port] [--still]` streams a
-synthetic controller (`--still`: at rest, as if put down) and takes replayed
-actions on the next port; point `[proxy] address` at `localhost:7331` and
-`replay_address` at `localhost:7332`. Without a capture card, `[video] input`
-can be a video file, played in a loop as if live.
+Without a Pi, `cargo run -p procon-proxy --example fake_proxy [port]
+[--still]` streams a synthetic controller (`--still`: at rest, as if put
+down) and takes replayed actions on the next port; point `[proxy] address`
+at `localhost:7331` and `replay_address` at `localhost:7332`. Without a
+capture card, `[video] input` can be a video file, played in a loop as if
+live.
 
 ## The dashboard
 
@@ -185,7 +192,7 @@ marks (labeled frames, processed frames, comments; a click near a mark goes
 to it) and the neighbours strip, updated while paused. Keys everywhere: Space
 play/pause, ←/→ one frame (Shift: ten), Home/End, G go to a frame number or
 time (12.5s, 1:02.5); they never scroll the page. Recorded sessions show
-exact frames decoded by the studio; other videos play in the browser.
+exact frames decoded by the lab; other videos play in the browser.
 
 ### Inkspector
 
@@ -296,7 +303,7 @@ cache; the Claude Code CLI places its own cache breakpoints, and only its
 system prompt is read back from the cache. Every message is saved in the review's
 `review.json` (`messages`, with role, text, the moment or range it was asked
 with, sources and time), so reopening the review shows the conversation. The
-chat needs a model backend: `ANTHROPIC_API_KEY` in the studio's environment
+chat needs a model backend: `ANTHROPIC_API_KEY` in the lab's environment
 (the only place it is read from), or the Claude Code CLI (below); without one
 the chat says so and messages, comments and drawings are still saved.
 
@@ -403,7 +410,7 @@ printf 'ANTHROPIC_API_KEY=%s\n' 'sk-ant-...' > ~/.config/procon/env
 chmod 600 ~/.config/procon/env
 ```
 
-Without a key, the studio can run the locally installed **Claude Code CLI**
+Without a key, the lab can run the locally installed **Claude Code CLI**
 instead (`[cuttlefish] backend`: `auto` by default takes the API when the key
 is set, else `claude` on PATH; `api` or `claude-cli` force one). It runs
 `claude -p` headless with the same prompt, no tools and an empty working
@@ -420,7 +427,7 @@ into its review (with the video's title, channel and upload date, shown in the
 library), and a local file can be copied in with **Copy into review**. A
 recorded session is never copied; its review points at the recording. Deleting
 a review deletes its folder, video included, after a confirmation. Reviews
-saved before this layout (`<id>.json`) move into folders when the studio
+saved before this layout (`<id>.json`) move into folders when the lab
 starts, and a YouTube video still in `~/.cache/procon-cuttlefish` moves into
 its review. A YouTube review without its title (such as one moved from the old
 layout) gets the title, channel and upload date in the background the first
@@ -551,13 +558,13 @@ when the store next loads. The embedding model (about 470 MB), thumbnails and
 unpacked archives stay on this machine, in `~/.cache/procon-cuttlefish`.
 
 The store of before lived in `~/.local/share/cuttlefish`, a folder another
-program (with its own `~/.cache/cuttlefish`) uses too. When the studio starts,
+program (with its own `~/.cache/cuttlefish`) uses too. When the lab starts,
 only our entries there (`docs/`, `index/`, `raw/`, the glossary, `models/`, …)
 are handled: their data is copied into the knowledge folder and checked, then
 they are moved into `~/.local/share/cuttlefish/procon-migrated-<date>.safe-to-delete/`
 (the Knowledge tab shows where). That folder can be deleted; the other
 program's files are never touched. The CLI `cuttlefish` finds the same
-knowledge folder through the studio's `config.toml` (`--config`, else
+knowledge folder through the lab's `config.toml` (`--config`, else
 `./config.toml`), else `$CUTTLEFISH_DATA`.
 
 ### Vision
@@ -606,7 +613,7 @@ README), served by AgentZero's `agentzero-detect-serve` (port 7341,
 not answer, the command to start it and **Start detector**, which runs
 `[vision] detector_command` (default `uv run agentzero-detect-serve --port
 <port>`) in `detector_dir` (default `../AgentZero`) and stops it with the
-studio; the service needs a trained checkpoint (`runs/detect/best`, from
+lab; the service needs a trained checkpoint (`runs/detect/best`, from
 `agentzero-detect train`). Once it answers: the checkpoint, its mAP50 on
 held-out frames, the frames it was trained on, when it was saved, the device
 and GPU memory free. Until about 200 frames are labeled a warning says the
@@ -621,7 +628,8 @@ busy. A run on the GPU is refused while a session is being recorded.
 COCO models know nothing of Salmon Run (Salmonids come out as `bowl`, `boat`
 or nothing), hence our classes only; the app is the workflow for our own
 weights. On a 16-core CPU a frame takes about 130 ms (n), 250 ms (s) and
-470 ms (m); build with `--features cuda` for the GPU.
+470 ms (m); build with `cargo build --release -p grizzco-lab --features cuda`
+for the GPU.
 
 #### Stage maps
 
@@ -635,7 +643,7 @@ A Cuttlefish review has a stage picker in its header (saved as `stage` in
 picked), with **Map by Gungee: 2D ↗ 3D ↗** links that open his viewers in
 a new tab. Vision, the Inkspector's Session card and the Predictor show the
 same links when a review of the video names the stage. Vision also shows his
-top-down picture of the stage, credited under it; the studio fetches each
+top-down picture of the stage, credited under it; the lab fetches each
 picture once, when first shown, into `~/.cache/procon-cuttlefish/gungee/`
 (`GET /api/cuttlefish/stage-map`), and none is kept in this repository.
 
@@ -687,7 +695,7 @@ it is for: labeling gameplay nobody recorded a controller for.
 The Predict panel's other model, **AgentZero online**, runs AgentZero's
 policy (checkpoints `runs/policy/*/best.pt`), which sees only the frames up
 to the one in hand, frame by frame as if live (`uv run agentzero-play
---json`, one at a time, stopped with **Stop** or with the studio; it needs an
+--json`, one at a time, stopped with **Stop** or with the lab; it needs an
 AgentZero whose `agentzero-play` has `--json`). Its view is
 `/predictor/online`.
 
@@ -698,16 +706,16 @@ AgentZero whose `agentzero-play` has `--json`). Its view is
   recorded at 30 fps; a skipped frame shows the action still held). When it
   ends or is stopped, the predictions are kept as a run named
   `policy-<checkpoint>` in **Predictions**.
-- **On the live capture**: the frames the studio grabs, 30 a second, go
+- **On the live capture**: the frames the lab grabs, 30 a second, go
   straight into the policy (the capture card opens only once): the newest
   frame the card delivered, as it delivered it (YUYV), through shared
-  memory, and AgentZero scales it on its GPU. The studio reads the capture
+  memory, and AgentZero scales it on its GPU. The lab reads the capture
   card itself for this (`[video] v4l2_direct`, on unless the card is in
   another format than YUYV; ffmpeg reads it otherwise). The video panel
   shows the Studio's live preview with AgentZero's action drawn over it in
   orange, and **Loop** the latency from the capture card's timestamp of a
   frame to its action written to the proxy's replay port: the frame's
-  hand-off (the capture card and the grabber, the pipe into the studio when
+  hand-off (the capture card and the grabber, the pipe into the lab when
   ffmpeg reads the card, shared memory, waiting for the model), the upload
   and scaling onto the model's device, the model and the send, median and
   99th percentile over the last 10 s. It needs an AgentZero with
@@ -721,11 +729,11 @@ AgentZero whose `agentzero-play` has `--json`). Its view is
   replaces its own while you do. **Stop bot**, a big red button over every
   app while it plays, or Esc anywhere on the page ends it, as do the end of
   the time, Stop of the run, the Replay panel starting, the proxy's frames
-  not reaching the studio, the policy going quiet for half a second and
+  not reaching the lab, the policy going quiet for half a second and
   closing every dashboard page. A red frame marks it playing. Only in the
   practice area or a private job, with you at the console.
 - **What AgentZero may press** (under that button, kept with the dashboard's
-  settings, held to in every line the studio sends): the d-pad (its signals
+  settings, held to in every line the lab sends): the d-pad (its signals
   disturb teammates) and the special (the right stick's click) are blocked
   unless unticked, Home and Capture always; your own presses still reach the
   Switch. No button is pressed faster than a person could, so its play never
@@ -734,7 +742,7 @@ AgentZero whose `agentzero-play` has `--json`). Its view is
   manage 6 to 7), each held 40 ms or more. **Measure my max…** counts your
   own ZR presses from the controller for 10 s from your first one and offers
   1.1 times your fastest as the cap.
-- It does not start while the studio records unless **Allow while
+- It does not start while the Studio records unless **Allow while
   recording** is ticked, and stops when a recording starts without it. The
   page warns when the GPU has less than 1.5 GiB free; **CPU** runs it
   without the GPU (much slower).
@@ -765,7 +773,7 @@ runs now, what waits and why, and what came out.
   run folder's `metrics.jsonl` and `args.json`, else the last `N/M` in its
   log), its loss curves (train, validation, held-out) drawn across the steps
   still to run, its latest validation scores, its processes' GPU memory, CPU
-  and RAM, and its log. The studio finds an entry's processes by its process
+  and RAM, and its log. The lab finds an entry's processes by its process
   group, its process or a piece of its command line, so it also shows an
   entry that runs while the file still says queued, and warns about one the
   file says runs when none of its processes is left.
@@ -773,7 +781,7 @@ runs now, what waits and why, and what came out.
   power), CPU and memory, each with its last half hour, and the GPU's
   processes with the entries they belong to.
 - **GPU timeline**: busy %, memory (the queue's jobs against the rest) and
-  what ran when, over the last 1 to 12 hours. The studio samples every 5 s
+  what ran when, over the last 1 to 12 hours. The lab samples every 5 s
   from its start and keeps 12 hours in memory.
 - **Queue**: the waiting entries in the order they run. Drag one by its
   handle, or focus the handle and press ↑ ↓, to change what runs next: the
@@ -802,7 +810,7 @@ To line them up on the PC's clock:
 
 - Frame `n` of a video file was captured at its `start_unix_ms` plus
   `n / video.fps` seconds. `start_unix_ms` is when the capture card delivered
-  the first frame to the kernel, not when it reached the studio.
+  the first frame to the kernel, not when it reached the lab.
 - A controller frame's time is its timestamp plus `proxy.clock_offset_ms`
   (the smallest PC-minus-Pi difference seen over 10 s, so it includes the
   shortest network delay).
@@ -819,7 +827,7 @@ To line them up on the PC's clock:
 ### Replaying actions
 
 To see what a model does, play actions to the Switch from the Replay panel:
-load a session folder, a `controller.bin` or a `.jsonl`, then Play. The studio
+load a session folder, a `controller.bin` or a `.jsonl`, then Play. The lab
 sends them to the proxy's replay port; while it plays, the Switch gets the
 replayed input instead of the controller's (and that is what gets recorded),
 and the controller takes over again on Stop or at the end. "Mix with the
@@ -836,15 +844,15 @@ A `.jsonl` file has one action per line:
 ```
 
 Fields left out keep the controller's own values. Sticks are raw 12-bit
-(center ≈ 2048), `gyro`/`accel` raw IMU units; see `src/replay.rs`. A model
-can also connect to the replay port itself and stream lines (without `t_ms`)
-as it predicts them.
+(center ≈ 2048), `gyro`/`accel` raw IMU units; see
+`crates/procon/src/replay.rs`. A model can also connect to the replay port
+itself and stream lines (without `t_ms`) as it predicts them.
 
 ## Configuration
 
 Both programs take `--config <path>`.
 
-`config.toml` (studio, on the PC):
+`config.toml` (Grizzco Lab, on the PC):
 
 | Section | Sets |
 |---|---|
@@ -865,7 +873,7 @@ Both programs take `--config <path>`.
 |---|---|
 | `[proxy]` | `hidg_retry_delay_ms`: wait before reopening the HID gadget |
 | `[dump]` | `autostart` a local backup session from launch until exit, at `prefix` |
-| `[stream]` | `port` the studio connects to for frames (7331) |
+| `[stream]` | `port` the lab connects to for frames (7331) |
 | `[replay]` | `port` for JSON-line actions (7332) |
 | `[performance]` | `enable_cpu_affinity`: pin the proxy to one CPU core |
 | `[logging]` | `level` |
@@ -895,9 +903,9 @@ as with Tailscale Funnel).
 - **No video**: a capture card can only be opened by one program; close OBS.
 - **Switch asleep**: the proxy logs "Switch stopped taking input" once and
   drops reports until it wakes. Home then signals USB remote wakeup
-  (`src/wake.rs`). The Switch 2 ignores it, as it does a Pro Controller plugged
-  in directly: wake it with its power button or a wireless controller. The
-  original Switch may accept it (untested).
+  (`crates/procon-proxy/src/wake.rs`). The Switch 2 ignores it, as it does
+  a Pro Controller plugged in directly: wake it with its power button or a
+  wireless controller. The original Switch may accept it (untested).
 
 ## Contributing
 

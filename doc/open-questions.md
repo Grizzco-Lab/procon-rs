@@ -43,7 +43,7 @@ decision lives).
 14. **YouTube ranges** start at a keyframe near `start_s`;
     `--force-keyframes-at-cuts` would make them exact but re-encodes.
 15. **Comment author**: saved as `user` and shown as "You"; use a real name?
-16. **Object label code** lives in `src/objects.rs` and again in
+16. **Object label code** lives in `crates/grizzco-lab/src/inspect/objects.rs` and again in
     `gameplay-vision`; move one reader into `gameplay-data` (shared with
     Python)?
 

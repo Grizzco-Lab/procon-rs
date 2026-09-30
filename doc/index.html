@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ProCon Studio</title>
+    <title>Grizzco Lab</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -447,7 +447,7 @@
     <main>
       <header class="hero">
         <span class="eyebrow">procon-rs · data collection rig</span>
-        <h1>Pro<span class="l">Con</span> <span class="r">Studio</span></h1>
+        <h1><span class="l">Grizzco</span> <span class="r">Lab</span></h1>
         <p class="lede">
           Play Switch games as usual while every button press, stick and gyro
           sample is timestamped and recorded next to the console's video and
@@ -463,7 +463,7 @@
           <p>
             The Raspberry Pi sits between the controller and the console. The
             Switch sees an ordinary wired Pro Controller. The PC watches the
-            video through a capture card and runs the studio.
+            video through a capture card and runs Grizzco Lab.
           </p>
         </div>
 
@@ -710,7 +710,7 @@
               />
               <text class="name" x="0" y="160">Linux PC</text>
               <text class="role" x="0" y="178">
-                procon · studio: dashboard, video, recording
+                grizzco-lab: dashboard, video, recording
               </text>
             </g>
 
@@ -788,9 +788,9 @@
             <span class="what">control</span>
             <h3>Linux PC</h3>
             <p>
-              Runs <code>procon</code>, the studio: the dashboard, ffmpeg
-              capture with NVENC, and the recorded sessions. It also
-              cross-compiles and deploys the proxy.
+              Runs <code>grizzco-lab</code>, Grizzco Lab (ProCon Studio until
+              September 2026): the dashboard, ffmpeg capture with NVENC, and the
+              recorded sessions. It also cross-compiles and deploys the proxy.
             </p>
           </div>
         </div>
@@ -820,14 +820,14 @@
               <p>
                 A background thread sends the 80-byte frame over TCP port 7331.
                 When the controller is quiet it sends a heartbeat every second,
-                so the studio can tell an idle controller from a dead link. Gaps
-                in the sequence numbers count as dropped frames.
+                so the lab can tell an idle controller from a dead link. Gaps in
+                the sequence numbers count as dropped frames.
               </p>
             </div>
           </li>
           <li>
             <div>
-              <strong>The studio lines up both clocks.</strong>
+              <strong>The lab lines up both clocks.</strong>
               <p>
                 For each frame the PC compares its own clock with the Pi's
                 timestamp and keeps the lowest difference over 10 seconds. That
@@ -842,8 +842,8 @@
               <strong>ffmpeg records the video.</strong>
               <p>
                 One ffmpeg process holds the capture card and hands raw 1080p
-                frames to the studio, each with the time the card delivered it.
-                A second encodes them into a low-latency H.264 preview that the
+                frames to the lab, each with the time the card delivered it. A
+                second encodes them into a low-latency H.264 preview that the
                 dashboard plays in a video element, and Record starts a third
                 that encodes the recording at a constant frame rate. Settings
                 changes restart only the encoders, and video begins with the
@@ -879,7 +879,7 @@
 
       <section aria-labelledby="h-studio">
         <div class="head">
-          <span class="eyebrow">The studio</span>
+          <span class="eyebrow">Grizzco Lab</span>
           <h2 id="h-studio">One page to watch, record and check</h2>
           <p>
             The dashboard runs on the PC and opens in any browser on the
@@ -887,7 +887,7 @@
             <strong>Studio</strong> to watch and record, and
             <strong>Inkspector</strong> to check what was recorded. The app
             links sit in a rail on the left or in the top bar, and the status
-            chips stay in view in both. The screenshots come from a test studio
+            chips stay in view in both. The screenshots come from a test lab
             whose video input is a screen playing a recorded Salmon Run match,
             with the synthetic controller from <code>fake_proxy</code>.
           </p>
@@ -1171,7 +1171,7 @@
         ><span class="c"># Cross-compile procon-proxy, copy it with proxy.toml to the Pi, restart it</span>
 ./scripts/deploy.sh pi4
 
-<span class="c"># Start the studio, then open http://&lt;pc&gt;:8090 for the Studio and Inkspector</span>
+<span class="c"># Start Grizzco Lab, then open http://&lt;pc&gt;:8090 for the Studio and Inkspector</span>
 ./scripts/run.sh</pre>
       </section>
 

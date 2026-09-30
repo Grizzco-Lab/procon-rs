@@ -1,6 +1,6 @@
 # Cuttlefish
 
-Knowledge store and model backend for Cuttlefish, the studio's AI reviewer
+Knowledge store and model backend for Cuttlefish, Grizzco Lab's AI reviewer
 for Splatoon 3 Salmon Run. It imports guides, wikis, video transcripts and
 Discord VOD-review discussions into a local store; retrieves what matters for
 a moment of gameplay or a question; and asks Claude (Anthropic Messages API)
@@ -13,7 +13,7 @@ with the frames, the retrieved knowledge and a jargon glossary. Library
 cargo build --release -p cuttlefish
 alias cuttlefish=target/release/cuttlefish
 
-# The knowledge folder is the studio's: found through its config (--config,
+# The knowledge folder is the lab's: found through its config (--config,
 # else ./config.toml: [cuttlefish] knowledge, else "Knowledge" next to the
 # sessions), else --data or $CUTTLEFISH_DATA; without any, the CLI stops
 cd ~/Developing/procon-rs    # where config.toml is
@@ -37,7 +37,7 @@ cuttlefish read-images --effort medium     # the downloaded images as text, read
 cuttlefish corpus build                    # the reviewed VODs of the archive as corpus/vod-review.jsonl, with counts
 cuttlefish corpus videos --list            # the YouTube VODs with their 480p sizes; `corpus videos` downloads them slowly
 cuttlefish corpus align                    # read the HUD of the videos on disk (wave tables), place the wave-timer moments
-cuttlefish corpus reviews                  # a studio review per VOD on disk, the community's comments at their moments
+cuttlefish corpus reviews                  # a review in the lab per VOD on disk, the community's comments at their moments
 cuttlefish corpus index                    # every reviewer comment as an expert comment of its own in the store
 cuttlefish corpus retrieval                # how well a moment's summary alone finds expert comments (no model)
 cuttlefish ingest leanny --dry-run         # Lean's Splatoon 3 datamine: list the files, fetch nothing
@@ -59,7 +59,7 @@ export ANTHROPIC_API_KEY=...               # only ever from the environment, or 
 cuttlefish ask "When should I leave the basket to kill a Stinger?"
 cuttlefish translate "Kill the Steelhead before the Flyfish" --to ja
 cuttlefish eval eval.example.toml --answer
-cuttlefish eval deep --lang zh --max 5       # the deep question bank; answers into <data>/eval/, reviewed in the studio
+cuttlefish eval deep --lang zh --max 5       # the deep question bank; answers into <data>/eval/, reviewed in the lab
 ```
 
 The first command that embeds downloads the embedding model (about 470 MB)
@@ -121,7 +121,7 @@ data folder. `--model` / `$CUTTLEFISH_MODEL` picks the model
 
 Ingesting the same url again replaces its document (`--refresh` refetches
 pages already stored). Opening the store embeds the documents the index
-lacks, 32 chunks at a time; the studio shows "embedding N of M chunks" in the
+lacks, 32 chunks at a time; the lab shows "embedding N of M chunks" in the
 running import and stops when the import is cancelled (what was embedded is
 kept, the rest waits for the next opening). `cuttlefish reindex` re-embeds everything after a
 change of embedder or chunk sizes; `cuttlefish delete <id>` removes a document.
@@ -136,7 +136,7 @@ end. The folder's parent must exist, so an unmounted synced folder is not
 silently replaced.
 
 **One writer at a time.** Every writer (`ingest`, `delete` and `reindex` of
-the CLI; the studio's imports and deletes) holds `<data>/.lock` while it
+the CLI; the lab's imports and deletes) holds `<data>/.lock` while it
 writes: an exclusive `flock`, which the system releases when the process
 ends however it ends, and a record of who holds it (program, pid, host, start
 time), cleared when done. A second writer stops with
@@ -145,7 +145,7 @@ time), cleared when done. A second writer stops with
 the knowledge store is being written by cuttlefish ingest pid 41234 on studio-pc since 2026-09-26 21:04:10 UTC; wait for it, or if that process is gone, delete /path/to/Knowledge/.lock
 ```
 
-and the studio fails the import job with the same line. `flock` does not
+and the lab fails the import job with the same line. `flock` does not
 reach across machines, so on a synced folder the record does: a record naming
 another host stops writers here too, until that machine's writer clears it
 (or you delete the file after checking that nothing runs there). A record
@@ -154,7 +154,7 @@ asking, `stats` and `docs` never wait for the lock.
 
 The data folder of before (`$XDG_DATA_HOME/cuttlefish`, usually
 `~/.local/share/cuttlefish`) is shared with another program, so
-`store::migrate` (the studio at startup, the CLI on each run) handles only our
+`store::migrate` (the lab at startup, the CLI on each run) handles only our
 entries there: `docs/`, `index/`, `raw/`, `terms/`, `reports/`, `inbox/`,
 `glossary.toml`, `digest.md`, `assets.json`, `inbox.json` and `models/`. Their
 data is copied into the knowledge folder if that holds none and checked (every
@@ -167,7 +167,7 @@ that folder.
 ## The inbox
 
 `<data>/inbox/` takes anything: files, folders, zip or tar archives, source
-repositories. `cuttlefish ingest inbox` (or **Import inbox** in the studio,
+repositories. `cuttlefish ingest inbox` (or **Import inbox** in the lab,
 which can also upload into it) looks at each file by name and first bytes:
 
 | File | Taken as |
@@ -257,10 +257,10 @@ skipped and why, failed, gone.
 
 | Source | How | Notes |
 |---|---|---|
-| Expert notes (your own corrections) | **Correct / add to memory** under an answer in the studio, the Notes panel, or a file in `<data>/notes/` | Source `expert-note`, weight 1.3, the highest; retrieved first and labelled "Expert note (user), <date>". See "Deep questions and expert notes" |
+| Expert notes (your own corrections) | **Correct / add to memory** under an answer in the lab, the Notes panel, or a file in `<data>/notes/` | Source `expert-note`, weight 1.3, the highest; retrieved first and labelled "Expert note (user), <date>". See "Deep questions and expert notes" |
 | Guides ("Overfishing Fundamentals", Lenny, ...) | `ingest file` (md, txt, html, pdf) or `ingest url` | `--source guide` (weight 1.15); record the license with `--license` |
-| Inkipedia, other MediaWiki wikis | `ingest wiki <start pages or categories>` (the studio: **Wiki / site**, MediaWiki topic) | A whole topic through the API, re-runs fetch only changed pages; the wiki's license (from `siteinfo`) and "<wiki> contributors" kept per document. See "Whole wikis and sites" |
-| A whole site | `ingest site <start address>` (the studio: **Wiki / site**, Whole site) | Same host only, a page cap, assets and given paths skipped. See "Whole wikis and sites" |
+| Inkipedia, other MediaWiki wikis | `ingest wiki <start pages or categories>` (the lab: **Wiki / site**, MediaWiki topic) | A whole topic through the API, re-runs fetch only changed pages; the wiki's license (from `siteinfo`) and "<wiki> contributors" kept per document. See "Whole wikis and sites" |
+| A whole site | `ingest site <start address>` (the lab: **Wiki / site**, Whole site) | Same host only, a page cap, assets and given paths skipped. See "Whole wikis and sites" |
 | Other pages, stat.ink docs | `ingest url` (urls, `--list`, `--sitemap`) | robots.txt obeyed, one request per site every 3 s or the site's `Crawl-delay` |
 | Google Docs, Sheets, Slides | `ingest url <the address you share>` | Read through their exports (see below); only files shared as "Anyone with the link can view"; a sheet's tabs one by one with `--all-tabs` |
 | YouTube | `ingest youtube <video/playlist/channel>` | `yt-dlp` fetches subtitles and metadata only; uploaded subtitles preferred over auto captions |
@@ -268,7 +268,7 @@ skipped and why, failed, gone.
 | X (Twitter) | `tools/capture/xcap.mjs` + `ingest inbox` | The Salmon Run posts of the accounts you follow, with their replies, captured by your own logged-in Chrome, slowly and read-only (source kind `x`, weight 1.0); against X's terms, see below. Or save a thread as text and `ingest file` |
 | Xiaohongshu (RedNote, 小红书) | `tools/capture/rednote.mjs` + `ingest inbox` | The Salmon Run notes of the creators you follow, with their comments and replies, captured by your own logged-in Chrome, slowly and read-only (source kind `rednote`, weight 1.0); can breach the site's terms, see below |
 | Twitch | not automated | Twitch VODs have no subtitles (a speech-to-text step would be needed) |
-| Lean's Splatoon 3 datamine (leanny.github.io) | `ingest leanny` (the studio: **Game data (Lean)**) | Fact cards of exact game numbers (source kind `game-data`, weight 1.1) and the Eggstra Work events table; no licence, the data is Nintendo's: fetched at run time, private study only. See "Game data" |
+| Lean's Splatoon 3 datamine (leanny.github.io) | `ingest leanny` (the lab: **Game data (Lean)**) | Fact cards of exact game numbers (source kind `game-data`, weight 1.1) and the Eggstra Work events table; no licence, the data is Nintendo's: fetched at run time, private study only. See "Game data" |
 
 **Google Docs, Sheets and Slides.** Their pages are drawn by JavaScript, so
 the page itself holds only a shell ("This browser version is no longer
@@ -280,12 +280,12 @@ anchors and the table of contents dropped), else plain text, else `.docx`; a
 sheet as CSV (`export?format=csv`, the tab of the address's `gid`), which
 becomes a name table in the glossary when it holds names in several languages
 and a text document otherwise, like a CSV in the inbox. A sheet's address
-without a `gid`, or any with `--all-tabs` (the studio's **Every tab of a
+without a `gid`, or any with `--all-tabs` (the lab's **Every tab of a
 Google Sheet**), brings every tab, each a document of its own under its
 tab's address: the tabs are listed from the sheet's HTML view
 (`/htmlview`);
 slides as text (`export/txt`). The document is stored under the address you
-gave, so importing it again with `--refresh` (in the studio: **Again if
+gave, so importing it again with `--refresh` (in the lab: **Again if
 stored**) replaces it. Exports work only for files shared publicly: in Google
 Docs, **Share > General access > Anyone with the link** (Viewer is enough).
 A file shared only with some people answers with Google's sign-in page or
@@ -300,7 +300,7 @@ supported", or has almost no text in a large page) are skipped with the
 reason rather than stored; save such a page from the browser and import the
 file.
 
-**Local files.** `ingest file` (the studio's **Files**) reads the prose
+**Local files.** `ingest file` (the lab's **Files**) reads the prose
 formats above. A folder or an archive (by its name or first bytes) is
 copied into the inbox (`inbox/<its name>`) and taken as the inbox takes it:
 unpacked, sorted, deduplicated. Other binary files are refused with the
@@ -408,7 +408,7 @@ What it does, and does not do:
 By default each channel goes to `<knowledge>/inbox/discord/<guild
 id>/<channel id>/` (the knowledge folder found as for every other command:
 `--config`, else `./config.toml`, else `--data`, else `$CUTTLEFISH_DATA`),
-where **`cuttlefish ingest inbox`** (or the studio's Import inbox) reads it:
+where **`cuttlefish ingest inbox`** (or the lab's Import inbox) reads it:
 each channel and thread becomes conversations as above, `#vod-review` and
 its threads with source kind `discord-vod-review`; the channel objects and
 `state.json` are skipped as the fetcher's own. A re-run appends to the
@@ -671,9 +671,9 @@ hook for evidence about the game: a `game` key (`"S2"` or `"S3"`) in it,
 written by hand or by a reader that tells the games apart, overrides the
 era from the date.
 
-**Reviews for the studio.** `cuttlefish corpus reviews` creates or updates
+**Reviews for the lab.** `cuttlefish corpus reviews` creates or updates
 a review of the Cuttlefish app for every VOD whose video is on disk, in the
-studio's reviews folder (`[cuttlefish] reviews` of `--config`, else
+lab's reviews folder (`[cuttlefish] reviews` of `--config`, else
 `Reviews` next to the knowledge folder; `--reviews <dir>` overrides):
 `<reviews>/discord-<conversation id>/review.json`, titled by the poster and
 the day, with the era and the origin (`source: {from: discord, url,
@@ -687,7 +687,7 @@ message's link as `source`), and one note for the rest: the text without a
 time, and the moments that wait for the HUD as `unplaced` (text, kind,
 wave, seconds left), which the page shows as chips. Ids of what was
 written start with `discord-`; a run replaces those and nothing else, so
-comments, notes and chats added in the studio stay where they are, and a
+comments, notes and chats added in the lab stay where they are, and a
 run that changes nothing writes nothing. The library's **Community**
 filter shows these reviews; the Knowledge page's **Create reviews from
 #vod-review** button runs `align`, `reviews` and `index` as a job.
@@ -808,7 +808,7 @@ page (`eggstra_work/coop_event_NN.html`, data in
 `eggstrawork/EggstraWorkNN.js`): stage, weapons, specials, the five waves'
 tide and occurrence and the boss spawn schedule per hazard level. Thanks
 to Lean for all of it. `cuttlefish ingest leanny` (`leanny.rs`,
-`eggstra.rs`; the studio's **Game data (Lean)** import) fetches what
+`eggstra.rs`; the lab's **Game data (Lean)** import) fetches what
 matters for Salmon Run and stores **fact cards**, one document per
 entity, with source kind `game-data` (weight 1.1), the version of the
 game the data is from (`versions.json`, `11.3.0` in September 2026) and
@@ -896,14 +896,14 @@ re-run asks for each file with `If-None-Match`; GitHub Pages answers 304
 for an unchanged file, so nothing is downloaded and, when nothing changed
 and every card is stored, nothing is embedded again (`--refresh` rebuilds
 the cards anyway). Event pages are probed upward until the first 404, so
-a new event is picked up by the next run. `--dry-run` (the studio's
+a new event is picked up by the next run. `--dry-run` (the lab's
 checkbox) fetches nothing: it lists the files with their state and what
 the copies fetched so far would give.
 
 **In prompts.** A `game-data` excerpt is labelled as such; the persona
 treats its numbers as exact for the version they name and credits Lean,
 while a number the cards lack (hit points) is still not to be invented.
-`web/demo-questions.js` holds demo questions the cards answer with exact
+The lab's `crates/grizzco-lab/web/demo-questions.js` holds demo questions the cards answer with exact
 numbers, in English and Chinese, plus a few that need the #vod-review
 knowledge too; the chat shows three of them at random among its chips.
 
@@ -919,7 +919,7 @@ cuttlefish search "Eggstra Work #7 wave 3"
 request at a time, `--delay-s` (default 2 s, at least 1) or the site's
 `Crawl-delay` when longer, every `robots.txt` rule for `Cuttlefish` (else
 `*`), and a `robots.txt` answering with a server error stops the import. A
-`--dry-run` (the studio's **Dry run: count the pages first**, on by
+`--dry-run` (the lab's **Dry run: count the pages first**, on by
 default) tells what is in scope and how long fetching it would take, and
 stores nothing. Progress and **Stop** work as for any import.
 
@@ -935,7 +935,7 @@ stores nothing. Progress and **Stop** work as for any import.
   records its url, `revision`, the wiki's license and "<wiki> contributors";
   a re-run fetches only the pages whose revision changed (`--refresh`
   fetches all). `--max-pages` (default 500) caps the pages *fetched* in a
-  run, so a capped run, or one stopped early (Cancel, the studio closed),
+  run, so a capped run, or one stopped early (Cancel, the lab closed),
   continues with the rest when run again. Every request carries
   `maxlag=5`: a lagging or busy wiki is left alone for the time it asks
   (or half a minute) and asked again. Raw pages go to `raw/wiki/`.
@@ -955,9 +955,9 @@ stores nothing. Progress and **Stop** work as for any import.
 
 **Stopping and running again.** Every import stores each document as soon
 as it is made, and the index follows the documents (opening the store embeds
-the ones it lacks), so an import stopped halfway (the studio's **Stop
+the ones it lacks), so an import stopped halfway (the lab's **Stop
 (continue later)** button on the running job, shown from "loading the
-knowledge store" on, embedding included; Ctrl+C; the studio closed) loses
+knowledge store" on, embedding included; Ctrl+C; the lab closed) loses
 at most the page under way. Running it again continues: `ingest
 url` and `ingest youtube` skip what is stored (a Google Sheet's tab kept as a
 name table too), wikis fetch only new or changed revisions, sites read their
@@ -1122,7 +1122,7 @@ Snatchers. `questions/deep.toml` is a bank of about fifty such questions in
 English and Simplified Chinese (`questions.rs`), each with a `category`
 (macro, openings, bosses, stages, events, eggs, weapons, moments) and what
 it `needs`: `knowledge` alone, a `video_moment`, a `video_range`, the `hud`,
-or the `detector` that is not trained yet. The studio offers a few at
+or the `detector` that is not trained yet. The lab offers a few at
 random as chips next to the chat (video questions only in a review with a
 video; detector ones not yet) and lists the whole bank in the Knowledge
 view.
@@ -1138,7 +1138,7 @@ The Knowledge view lists the runs; for each answer you mark **Good** or
 **Expert notes** are the memory: an answer you edited into the correct
 explanation, or anything you wrote from scratch, saved as
 `<data>/notes/<id>.md` (`notes.rs`; the id is the date and the question's
-words). Every answer of Cuttlefish in the studio has **Correct / add to
+words). Every answer of Cuttlefish in the lab has **Correct / add to
 memory** (中文: 纠正/补充 → 存为笔记), which opens the editor prefilled with
 the question and the answer. The file is Markdown with YAML front matter:
 
@@ -1165,7 +1165,7 @@ puts them in an `<expert_notes>` block, and the persona is told they come
 from a high-level player checking its earlier answers: when one applies,
 follow it over every other source and cite it. A note whose `question_id`
 names a bank question is that question's `reference`. The files are the
-truth: when the store opens (the studio, or any CLI command), notes edited
+truth: when the store opens (the lab, or any CLI command), notes edited
 by hand or synced from another machine are re-embedded and notes whose file
 is gone lose their document (`notes::sync`). The Knowledge view's **Expert
 notes** panel lists, edits and deletes them.
@@ -1182,7 +1182,7 @@ its `trusted` once the estimates are good enough, which drops the warning.
 
 ## Overfishing Pedia
 
-`pedia` is the studio's encyclopedia view over the glossary: which terms are
+`pedia` is the lab's encyclopedia view over the glossary: which terms are
 about Salmon Run (`candidate`, `in_scope`: the seed's and the user's terms,
 terms with slang, a definition or a relation, the Salmon Run tables' bosses,
 events, tides, stages and titles, and the Splatoon 2 and 3 weapons, specials,
@@ -1199,7 +1199,7 @@ cut the quotes. `fact_cards` reads the `game-data` documents,
 `review::SourceRef` carries the cited chunk's document id and position, so
 the page can show the chunk itself.
 
-## Library API (for the studio)
+## Library API (for Grizzco Lab)
 
 ```rust
 use cuttlefish::review::{Reviewer, ReviewRequest, Frame, ExistingComment};
@@ -1240,18 +1240,18 @@ let reply = reviewer.chat(&ChatRequest {
 task. In a chat, a translation request is an ordinary message: the persona
 translates with the glossary's names for the target language, and explains a
 bare callout before translating it. `translate` and `explain` are the
-translator's own calls (the studio's Translate view), without a knowledge
+translator's own calls (the lab's Translate view), without a knowledge
 store: only the glossary terms the text mentions go along, the target
 language's names first.
 
-The studio keeps one `Store` and `E5Embedder` for everything (search, imports
+The lab keeps one `Store` and `E5Embedder` for everything (search, imports
 and the chat) instead of a `Reviewer`: `review::chat(&store, &embedder,
 &client, k, &request)`, `review::review(...)` and `review::ask(...)` take the
 parts separately, with a `Client::from_env` made per request;
 `review::translate(&client, &glossary, text, target)` and
 `review::explain(...)` take only the glossary. Imports go
 through `ingest` (`web`, `youtube`, `files`, `discord_export`, `discord_bot`),
-which hand documents to an `ingest::Sink` (the CLI prints; the studio logs
+which hand documents to an `ingest::Sink` (the CLI prints; the lab logs
 into its import job) and stop when `Sink::cancelled` says so. Its Knowledge
 view shows all of this, and `inbox::import` does the inbox with the same kind
 of sink.
@@ -1376,7 +1376,7 @@ failed batch is read again by the next run, and a document's `[scanned]`
 mark only moves over stretches read in order.
 
 **Auto-apply**: `Found::auto_apply` approves what the model is at least a
-threshold sure of (0.6 by default; the studio's `[cuttlefish]
+threshold sure of (0.6 by default; the lab's `[cuttlefish]
 slang_auto_apply` and `slang_threshold`), marked `auto = true` so the page
 can list and undo it (`UserGlossary::undo` rejects it). **New terms**: when
 the slang names something narrower than any term (the Flyfish's missiles),
@@ -1391,7 +1391,7 @@ Flyfish]`. A new term the user rejected, or the glossary has, is never
 proposed again. **Moves**: an approved alias whose text an approved new
 term's alias also has (`missiles` of the Flyfish, then of Flyfish missiles)
 is offered to move to the new term (`UserGlossary::moves`, `apply_move`).
-**Editing terms** (`UserGlossary::edit_term`, the studio's `POST
+**Editing terms** (`UserGlossary::edit_term`, the lab's `POST
 knowledge/slang/term-edit`): a new term's name, kind, definition and
 relation change in place and the term becomes the user's (source `user`;
 suggestions never change a term that exists); a term of the generated
@@ -1452,7 +1452,7 @@ under either ranking.
 with patches and rotations, and retrieval updates by re-ingesting. It could
 pay off later for *style and judgment* (reviews that sound like the best
 reviewers, calibrated boss priority), once there are a few thousand accepted
-review comments from the studio to learn from, or to distil a cheap model
+review comments from the lab to learn from, or to distil a cheap model
 for high-volume work. Until then prompt + digest + retrieval is cheaper to
 iterate on.
 
@@ -1506,7 +1506,7 @@ are built and answers parsed by pure functions, and a fake transport stands
 in for HTTPS.
 
 **The Claude Code CLI as backend.** `llm::Backend` (`--backend`,
-`$CUTTLEFISH_BACKEND`, the studio's `[cuttlefish] backend`) is `auto`, `api`
+`$CUTTLEFISH_BACKEND`, the lab's `[cuttlefish] backend`) is `auto`, `api`
 or `claude-cli`; `auto` takes the API when `ANTHROPIC_API_KEY` is set and
 otherwise the `claude` on PATH. `claude_cli.rs` runs `claude -p` headless
 with the same prompt: the system prompt (persona, rules, digest) replaces

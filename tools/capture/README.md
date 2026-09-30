@@ -90,7 +90,7 @@ cuttlefish ingest inbox
 
 `--accounts a,b,c` reads only those accounts (no following list),
 `--refresh-following` reads the list again now, `--me` gives your handle
-when the page does not show it. `--config <studio config>` or `--data
+when the page does not show it. `--config <lab config>` or `--data
 <knowledge folder>` when not run beside `config.toml`.
 
 **Where the files go:** `<knowledge>/inbox/x/<handle>/posts.jsonl`, one
@@ -287,7 +287,7 @@ cuttlefish ingest inbox
 `--creators <link,id,...>` or `--creators @creators.txt` reads only those
 creators (profile links `https://www.xiaohongshu.com/user/profile/<id>` or
 24-character ids, one per line in the file); `--me <id>` gives your
-account's id when the page does not tell it. `--config <studio config>`
+account's id when the page does not tell it. `--config <lab config>`
 or `--data <knowledge folder>` when not run beside `config.toml`.
 
 **Where the files go:** `<knowledge>/inbox/rednote/<user id>/notes.jsonl`,
