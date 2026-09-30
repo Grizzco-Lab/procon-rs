@@ -404,15 +404,21 @@ approved at once with auto-apply (`[cuttlefish] slang_auto_apply`,
 `[[override]]` of the user file applied on every load; `term-reset` drops
 one). Expert notes (`cuttlefish::notes`, `<knowledge>/notes/<id>.md`, source
 kind `expert-note`, weight 1.3): `GET knowledge/notes`, `POST
-knowledge/notes/save` (written, then indexed at once under the store lock)
-and `notes/delete`; the page's editor (`web/knowledge.js`,
-`window.cuttlefishNotes.edit`) is opened by the chat's **Correct / add to
-memory** and by the deep eval's answers. The deep question bank
-(`cuttlefish::questions`, `GET knowledge/questions`) feeds the chat's chips
-and the eval (`cuttlefish::deep_eval`: `POST knowledge/eval/deep` runs it as
-a job, `GET knowledge/eval[?file=]` lists and reads
-`<knowledge>/eval/deep-<date>.jsonl`, `POST knowledge/eval/mark` records a
-verdict and the note made). Imports use `cuttlefish::ingest`
+knowledge/notes/save` (the file written first, then indexed at once under the
+store lock, or through the same loaded store while a job of the lab holds
+it; a step failing after the file only warns; with `eval: {file, id}` the
+eval answer it corrects is marked wrong with its id) and `notes/delete`; the
+page's editor (`web/knowledge.js`, the dialog `#cf-note-dialog` and its form
+`#cf-note-editor`, `window.cuttlefishNotes.edit`) is opened by the chat's
+**Correct / add to memory** and by the deep eval's answers, and keeps what
+is typed as a draft in localStorage until the note is saved. The deep
+question bank (`cuttlefish::questions`, `GET knowledge/questions`) feeds the
+chat's chips and the eval (`cuttlefish::deep_eval`: `POST knowledge/eval/deep`
+runs it as a job when the player starts it, `GET knowledge/eval[?file=]`
+lists and reads `<knowledge>/eval/deep-<date>.jsonl`, each answer with the
+backend, model and effort that gave it, `POST knowledge/eval/mark` records a
+verdict on the first answer or one asked again and the note made, `POST
+knowledge/eval/ask` asks a question again over the store as it is now). Imports use `cuttlefish::ingest`
 (the same code as the CLI) with a `Sink` that writes the job's log; one runs
 at a time, and the index is written every fifty documents and at the end (it
 may live in a synced folder, where each write uploads it whole). The
