@@ -88,58 +88,104 @@ pub enum InputSource {
 }
 
 /// How far the IDM's estimates can be trusted, as measured on held-out
-/// frames: the one place to update when a better IDM exists. Until
-/// `trusted` is set, the `<moment>` block warns the model off fine claims
-/// built on estimated input.
+/// play: the one place to update when a better IDM exists. The buttons
+/// and the continuous input may come from different measurements, each
+/// named with its model. Until `trusted` is set, the `<moment>` block
+/// warns the model off fine claims built on estimated input.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IdmReliability {
-    /// The model these numbers are about
+    /// The model the button numbers are about
     pub model: &'static str,
+    /// Where they were measured
+    pub measured_on: &'static str,
+    /// Per-frame F1 of the buttons worth naming, best first
+    pub buttons_f1: &'static [(&'static str, f32)],
+    /// Share of a button's presses whose start the model marks within
+    /// [`IdmReliability::onset_frames`] frames of the true start
+    pub onset_recall: &'static [(&'static str, f32)],
+    /// The window of `onset_recall`: frames either side of the true start
+    pub onset_frames: u32,
+    /// The model the camera turn, gyro and stick numbers are about, where
+    /// they were measured, and the minutes of play it was trained on
+    pub motion_model: &'static str,
+    pub motion_measured_on: &'static str,
+    pub motion_training_minutes: u32,
     /// Pearson r of the camera turn
     pub camera_turn_r: f32,
     /// Pearson r of the gyro pitch
     pub gyro_pitch_r: f32,
     /// Pearson r of the right stick's x
     pub right_stick_x_r: f32,
-    /// Per-frame F1 of the buttons worth naming
-    pub buttons_f1: &'static [(&'static str, f32)],
-    /// Minutes of play it was trained on
-    pub training_minutes: u32,
     /// Whether its estimates are good enough to use like recorded input
     pub trusted: bool,
 }
 
-/// AgentZero's IDM v2 on held-out frames (September 2026)
+/// AgentZero's IDM on held-out play. The buttons: IDM v4 against the true
+/// input of the three held-out sessions 13-20-24, 14-04-14 and 14-54-32
+/// (20 min of play), measured 2026-09-30 (A: frame F1 0.56, precision
+/// 0.54, recall 0.58). The camera turn, gyro and stick: IDM v2 on held-out
+/// frames (September 2026), trained on about 14 min of play; not measured
+/// again for v4 here.
 pub const IDM_RELIABILITY: IdmReliability = IdmReliability {
-    model: "IDM v2",
+    model: "IDM v4",
+    measured_on: "three held-out sessions, 20 min of play",
+    buttons_f1: &[
+        ("ZL", 0.92),
+        ("ZR", 0.82),
+        ("B", 0.67),
+        ("A", 0.56),
+        ("R", 0.51),
+        ("Y", 0.48),
+    ],
+    onset_recall: &[("A", 0.73), ("ZR", 0.39), ("Y", 0.19)],
+    onset_frames: 4,
+    motion_model: "IDM v2",
+    motion_measured_on: "held-out frames",
+    motion_training_minutes: 14,
     camera_turn_r: 0.80,
     gyro_pitch_r: 0.70,
     right_stick_x_r: 0.70,
-    buttons_f1: &[("ZL", 0.90), ("ZR", 0.83), ("B", 0.57), ("R", 0.22)],
-    training_minutes: 14,
     trusted: false,
 };
 
 impl IdmReliability {
-    /// The numbers in one sentence: `IDM v2 on held-out frames: camera
-    /// turn r 0.80, gyro pitch r 0.70, right stick x r 0.70; button F1 ZL
-    /// 0.90, ZR 0.83, B 0.57, R 0.22; trained on about 14 min of play`
+    /// The numbers in one sentence: `IDM v4 on three held-out sessions, 20
+    /// min of play: button F1 ZL 0.92, ZR 0.82, B 0.67, A 0.56, R 0.51, Y
+    /// 0.48; presses whose start it marks within 4 frames: A 0.73, ZR 0.39,
+    /// Y 0.19; IDM v2 on held-out frames: camera turn r 0.80, gyro pitch r
+    /// 0.70, right stick x r 0.70, trained on about 14 min of play`
     pub fn describe(&self) -> String {
-        let buttons: Vec<String> = self
-            .buttons_f1
-            .iter()
-            .map(|(b, f1)| alloc::format!("{b} {f1:.2}"))
-            .collect();
-        alloc::format!(
-            "{} on held-out frames: camera turn r {:.2}, gyro pitch r {:.2}, right stick x r \
-             {:.2}; button F1 {}; trained on about {} min of play",
+        let listed = |values: &[(&str, f32)]| {
+            values
+                .iter()
+                .map(|(b, x)| alloc::format!("{b} {x:.2}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut out = alloc::format!(
+            "{} on {}: button F1 {}",
             self.model,
+            self.measured_on,
+            listed(self.buttons_f1)
+        );
+        if !self.onset_recall.is_empty() {
+            out.push_str(&alloc::format!(
+                "; presses whose start it marks within {} frames: {}",
+                self.onset_frames,
+                listed(self.onset_recall)
+            ));
+        }
+        out.push_str(&alloc::format!(
+            "; {} on {}: camera turn r {:.2}, gyro pitch r {:.2}, right stick x r {:.2}, trained \
+             on about {} min of play",
+            self.motion_model,
+            self.motion_measured_on,
             self.camera_turn_r,
             self.gyro_pitch_r,
             self.right_stick_x_r,
-            buttons.join(", "),
-            self.training_minutes
-        )
+            self.motion_training_minutes
+        ));
+        out
     }
 
     /// How the `<moment>` block introduces input estimated by `model`
@@ -839,8 +885,10 @@ mod tests {
             "<moment>\n\
              HUD at 15.0 s: wave 2, 43 s left (W2 :43), golden eggs 18/24\n\
              Controller input 12.0\u{2013}18.0 s, ESTIMATED from the video by the inverse dynamics model v2, not recorded. \
-             IDM v2 on held-out frames: camera turn r 0.80, gyro pitch r 0.70, right stick x r 0.70; \
-             button F1 ZL 0.90, ZR 0.83, B 0.57, R 0.22; trained on about 14 min of play. \
+             IDM v4 on three held-out sessions, 20 min of play: button F1 ZL 0.92, ZR 0.82, B 0.67, A 0.56, \
+             R 0.51, Y 0.48; presses whose start it marks within 4 frames: A 0.73, ZR 0.39, Y 0.19; \
+             IDM v2 on held-out frames: camera turn r 0.80, gyro pitch r 0.70, right stick x r 0.70, \
+             trained on about 14 min of play. \
              Treat the lines below as hints, not facts: do not build fine claims on them:\n\
              - 14.2 s: squid roll\n\
              Objects a person labelled on the frame at 15.0 s: chum \u{d7}2 (left, center), steel eel (right)\n\

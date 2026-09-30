@@ -1182,13 +1182,18 @@ notes** panel lists, edits and deletes them.
 
 **Estimated controller input.** When a chat is about a video without a
 recording, the `<moment>` block's controller input comes from AgentZero's
-IDM. `situation::IDM_RELIABILITY` holds how far it can be trusted (IDM v2
-on held-out frames: camera turn r 0.80, gyro pitch r 0.70, right stick x r
-0.70; button F1 ZL 0.90, ZR 0.83, B 0.57, R 0.22; about 14 minutes of
-training data), the block says the input is *estimated, not recorded* with
-those numbers and tells the model not to build fine claims on it, and the
-persona repeats the rule. Update the constant when a better IDM exists; set
-its `trusted` once the estimates are good enough, which drops the warning.
+IDM. `situation::IDM_RELIABILITY` holds how far it can be trusted, each
+number with the model and the play it was measured on: the buttons from
+IDM v4 against the true input of the three held-out sessions 13-20-24,
+14-04-14 and 14-54-32 (20 min, measured 2026-09-30: frame F1 ZL 0.92, ZR
+0.82, B 0.67, A 0.56 (precision 0.54, recall 0.58), R 0.51, Y 0.48; presses
+whose start it marks within ±4 frames: A 0.73, ZR 0.39, Y 0.19), the camera
+turn, gyro and stick from IDM v2 on held-out frames (camera turn r 0.80,
+gyro pitch r 0.70, right stick x r 0.70; about 14 minutes of training
+data). The block says the input is *estimated, not recorded* with those
+numbers and tells the model not to build fine claims on it, and the persona
+repeats the rule. Update the constant when a better IDM exists; set its
+`trusted` once the estimates are good enough, which drops the warning.
 
 ## Overfishing Pedia
 
