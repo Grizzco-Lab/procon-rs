@@ -653,6 +653,12 @@
       known.data = await api(`run?id=${encodeURIComponent(id)}`);
       known.error = null;
     } catch (error) {
+      // Aborted (the app was left): nothing learnt, read again when shown
+      if (isAbort(error)) {
+        known.pending = false;
+        if (!known.data) pl.runs.delete(id);
+        return;
+      }
       known.error = error.message;
     }
     known.at = Date.now();
@@ -696,6 +702,11 @@
       log.modified = data.modified_ms;
       log.error = null;
     } catch (error) {
+      // Aborted (the app was left): read again when shown
+      if (isAbort(error)) {
+        log.pending = false;
+        return;
+      }
       log.error = error.message;
     }
     log.at = Date.now();
@@ -3166,6 +3177,7 @@
         await loadTimeline();
         renderTimeline();
       } catch (error) {
+        if (isAbort(error)) return;
         pl.error = error.message;
         renderError();
       }
