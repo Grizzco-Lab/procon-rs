@@ -9317,12 +9317,15 @@ button.cf-cite {
 }
 
 /* ============================================================ pipeline
- * The Pipeline app (pipeline.js): what runs, the machine, the GPU over the
- * last hours, the queue in the order it runs, results and history. Charts
- * use the series tokens (--s1 to --s3); experiments (an entry's group)
- * take the categorical slots --pl-c1 to --pl-c8, in the order of their
- * names, always beside their name; states wear the status colours, always
- * with an icon and a word.
+ * The Pipeline app (pipeline.js): the machines side by side, alike, each
+ * its state and what its GPU takes next, what runs on it, its vitals and
+ * its GPU's processes, in rows both share; the GPUs over the last hours
+ * side by side; the queue in the order it runs, results and history.
+ * Charts use the series tokens (--s1 to --s3); experiments (an entry's
+ * group) take the categorical slots --pl-c1 to --pl-c8, in the order of
+ * their names, always beside their name; states wear the status colours,
+ * always with an icon and a word (a machine's as a light: a dot and a
+ * word).
  */
 
 :root:not([data-app="pipeline"]) [data-app-only="pipeline"] {
@@ -9348,12 +9351,21 @@ button.cf-cite {
   max-width: 1760px;
   margin: 0 auto;
   align-items: start;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-template-areas:
-    "now now now now now now now machine machine machine machine machine"
-    "timeline timeline timeline timeline timeline timeline timeline timeline timeline timeline timeline timeline"
-    "queue queue queue queue queue queue results results results results results results"
-    "history history history history history history history history history history history history";
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* In the page's order, each across the page but the queue and the
+   results, side by side (a line on what is wrong goes first) */
+#pipeline-layout > * {
+  grid-column: 1 / -1;
+}
+
+#pipeline-layout > .p-pl-queue {
+  grid-column: 1;
+}
+
+#pipeline-layout > .p-pl-results {
+  grid-column: 2;
 }
 
 /* The Proxmox pool running low: a banner over the layout, as wide */
@@ -9383,29 +9395,10 @@ button.cf-cite {
   max-width: 1360px;
 }
 
-.p-pl-now {
-  grid-area: now;
-}
-.p-pl-machine {
-  grid-area: machine;
-}
-.p-pl-timeline {
-  grid-area: timeline;
-}
-.p-pl-queue {
-  grid-area: queue;
-}
-.p-pl-results {
-  grid-area: results;
-}
-.p-pl-history {
-  grid-area: history;
-}
-
-[data-theme="telemetry"] .p-pl-now {
+[data-theme="telemetry"] #pl-m-local {
   --panel-no: "01";
 }
-[data-theme="telemetry"] .p-pl-machine {
+[data-theme="telemetry"] #pl-m-remote {
   --panel-no: "02";
 }
 [data-theme="telemetry"] .p-pl-timeline {
@@ -9632,30 +9625,140 @@ button.cf-cite {
   color: var(--text-2);
   font-size: 12.5px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
-/* ------------------------------------------------------------ running */
+/* ------------------------------------------------------------ machines */
 
-.pl-running {
+/* The machines side by side. Each panel's head, vitals and processes sit
+   in rows both panels share (a subgrid: a part of one is always beside
+   the same part of the other), what runs on it last, where the two may
+   differ in length. A subgrid holds no containment, so its parts are the
+   size containers */
+.pl-machines {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(4, auto);
+  gap: 12px var(--gap);
+}
+
+.pl-machines[data-count="1"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pl-machine {
+  display: grid;
+  grid-row: span 4;
+  grid-template-rows: subgrid;
+}
+
+.pl-m-now {
+  display: grid;
+  align-content: start;
   gap: 12px;
 }
 
-.pl-idle {
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  padding: 26px 12px 22px;
-  color: var(--text-2);
-  text-align: center;
+/* A machine's head: its name, its state, what its GPU takes next */
+.pl-m-head {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 4px 14px;
 }
 
-.pl-idle .pl-idle-icon {
-  width: 56px;
-  height: 56px;
-  margin-bottom: 6px;
-  opacity: 0.55;
-  filter: grayscale(0.6);
+.pl-m-title {
+  white-space: nowrap;
+}
+
+.pl-m-state {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.pl-m-next {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 12.5px;
+  cursor: help;
+}
+
+.pl-m-next-label {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pl-m-next code {
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+/* A light: a dot of its level's colour with a soft ring, and a word */
+.pl-light {
+  --lt: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pl-light i {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lt);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--lt) 22%, transparent);
+}
+
+.pl-light[data-level="good"] {
+  --lt: var(--good);
+  color: var(--text);
+}
+
+.pl-light[data-level="warning"] {
+  --lt: var(--warning);
+  color: var(--text);
+}
+
+.pl-light[data-level="critical"] {
+  --lt: var(--critical);
+  color: var(--text);
+}
+
+.pl-light[data-level="note"] {
+  --lt: var(--accent);
+}
+
+.pl-light[data-level="off"] i {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--lt);
+}
+
+.pl-light[title] {
+  cursor: help;
+}
+
+/* A machine where nothing of the queue runs: why, what comes next there
+   and what ran last */
+.pl-idle {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px dashed var(--inset-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
 }
 
 .pl-idle p {
@@ -9663,13 +9766,86 @@ button.cf-cite {
 }
 
 .pl-idle-text {
-  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 14px;
   font-weight: 600;
 }
 
-.pl-idle-next {
-  color: var(--text-3);
+.pl-idle .pl-idle-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  opacity: 0.55;
+  filter: grayscale(0.6);
+}
+
+.pl-idle-note {
+  padding-left: 10px;
+  border-left: 2px solid var(--inset-border);
   font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.pl-idle-note[data-level="warning"] {
+  border-left-color: var(--warning);
+  color: var(--text);
+}
+
+/* An entry in a line (next here, last here): what it is to the machine,
+   then its title and its question or its result */
+.pl-line {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 2px solid
+    color-mix(in oklab, var(--g, var(--accent)) 55%, transparent);
+}
+
+.pl-m-now > .pl-line {
+  margin: 2px 0 0 4px;
+}
+
+.pl-line-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pl-line-label .pl-state {
+  font-size: 10.5px;
+}
+
+.pl-line-title {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.pl-line-title .pl-group {
+  margin-right: 8px;
+  vertical-align: 1px;
+}
+
+.pl-line-sub {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .pl-run {
@@ -9683,6 +9859,39 @@ button.cf-cite {
   border-radius: var(--radius-sm);
   background: var(--inset);
   overflow: hidden;
+  container: pl-run / inline-size;
+}
+
+/* Its run folder's curve, then its scores; side by side where the card is
+   wide, the scores two a row without their notes (the best is in each
+   one's course) */
+.pl-run-data {
+  display: grid;
+  gap: 10px;
+}
+
+@container pl-run (min-width: 720px) {
+  .pl-run-data {
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .pl-run-data .pl-scores {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .pl-run-data .pl-score {
+    padding: 6px 9px 4px;
+  }
+
+  .pl-run-data .pl-score-note {
+    display: none;
+  }
+
+  .pl-run-data .pl-score .pl-spark {
+    height: 18px;
+  }
 }
 
 /* The state's rule along the card's edge */
@@ -9840,6 +10049,17 @@ button.cf-cite {
 /* What a run does now that it no longer counts steps */
 .pl-phase {
   color: var(--text);
+  font-weight: 600;
+}
+
+/* The step a job runs, as its script or its process names it */
+.pl-step {
+  margin-right: 2px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--text) 8%, transparent);
+  color: var(--text);
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -10281,17 +10501,25 @@ button.cf-cite {
   fill: color-mix(in oklab, var(--s3) 14%, transparent);
 }
 
-/* ------------------------------------------------------------ machine */
+/* ------------------------------------------------------------- vitals */
+
+/* A machine's vitals: its GPU's four tiles in a row, then its host's (CPU,
+   memory, disk) in another; one row of all where the panel is wide, two
+   a row where it is a phone's */
+.pl-vitals {
+  container: pl-vitals / inline-size;
+}
 
 .pl-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 8px;
 }
 
 .pl-tile {
   container-type: inline-size;
   display: grid;
+  grid-column: span 3;
   align-content: start;
   gap: 4px;
   min-width: 0;
@@ -10299,6 +10527,41 @@ button.cf-cite {
   border: 1px solid var(--inset-border);
   border-radius: var(--radius-sm);
   background: var(--inset);
+}
+
+.pl-tile[data-row="host"] {
+  grid-column: span 4;
+}
+
+.pl-tiles[data-host="2"] .pl-tile[data-row="host"] {
+  grid-column: span 6;
+}
+
+@container pl-vitals (min-width: 1000px) {
+  .pl-tiles {
+    grid-template-columns: repeat(var(--n, 7), minmax(0, 1fr));
+  }
+
+  .pl-tiles .pl-tile,
+  .pl-tiles[data-host] .pl-tile[data-row="host"] {
+    grid-column: auto;
+  }
+}
+
+@container pl-vitals (max-width: 419px) {
+  .pl-tiles .pl-tile,
+  .pl-tiles[data-host] .pl-tile[data-row="host"] {
+    grid-column: span 6;
+  }
+
+  .pl-tiles[data-host="3"] .pl-tile[data-row="host"]:last-child {
+    grid-column: span 12;
+  }
+}
+
+/* A tile without its course or meter keeps their place */
+.pl-tile-gap {
+  height: 26px;
 }
 
 .pl-tile[data-level="warning"] {
@@ -10314,9 +10577,9 @@ button.cf-cite {
   font-size: 11.5px;
 }
 
-/* As large as the tile lets "22.4 / 31.3 GiB" be */
+/* As large as the tile lets "11.9 GiB" be */
 .pl-tile-value {
-  font-size: min(20px, 12cqi);
+  font-size: min(20px, 21cqi);
   font-weight: 650;
   letter-spacing: -0.01em;
   white-space: nowrap;
@@ -10360,6 +10623,11 @@ button.cf-cite {
 
 .pl-m-ram {
   background: var(--s3);
+}
+
+/* A disk's used space: neutral, its tile's edge warns when it runs low */
+.pl-m-disk {
+  background: color-mix(in oklab, var(--text-2) 60%, transparent);
 }
 
 /* The GPU's processes */
@@ -10474,9 +10742,20 @@ button.cf-cite {
   white-space: nowrap;
 }
 
+/* A chart per GPU, side by side like the machines above them */
+.pl-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px var(--gap);
+}
+
+.pl-charts[data-count="1"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .pl-chart {
   position: relative;
-  min-height: 200px;
+  min-height: 140px;
 }
 
 .pl-svg .pl-area.s1 {
@@ -10837,6 +11116,7 @@ button.cf-cite {
   color: var(--text);
   font-size: 13px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .pl-r:is([data-state="finished"], [data-state="stopped"]) .pl-r-summary {
@@ -10847,6 +11127,7 @@ button.cf-cite {
   color: var(--text-2);
   font-size: 12.5px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .pl-r-next b {
@@ -10907,29 +11188,92 @@ button.cf-cite {
 
 /* ------------------------------------------------------ narrower windows */
 
-@media (max-width: 1100px) {
-  :root[data-theme] #pipeline-layout {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas:
-      "now now"
-      "machine machine"
-      "timeline timeline"
-      "queue results"
-      "history history";
+/* The machines one over the other where the page is narrower than two
+   runs side by side need (their charts a little later): with nothing
+   beside them to line up with, what runs comes right under the head */
+@container page (max-width: 1100px) {
+  .pl-machines {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pl-machine + .pl-machine {
+    margin-top: calc(var(--gap) - 12px);
+  }
+
+  .pl-m-now {
+    order: 1;
+  }
+
+  .pl-vitals {
+    order: 2;
+  }
+
+  .pl-m-procs {
+    order: 3;
   }
 }
 
+@container page (max-width: 900px) {
+  .pl-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* One column: the queue and the results before the timeline */
 @media (max-width: 860px) {
   :root[data-theme] #pipeline-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "now" "machine" "queue" "results" "timeline" "history";
+  }
+
+  :root[data-theme] #pipeline-layout > * {
+    grid-column: 1;
+  }
+
+  :root[data-theme] #pipeline-layout > .p-pl-timeline {
+    order: 1;
+  }
+
+  :root[data-theme] #pipeline-layout > .p-pl-history {
+    order: 2;
   }
 }
 
 :root[data-layout="phone"][data-theme] #pipeline-layout {
   max-width: 480px;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "now" "machine" "queue" "results" "timeline" "history";
+}
+
+:root[data-layout="phone"][data-theme] #pipeline-layout > * {
+  grid-column: 1;
+}
+
+:root[data-layout="phone"][data-theme] #pipeline-layout > .p-pl-timeline {
+  order: 1;
+}
+
+:root[data-layout="phone"][data-theme] #pipeline-layout > .p-pl-history {
+  order: 2;
+}
+
+:root[data-layout="phone"] .pl-machines,
+:root[data-layout="phone"] .pl-charts {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+:root[data-layout="phone"] .pl-machine + .pl-machine {
+  margin-top: calc(var(--gap) - 12px);
+}
+
+:root[data-layout="phone"] .pl-m-now {
+  order: 1;
+}
+
+:root[data-layout="phone"] .pl-vitals {
+  order: 2;
+}
+
+:root[data-layout="phone"] .pl-m-procs {
+  order: 3;
 }
 
 @container page (max-width: 560px) {

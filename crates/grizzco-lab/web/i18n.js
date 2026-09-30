@@ -1285,9 +1285,6 @@ const I18N = {
     "bot.stopNote": "AgentZero is playing the Switch: stop it (Esc)",
     "bot.left": "{left} left",
     // The Pipeline app: the GPU and the experiment queue agents keep
-    "pl.now.title": "Running",
-    "pl.now.count": ({ n }) => (n === 1 ? "1 entry" : `${n} entries`),
-    "pl.machine.title": "Machine",
     "pl.timeline.title": "GPU timeline",
     "pl.timeline.range": "Hours shown",
     "pl.range.60": "1 h",
@@ -1315,17 +1312,13 @@ const I18N = {
     "pl.state.goneNote":
       "The queue says it runs, but none of its processes is left: did it end without the queue being told?",
     "pl.state.finished": "Ran to the end, not marked",
-    "pl.state.finishedNote":
-      "Its run folder reached its last step, and the queue still says {status}.",
     "pl.state.stopped": "Ended early, not marked",
     "pl.state.queued": "Queued",
     "pl.state.paused": "Paused",
     "pl.state.done": "Done",
     "pl.state.failed": "Failed",
-    "pl.idle": "Nothing runs right now.",
-    "pl.idleNext": "Next up: {title}",
     "pl.idleBusy":
-      "The GPU is {util}% busy with work the queue does not list (see Machine).",
+      "The GPU is {util}% busy with work the queue does not list (see its processes).",
     "pl.startedAt": "Started {clock}",
     "pl.device.gpu": "either GPU",
     "pl.device.cpu": "CPU",
@@ -1344,8 +1337,6 @@ const I18N = {
     "pl.progress.eta": "ETA {clock}",
     "pl.progress.left": "{left} left",
     "pl.progress.written": "last written {ago}",
-    "pl.progress.none":
-      "No progress to read: no metrics in a run folder, no N/M in its log",
     "pl.proc.gpu": "GPU memory",
     "pl.proc.cpu": "CPU",
     "pl.proc.ram": "RAM",
@@ -1385,11 +1376,8 @@ const I18N = {
     "pl.tile.cpu": "CPU",
     "pl.tile.ram": "Memory",
     "pl.tile.last": "last {minutes} min",
-    "pl.tile.memNote": "queue {jobs} · other {other}",
     "pl.tile.fan": "fan {fan}%",
-    "pl.tile.powerNote": "of {limit} W · {clock} MHz",
-    "pl.tile.cpuNote": "{cores} threads · load {load}",
-    "pl.tile.ramNote": "{available} available",
+    "pl.tile.clock": "SM clock {clock} MHz",
     "pl.tile.swap": "swap {used} used",
     "pl.tile.swapFull": "swap full ({used})",
     "pl.noGpu": "No GPU readings: {error}",
@@ -1406,7 +1394,7 @@ const I18N = {
       "Sampled every {s} s since the lab started, {clock}; earlier lanes come from the queue's own times.",
     "pl.timeline.empty": "No samples yet.",
     "pl.timeline.aria":
-      "The GPUs over the last {hours} h: this host's busy {util}% now, their memory, this host's CPU, and what ran on each when",
+      "{gpu} over the last {hours} h: busy {util}% now, its machine's CPU, its memory, and what ran on it when",
     "pl.queue.count": ({ n }) => (n === 1 ? "1 waiting" : `${n} waiting`),
     "pl.queue.updated": "updated {ago}",
     "pl.queue.empty":
@@ -1450,8 +1438,6 @@ const I18N = {
     "pl.state.runnerStopped": "Its runner is not running.",
     "pl.state.unknownStarting":
       "The {host} runner has taken it and has not written since: it copies the code and data over before the job starts.",
-    "pl.phase.after": "Another step, running for {time}",
-    "pl.phase.afterNow": "Another step is running",
     "pl.phase.trained": "its training ran all {total} steps",
     "pl.phase.trainedEarly":
       "its training stopped early at step {step} of {total}",
@@ -1496,7 +1482,6 @@ const I18N = {
     "pl.tile.cpuJobs": "queue {cores} cores",
     "pl.tile.noReading": "no reading",
     "pl.tile.unreachable": "unreachable",
-    "pl.tile.remoteSince": "last read {ago}",
     "pl.tile.runnerStopped": "runner not running",
     "pl.tile.hold": "on hold",
     "pl.procs.remoteNote":
@@ -1543,6 +1528,44 @@ const I18N = {
       "No fresh reading of {pool} on {host}: {error}.",
     "pl.storage.banner.why":
       "Every VM's disk is a thin volume on it: when it fills up, the host hangs and both VMs with it. Free space before big jobs.",
+    "pl.m.running": ({ n }) => `${n} running`,
+    "pl.m.gone": "{n} with no process",
+    "pl.m.unknown": "{n} with no word",
+    "pl.m.stalled": "{n} stalled",
+    "pl.m.idle": "Idle",
+    "pl.m.busyOther": "{util}% busy, not with the queue's work",
+    "pl.m.never": "No word from its runner yet",
+    "pl.m.quiet": "Last word {ago}",
+    "pl.m.quietNote":
+      "No word from its runner since {clock} ({ago}): what runs there is unknown.",
+    "pl.m.runnerDownNote":
+      "Its runner (agentzero-win11 run) is not running: nothing new starts on this GPU.",
+    "pl.m.holdNote":
+      "Its runner holds new entries back (runs/win11/HOLD); what runs goes on.",
+    "pl.m.next": "Next",
+    "pl.m.nextNote":
+      "What this GPU's runner takes next: the first queued entry that fits it and waits for nothing",
+    "pl.m.nextWaitsNote":
+      "The first queued entry this GPU can take, once the entries it waits for are done",
+    "pl.m.idleText": "Nothing of the queue runs on this GPU.",
+    "pl.m.nextHere": "Next here",
+    "pl.m.nextWaits": "Next here, after {ids}",
+    "pl.m.lastHere": "Last here · {clock} · took {took}",
+    "pl.tile.notRead": "its runner does not read it yet",
+    "pl.tile.gpuMemNote": "the queue's jobs {jobs} · the rest {other}",
+    "pl.tile.of": "of {total}",
+    "pl.tile.powerOf": "of {limit} W",
+    "pl.tile.threads": "{cores} threads",
+    "pl.tile.load": "load {load}",
+    "pl.tile.available": "{available} available",
+    "pl.tile.disk": "Disk",
+    "pl.tile.diskNote": "free of {total} · {path}",
+    "pl.work.running": "running {time}",
+    "pl.work.plain": "No step counter · running {time}",
+    "pl.work.plainNow": "No step counter",
+    "pl.work.note":
+      "What its log says it runs: the step its job script started last (== start <name>), else its main process",
+    "pl.proc.main": "main process: {name}",
   },
 };
 

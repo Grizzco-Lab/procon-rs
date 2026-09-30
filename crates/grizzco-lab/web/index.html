@@ -4112,32 +4112,55 @@
     </div>
 
     <!-- Pipeline app: the GPUs (this host's and the win11 VM's) and the
-         experiment queue agents keep in AgentZero's runs/queue.json, live:
-         what runs with its progress and loss, the machine, each GPU over
-         the last hours with its CPU and what ran on it when, what waits in
-         the order it runs (drag by the handle to reorder, written back as
-         priorities), what came out and the history. pipeline.js draws it
-         all from /api/pipeline (src/pipeline.rs). -->
+         experiment queue agents keep in AgentZero's runs/queue.json, live.
+         The machines side by side, alike: each its state and what its GPU
+         takes next, its vitals as tiles and its GPU's processes (in rows
+         both panels share), then what runs there (progress, loss, scores,
+         log) or what comes next and ran last. Then each GPU over the
+         last hours, side by side, with its machine's CPU and what ran on it
+         when; what waits in the order it runs (drag by the handle to
+         reorder, written back as priorities), what came out and the
+         history. pipeline.js draws it all from /api/pipeline
+         (src/pipeline.rs). -->
     <div data-app-section="pipeline" hidden>
       <!-- The Proxmox pool running low -->
       <p class="notice pl-storage" id="pl-storage" role="alert" hidden></p>
       <main class="layout" id="pipeline-layout">
-        <section class="panel p-pl-now" aria-labelledby="h-pl-now">
-          <header class="panel-head">
-            <h2 id="h-pl-now" data-i18n="pl.now.title">Running</h2>
-            <span class="panel-note" id="pl-now-note"></span>
-          </header>
-          <div class="pl-running" id="pl-running"></div>
-        </section>
+        <p class="notice pl-alert" id="pl-alert" hidden></p>
 
-        <section class="panel p-pl-machine" aria-labelledby="h-pl-machine">
-          <header class="panel-head">
-            <h2 id="h-pl-machine" data-i18n="pl.machine.title">Machine</h2>
-            <span class="panel-note" id="pl-gpu-name"></span>
-          </header>
-          <div class="pl-tiles" id="pl-tiles"></div>
-          <div class="pl-procs" id="pl-procs"></div>
-        </section>
+        <div class="pl-machines" id="pl-machines">
+          <section
+            class="panel pl-machine"
+            id="pl-m-local"
+            data-key="local"
+            aria-labelledby="h-pl-m-local"
+          >
+            <header class="panel-head pl-m-head">
+              <h2 class="pl-m-title" id="h-pl-m-local">Linux</h2>
+              <span class="pl-m-state"></span>
+              <span class="pl-m-next" hidden></span>
+            </header>
+            <div class="pl-vitals"><div class="pl-tiles"></div></div>
+            <div class="pl-m-procs"></div>
+            <div class="pl-m-now"></div>
+          </section>
+          <section
+            class="panel pl-machine"
+            id="pl-m-remote"
+            data-key="remote"
+            aria-labelledby="h-pl-m-remote"
+            hidden
+          >
+            <header class="panel-head pl-m-head">
+              <h2 class="pl-m-title" id="h-pl-m-remote">win11</h2>
+              <span class="pl-m-state"></span>
+              <span class="pl-m-next" hidden></span>
+            </header>
+            <div class="pl-vitals"><div class="pl-tiles"></div></div>
+            <div class="pl-m-procs"></div>
+            <div class="pl-m-now"></div>
+          </section>
+        </div>
 
         <section class="panel p-pl-timeline" aria-labelledby="h-pl-timeline">
           <header class="panel-head">
@@ -4186,7 +4209,10 @@
               </button>
             </div>
           </header>
-          <div class="pl-chart" id="pl-timeline"></div>
+          <div class="pl-charts" id="pl-charts">
+            <div class="pl-chart" data-key="local"></div>
+            <div class="pl-chart" data-key="remote" hidden></div>
+          </div>
           <p class="panel-note" id="pl-timeline-note"></p>
         </section>
 
