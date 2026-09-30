@@ -126,11 +126,13 @@ use super::{
     PRED_FILE, Predictor, RUN_FILE, Source, Status as HttpError, agreement, blocking, check_name,
     checkpoints_in, gpu_memory, help_has, now_ms, signal_group,
 };
-use crate::detector::recording_in_progress;
-use crate::objects::write_atomic;
+use crate::inspect::objects::write_atomic;
+use crate::studio::v4l2::YUYV;
+use crate::studio::video::{
+    self, POLICY_MAX_BYTES, PolicySink, PolicyTimes, mono_ns, mono_to_unix_us,
+};
 use crate::studio::{BotStart, Studio};
-use crate::v4l2::YUYV;
-use crate::video::{self, POLICY_MAX_BYTES, PolicySink, PolicyTimes, mono_ns, mono_to_unix_us};
+use crate::vision::detector::recording_in_progress;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};

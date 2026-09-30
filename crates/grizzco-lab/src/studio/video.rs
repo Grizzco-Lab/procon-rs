@@ -16,7 +16,7 @@
 //!   so a file begins with the next frame and pausing never touches the input.
 //!
 //! A V4L2 capture card in YUYV (the Elgato 4K X's uncompressed mode) is read
-//! by the studio itself instead ([`crate::v4l2`]): memory-mapped, a few
+//! by the studio itself instead ([`crate::studio::v4l2`]): memory-mapped, a few
 //! buffers, each frame taken as soon as the kernel has it, with the kernel's
 //! timestamp. The reader puts the frames on the constant rate ([`ConstantRate`],
 //! the fps filter's job otherwise) and writes them into a converter ffmpeg,
@@ -57,9 +57,9 @@
 //! ([`Audio`]) through a second pipe, starting at the sample that arrived
 //! with its first frame, as a second track of the same file.
 
-use crate::audio::{self, Audio};
 use crate::config::VideoConfig;
-use crate::v4l2::{Capture, Dequeued};
+use crate::studio::audio::{self, Audio};
+use crate::studio::v4l2::{Capture, Dequeued};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, ensure};

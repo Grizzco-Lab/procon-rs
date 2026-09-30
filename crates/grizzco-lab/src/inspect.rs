@@ -33,15 +33,17 @@
 //! - `POST markers` with `{"s", "markers"}` replaces a session's markers
 //!   in its `session.json`, answered with them as saved
 //! - `classes`: the object classes of the labeling mode (see
-//!   [`crate::objects`]), with the annotations folder
+//!   [`objects`]), with the annotations folder
 //! - `objects?s=&seg=`: every labeled frame of a segment
 //! - `POST objects` with `{"s", "seg", "frame", "boxes", "base"}` replaces a
 //!   frame's boxes (`base`: the model boxes the page loaded for it) and
 //!   answers with the frame as saved
 //! - `follow/...`: Follow, boxes carried over the next frames by a tracker
-//!   (see [`crate::follow`])
+//!   (see [`follow`])
 
-use crate::objects::{Annotations, ObjectBox};
+pub mod follow;
+pub mod objects;
+
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
@@ -53,6 +55,7 @@ use gameplay_data::controller::ControllerLog;
 use gameplay_data::labels::{self, Label};
 use gameplay_data::session::{Marker, SESSION_FILE, SessionInfo, write_markers};
 use gameplay_data::turn::{self, TurnFit, read_turn_fits};
+use objects::{Annotations, ObjectBox};
 use procon::recorder::Recorder;
 use serde_json::{Value, json};
 use std::collections::HashMap;

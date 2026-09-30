@@ -1,4 +1,10 @@
-//! Studio host: ties controller recording and video capture into sessions
+//! The Studio app: ties controller recording and video capture into sessions
+//!
+//! Its parts: [`video`] captures the video (read directly by [`v4l2`] when
+//! the card allows) and [`audio`] the sound; [`player`] is the Replay panel;
+//! [`parser`] reads each input report into a [`keystate::ControllerState`]
+//! for the live view, and [`motion`] follows the controller's pose for
+//! Splatoon mode.
 //!
 //! A session folder holds `controller.bin` (frames streamed from the proxy),
 //! `video-01.mkv`, `video-02.mkv`, … (one per stretch between pauses) and
@@ -24,16 +30,22 @@
 //! `session.json` ([`BotRecord`]: each play, and where a person took over)
 //! and the policy's actions in `agentzero.jsonl` ([`BOT_LOG_FILE`]).
 
-use crate::audio;
-use crate::player::Player;
+pub mod audio;
+pub mod keystate;
+pub mod motion;
+pub mod parser;
+pub mod player;
+pub mod v4l2;
+pub mod video;
+
 use crate::predictor::online::limits::Limits;
 use crate::predictor::online::{Bot, Ended, Takeover};
-use crate::video::Video;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
 use gameplay_data::session::{MARKER_TECHNIQUE, Marker, SessionInfo, write_atomic, write_markers};
+use player::Player;
 use procon::dump::unix_ms;
 use procon::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
 use procon::stream::LinkStats;
@@ -43,6 +55,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+use video::Video;
 
 /// The policy's actions of a bot run, one JSON line each, in the session
 /// folder (see [`BotRecord`])

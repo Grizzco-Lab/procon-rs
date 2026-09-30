@@ -117,17 +117,19 @@
 //! - `GET pedia`, `GET pedia/<term id>?quotes=`: the Overfishing Pedia;
 //!   `GET source?url=&doc=&ordinal=&title=&heading=`: the context of a
 //!   cited source or a quote, for the page's source popover; see
-//!   [`crate::pedia`]
+//!   [`pedia`]
 //! - `knowledge/...`: the knowledge view (overview, search, imports,
-//!   glossary, assets), see [`crate::knowledge`]; its store and embedder
+//!   glossary, assets), see [`knowledge`]; its store and embedder
 //!   also serve `chat`
 //!
 //! Errors are `{"error": "..."}` with status 400 (404 for a missing review).
 
+mod frames;
+pub mod knowledge;
+pub mod pedia;
+
+use crate::inspect::objects::write_atomic;
 use crate::inspect::{Inspector, ffprobe};
-use crate::knowledge::{AutoApply, Knowledge, Status, Translation, now_ms};
-use crate::objects::write_atomic;
-use crate::pedia::Pedia;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
@@ -140,8 +142,11 @@ use cuttlefish::review::{self as ai, ChatRequest, KeyMoment, SourceRef, VideoCon
 use cuttlefish::sampling::{self, MAX_RANGE_S};
 use cuttlefish::situation::{self, Input, InputSource, SeenObject, Situation};
 use cuttlefish::{corpus, corpus_reviews, expert};
+use frames::FrameSource;
 use gameplay_data::labels::{self, Label};
 use gameplay_data::session::SessionInfo;
+use knowledge::{AutoApply, Knowledge, Status, Translation, now_ms};
+use pedia::Pedia;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -153,9 +158,6 @@ use std::time::Instant;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::{Method, Response, StatusCode};
-
-mod frames;
-use frames::FrameSource;
 
 /// Largest part of a video sent in one reply; the player asks for more
 const VIDEO_CHUNK: u64 = 4 << 20;
@@ -1835,7 +1837,7 @@ impl Cuttlefish {
                 let quotes = query
                     .get("quotes")
                     .and_then(|q| q.parse().ok())
-                    .unwrap_or(crate::pedia::QUOTES);
+                    .unwrap_or(crate::cuttlefish::pedia::QUOTES);
                 let root = self.knowledge.root();
                 Ok(Reply::json(
                     self.pedia
@@ -1925,7 +1927,7 @@ impl Cuttlefish {
 pub fn routes(cuttlefish: Arc<Cuttlefish>) -> BoxedFilter<(Response<Vec<u8>>,)> {
     let base = || warp::path("api").and(warp::path("cuttlefish"));
     // Uploads and thumbnails first: they stream or answer images
-    let knowledge = crate::knowledge::routes(Arc::clone(&cuttlefish.knowledge));
+    let knowledge = crate::cuttlefish::knowledge::routes(Arc::clone(&cuttlefish.knowledge));
     let reader = Arc::clone(&cuttlefish);
     let get = warp::get()
         .and(base())

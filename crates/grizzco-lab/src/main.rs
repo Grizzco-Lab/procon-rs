@@ -8,14 +8,14 @@ use alloc::sync::Arc;
 use clap::Parser;
 use grizzco_lab::config::StudioConfig;
 use grizzco_lab::cuttlefish::Cuttlefish;
-use grizzco_lab::follow::{self, Follow};
 use grizzco_lab::inspect::Inspector;
+use grizzco_lab::inspect::follow::{self, Follow};
 use grizzco_lab::pipeline::{self, Pipeline};
-use grizzco_lab::player::Player;
 use grizzco_lab::predictor::online::{Bot, Online};
 use grizzco_lab::predictor::{self, Predictor};
+use grizzco_lab::studio::player::Player;
+use grizzco_lab::studio::video::Video;
 use grizzco_lab::studio::{Command, SavedState, Studio};
-use grizzco_lab::video::Video;
 use grizzco_lab::vision::{self, Vision};
 use grizzco_lab::web::{self, LiveFeed};
 use procon::config;
@@ -222,7 +222,7 @@ fn main() -> anyhow::Result<()> {
         predictor_settings.results.clone(),
         settings,
         config.cuttlefish.translate_model,
-        grizzco_lab::knowledge::AutoApply {
+        grizzco_lab::cuttlefish::knowledge::AutoApply {
             on: config.cuttlefish.slang_auto_apply.unwrap_or(true),
             threshold: config
                 .cuttlefish

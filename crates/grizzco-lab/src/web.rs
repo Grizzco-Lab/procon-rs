@@ -17,9 +17,9 @@
 //!   `{"error": "..."}`
 //! - `GET /api/inspect/...`: the Inkspector app's data, see [`crate::inspect`];
 //!   errors are `400` with `{"error": "..."}`; `/api/inspect/follow/...`:
-//!   Follow in its labeling mode, see [`crate::follow`]
+//!   Follow in its labeling mode, see [`crate::inspect::follow`]
 //! - `/api/cuttlefish/...`: the Cuttlefish app's reviews, videos and
-//!   knowledge, see [`crate::cuttlefish`] and [`crate::knowledge`]
+//!   knowledge, see [`crate::cuttlefish`] and [`crate::cuttlefish::knowledge`]
 //! - `/api/vision/...`: the Vision app's runs and results, see
 //!   [`crate::vision`]
 //! - `/api/predictor/...`: the Predictor app's runs and predictions, see
@@ -31,15 +31,15 @@
 
 use crate::config::WebConfig;
 use crate::cuttlefish::{self, Cuttlefish};
-use crate::follow::{self, Follow};
 use crate::inspect::Inspector;
-use crate::motion::Orientation;
-use crate::parser::ProConParser;
+use crate::inspect::follow::{self, Follow};
 use crate::pipeline::{self, Pipeline};
 use crate::predictor::online::{self, Online};
 use crate::predictor::{self, Predictor};
+use crate::studio::motion::Orientation;
+use crate::studio::parser::ProConParser;
+use crate::studio::video::{ChunkKind, PreviewChunk};
 use crate::studio::{Command, Studio};
-use crate::video::{ChunkKind, PreviewChunk};
 use crate::vision::{self, Vision};
 use alloc::collections::VecDeque;
 use alloc::ffi::CString;

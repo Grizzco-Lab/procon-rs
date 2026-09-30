@@ -11,14 +11,14 @@
 //!
 //! - `<results>/<session>/<segment stem>.objects.jsonl`: one line per
 //!   processed frame, in the label format shared with the labeling mode
-//!   (see [`crate::objects`]), plus the frame's timings in ms:
+//!   (see [`crate::inspect::objects`]), plus the frame's timings in ms:
 //!   `{"frame": 120, "boxes": [...], "ms": {"decode": 0.4, "network": 141.2, "total": 143.0}}`.
 //!   `gameplay-vision render` and `prelabel --input` read it as it is.
 //! - `<results>/<session>/<segment stem>.run.json`: the run ([`Job`]): model,
 //!   device, range, state and timing summary.
 //!
 //! The Salmon Run detector (`salmon`) is not run here but by AgentZero's
-//! service ([`crate::detector`]): the run streams its boxes and timings from
+//! service ([`detector`]): the run streams its boxes and timings from
 //! there, and tracks and stores them like the others.
 //!
 //! "Send to labels" merges a segment's results into the annotations folder
@@ -48,14 +48,16 @@
 //!
 //! Errors are `{"error": "..."}` with status 400.
 
-use crate::detector::{self, Message};
+pub mod detector;
+
 use crate::inspect::Inspector;
-use crate::objects::write_atomic;
+use crate::inspect::objects::write_atomic;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
+use detector::Message;
 use gameplay_data::session::SessionInfo;
 use gameplay_vision::detect::{self, Detector, Weights};
 use gameplay_vision::frames::{FrameRange, FrameReader, Segment};
@@ -1300,7 +1302,7 @@ mod tests {
 
         // A person labeled frame 2 already; the model must not touch it
         let annotations = inspector.annotations();
-        let user = crate::objects::ObjectBox {
+        let user = crate::inspect::objects::ObjectBox {
             class: "chum".into(),
             x: 0.2,
             y: 0.2,

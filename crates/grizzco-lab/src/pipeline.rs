@@ -53,7 +53,7 @@
 //! `{"error": "..."}` with status 400 (404 for an unknown endpoint or
 //! entry, 409 when the queue file stays locked).
 
-use crate::objects::write_atomic;
+use crate::inspect::objects::write_atomic;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail};

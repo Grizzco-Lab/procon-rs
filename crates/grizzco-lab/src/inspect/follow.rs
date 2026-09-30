@@ -11,7 +11,7 @@
 //! - labeled frames do not stop a Follow ([`follow_span`]); the rule is per
 //!   object ([`apply_followed`]): a followed object's box is added to a
 //!   frame unless a person's box of the same class overlaps it (IoU above
-//!   [`COVERED_IOU`](crate::objects::COVERED_IOU)), which stands for it
+//!   [`COVERED_IOU`](crate::inspect::objects::COVERED_IOU)), which stands for it
 //!   there, and the object is followed on; a line a person left empty is
 //!   not changed, and boxes of people are never changed or removed;
 //! - an object the tracker loses (low score, empty mask, sudden jump) is
@@ -39,7 +39,7 @@
 
 use crate::config::InspectConfig;
 use crate::inspect::Inspector;
-use crate::objects::{FollowWrite, ObjectBox, follow_span};
+use crate::inspect::objects::{FollowWrite, ObjectBox, follow_span};
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};

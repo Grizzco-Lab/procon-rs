@@ -53,8 +53,8 @@
 pub mod online;
 
 use crate::cuttlefish::{Cuttlefish, VideoKind, VideoRef};
+use crate::inspect::objects::write_atomic;
 use crate::inspect::{Inspector, ffprobe};
-use crate::objects::write_atomic;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};

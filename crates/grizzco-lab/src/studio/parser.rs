@@ -1,6 +1,8 @@
+//! Input reports read into [`ControllerState`]s
+
 use anyhow::{Result, anyhow};
 
-use crate::keystate::{ButtonState, ControllerState, GyroData, StickData};
+use crate::studio::keystate::{ButtonState, ControllerState, GyroData, StickData};
 
 /// Static parser functions for Pro Controller data
 pub struct ProConParser;

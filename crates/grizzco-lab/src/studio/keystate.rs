@@ -1,3 +1,6 @@
+//! A Pro Controller input report as the dashboard's live view shows it:
+//! buttons, sticks and IMU samples
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

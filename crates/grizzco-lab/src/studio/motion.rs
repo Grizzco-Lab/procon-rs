@@ -7,7 +7,7 @@
 //! Everything is in the dashboard's CSS frame, where the tilt view was tuned:
 //! CSS x = IMU y, CSS y = IMU x, CSS z = -IMU z (a proper rotation).
 
-use crate::keystate::{ControllerState, GyroData};
+use crate::studio::keystate::{ControllerState, GyroData};
 
 /// Uncalibrated gyro raw units to radians per second (0.07 °/s per unit)
 const GYRO_RAD: f64 = 0.07 * core::f64::consts::PI / 180.0;
@@ -160,7 +160,7 @@ impl Orientation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::ProConParser;
+    use crate::studio::parser::ProConParser;
 
     /// Input report with the given IMU sample repeated three times
     fn report(gyro: [i16; 3], accel: [i16; 3], y: bool) -> ControllerState {

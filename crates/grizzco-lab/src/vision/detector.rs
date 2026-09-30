@@ -3,7 +3,7 @@
 //! next to the COCO models it runs itself
 //!
 //! The studio talks to it as Follow talks to the tracker (see
-//! [`crate::follow`]): `GET /health` says whether it answers, which
+//! [`crate::inspect::follow`]): `GET /health` says whether it answers, which
 //! checkpoint it serves and how that was trained; `POST /detect` streams one
 //! JSON line per frame ([`Message`]), and closing the connection stops it.
 //! The service runs one request at a time and answers another with 409.
@@ -15,7 +15,7 @@
 //! the GPU is the recording's then.
 
 use crate::config::VisionConfig;
-use crate::follow::{agent, port_of};
+use crate::inspect::follow::{agent, port_of};
 use anyhow::{Context, Result, bail, ensure};
 use core::time::Duration;
 use gameplay_vision::labels::{ObjectBox, Source};

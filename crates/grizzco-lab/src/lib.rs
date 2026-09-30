@@ -1,22 +1,27 @@
+//! Grizzco Lab, on the capture host: receives the controller frames
+//! `procon-proxy` streams, captures the console's video and sound, and
+//! serves the dashboard, whose apps are its modules:
+//!
+//! - [`studio`]: the Studio, live view, recording and replay;
+//! - [`inspect`]: the Inkspector, recorded sessions frame by frame and their
+//!   object labels;
+//! - [`cuttlefish`]: Cuttlefish, video reviews with the AI reviewer, and its
+//!   Translate, Knowledge and Pedia views;
+//! - [`vision`]: Vision, detection and tracking on recorded sessions;
+//! - [`predictor`]: the Predictor, the IDM's predictions on any video and
+//!   AgentZero's policy online;
+//! - [`pipeline`]: the Pipeline, the GPU and the experiment queue.
+//!
+//! [`web`] serves the page (embedded from `web/`) with every app's routes,
+//! and [`config`] reads `config.toml`.
+
 extern crate alloc;
 
-pub mod audio;
 pub mod config;
 pub mod cuttlefish;
-pub mod detector;
-pub mod follow;
 pub mod inspect;
-pub mod keystate;
-pub mod knowledge;
-pub mod motion;
-pub mod objects;
-pub mod parser;
-pub mod pedia;
 pub mod pipeline;
-pub mod player;
 pub mod predictor;
 pub mod studio;
-pub mod v4l2;
-pub mod video;
 pub mod vision;
 pub mod web;
