@@ -155,6 +155,41 @@ async function imageUrl(url, signal) {
   return URL.createObjectURL(await response.blob());
 }
 
+/** The pictures of a list (`img[data-src]` in `root`) through the queue
+ * (`imageUrl`), each once it comes into view, as `loading="lazy"` would
+ * load it: a list of thumbnails never takes the page's connections. One
+ * whose app is left meanwhile loads when seen again. Returns what lets
+ * them go, for when the list is drawn again. */
+function lazyImages(root) {
+  const urls = [];
+  const watch = new IntersectionObserver(
+    (seen) => {
+      for (const { target: img, isIntersecting } of seen) {
+        if (!isIntersecting || img.dataset.loading) continue;
+        img.dataset.loading = "1";
+        imageUrl(img.dataset.src).then(
+          (url) => {
+            urls.push(url);
+            watch.unobserve(img);
+            img.src = url;
+          },
+          (error) => {
+            delete img.dataset.loading;
+            if (!isAbort(error)) watch.unobserve(img);
+          },
+        );
+      }
+    },
+    // A little before they show
+    { rootMargin: "200px 0px" },
+  );
+  for (const img of root.querySelectorAll("img[data-src]")) watch.observe(img);
+  return () => {
+    watch.disconnect();
+    for (const url of urls) URL.revokeObjectURL(url);
+  };
+}
+
 // ---------------------------------------------------------------- formatting
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"];

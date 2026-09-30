@@ -76,6 +76,8 @@
     wasRunning: false,
     /** The panels asked for again while the lab makes them, by loader */
     again: new Map(),
+    /** Lets the assets' thumbnails go (`lazyImages`) */
+    thumbs: null,
   };
 
   function remembered(key, fallback) {
@@ -856,9 +858,11 @@
     try {
       data = await api(`assets?${new URLSearchParams({ q, folder })}`);
     } catch (error) {
-      $("k-assets-note").textContent = error.message;
+      if (!isAbort(error)) $("k-assets-note").textContent = error.message;
       return;
     }
+    k.thumbs?.();
+    k.thumbs = null;
     const select = $("k-asset-folder");
     const options = Object.entries(data.folders)
       .map(
@@ -897,13 +901,15 @@
           : "";
         const dims = a.width ? `${a.width}×${a.height} · ` : "";
         li.innerHTML = `
-          <div class="k-asset-img"><img loading="lazy" alt="" src="/api/cuttlefish/knowledge/thumb?${new URLSearchParams({ id: a.id, v: a.bytes })}" /></div>
+          <div class="k-asset-img"><img alt="" data-src="/api/cuttlefish/knowledge/thumb?${new URLSearchParams({ id: a.id, v: a.bytes })}" /></div>
           <span class="k-asset-name">${escapeHtml(a.name)}</span>
           ${a.term ? `<span class="cf-kind">${escapeHtml(a.term)}</span><div class="k-forms">${names}</div>` : ""}
           <span class="panel-note">${dims}${escapeHtml(a.format)} · ${size(a.bytes)}</span>`;
         return li;
       }),
     );
+    // Through the page's queue, as they come into view
+    k.thumbs = lazyImages(list);
   }
 
   let assetTimer = null;

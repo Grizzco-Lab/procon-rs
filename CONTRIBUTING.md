@@ -228,9 +228,10 @@ A click never freezes the page. The page shares six connections to the lab
 (HTTP/1.1) between every app, so every `fetch` takes its turn in one queue
 in `web/app.js`: at most four at a time, changes first, then the open
 app's data, then its pictures (frames and thumbnails load through it too,
-`imageUrl`); a GET belongs to the app open when it was asked, and leaving
-that app aborts it, so the next app never waits for the one left (a loader
-treats `isAbort(error)` as nothing and runs again when shown). The lab
+`imageUrl`, a list's thumbnails as they come into view, `lazyImages`); a
+GET belongs to the app open when it was asked, and leaving that app
+aborts it, so the next app never waits for the one left (a loader treats
+`isAbort(error)` as nothing and runs again when shown). The lab
 answers at once: slow data is made on a thread and kept (`Kept` in
 `src/cuttlefish/kept.rs` for the glossary and the game items, the Knowledge
 view's panels, the reviews list, the Pedia), `refreshing` while made again,
