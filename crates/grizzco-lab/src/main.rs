@@ -7,7 +7,10 @@
 //! `grizzco-lab sample` only samples the machine for the Pipeline app, until
 //! stopped: the lab starts it when none runs, detached, so the Pipeline's
 //! timeline has no hole while the lab is stopped (see
-//! [`grizzco_lab::pipeline`]).
+//! [`grizzco_lab::pipeline`]). `grizzco-lab mcp --socket <path>` is the MCP
+//! server the Claude CLI starts for Cuttlefish's knowledge tools: it relays
+//! to the tools the lab serves on that socket while it asks the model
+//! (`cuttlefish::mcp`).
 //!
 //! Ctrl-C stops it step by step, each logged: AgentZero, the recording
 //! (its video file finished), the services the page started, the capture,
@@ -64,6 +67,14 @@ enum Mode {
     /// history), until stopped; one at a time. The lab starts one when none
     /// runs, and it outlives the lab
     Sample,
+    /// Relay stdin and stdout to the knowledge tools the lab serves on a
+    /// socket while it asks the model: the MCP server the Claude CLI starts
+    /// for Cuttlefish (no config is read)
+    Mcp {
+        /// The socket the lab serves the tools on
+        #[arg(long)]
+        socket: PathBuf,
+    },
 }
 
 /// Whether a log record is the web server reporting a client that went
@@ -115,6 +126,10 @@ impl log::Log for Logger {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    // Started by the Claude CLI in a folder of its own: no config there
+    if let Some(Mode::Mcp { socket }) = &args.mode {
+        return cuttlefish::mcp::relay(socket);
+    }
     let config: LabConfig = config::load(&args.config)?;
     config.logging.validate()?;
     let logger = env_logger::builder()
@@ -255,6 +270,9 @@ fn main() -> anyhow::Result<()> {
                 .map_err(|e| anyhow::anyhow!("[cuttlefish] backend: {e}"))?,
             None => cuttlefish::llm::Backend::Auto,
         },
+        // On the Claude CLI the model looks the knowledge up itself: the
+        // CLI starts this binary as the tools' MCP server (`mcp --socket`)
+        mcp_relay: std::env::current_exe().ok(),
         ..Default::default()
     };
     let predictor_settings =

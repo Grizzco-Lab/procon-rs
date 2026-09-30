@@ -2,8 +2,15 @@
 //!
 //! The store (documents, chunk index, glossary) and the E5 embedder load
 //! once, on the first request that needs them, and serve everything that
-//! follows: searches, imports and the chat's retrieval (the chat lives in
-//! the reviews, see [`crate::cuttlefish`]; this view manages the store).
+//! follows: searches, imports and the chat's knowledge (the chat lives in
+//! the reviews, see [`crate::cuttlefish`]; this view manages the store). On
+//! the Claude CLI the chat, the deep eval and an eval question asked again
+//! let the model look the store up itself: the lab serves the knowledge
+//! tools (`cuttlefish::tools`, a session per answer over the loaded store,
+//! with the corpus and the sessions' markers kept in a
+//! `cuttlefish::tools::Library`) on a socket for the length of the answer,
+//! and the CLI starts this binary as `grizzco-lab mcp --socket`, their MCP
+//! server; on the API they take the one-shot path.
 //! The model client is made per request on the backend `[cuttlefish]
 //! backend` names (`cuttlefish::llm::Backend`): the API with the key from
 //! `ANTHROPIC_API_KEY`, the only place the key is read from, or the
@@ -128,6 +135,7 @@ use cuttlefish::notes::{self, Note};
 use cuttlefish::review::{self, ChatReply, ChatRequest, Frame, KeyMoment};
 use cuttlefish::slang::{self, AliasEdit, SuggestOptions, TermEdit, UserGlossary};
 use cuttlefish::store::{self, Store};
+use cuttlefish::tools::{Library, Session};
 use cuttlefish::{deep_eval, inbox, leanny, lock, questions, tables, wiki};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -731,6 +739,8 @@ pub struct Knowledge {
     glossaries: Arc<Kept<Glossaries>>,
     /// The view's panels, kept
     panels: Panels,
+    /// What the knowledge tools read besides the store, kept between answers
+    library: Library,
 }
 
 /// Auto-apply of slang suggestions by default: suggestions the model is at
@@ -784,6 +794,7 @@ impl Knowledge {
                 file: cache.join(PANELS_FILE),
                 state: Mutex::default(),
             },
+            library: Library::new(&root, None),
             root,
             cache,
             settings,
@@ -819,6 +830,15 @@ impl Knowledge {
     /// With this auto-apply of slang suggestions by default
     pub fn with_auto_apply(self, auto_apply: AutoApply) -> Self {
         Self { auto_apply, ..self }
+    }
+
+    /// With the recorded sessions under `sessions` (the Inkspector's root),
+    /// whose technique markers the Pedia tool gives as recorded examples
+    pub fn with_sessions(self, sessions: PathBuf) -> Self {
+        Self {
+            library: Library::new(&self.root, Some(sessions)),
+            ..self
+        }
     }
 
     /// The crate's data folder
@@ -910,20 +930,40 @@ impl Knowledge {
         Client::from_env(self.translate.clone()).map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))
     }
 
-    /// Answer a chat message with knowledge from the store
+    /// Answer a chat message with knowledge from the store: on the Claude
+    /// CLI the model looks it up itself ([`review::chat_with_tools`], its
+    /// ids new to the conversation), else the retrieved excerpts go with
+    /// the message ([`review::chat`])
     pub fn chat(&self, request: &ChatRequest) -> Result<ChatReply, Status> {
         let client = self.client()?;
         let loaded = self
             .loaded()
             .map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))?;
-        let store = loaded.store.read().unwrap();
-        review::chat(&store, &loaded.embedder, &client, K, request)
-            .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))
+        self.answer_chat(&client, &loaded, request)
+    }
+
+    /// A chat's answer on the path the client takes
+    fn answer_chat(
+        &self,
+        client: &Client,
+        loaded: &Loaded,
+        request: &ChatRequest,
+    ) -> Result<ChatReply, Status> {
+        let answer = if client.has_tools() {
+            let first = review::first_source_id(&request.history);
+            let tools = Session::new(&loaded.store, &loaded.embedder, &self.library, first);
+            review::chat_with_tools(&tools, client, request)
+        } else {
+            let store = loaded.store.read().unwrap();
+            review::chat(&store, &loaded.embedder, client, K, request)
+        };
+        answer.map_err(|e| Status(StatusCode::BAD_GATEWAY, e))
     }
 
     /// Answer a chat message about a long range in two passes
     /// ([`review::chat_in_two_passes`]): `detail` gives the frames around
-    /// the key moments the first pass picks
+    /// the key moments the first pass picks; the second pass takes the
+    /// client's path, as [`Knowledge::chat`]
     pub fn chat_in_two_passes(
         &self,
         request: &ChatRequest,
@@ -933,9 +973,13 @@ impl Knowledge {
         let loaded = self
             .loaded()
             .map_err(|e| Status(StatusCode::NOT_IMPLEMENTED, e))?;
-        let store = loaded.store.read().unwrap();
-        review::chat_in_two_passes(&store, &loaded.embedder, &client, K, request, detail)
-            .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))
+        let system = {
+            let store = loaded.store.read().unwrap();
+            review::system_prompt(store.digest().as_deref(), store.names())
+        };
+        let second = review::key_moments(&system, &client, request, detail)
+            .map_err(|e| Status(StatusCode::BAD_GATEWAY, e))?;
+        self.answer_chat(&client, &loaded, &second)
     }
 
     /// The model's name (null for the backend's default) and the backend
@@ -2166,13 +2210,13 @@ impl Knowledge {
         let job = self.start_job(what, move |knowledge, id| {
             knowledge.log(id, "loading the knowledge store".to_string());
             let loaded = knowledge.loaded()?;
-            let store = loaded.store.read().unwrap();
             knowledge.update(id, |job| job.total = Some(count));
             let summary = deep_eval::run(
                 deep_eval::Asker {
-                    store: &store,
+                    store: &loaded.store,
                     embedder: &loaded.embedder,
                     client: &client,
+                    library: &knowledge.library,
                 },
                 &bank,
                 &opts,
@@ -2262,15 +2306,13 @@ impl Knowledge {
         let entry = deep_eval::entry(&self.root, file, id)?;
         let client = self.client()?;
         let loaded = self.loaded()?;
-        let again = {
-            let store = loaded.store.read().unwrap();
-            let asker = deep_eval::Asker {
-                store: &store,
-                embedder: &loaded.embedder,
-                client: &client,
-            };
-            deep_eval::ask_again(asker, K, &entry)
+        let asker = deep_eval::Asker {
+            store: &loaded.store,
+            embedder: &loaded.embedder,
+            client: &client,
+            library: &self.library,
         };
+        let again = deep_eval::ask_again(asker, K, &entry);
         if let Some(e) = &again.error {
             log::warn!("Asking {id} again failed: {e}");
         }

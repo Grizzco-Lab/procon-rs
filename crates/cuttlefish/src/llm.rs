@@ -8,6 +8,13 @@
 //! CLI ([`crate::claude_cli`]) runs the locally installed `claude -p` on the
 //! user's own Claude subscription instead. [`Backend`] picks; `auto` takes
 //! the API when the key is set and the CLI when `claude` is on PATH.
+//!
+//! On the CLI, a prompt may also go with the knowledge tools
+//! ([`Client::send_with_tools`], [`crate::mcp`]): the model looks things
+//! up itself before it answers. That needs the program the CLI starts as
+//! their MCP server, [`Settings::mcp_relay`]; without it
+//! ([`Client::has_tools`] false, and always on the API) questions and
+//! chats take the one-shot path.
 
 use crate::claude_cli::Cli;
 use alloc::string::String;
@@ -18,6 +25,7 @@ use core::str::FromStr;
 use core::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::path::PathBuf;
 
 /// Messages endpoint
 pub const API_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -131,6 +139,11 @@ pub struct Settings {
     pub max_tokens: u32,
     /// Which backend answers
     pub backend: Backend,
+    /// The program the Claude CLI starts as the knowledge tools' MCP server,
+    /// `<program> mcp --socket <path>` ([`crate::mcp::relay`]): the asking
+    /// process's own binary (the lab's, or `cuttlefish`). `None`: no tools,
+    /// so questions and chats take the one-shot path
+    pub mcp_relay: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -140,6 +153,7 @@ impl Default for Settings {
             effort: String::from(DEFAULT_EFFORT),
             max_tokens: 16000,
             backend: Backend::Auto,
+            mcp_relay: None,
         }
     }
 }
@@ -453,14 +467,43 @@ impl Client {
         self.settings.model.as_deref().unwrap_or(DEFAULT_MODEL)
     }
 
+    /// Whether a prompt may go with the knowledge tools
+    /// ([`Client::send_with_tools`]): the CLI backend, with the program it
+    /// starts as their MCP server ([`Settings::mcp_relay`])
+    pub fn has_tools(&self) -> bool {
+        matches!(self.inner, Inner::Cli(_)) && self.settings.mcp_relay.is_some()
+    }
+
     /// Sends a prompt. On the API, rate limits, overload and server errors
     /// are retried twice; the CLI retries on its own. The reply names the
     /// model that answered: as the backend said, else the one asked for.
     pub fn send(&self, prompt: &Prompt) -> Result<Reply> {
-        let mut reply = match &self.inner {
+        let reply = match &self.inner {
             Inner::Api { transport, api_key } => self.post(transport.as_ref(), api_key, prompt)?,
             Inner::Cli(cli) => cli.send(&self.settings, prompt)?,
         };
+        Ok(self.answered(reply))
+    }
+
+    /// Sends a prompt with the knowledge tools: the model may call them as
+    /// often as it needs before it answers ([`crate::claude_cli::Cli::send_with_tools`]).
+    /// Only on the CLI backend with a relay ([`Client::has_tools`]).
+    pub fn send_with_tools(&self, prompt: &Prompt, tools: &dyn crate::mcp::Tools) -> Result<Reply> {
+        let reply = match &self.inner {
+            Inner::Cli(cli) if self.settings.mcp_relay.is_some() => {
+                cli.send_with_tools(&self.settings, prompt, tools)?
+            }
+            _ => bail!(
+                "the knowledge tools need the Claude CLI backend and the program it starts as \
+                 their MCP server"
+            ),
+        };
+        Ok(self.answered(reply))
+    }
+
+    /// A reply naming its model (as the backend said, else the one asked
+    /// for), logged with its token counts
+    fn answered(&self, mut reply: Reply) -> Reply {
         if reply.model.is_none() {
             reply.model = Some(String::from(self.model()));
         }
@@ -474,7 +517,7 @@ impl Client {
             u.cache_write,
             u.output
         );
-        Ok(reply)
+        reply
     }
 
     /// One prompt through the API, with the retries

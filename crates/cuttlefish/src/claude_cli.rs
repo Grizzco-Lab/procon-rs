@@ -21,10 +21,21 @@
 //! again at full price. Answers count against the subscription's limits,
 //! not per token.
 //!
-//! [`args`], [`message`] and [`parse_output`] are pure; the [`Runner`] trait
-//! is the only part that starts a process, so tests use a fake one.
+//! With the knowledge tools ([`Cli::send_with_tools`]) the run gets one MCP
+//! server and nothing else: `--mcp-config` names the relay
+//! ([`crate::mcp::config`]: the asking process's binary as `mcp --socket`,
+//! connecting to the tools this process serves on a socket in the run's
+//! private folder), `--strict-mcp-config` leaves out every other MCP
+//! server, `--tools ""` still removes every built-in tool, and
+//! `--allowedTools` names the knowledge tools, which run without asking
+//! (anything else would ask, and `--permission-prompts none` denies it).
+//!
+//! [`args`], [`tool_args`], [`message`] and [`parse_output`] are pure; the
+//! [`Runner`] trait is the only part that starts a process, so tests use a
+//! fake one.
 
 use crate::llm::{Prompt, Reply, Role, Settings, Usage, block_json};
+use crate::mcp::{self, Tools};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use anyhow::{Context, Result, bail};
@@ -32,6 +43,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 use serde_json::{Value, json};
 use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Condvar, Mutex, PoisonError};
@@ -50,6 +62,8 @@ pub const ENV_REMOVED: [&str; 3] = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
 /// The error when the CLI has no account
 const NOT_LOGGED_IN: &str =
     "the claude CLI is not logged in: run `claude` once and log in with your Claude subscription";
+/// The socket the knowledge tools are served on, in a run's folder
+pub const SOCKET: &str = "mcp.sock";
 
 /// What a run of the CLI produced
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -178,6 +192,100 @@ impl Cli {
         let _ = std::fs::remove_dir_all(&dir);
         parse_output(&run?)
     }
+
+    /// Sends a prompt with the knowledge tools: one run of the CLI in a
+    /// fresh private folder, where this process serves `tools` on a socket
+    /// ([`mcp::Listener`]) that the relay the CLI starts
+    /// ([`Settings::mcp_relay`]) connects to; the folder is removed
+    /// afterwards. The model may call the tools as often as it needs (the
+    /// tools set their own limit) before it answers.
+    pub fn send_with_tools(
+        &self,
+        settings: &Settings,
+        prompt: &Prompt,
+        tools: &dyn Tools,
+    ) -> Result<Reply> {
+        let relay = settings
+            .mcp_relay
+            .as_deref()
+            .context("no program to start as the knowledge tools' MCP server")?;
+        let _slot = Slot::take();
+        let dir = scratch_dir()?;
+        let run = self.run_with_tools(settings, prompt, tools, relay, &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        parse_output(&run?)
+    }
+
+    /// The run of [`Cli::send_with_tools`] in `dir`, while the tools are
+    /// served
+    fn run_with_tools(
+        &self,
+        settings: &Settings,
+        prompt: &Prompt,
+        tools: &dyn Tools,
+        relay: &Path,
+        dir: &Path,
+    ) -> Result<Output> {
+        let socket = dir.join(SOCKET);
+        let listener = mcp::Listener::bind(&socket)?;
+        let mut command = self.command(settings, &prompt.system, dir);
+        command.args(tool_args(
+            &mcp::config(relay, &socket),
+            &mcp::allowed(tools),
+        ));
+        let stdin = message(prompt);
+        log::debug!(
+            "{} with the knowledge tools: {} blocks, {} bytes on stdin",
+            self.program.display(),
+            prompt.user.len(),
+            stdin.len()
+        );
+        let (run, connected) = std::thread::scope(|scope| {
+            let server = scope.spawn(|| listener.serve(tools));
+            let run = self.runner.run(&mut command, &stdin);
+            listener.stop();
+            (run, server.join().unwrap_or(false))
+        });
+        let out = run?;
+        if !connected && out.success {
+            log::warn!(
+                "the claude CLI never reached the knowledge tools: the answer was written without them"
+            );
+        }
+        let denied = permission_denials(&out);
+        if !denied.is_empty() {
+            log::warn!("the claude CLI denied the model: {}", denied.join(", "));
+        }
+        Ok(out)
+    }
+}
+
+/// The arguments that give a run the knowledge tools: the MCP config of
+/// the relay and the tools allowed without asking. [`args`] keeps every
+/// other tool off (`--tools ""`, `--strict-mcp-config`).
+pub fn tool_args(config: &Value, allowed: &[String]) -> Vec<String> {
+    alloc::vec![
+        String::from("--mcp-config"),
+        config.to_string(),
+        String::from("--allowedTools"),
+        allowed.join(","),
+    ]
+}
+
+/// The tools a run's result says it denied the model
+pub fn permission_denials(out: &Output) -> Vec<String> {
+    out.stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+        .filter(|v| v["type"] == "result")
+        .flat_map(|v| {
+            v["permission_denials"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .map(|d| String::from(d["tool_name"].as_str().unwrap_or("a tool")))
+        .collect()
 }
 
 /// The arguments: headless, `stream-json` both ways, no tools, no MCP
@@ -350,7 +458,8 @@ fn tail(text: &str) -> String {
 /// Number of runs so far, naming the scratch folders
 static RUNS: AtomicUsize = AtomicUsize::new(0);
 
-/// A fresh empty folder for one run
+/// A fresh empty folder for one run, only for this user (the knowledge
+/// tools' socket lives there)
 fn scratch_dir() -> Result<PathBuf> {
     let dir = std::env::temp_dir().join(alloc::format!(
         "cuttlefish-claude-{}-{}",
@@ -358,6 +467,7 @@ fn scratch_dir() -> Result<PathBuf> {
         RUNS.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir_all(&dir).with_context(|| alloc::format!("creating {}", dir.display()))?;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
     Ok(dir)
 }
 
@@ -388,20 +498,20 @@ impl Drop for Slot {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::llm::{Backend, Block, Client, Turn};
     use std::sync::Arc;
 
     /// What the fake runner was asked to run
     #[derive(Debug, Default)]
-    struct Seen {
-        program: String,
-        args: Vec<String>,
-        envs: Vec<(String, Option<String>)>,
-        cwd: Option<PathBuf>,
-        cwd_existed: bool,
-        stdin: String,
+    pub(crate) struct Seen {
+        pub program: String,
+        pub args: Vec<String>,
+        pub envs: Vec<(String, Option<String>)>,
+        pub cwd: Option<PathBuf>,
+        pub cwd_existed: bool,
+        pub stdin: String,
     }
 
     /// Answers with a canned output and keeps what it was asked to run
@@ -437,7 +547,7 @@ mod tests {
     }
 
     /// A successful run: init and assistant lines, then the result
-    fn success(text: &str) -> Output {
+    pub(crate) fn success(text: &str) -> Output {
         let result = json!({
             "type": "result", "subtype": "success", "is_error": false,
             "duration_ms": 1200, "num_turns": 1, "result": text,
@@ -491,7 +601,7 @@ mod tests {
     }
 
     /// The argument after a flag
-    fn after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    pub(crate) fn after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
         let i = args.iter().position(|a| a == flag)?;
         args.get(i + 1).map(String::as_str)
     }
@@ -738,6 +848,187 @@ mod tests {
             e.to_string()
                 .contains("was not found at /nonexistent/claude"),
             "{e}"
+        );
+    }
+
+    /// Plays the Claude CLI with the knowledge tools: connects to the socket
+    /// its MCP config names, as the relay would, shakes hands, lists the
+    /// tools, makes the `calls` and answers with `answer` of the texts it
+    /// got back; keeps its arguments and what the tools said
+    pub(crate) struct ToolUser {
+        pub calls: Vec<(&'static str, Value)>,
+        pub answer: fn(&[String]) -> String,
+        pub seen: Arc<Mutex<Seen>>,
+        pub results: Arc<Mutex<Vec<String>>>,
+        /// Leave the tools alone, as a CLI whose MCP server failed
+        pub connect: bool,
+    }
+
+    impl ToolUser {
+        pub fn new(calls: Vec<(&'static str, Value)>, answer: fn(&[String]) -> String) -> Self {
+            ToolUser {
+                calls,
+                answer,
+                seen: Arc::default(),
+                results: Arc::default(),
+                connect: true,
+            }
+        }
+    }
+
+    impl Runner for ToolUser {
+        fn run(&self, command: &mut Command, stdin: &str) -> Result<Output> {
+            use std::io::BufRead;
+            use std::os::unix::net::UnixStream;
+            let args: Vec<String> = command
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            let cwd = command.get_current_dir().map(Path::to_path_buf);
+            *self.seen.lock().unwrap() = Seen {
+                program: command.get_program().to_string_lossy().into_owned(),
+                args: args.clone(),
+                envs: Vec::new(),
+                cwd_existed: cwd.as_ref().is_some_and(|d| d.is_dir()),
+                cwd,
+                stdin: String::from(stdin),
+            };
+            let config: Value = serde_json::from_str(after(&args, "--mcp-config").unwrap())?;
+            let socket = config["mcpServers"]["cuttlefish"]["args"][2]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let mut texts = Vec::new();
+            let mut lines = Vec::new();
+            if self.connect {
+                let stream = UnixStream::connect(&socket)?;
+                let mut reader = std::io::BufReader::new(stream.try_clone()?);
+                let mut id = 0;
+                let mut ask = |method: &str, params: Value| -> Result<Value> {
+                    id += 1;
+                    let message =
+                        json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+                    (&stream).write_all(alloc::format!("{message}\n").as_bytes())?;
+                    let mut line = String::new();
+                    reader.read_line(&mut line)?;
+                    Ok(serde_json::from_str(&line)?)
+                };
+                let init = ask("initialize", json!({"protocolVersion": "2025-11-25"}))?;
+                assert_eq!(init["result"]["serverInfo"]["name"], "cuttlefish");
+                let listed = ask("tools/list", json!({}))?;
+                assert!(
+                    listed["result"]["tools"]
+                        .as_array()
+                        .is_some_and(|t| !t.is_empty())
+                );
+                for (n, (name, arguments)) in self.calls.iter().enumerate() {
+                    let got = ask("tools/call", json!({"name": name, "arguments": arguments}))?;
+                    let text = crate::mcp::answer_text(&got).unwrap_or_default();
+                    let tool_id = alloc::format!("toolu_{n}");
+                    lines.push(json!({"type": "assistant", "message": {"content": [
+                        {"type": "tool_use", "id": tool_id,
+                         "name": alloc::format!("mcp__cuttlefish__{name}"), "input": arguments}]}}));
+                    lines.push(json!({"type": "user", "message": {"content": [
+                        {"type": "tool_result", "tool_use_id": tool_id,
+                         "content": [{"type": "text", "text": text}]}]}}));
+                    texts.push(text);
+                }
+            }
+            *self.results.lock().unwrap() = texts.clone();
+            let mut out = success(&(self.answer)(&texts));
+            let calls: String = lines.iter().map(|l| alloc::format!("{l}\n")).collect();
+            out.stdout = calls + &out.stdout;
+            Ok(out)
+        }
+    }
+
+    #[test]
+    fn runs_with_the_knowledge_tools() {
+        let user = ToolUser::new(
+            alloc::vec![
+                ("echo", json!({"text": "Steelhead: 3 s"})),
+                ("fail", json!({})),
+            ],
+            |texts| alloc::format!("It said: {}", texts.join(" / ")),
+        );
+        let (seen, results) = (Arc::clone(&user.seen), Arc::clone(&user.results));
+        let cli = Cli::with_runner(PathBuf::from("/opt/fake/claude"), Box::new(user));
+        let settings = Settings {
+            backend: Backend::ClaudeCli,
+            mcp_relay: Some(PathBuf::from("/opt/lab/grizzco-lab")),
+            ..Settings::default()
+        };
+        let client = Client::with_cli(cli, settings);
+        assert!(client.has_tools());
+        let reply = client
+            .send_with_tools(&prompt(), &crate::mcp::tests::Echo)
+            .unwrap();
+        assert_eq!(reply.text, "It said: Steelhead: 3 s / no tool fail");
+        assert_eq!(*results.lock().unwrap(), ["Steelhead: 3 s", "no tool fail"]);
+        let seen = seen.lock().unwrap();
+        let a = &seen.args;
+        // Only the knowledge tools: no built-in tool, no other MCP server,
+        // the tools allowed without asking
+        assert_eq!(after(a, "--tools"), Some(""));
+        assert!(a.iter().any(|x| x == "--strict-mcp-config"));
+        assert_eq!(after(a, "--permission-prompts"), Some("none"));
+        assert_eq!(
+            after(a, "--allowedTools"),
+            Some("mcp__cuttlefish__echo,mcp__cuttlefish__fail")
+        );
+        let config: Value = serde_json::from_str(after(a, "--mcp-config").unwrap()).unwrap();
+        let server = &config["mcpServers"]["cuttlefish"];
+        assert_eq!(server["command"], "/opt/lab/grizzco-lab");
+        assert_eq!(server["args"][0], "mcp");
+        assert_eq!(server["args"][1], "--socket");
+        // The socket is in the run's own folder, which is private and gone
+        // afterwards
+        let cwd = seen.cwd.clone().unwrap();
+        assert_eq!(
+            Path::new(server["args"][2].as_str().unwrap()),
+            cwd.join(SOCKET)
+        );
+        assert!(seen.cwd_existed);
+        assert!(!cwd.exists());
+        // The same message as without tools
+        assert_eq!(seen.stdin, message(&prompt()));
+    }
+
+    #[test]
+    fn a_run_without_the_tools_still_answers() {
+        // The CLI never reached the tools (its MCP server failed): the
+        // answer is kept, with a warning in the log
+        let mut user = ToolUser::new(Vec::new(), |_| String::from("Written blind."));
+        user.connect = false;
+        let cli = Cli::with_runner(PathBuf::from("claude"), Box::new(user));
+        let settings = Settings {
+            mcp_relay: Some(PathBuf::from("/opt/lab/grizzco-lab")),
+            ..Settings::default()
+        };
+        let client = Client::with_cli(cli, settings);
+        let reply = client
+            .send_with_tools(&prompt(), &crate::mcp::tests::Echo)
+            .unwrap();
+        assert_eq!(reply.text, "Written blind.");
+        // Without a relay, or on the API, there are no tools
+        let cli = Cli::with_runner(PathBuf::from("claude"), Box::new(Spawn));
+        let client = Client::with_cli(cli, Settings::default());
+        assert!(!client.has_tools());
+        let e = client
+            .send_with_tools(&prompt(), &crate::mcp::tests::Echo)
+            .unwrap_err();
+        assert!(e.to_string().contains("need the Claude CLI backend"), "{e}");
+        // Denials the result reports are read
+        let mut denied = success("x");
+        denied.stdout = denied.stdout.replace(
+            "\"type\":\"result\"",
+            "\"permission_denials\":[{\"tool_name\":\"Bash\"}],\"type\":\"result\"",
+        );
+        assert_eq!(permission_denials(&denied), ["Bash"]);
+        assert!(permission_denials(&success("x")).is_empty());
+        assert_eq!(
+            tool_args(&json!({"a": 1}), &[String::from("x"), String::from("y")]),
+            ["--mcp-config", "{\"a\":1}", "--allowedTools", "x,y"]
         );
     }
 

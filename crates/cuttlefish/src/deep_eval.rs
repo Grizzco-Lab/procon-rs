@@ -12,18 +12,24 @@
 //! how the memory grows. A question can be asked again ([`ask_again`]) with
 //! the store as it is then, the notes written since included; each answer
 //! is kept beside the first in [`Entry::again`], with its own verdict.
+//!
+//! On the Claude CLI backend a question takes the agentic path
+//! ([`review::ask_with_tools`]): the model looks the store up itself, and
+//! the answer keeps what it looked up ([`Answered::lookups`]).
 
 use crate::embed::Embedder;
 use crate::llm::{AnsweredBy, Client};
 use crate::questions::{Bank, Question};
 use crate::review::{self, SourceRef};
 use crate::store::{Store, write_atomic};
+use crate::tools::{Library, Lookup, Session};
 use alloc::string::String;
 use alloc::vec::Vec;
 use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::{PoisonError, RwLock};
 
 /// The eval folder in the knowledge folder
 pub const DIR: &str = "eval";
@@ -51,6 +57,9 @@ pub struct Answered {
     /// The sources it cited
     #[serde(default)]
     pub sources: Vec<SourceRef>,
+    /// What the model looked up, on the agentic path
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lookups: Vec<Lookup>,
     /// Why there is no answer
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -181,20 +190,26 @@ pub fn pick<'a>(bank: &'a Bank, opts: &Options) -> Vec<&'a Question> {
     out
 }
 
-/// What answers: the store, its embedder and the model client
+/// What answers: the store (read-locked per lookup or question, never for
+/// a whole run), its embedder, the model client and the knowledge tools'
+/// caches
 #[derive(Clone, Copy)]
 pub struct Asker<'a> {
-    pub store: &'a Store,
+    pub store: &'a RwLock<Store>,
     pub embedder: &'a dyn Embedder,
     pub client: &'a Client,
+    pub library: &'a Library,
 }
 
-/// Asks a question with `k` excerpts: the answer, or why there is none
+/// Asks a question: on the agentic path when the client has the tools
+/// ([`review::ask_with_tools`]), else with `k` excerpts
+/// ([`review::ask`]); the answer, or why there is none
 fn answer(asker: Asker<'_>, k: usize, question: &str) -> Answered {
     let started = std::time::Instant::now();
     let mut answered = Answered {
         answer: String::new(),
         sources: Vec::new(),
+        lookups: Vec::new(),
         error: None,
         asked_at: Utc::now(),
         ms: 0,
@@ -205,10 +220,21 @@ fn answer(asker: Asker<'_>, k: usize, question: &str) -> Answered {
         },
         verdict: None,
     };
-    match review::ask(asker.store, asker.embedder, asker.client, k, question) {
+    let asked = if asker.client.has_tools() {
+        let tools = Session::new(asker.store, asker.embedder, asker.library, 1);
+        let asked = review::ask_with_tools(&tools, asker.client, question);
+        // What it looked up is kept even when the answer failed
+        answered.lookups = tools.lookups();
+        asked
+    } else {
+        let store = asker.store.read().unwrap_or_else(PoisonError::into_inner);
+        review::ask(&store, asker.embedder, asker.client, k, question)
+    };
+    match asked {
         Ok(answer) => {
             answered.answer = answer.text;
             answered.sources = answer.sources;
+            answered.lookups = answer.lookups;
             answered.by = answer.by;
         }
         Err(e) => answered.error = Some(alloc::format!("{e:#}")),
@@ -496,10 +522,13 @@ mod tests {
                 .starts_with("deep-")
         );
         let mut seen = Vec::new();
+        let store = RwLock::new(store);
+        let library = Library::new(&root, None);
         let asker = Asker {
             store: &store,
             embedder: &e,
             client: &client,
+            library: &library,
         };
         let summary = run(
             asker,

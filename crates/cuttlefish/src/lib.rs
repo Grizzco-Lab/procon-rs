@@ -32,7 +32,11 @@
 //! them.
 //! [`review::Reviewer`] retrieves what is relevant to a moment or question
 //! and asks the model through the Anthropic Messages API or the Claude Code
-//! CLI ([`llm`], [`claude_cli`]), with the video frames [`sampling`] picks. The player's own corrections are expert
+//! CLI ([`llm`], [`claude_cli`]), with the video frames [`sampling`] picks.
+//! On the CLI, questions and chats let the model look things up itself
+//! instead: read-only [`tools`] over the store (search, open, pedia,
+//! thread, names), served to the CLI as an MCP server ([`mcp`]) by the
+//! process that has the store loaded. The player's own corrections are expert
 //! notes ([`notes`]), the most trusted source; a bank of deep questions
 //! ([`questions`]) is asked through [`deep_eval`] and the answers reviewed
 //! into notes.
@@ -71,6 +75,7 @@ pub mod keyword;
 pub mod leanny;
 pub mod llm;
 pub mod lock;
+pub mod mcp;
 pub mod messages;
 pub mod moments;
 pub mod notes;
@@ -85,6 +90,7 @@ pub mod slang;
 pub mod stats;
 pub mod store;
 pub mod tables;
+pub mod tools;
 pub mod wiki;
 pub mod x;
 pub mod youtube;

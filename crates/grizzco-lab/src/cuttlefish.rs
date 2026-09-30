@@ -150,6 +150,7 @@ use cuttlefish::llm::{AnsweredBy, Role, Settings, Turn};
 use cuttlefish::review::{self as ai, ChatRequest, KeyMoment, SourceRef, VideoContext};
 use cuttlefish::sampling::{self, MAX_RANGE_S};
 use cuttlefish::situation::{self, Input, InputSource, SeenObject, Situation};
+use cuttlefish::tools::Lookup;
 use cuttlefish::{corpus, corpus_reviews, expert};
 use frames::FrameSource;
 use gameplay_data::labels::{self, Label};
@@ -402,6 +403,10 @@ pub struct Message {
     /// Ids of the comments an assistant message added
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<String>,
+    /// What an assistant message looked up in the knowledge store (the
+    /// agentic path), shown folded under it
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lookups: Vec<Lookup>,
     /// The backend, model and effort that wrote an assistant message
     #[serde(flatten)]
     pub by: AnsweredBy,
@@ -818,7 +823,8 @@ impl Cuttlefish {
     ) -> Self {
         let knowledge = Arc::new(
             Knowledge::new(knowledge, cache.clone(), settings, translate_model)
-                .with_auto_apply(auto_apply),
+                .with_auto_apply(auto_apply)
+                .with_sessions(inspector.root()),
         );
         // Made from the store's glossary as the files are now
         let glossaries = Arc::clone(knowledge.glossaries());
@@ -1834,6 +1840,7 @@ impl Cuttlefish {
             "text": reply.text,
             "sources": reply.sources,
             "experts": reply.experts,
+            "lookups": reply.lookups,
             "comments": comments,
             "images": {"frames": images.0, "tokens": images.1},
             "backend": reply.by.backend,
@@ -2935,6 +2942,10 @@ mod tests {
                 {"id": "m1", "role": "user", "text": "What is a Steelhead?", "created_ms": 1},
                 {"id": "m2", "role": "assistant", "text": "A boss [S1].",
                  "sources": [{"id": "S1", "title": "Bosses", "heading": "", "source": "guide"}],
+                 "lookups": [{"tool": "search", "input": {"query": "Steelhead", "kinds": ["guide"]},
+                              "found": [{"id": "S1", "title": "Bosses"}], "ms": 12},
+                             {"tool": "pedia", "input": {"term": "xyz"},
+                              "error": "no term named \"xyz\"", "ms": 1}],
                  "backend": "claude-cli", "model": "claude-opus-5-5", "effort": "medium",
                  "created_ms": 2}
             ]
@@ -2943,6 +2954,10 @@ mod tests {
         assert!(review.video.is_none());
         assert_eq!(review.messages[1].role, Role::Assistant);
         assert_eq!(review.messages[1].sources[0].title, "Bosses");
+        // What it looked up is kept with the answer
+        assert_eq!(review.messages[1].lookups.len(), 2);
+        assert_eq!(review.messages[1].lookups[0].found[0].id, "S1");
+        assert!(review.messages[1].lookups[1].error.is_some());
         // Who answered is kept with the answer
         assert_eq!(
             review.messages[1].by.model.as_deref(),
@@ -2955,7 +2970,12 @@ mod tests {
         .unwrap();
         assert!(written.get("video").is_none());
         assert!(written["messages"][0].get("sources").is_none());
+        assert!(written["messages"][0].get("lookups").is_none());
         assert!(written["messages"][0].get("model").is_none());
+        assert_eq!(
+            written["messages"][1]["lookups"][0]["input"]["query"],
+            "Steelhead"
+        );
         assert_eq!(written["messages"][1]["backend"], "claude-cli");
         assert_eq!(written["messages"][1]["effort"], "medium");
         assert_eq!(cuttlefish.review("c").unwrap(), review);
@@ -2986,6 +3006,7 @@ mod tests {
             sources: Vec::new(),
             experts: Vec::new(),
             comments: Vec::new(),
+            lookups: Vec::new(),
             by: AnsweredBy::default(),
             created_ms: 3,
         });

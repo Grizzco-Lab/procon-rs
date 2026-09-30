@@ -6,6 +6,12 @@
 //! logged-in Claude Code CLI with `--backend claude-cli`),
 //! `DISCORD_BOT_TOKEN` (ingest discord-bot) and `DISCORD_USER_TOKEN` (fetch
 //! discord).
+//!
+//! On the Claude CLI, `ask` and `eval deep` let the model look things up
+//! itself: this process serves the knowledge tools and the CLI starts this
+//! same binary as `cuttlefish mcp --socket <path>`, their MCP server
+//! (`--no-tools` asks the one-shot way). `cuttlefish mcp` alone serves the
+//! tools on stdin and stdout over the store, for any MCP client.
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
@@ -22,15 +28,16 @@ use cuttlefish::eval::EvalSet;
 use cuttlefish::ingest::{self, Meta};
 use cuttlefish::llm::{Backend, Client, Settings};
 use cuttlefish::lock::{self, WriteLock};
-use cuttlefish::review::{Reviewer, translate};
+use cuttlefish::review::{self, Reviewer, translate};
 use cuttlefish::slang::{self, UserGlossary};
 use cuttlefish::store::{self, Retrieval, Store};
-use cuttlefish::{assets, env_file, image_text, inbox, leanny, tables};
+use cuttlefish::tools::{Library, Lookup, Session};
+use cuttlefish::{assets, env_file, image_text, inbox, leanny, mcp, tables};
 use cuttlefish::{corpus, corpus_reviews, corpus_videos, expert};
 use cuttlefish::{deep_eval, notes, questions};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 #[derive(Parser)]
@@ -77,15 +84,22 @@ enum Command {
         /// A term in any language, or a sentence
         text: String,
     },
-    /// Ask Cuttlefish a question (needs a model backend, see --backend)
+    /// Ask Cuttlefish a question (needs a model backend, see --backend). On
+    /// the Claude CLI the model looks the store up itself with the
+    /// knowledge tools; the answer is followed by its sources and what it
+    /// looked up
     Ask {
         /// The question
         question: String,
         #[command(flatten)]
         model: ModelArgs,
-        /// Knowledge excerpts to retrieve
+        /// Knowledge excerpts to retrieve (without the tools)
         #[arg(short, default_value_t = 8)]
         k: usize,
+        /// No knowledge tools: the excerpts retrieval picks go with the
+        /// question, as on the API
+        #[arg(long)]
+        no_tools: bool,
     },
     /// Translate text with the community's names (needs a model backend)
     Translate {
@@ -130,6 +144,10 @@ enum Command {
         /// store is only read
         #[arg(long)]
         dry_run: bool,
+        /// deep: no knowledge tools on the Claude CLI: the excerpts
+        /// retrieval picks go with each question, as on the API
+        #[arg(long)]
+        no_tools: bool,
         #[command(flatten)]
         model: ModelArgs,
     },
@@ -177,6 +195,17 @@ enum Command {
     /// its chat picks the changes up on the next slang change or restart)
     #[command(subcommand)]
     Slang(Slang),
+    /// Serve the knowledge tools (search, open, pedia, thread, names) to an
+    /// MCP client on stdin and stdout, over the store (read only; the
+    /// sessions of the lab's config give the Pedia's recorded examples).
+    /// With --socket: relay to the tools a process asking the model serves
+    /// there, which is how the Claude CLI reaches them from `ask`, `eval
+    /// deep` and the lab
+    Mcp {
+        /// The socket of the process that serves the tools
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -229,13 +258,27 @@ struct ModelArgs {
 }
 
 impl ModelArgs {
+    /// The settings; on the Claude CLI the knowledge tools' MCP server is
+    /// this binary (`cuttlefish mcp --socket`)
     fn settings(&self) -> Settings {
         Settings {
             model: self.model.clone(),
             effort: self.effort.clone(),
             backend: self.backend,
+            mcp_relay: std::env::current_exe().ok(),
             ..Settings::default()
         }
+    }
+
+    /// The settings of `ask` and `eval deep`: without the knowledge tools
+    /// when `no_tools`, so the excerpts retrieval picks go with the question
+    /// as on the API
+    fn asking(&self, no_tools: bool) -> Settings {
+        let mut settings = self.settings();
+        if no_tools {
+            settings.mcp_relay = None;
+        }
+        settings
     }
 }
 
@@ -615,42 +658,68 @@ impl ingest::Sink for Sink {
     }
 }
 
-/// Where the lab with this config keeps its knowledge, as the lab
-/// finds it: `[cuttlefish] knowledge` (relative to the config file), else
-/// `Knowledge` next to the sessions' folder, which is `[inspect] root` or
-/// the folder of the recording prefix (the dashboard's choice, saved in
-/// `<config>.state.json`, before `[recording] prefix`)
-fn lab_knowledge(config: &Path) -> Result<PathBuf> {
+/// A lab config, read, and its folder
+fn lab_config(config: &Path) -> Result<(toml::Value, PathBuf)> {
     let text =
         std::fs::read_to_string(config).with_context(|| format!("reading {}", config.display()))?;
     let value: toml::Value =
         toml::from_str(&text).with_context(|| format!("in {}", config.display()))?;
-    let dir = config.parent().unwrap_or(Path::new("."));
-    let get = |table: &str, key: &str| value.get(table)?.get(key)?.as_str().map(String::from);
-    if let Some(knowledge) = get("cuttlefish", "knowledge") {
+    Ok((
+        value,
+        config.parent().unwrap_or(Path::new(".")).to_path_buf(),
+    ))
+}
+
+/// A string of a lab config: `[table] key`
+fn config_str(value: &toml::Value, table: &str, key: &str) -> Option<String> {
+    value.get(table)?.get(key)?.as_str().map(String::from)
+}
+
+/// Where the lab with this config keeps its knowledge, as the lab
+/// finds it: `[cuttlefish] knowledge` (relative to the config file), else
+/// `Knowledge` next to the sessions' folder ([`lab_sessions`])
+fn lab_knowledge(config: &Path) -> Result<PathBuf> {
+    let (value, dir) = lab_config(config)?;
+    if let Some(knowledge) = config_str(&value, "cuttlefish", "knowledge") {
         return Ok(dir.join(knowledge));
     }
-    let sessions = match get("inspect", "root") {
-        Some(root) => dir.join(root),
-        None => {
-            let saved = std::fs::read(config.with_extension("state.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-                .and_then(|state| state["prefix"].as_str().map(String::from));
-            let prefix = saved
-                .or_else(|| get("recording", "prefix"))
-                .context("the config has no [recording] prefix")?;
-            // As the recorder: "a/b-" lives in "a", "a/b/" in "a/b"
-            match Path::new(&format!("{prefix}x")).parent() {
-                Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-                _ => PathBuf::from("."),
-            }
-        }
-    };
-    Ok(sessions
+    Ok(lab_sessions(config)?
         .parent()
         .unwrap_or(Path::new("."))
         .join("Knowledge"))
+}
+
+/// The lab's sessions' folder: `[inspect] root`, else the folder of the
+/// recording prefix (the dashboard's choice, saved in
+/// `<config>.state.json`, before `[recording] prefix`)
+fn lab_sessions(config: &Path) -> Result<PathBuf> {
+    let (value, dir) = lab_config(config)?;
+    if let Some(root) = config_str(&value, "inspect", "root") {
+        return Ok(dir.join(root));
+    }
+    let saved = std::fs::read(config.with_extension("state.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|state| state["prefix"].as_str().map(String::from));
+    let prefix = saved
+        .or_else(|| config_str(&value, "recording", "prefix"))
+        .context("the config has no [recording] prefix")?;
+    // As the recorder: "a/b-" lives in "a", "a/b/" in "a/b"
+    Ok(match Path::new(&format!("{prefix}x")).parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    })
+}
+
+/// The recorded sessions' folder of the lab's config (`--config`, else
+/// `./config.toml`), for the Pedia's recorded examples; none without one
+fn sessions_folder(config: Option<&Path>) -> Option<PathBuf> {
+    let config = config
+        .map(Path::to_path_buf)
+        .or_else(|| Some(PathBuf::from("config.toml")).filter(|c| c.is_file()))?;
+    lab_sessions(&config)
+        .map_err(|e| log::info!("no recorded sessions for the Pedia's examples: {e:#}"))
+        .ok()
 }
 
 /// The reviews folder as the lab finds it: `[cuttlefish] reviews` of the
@@ -709,9 +778,17 @@ fn main() -> Result<()> {
     if let Command::Fetch(f) = cli.command {
         return fetch(f, cli.data, cli.config);
     }
+    // The relay the Claude CLI starts: nothing to find or load
+    if let Command::Mcp {
+        socket: Some(socket),
+    } = &cli.command
+    {
+        return mcp::relay(socket);
+    }
     let data = knowledge_folder(cli.data.clone(), cli.config.clone())?;
     match cli.command {
         Command::Fetch(_) => unreachable!(),
+        Command::Mcp { .. } => serve_tools(&data, cli.config.as_deref()),
         Command::Corpus(c) => corpus_command(&data, cli.config.as_deref(), c),
         Command::Ingest(i) => ingest(&data, i),
         Command::Search { query, k, mode } => {
@@ -759,10 +836,22 @@ fn main() -> Result<()> {
             );
             Ok(())
         }
-        Command::Ask { question, model, k } => {
-            let mut reviewer = Reviewer::open(&data, model.settings())?;
-            reviewer.k = k;
-            let answer = reviewer.ask(&question)?;
+        Command::Ask {
+            question,
+            model,
+            k,
+            no_tools,
+        } => {
+            let client = Client::from_env(model.asking(no_tools))?;
+            let (store, embedder) = open(&data, true)?;
+            let answer = if client.has_tools() {
+                let store = RwLock::new(store);
+                let library = Library::new(&data, sessions_folder(cli.config.as_deref()));
+                let tools = Session::new(&store, &embedder, &library, 1);
+                review::ask_with_tools(&tools, &client, &question)?
+            } else {
+                review::ask(&store, &embedder, &client, k, &question)?
+            };
             println!("{}\n", answer.text);
             for s in answer.sources {
                 println!(
@@ -774,6 +863,7 @@ fn main() -> Result<()> {
                     s.url.map(|u| format!(" {u}")).unwrap_or_default()
                 );
             }
+            print_lookups(&answer.lookups, "");
             Ok(())
         }
         Command::Translate { text, to, model } => {
@@ -791,6 +881,7 @@ fn main() -> Result<()> {
             max,
             only,
             dry_run,
+            no_tools,
             model,
         } => {
             if target == "deep" && dry_run {
@@ -804,7 +895,8 @@ fn main() -> Result<()> {
                     only,
                     k,
                 };
-                return eval_deep(&data, model.settings(), &opts);
+                let sessions = sessions_folder(cli.config.as_deref());
+                return eval_deep(&data, model.asking(no_tools), &opts, sessions);
             }
             let set = if target == "retrieval" {
                 EvalSet::parse(cuttlefish::eval::RETRIEVAL)?
@@ -1214,18 +1306,30 @@ fn slang_command(data: &Path, cmd: Slang) -> Result<()> {
 
 /// `eval deep`: the bank's askable questions through the model, the
 /// answers into `<knowledge>/eval/deep-<date>.jsonl`
-fn eval_deep(data: &Path, settings: Settings, opts: &deep_eval::Options) -> Result<()> {
+fn eval_deep(
+    data: &Path,
+    settings: Settings,
+    opts: &deep_eval::Options,
+    sessions: Option<PathBuf>,
+) -> Result<()> {
     let client = Client::from_env(settings)?;
     let (store, embedder) = open(data, true)?;
+    let store = RwLock::new(store);
+    let library = Library::new(data, sessions);
     let bank = questions::Bank::seed();
     let picked = deep_eval::pick(&bank, opts);
     let out = deep_eval::new_file(data, chrono::Utc::now());
     println!(
-        "Asking {} of the bank's {} questions in {}, {} at a time; answers go to {}. Ctrl+C stops after the batch under way.",
+        "Asking {} of the bank's {} questions in {}, {} at a time{}; answers go to {}. Ctrl+C stops after the batch under way.",
         picked.len(),
         bank.questions.len(),
         opts.lang,
         opts.parallel.clamp(1, deep_eval::MAX_PARALLEL),
+        if client.has_tools() {
+            ", the model looking the store up itself"
+        } else {
+            ""
+        },
         out.display()
     );
     let stop = ctrl_c()?;
@@ -1234,6 +1338,7 @@ fn eval_deep(data: &Path, settings: Settings, opts: &deep_eval::Options) -> Resu
             store: &store,
             embedder: &embedder,
             client: &client,
+            library: &library,
         },
         &bank,
         opts,
@@ -1257,11 +1362,45 @@ fn eval_deep(data: &Path, settings: Settings, opts: &deep_eval::Options) -> Resu
                     }
                 }
             }
+            print_lookups(&answered.lookups, "     ");
             println!();
         },
     )?;
     println!("{summary}; review them in the lab's Knowledge view");
     Ok(())
+}
+
+/// What an answer looked up, one line per call: the tool, its arguments,
+/// what it showed
+fn print_lookups(lookups: &[Lookup], indent: &str) {
+    if lookups.is_empty() {
+        return;
+    }
+    println!("{indent}Looked up:");
+    for l in lookups {
+        let shown: Vec<String> = l
+            .found
+            .iter()
+            .map(|f| format!("{} {}", f.id, f.title))
+            .collect();
+        let result = match &l.error {
+            Some(e) => format!("failed: {e}"),
+            None if shown.is_empty() => String::from("nothing"),
+            None => shown.join("; "),
+        };
+        println!("{indent}  {} {} ({} ms) → {result}", l.tool, l.input, l.ms);
+    }
+}
+
+/// `mcp` without a socket: the knowledge tools on stdin and stdout over the
+/// store, which is only read, for any MCP client
+fn serve_tools(data: &Path, config: Option<&Path>) -> Result<()> {
+    let embedder = E5Embedder::load(&store::models_dir())?;
+    let store = RwLock::new(Store::open(data, &embedder)?);
+    let library = Library::new(data, sessions_folder(config));
+    let tools = Session::new(&store, &embedder, &library, 1);
+    log::info!("serving the knowledge tools of {} on stdin", data.display());
+    mcp::serve(&tools, std::io::stdin().lock(), std::io::stdout().lock())
 }
 
 /// `eval deep --dry-run`: what retrieval gives every question of the bank,
