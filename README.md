@@ -786,25 +786,48 @@ runs now, what waits and why, and what came out.
   of an experiment: what runs, the question it answers, its status (queued,
   running, done, failed or paused), its processes, run folder and log, and
   once it is over a one-line result and the next step.
-- **Running**: a card per running entry with its progress and ETA (from its
-  run folder's `metrics.jsonl` and `args.json`, else the last `N/M` in its
-  log), its loss curves (train, validation, held-out) drawn across the steps
-  still to run, its latest validation scores, its processes' GPU memory, CPU
-  and RAM, and its log. The lab finds an entry's processes by its process
-  group, its process or a piece of its command line, so it also shows an
-  entry that runs while the file still says queued, and warns about one the
-  file says runs when none of its processes is left.
-- **Machine**: the GPU (busy, memory with the queue's share, temperature,
-  power), CPU and memory, each with its last half hour, and the GPU's
-  processes with the entries they belong to.
-- **GPU timeline**: busy %, memory (the queue's jobs against the rest) and
-  what ran when, over the last 1 to 12 hours. The lab samples every 5 s
-  from its start and keeps 12 hours in memory.
-- **Queue**: the waiting entries in the order they run. Drag one by its
-  handle, or focus the handle and press ↑ ↓, to change what runs next: the
-  order goes into the file as priorities, and agents take the top one
-  (`agentzero-queue next`). An entry whose run folder shows it already ran
-  moves to Results, marked as not yet updated in the file.
+- **Two GPUs** take the queue's entries: this host's (`device: gpu:linux`)
+  and the win11 VM's RTX 4080 SUPER (`gpu:win11`; `gpu` is either), which
+  AgentZero's `agentzero-win11 run` feeds. The runner marks what it takes
+  `host: win11`, copies its log and metrics back here every minute and
+  writes the VM's GPU to `runs/win11/gpu.json` every 10 s; the lab reads
+  that file for the VM's GPU and for whether its entry still runs. A file
+  older than a minute says nothing: the GPU shows no reading (never 0) and
+  its entry "no word", not "no process".
+- **Running**: a card per running entry, labelled with where it runs
+  (Linux · RTX 4070 SUPER, win11 · RTX 4080 SUPER, or CPU), with its
+  progress and ETA (from its run folder's `metrics.jsonl` and `args.json`,
+  else the last `N/M` in its log), its loss curves (train, validation,
+  held-out) drawn across the steps still to run, its latest validation
+  scores and AgentZero's copycat scores (keyframe buttons, anticipation,
+  turn over half a second, press F1: what the policy gets right beyond
+  repeating the present; hover one for what it means), its processes' GPU
+  memory, CPU and RAM (on the VM, its GPU), and its log. Once a run's
+  training is over while its job goes on (an evaluation after it, say), the
+  card says so ("Another step, running for 16 min") with the log's latest
+  line instead of a stuck bar; a step that has not moved for 5 minutes
+  says that too, and neither has an ETA. A run that stopped early (no
+  better validation) reads "Stopped early at step 600 of 2,000". The lab
+  finds an entry's processes by its process group, its process or a piece
+  of its command line, so it also shows an entry that runs while the file
+  still says queued, and warns about one the file says runs when none of
+  its processes is left.
+- **Machine**: this host's GPU (busy, memory with the queue's share,
+  temperature, power), CPU (with the queue's share in cores) and memory,
+  and the VM's GPU, each with its last half hour, and each GPU's processes
+  with the entries they belong to.
+- **GPU timeline**: one section per GPU, over the last 1 to 12 hours: busy
+  % (with this host's CPU over it), memory (the queue's jobs against the
+  rest) and lanes of what ran on it when, each bar holding its job's CPU in
+  cores, so a CPU-bound step of a GPU job stands out; stretches without a
+  reading are shaded. The lab samples every 5 s and keeps 12 hours in
+  memory, and a week on disk.
+- **Queue**: the waiting entries in the order they run, with what each
+  waits for and which runner takes it next ("Next · Linux, win11"). Drag
+  one by its handle, or focus the handle and press ↑ ↓, to change what runs
+  next: the order goes into the file as priorities, and agents take the top
+  one that fits (`agentzero-queue next`). An entry whose run folder shows it
+  already ran moves to Results, marked as not yet updated in the file.
 - **Results** and **History**: what came out, newest first, each with its
   conclusion and next step; open a result for its question, loss curve and
   log.

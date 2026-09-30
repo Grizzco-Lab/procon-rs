@@ -111,7 +111,7 @@ stays there), and `uv` rebuilds it when the Rust sources change.
 | `src/vision/detector.rs` | The Salmon Run detector's client: AgentZero's `agentzero-detect-serve`, its health, runs streamed as JSON lines, and starting it |
 | `src/predictor.rs` | Predictor app backend: `agentzero-predict` runs as a child process, stored predictions, windows of predictions and truth, agreement numbers |
 | `src/predictor/online.rs` | The Predictor's online mode: `agentzero-play --json` on a paced video or the live capture's piped frames, the loop's latency, and the bot (`Bot`) that plays the Switch through the replay port with a person's input taking over |
-| `src/pipeline.rs` | Pipeline app backend: the experiment queue file (read, reordered under its lock), the GPU and the machine sampled on a thread, each entry's processes and progress, the timeline |
+| `src/pipeline.rs` | Pipeline app backend: the experiment queue file (read, reordered under its lock, what each runner takes next), both GPUs (this host's, and the win11 VM's from its runner's file) and the machine sampled on a thread, each entry's processes, CPU and progress (ended, stalled), the timeline |
 | `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `translate.js`, `vision.js`, `predictor.js`, `pipeline.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
 | **Libraries and CLIs** | |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration, the camera turn from AgentZero's fits; Python bindings |
@@ -535,23 +535,45 @@ stop it first. The bot's status goes out with every `status` message on
 nothing but the queue's order. The queue is a JSON file the agents keep
 (AgentZero's `runs/queue.json`, `[pipeline] queue`), written by AgentZero's
 `agentzero-queue`: each entry one step of an experiment with its status,
-`priority`, processes (`pgid`, `pid` or `match`, a piece of its command
-line), run folder, log, times, result and next step. It is read again when
-its size or time changes, each entry on its own, so an entry that does not
-read is reported and kept, never lost. A thread samples every 5 s: the GPU
-with `nvidia-smi` (one query for the GPU, one for its compute processes),
-the CPU, memory and every process from `/proc`, which processes belong to
+`priority`, the entries it waits for (`after`), where it can run
+(`device`: `cpu`, `gpu:linux`, `gpu:win11` or `gpu`, either), processes
+(`pgid`, `pid` or `match`, a piece of its command line), run folder, log,
+times, result and next step. It is read again when its size or time
+changes, each entry on its own, so an entry that does not read is reported
+and kept, never lost. Which entry each runner takes next follows the
+helper's rules (`next_for`: the first queued one that fits its device and
+waits for nothing; the VM's only with a `command`).
+
+The second GPU is the win11 VM's: AgentZero's `agentzero-win11 run` marks
+the entries it takes `host: win11`, copies their logs and metrics into the
+same paths here every minute and writes the VM's GPU to `win11/gpu.json`
+beside the queue every 10 s. An entry of another machine is never looked
+for among this host's processes; it runs while that file, fresh (a
+minute), names it as the runner's job. A stale file makes the VM's GPU
+unknown, never 0, and its entries "no word" rather than "no process".
+
+A thread samples every 5 s: the GPU with `nvidia-smi` (one query for the
+GPU, one for its compute processes), the VM's GPU from its file, the CPU,
+load, memory and every process from `/proc`, which processes belong to
 which entry (running entries claim theirs first), each live entry's CPU,
 RSS and GPU memory, and when each was seen running; it keeps 12 hours of
 samples in memory for the timeline, averaged down to 720 points for a
-window. Each sample is also appended to `pipeline-gpu.jsonl` in the local
-cache (`~/.cache/procon-cuttlefish`) and read back at start, so a restart
-keeps the timeline; the log keeps a week, older than 12 hours one row a
-minute. Progress comes from the run folder's `metrics.jsonl`, read as it
-grows (whole lines only, from the start again when the file shrinks), with
-the total from `args.json`, else from the last `N/M` in the log of a live
-entry; the ETA comes from the steps the sampler saw over the last ten
-minutes, else from `s_per_step`. `POST order` rewrites the waiting entries'
+window, each sample with the entries seen running and the cores each took.
+Each sample is also appended to `pipeline-gpu.jsonl` in the local cache
+(`~/.cache/procon-cuttlefish`) and read back at start, so a restart keeps
+the timeline; the log keeps a week, older than 12 hours one row a minute.
+Its lines keep the first version's layout (eight numbers, then the running
+ids) and add the VM's GPU, the load and each entry's cores after it, so
+either version reads the other's lines. Progress comes from the run
+folder's `metrics.jsonl`, read as it grows (whole lines only, from the
+start again when the file shrinks), with the total from `args.json`, else
+from the last `N/M` in the log of a live entry; the ETA comes from the
+steps the sampler saw over the last ten minutes, else from `s_per_step`. A
+run whose trainer wrote its closing rows (the policy's `thresholds`, the
+IDM's `val-tuned`) has ended, early when short of its `steps`; a live
+entry whose step has not moved for five minutes does something else (an
+evaluation after its training, say); neither gets an ETA, and the page
+shows what runs instead of a bar. `POST order` rewrites the waiting entries'
 priorities (their count down to 1, top first) under the lock the helper
 takes (`<queue>.lock`, an exclusive `flock`) and replaces the file
 atomically, with the fields in the helper's order, so the two write the same
