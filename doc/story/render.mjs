@@ -3,7 +3,8 @@
 // script: the page draws every frame with its own canvas code
 // (window.storyRender), headless Chrome runs it (DevTools protocol over a
 // WebSocket, Node 22+, no packages, as scripts/layout-check.mjs does), and
-// ffmpeg encodes the PNG frames with libx264 on the CPU, niced.
+// ffmpeg encodes the PNG frames with libx264 on the CPU, niced, on 4 threads
+// (training may hold the machine).
 //
 // Usage:
 //   node doc/story/render.mjs                     every scene, English and Chinese
@@ -184,6 +185,8 @@ for (const id of scenes) {
         "png",
         "-i",
         "-",
+        "-threads",
+        "4",
         "-c:v",
         "libx264",
         "-preset",
