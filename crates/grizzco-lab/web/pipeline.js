@@ -277,14 +277,6 @@
   /** Bytes as GiB with one decimal */
   const gibBytes = (bytes) => gib(bytes / 2 ** 20);
 
-  /** Bytes of a disk as GB or TB, decimal as disks are sold (and as
-   * AgentZero's storage guard counts) */
-  function diskSize(bytes) {
-    if (bytes == null || !Number.isFinite(bytes)) return "–";
-    if (bytes >= 1e12) return `${num(bytes / 1e12, 2)} TB`;
-    return `${num(bytes / 1e9, bytes >= 1e11 ? 0 : 1)} GB`;
-  }
-
   /** 13:05 (the day too when not today) */
   function clock(ms, withDay = false) {
     if (ms == null) return "–";
@@ -728,6 +720,7 @@
     const slots = groupSlots(entries);
     $("pl-alert").hidden = true;
     renderMachines(state, entries, slots);
+    renderHost(state.storage);
     renderTimeline();
     if (!pl.drag && !pl.order) renderQueue(entries, slots);
     renderResults(entries, slots);
@@ -1757,7 +1750,10 @@
     const v0 = lo ?? Math.min(...vs);
     const v1 = hi ?? Math.max(...vs);
     const sx = (v) => 2 + ((v - x0) / (x1 - x0 || 1)) * (width - 6);
-    const sy = (v) => 3 + ((v1 - v) / (v1 - v0 || 1)) * (height - 6);
+    // A value past a given range stays on its edge, inside the tile
+    const sy = (v) =>
+      3 +
+      ((v1 - Math.min(v1, Math.max(v0, v))) / (v1 - v0 || 1)) * (height - 6);
     const segments = [];
     let current = null;
     for (const [x, v] of points) {
@@ -1947,6 +1943,8 @@
         );
       if (r?.hold)
         flags.push(light("note", t("pl.tile.hold"), t("pl.m.holdNote")));
+      // AgentZero's storage guard holds it: the pool, this host or its C:
+      if (r?.space) flags.push(light("warning", t("pl.m.spaceHold"), r.space));
       if (!r?.at_ms) return { main: light("warning", t("pl.m.never")), flags };
       if (!r.fresh)
         return {
@@ -2352,16 +2350,17 @@
               : null,
       }),
     );
-    // The disk the machine runs from, where it is read
+    // The disk the machine runs from, where it is read (this host's `/`,
+    // the VM's `C:`; both are volumes on the Proxmox host's pool, below)
     if (m.disk)
       tiles.push(
-        tile("host", t("pl.tile.disk"), diskSize(m.disk.free), {
+        tile("host", t("pl.tile.disk"), formatBytes(m.disk.free), {
           meter: stackedMeter(
             [{ value: m.disk.total - m.disk.free, cls: "pl-m-disk" }],
             m.disk.total,
           ),
           note: t("pl.tile.diskNote", {
-            total: diskSize(m.disk.total),
+            total: formatBytes(m.disk.total),
             path: m.disk.path,
           }),
           level:
@@ -2484,6 +2483,96 @@
     );
     if (!rows.length) return empty(t("pl.procs.none"));
     return [head, el("ul", { class: "pl-proc-list" }, rows)];
+  }
+
+  /**
+   * The Proxmox host both machines are VMs on, a strip under them: its
+   * level as a light (the watched pool, rpool, where every VM's disk
+   * lives: fine, low, almost full or no reading) and when its pools were
+   * read, then its pools as tiles, the watched one first with its edge in
+   * its level's colour; hidden without a storage host (`[pipeline]
+   * storage_host = ""`)
+   */
+  function renderHost(storage) {
+    const panel = $("pl-host");
+    panel.hidden = !storage?.host;
+    if (panel.hidden) return;
+    const level = storage.level;
+    const watched = storage.pools.find((p) => p.name === storage.watched);
+    panel.querySelector(".pl-m-title").textContent = t("pl.host.title", {
+      host: storage.host,
+    });
+    const word = !level
+      ? t("pl.storage.noAnswer")
+      : watched
+        ? t(level === "ok" ? "pl.host.ok" : `pl.storage.chip.${level}`, {
+            pool: watched.name,
+            free: formatBytes(watched.free),
+          })
+        : t("pl.storage.chip.unknown", { pool: storage.watched });
+    fill(
+      panel.querySelector(".pl-m-state"),
+      light(
+        !level
+          ? "off"
+          : level === "ok"
+            ? "good"
+            : level === "critical"
+              ? "critical"
+              : "warning",
+        word,
+        storageLines(storage).join("\n"),
+      ),
+      el("span", {
+        class: "pl-dim pl-host-read",
+        text: storage.error
+          ? t("pl.storage.error", { error: storage.error })
+          : storage.pools_ms
+            ? t("pl.storage.read", { time: clock(storage.pools_ms) })
+            : null,
+      }),
+    );
+    const edge = level === "critical" ? "critical" : "warning";
+    const limits = t("pl.storage.limits", {
+      low: formatBytes(storage.low_free),
+      cap: storage.low_cap,
+      critical: formatBytes(storage.critical_free),
+    });
+    const pools = [...storage.pools].sort(
+      (a, b) =>
+        (b.name === storage.watched) - (a.name === storage.watched) ||
+        a.name.localeCompare(b.name),
+    );
+    panel.querySelector(".pl-host-pools").replaceChildren(
+      ...pools.map((pool) => {
+        const isWatched = pool.name === storage.watched;
+        return pulseTile(
+          "host",
+          isWatched ? t("pl.host.watched", { pool: pool.name }) : pool.name,
+          formatBytes(pool.free),
+          {
+            meter: stackedMeter(
+              [{ value: pool.alloc, cls: "pl-m-disk" }],
+              pool.size,
+            ),
+            note: t("pl.host.poolNote", {
+              size: formatBytes(pool.size),
+              cap: Math.round(pool.cap),
+            }),
+            level: isWatched && level !== "ok" ? edge : null,
+            title:
+              [
+                pool.frag != null
+                  ? t("pl.host.frag", { frag: Math.round(pool.frag) })
+                  : null,
+                isWatched ? limits : null,
+              ]
+                .filter(Boolean)
+                .join("\n") || null,
+          },
+        );
+      }),
+    );
   }
 
   // ------------------------------------------------------------ timeline

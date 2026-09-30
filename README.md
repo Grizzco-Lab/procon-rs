@@ -863,11 +863,16 @@ runs now, what waits and why, and what came out.
   the host's pools once a minute (`ssh pve zpool list`, `[pipeline]
   storage_host` and `storage_command`; a host that does not answer in 30 s
   is given up until the next minute), this host's `/`, and the VM's `C:`
-  from its runner's file. While `rpool` runs low (amber: under 300 GB free
-  or 85 % used; red: under 150 GB, AgentZero's storage guard's thresholds)
-  or has no fresh reading, a banner tops this page and a chip shows in the
-  top bar of every app, with every disk's numbers in its tooltip. The
-  samples keep each disk's free space, so the history on disk has it too.
+  from its runner's file. Each machine's disk is a tile of its own (`/`,
+  `C:`), and under the two machines a strip for the Proxmox host shows its
+  pools, `rpool` first with its level, when they were read and why a
+  reading failed. While `rpool` runs low (amber: under 300 GB free or 85 %
+  used; red: under 150 GB, AgentZero's storage guard's thresholds) or has
+  no fresh reading, a banner tops this page and a chip shows in the top
+  bar of every app, with every disk's numbers in its tooltip; the VM's
+  head lights amber while its runner holds new entries back for storage.
+  The samples keep each disk's free space, so the history on disk has it
+  too.
 
 ## Recordings
 

@@ -1566,6 +1566,12 @@ const I18N = {
     "pl.work.note":
       "What its log says it runs: the step its job script started last (== start <name>), else its main process",
     "pl.proc.main": "main process: {name}",
+    "pl.m.spaceHold": "held for storage",
+    "pl.host.title": "Proxmox · {host}",
+    "pl.host.ok": "{pool}: {free} free",
+    "pl.host.watched": "{pool} · every VM's disk",
+    "pl.host.poolNote": "free of {size} · {cap}% used",
+    "pl.host.frag": "{frag}% of its free space fragmented",
   },
 };
 

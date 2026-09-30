@@ -4162,6 +4162,22 @@
           </section>
         </div>
 
+        <!-- The Proxmox host both machines are VMs on: its ZFS pools, rpool
+             (every VM's disk) first; the banner above says when it runs
+             low -->
+        <section
+          class="panel pl-host"
+          id="pl-host"
+          aria-labelledby="h-pl-host"
+          hidden
+        >
+          <header class="panel-head pl-m-head">
+            <h2 class="pl-m-title" id="h-pl-host">Proxmox</h2>
+            <span class="pl-m-state"></span>
+          </header>
+          <div class="pl-host-pools"></div>
+        </section>
+
         <section class="panel p-pl-timeline" aria-labelledby="h-pl-timeline">
           <header class="panel-head">
             <h2 id="h-pl-timeline" data-i18n="pl.timeline.title">

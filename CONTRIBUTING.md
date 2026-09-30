@@ -655,7 +655,11 @@ touch drags as a mouse does. It draws both machines from one model
 samples, the runner of its GPU), so the two panels are alike; their head,
 vitals and processes share rows (`grid-template-rows: subgrid`, which a
 size container would break: the vitals box is the container instead), and
-the running cards come last, where the columns may differ in length. A
+the running cards come last, where the columns may differ in length. Each
+machine's disk tile reads `storage.root` (`/`) or the VM's `disk` (`C:`);
+the Proxmox host's pools are a strip of their own under the machines
+(`renderHost`, the watched pool first, its tile's edge in its level's
+colour), beside main's banner over the page and chip in the top bar. A
 card's phase (`phaseOf`) is counting, working (no counter of its own: a
 step its script started after the counter's last line, its training over,
 or none at all; named by the step or the main process), stalled or ended.

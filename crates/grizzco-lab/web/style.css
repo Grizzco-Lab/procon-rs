@@ -9401,17 +9401,20 @@ button.cf-cite {
 [data-theme="telemetry"] #pl-m-remote {
   --panel-no: "02";
 }
-[data-theme="telemetry"] .p-pl-timeline {
+[data-theme="telemetry"] #pl-host {
   --panel-no: "03";
 }
-[data-theme="telemetry"] .p-pl-queue {
+[data-theme="telemetry"] .p-pl-timeline {
   --panel-no: "04";
 }
-[data-theme="telemetry"] .p-pl-results {
+[data-theme="telemetry"] .p-pl-queue {
   --panel-no: "05";
 }
-[data-theme="telemetry"] .p-pl-history {
+[data-theme="telemetry"] .p-pl-results {
   --panel-no: "06";
+}
+[data-theme="telemetry"] .p-pl-history {
+  --panel-no: "07";
 }
 
 #pipeline-layout .panel-head {
@@ -10562,6 +10565,43 @@ button.cf-cite {
 /* A tile without its course or meter keeps their place */
 .pl-tile-gap {
   height: 26px;
+}
+
+/* The Proxmox host both machines run on: a strip under them, its head
+   beside its pools (a tile each, in one row) where there is room */
+.pl-host {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 24px;
+}
+
+.pl-host > .pl-m-head {
+  flex: 0 1 auto;
+}
+
+.pl-host-read {
+  font-size: 12px;
+}
+
+.pl-host-pools {
+  display: grid;
+  flex: 0 1 auto;
+  grid-auto-columns: minmax(180px, 250px);
+  grid-auto-flow: column;
+  gap: 8px;
+}
+
+.pl-host-pools .pl-tile[data-row] {
+  grid-column: auto;
+}
+
+@container page (max-width: 560px) {
+  .pl-host-pools {
+    flex-basis: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-flow: row;
+  }
 }
 
 .pl-tile[data-level="warning"] {

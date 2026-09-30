@@ -1471,4 +1471,10 @@ I18N.zh = {
   "pl.work.note":
     "日志里说它在运行什么：任务脚本最后开始的一步（== start <名称>），否则是它的主进程",
   "pl.proc.main": "主进程：{name}",
+  "pl.m.spaceHold": "因存储暂停接任务",
+  "pl.host.title": "Proxmox · {host}",
+  "pl.host.ok": "{pool}：剩 {free}",
+  "pl.host.watched": "{pool} · 所有虚拟机的磁盘",
+  "pl.host.poolNote": "空闲，共 {size} · 已用 {cap}%",
+  "pl.host.frag": "空闲空间的碎片 {frag}%",
 };
