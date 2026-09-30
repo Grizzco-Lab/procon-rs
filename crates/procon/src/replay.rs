@@ -8,7 +8,7 @@
 //!
 //! Every field is optional, and each one given replaces the controller's own
 //! value: `buttons` lists the pressed buttons (names as in
-//! [`ButtonState`](crate::keystate::ButtonState)), sticks are raw 12-bit
+//! [`BUTTONS`](gameplay_data::controller::BUTTONS)), sticks are raw 12-bit
 //! `[x, y]` (center ≈ 2048), `gyro` and `accel` are raw IMU readings (0.07 °/s
 //! and 1/4096 g per unit) for all three samples of a report. `t_ms` is when
 //! the line plays, counted from the first line; the proxy ignores it.

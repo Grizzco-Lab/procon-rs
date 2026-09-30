@@ -1,0 +1,16 @@
+[package]
+name = "procon-proxy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.45", features = ["derive"] }
+env_logger = "0.11.8"
+hidapi = { version = "2.6.7", default-features = false, features = ["linux-native-basic-udev"] }
+libc = "0.2.175"
+log = "0.4.27"
+num_cpus = "1.17.0"
+procon = { version = "0.1.0", path = "../procon" }
+serde = { version = "1.0.219", features = ["derive"] }
+usb-gadget = "0.7.5"

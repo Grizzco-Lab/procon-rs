@@ -1,11 +1,11 @@
 //! Stand-in for `procon-proxy`: streams a synthetic controller like it does
 //!
 //! ```sh
-//! cargo run --example fake_proxy [port] [--still]
+//! cargo run -p procon-proxy --example fake_proxy [port] [--still]
 //! ```
 //!
 //! Then point `config.toml`'s `[proxy] address` at `localhost:7331` (or the given
-//! port) and run `procon`. No Pro Controller or USB gadget needed.
+//! port) and run `grizzco-lab`. No Pro Controller or USB gadget needed.
 //!
 //! Like the proxy, it takes replayed actions on the next port (7332, its
 //! `replay_address`) and applies them to its reports. `--still` leaves the

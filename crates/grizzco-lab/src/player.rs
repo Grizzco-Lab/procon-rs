@@ -3,16 +3,16 @@
 //! The dashboard loads a session folder, a `controller.bin` or a `.jsonl` of
 //! [`Action`]s (such as a model's predictions), then plays it: each action is
 //! sent to the proxy's replay port at its `t_ms`, and the Switch sees it
-//! instead of, or mixed with, the controller (see [`crate::replay`]). Stopping,
+//! instead of, or mixed with, the controller (see [`procon::replay`]). Stopping,
 //! or reaching the end, closes the connection and gives the controller back.
 //! Pausing does too, until Resume reconnects and carries on where it paused.
 
-use crate::recorder::expand_home;
-use crate::replay::{self, Action};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, ensure};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use core::time::Duration;
+use procon::recorder::expand_home;
+use procon::replay::{self, Action};
 use serde::Serialize;
 use std::io::Write;
 use std::net::{TcpStream, ToSocketAddrs};

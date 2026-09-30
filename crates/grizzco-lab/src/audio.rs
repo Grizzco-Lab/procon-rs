@@ -7,12 +7,12 @@
 //! that frame is; from then on chunks stream straight to its encoder. The
 //! video file then holds both tracks, both starting at time 0.
 
-use crate::dump::unix_ms;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use anyhow::{Context, Result};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use core::time::Duration;
+use procon::dump::unix_ms;
 use std::io::{BufRead, BufReader, Read};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};

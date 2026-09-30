@@ -10,10 +10,10 @@
 
 use crate::config::ProxyConfig;
 use crate::device::ProController;
-use crate::dump::{Dumper, stamped};
-use crate::replay::Replay;
 use crate::wake::RemoteWakeup;
 use anyhow::{Result, bail};
+use procon::dump::{Dumper, stamped};
+use procon::replay::Replay;
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;

@@ -42,7 +42,6 @@
 //!   (see [`crate::follow`])
 
 use crate::objects::{Annotations, ObjectBox};
-use crate::recorder::Recorder;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
@@ -54,6 +53,7 @@ use gameplay_data::controller::ControllerLog;
 use gameplay_data::labels::{self, Label};
 use gameplay_data::session::{Marker, SESSION_FILE, SessionInfo, write_markers};
 use gameplay_data::turn::{self, TurnFit, read_turn_fits};
+use procon::recorder::Recorder;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

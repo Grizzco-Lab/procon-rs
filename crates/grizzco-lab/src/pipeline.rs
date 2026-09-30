@@ -53,12 +53,12 @@
 //! `{"error": "..."}` with status 400 (404 for an unknown endpoint or
 //! entry, 409 when the queue file stays locked).
 
-use crate::dump::unix_ms;
 use crate::objects::write_atomic;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail};
 use core::time::Duration;
+use procon::dump::unix_ms;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};

@@ -25,18 +25,18 @@
 //! and the policy's actions in `agentzero.jsonl` ([`BOT_LOG_FILE`]).
 
 use crate::audio;
-use crate::dump::unix_ms;
 use crate::player::Player;
 use crate::predictor::online::limits::Limits;
 use crate::predictor::online::{Bot, Ended, Takeover};
-use crate::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
-use crate::stream::LinkStats;
 use crate::video::Video;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
 use gameplay_data::session::{MARKER_TECHNIQUE, Marker, SessionInfo, write_atomic, write_markers};
+use procon::dump::unix_ms;
+use procon::recorder::{CONTROLLER_FILE, Recorder, RecorderState};
+use procon::stream::LinkStats;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs::{File, OpenOptions};
@@ -885,7 +885,7 @@ impl Studio {
             },
             "controller": {
                 "file": CONTROLLER_FILE,
-                "frame_size": crate::dump::FRAME_SIZE,
+                "frame_size": procon::dump::FRAME_SIZE,
                 "frames": recorder.frames,
                 "dropped": self.link.dropped.load(Ordering::Relaxed) - session.dropped_before,
             },

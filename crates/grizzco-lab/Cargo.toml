@@ -1,0 +1,29 @@
+[package]
+name = "grizzco-lab"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+chrono = { version = "0.4.41", features = ["serde"] }
+clap = { version = "4.5.45", features = ["derive"] }
+cuttlefish = { version = "0.1.0", path = "../cuttlefish" }
+env_logger = "0.11.8"
+futures-util = "0.3.31"
+gameplay-data = { version = "0.1.0", path = "../gameplay-data" }
+gameplay-vision = { version = "0.1.0", path = "../gameplay-vision" }
+include_dir = "0.7.4"
+libc = "0.2.175"
+log = "0.4.27"
+num_cpus = "1.17.0"
+procon = { version = "0.1.0", path = "../procon" }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.142"
+tokio = { version = "1.47.1", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+toml = "0.9.5"
+ureq = { version = "3.4.2", default-features = false }
+warp = { version = "0.4.1", features = ["websocket", "server"] }
+
+[features]
+# The Vision app's detector on an NVIDIA GPU; needs the CUDA toolkit (nvcc)
+cuda = ["gameplay-vision/cuda"]

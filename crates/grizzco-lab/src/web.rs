@@ -31,7 +31,6 @@
 
 use crate::config::WebConfig;
 use crate::cuttlefish::{self, Cuttlefish};
-use crate::dump::{Dumper, Frame};
 use crate::follow::{self, Follow};
 use crate::inspect::Inspector;
 use crate::motion::Orientation;
@@ -49,6 +48,7 @@ use anyhow::Result;
 use core::sync::atomic::Ordering;
 use core::time::Duration;
 use futures_util::{SinkExt, StreamExt};
+use procon::dump::{Dumper, Frame};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::os::unix::ffi::OsStrExt;

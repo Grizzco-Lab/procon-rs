@@ -36,7 +36,7 @@
 //! **Letting AgentZero play** (live only, [`Bot`]) is a second step, off by
 //! default: the page asks for confirmation each time, for a set time (at most
 //! [`MAX_PLAY_S`]). The studio then writes each action to the proxy's replay
-//! port as a replay line with `mix` (see [`crate::replay`]): the proxy
+//! port as a replay line with `mix` (see [`procon::replay`]): the proxy
 //! combines it with the physical controller on every report, so a person
 //! holding it corrects the bot live, without pausing it: their buttons add
 //! to the bot's, and a stick they push past a small deadzone, or a turn
@@ -127,11 +127,7 @@ use super::{
     checkpoints_in, gpu_memory, help_has, now_ms, signal_group,
 };
 use crate::detector::recording_in_progress;
-use crate::dump::{Dumper, Frame, unix_ms};
 use crate::objects::write_atomic;
-use crate::recorder::RecorderState;
-use crate::replay::Action;
-use crate::stream::LinkStats;
 use crate::studio::{BotStart, Studio};
 use crate::v4l2::YUYV;
 use crate::video::{self, POLICY_MAX_BYTES, PolicySink, PolicyTimes, mono_ns, mono_to_unix_us};
@@ -142,6 +138,10 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use core::time::Duration;
 use gameplay_data::labels::{self, Label};
 use limits::{Limiter, Limits, Tapping, TappingStatus};
+use procon::dump::{Dumper, Frame, unix_ms};
+use procon::recorder::RecorderState;
+use procon::replay::Action;
+use procon::stream::LinkStats;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -1389,7 +1389,7 @@ pub struct Takeover {
 }
 
 /// What of `report` (a frame of the proxy) is a person's rather than any of
-/// the `lines` sent lately, by the proxy's mix (see [`crate::replay`]):
+/// the `lines` sent lately, by the proxy's mix (see [`procon::replay`]):
 /// buttons no line pressed, and a stick or the gyro equal to no line's,
 /// since a line's values are written as they are (a line without a stick
 /// or gyro leaves it to the controller: not a takeover). Nothing before the

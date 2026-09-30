@@ -5,8 +5,9 @@
 #
 # The proxy is a static musl binary linked by Rust's bundled lld (see
 # .cargo/config.toml), so it needs no C toolchain here and no libraries there.
-# It is built without the `studio` feature: the studio's crates are of no use
-# on the Pi and some of them need a C compiler for the target.
+# Only its own package is built (crates/procon-proxy, with crates/procon): the
+# lab's crates are of no use on the Pi and some of them need a C compiler for
+# the target.
 
 set -euo pipefail
 
@@ -15,7 +16,7 @@ DEST=procon
 TARGET=aarch64-unknown-linux-musl
 
 cd "$(git rev-parse --show-toplevel)"
-cargo build --release --target "$TARGET" --no-default-features --bin procon-proxy
+cargo build --release --target "$TARGET" -p procon-proxy
 
 echo "Copying to $HOST:$DEST..."
 ssh "$HOST" "mkdir -p $DEST"

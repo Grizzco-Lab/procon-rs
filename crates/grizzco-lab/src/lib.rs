@@ -1,0 +1,22 @@
+extern crate alloc;
+
+pub mod audio;
+pub mod config;
+pub mod cuttlefish;
+pub mod detector;
+pub mod follow;
+pub mod inspect;
+pub mod keystate;
+pub mod knowledge;
+pub mod motion;
+pub mod objects;
+pub mod parser;
+pub mod pedia;
+pub mod pipeline;
+pub mod player;
+pub mod predictor;
+pub mod studio;
+pub mod v4l2;
+pub mod video;
+pub mod vision;
+pub mod web;

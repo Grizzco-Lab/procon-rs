@@ -6,21 +6,22 @@
 
 use alloc::sync::Arc;
 use clap::Parser;
-use procon::config::{self, StudioConfig};
-use procon::cuttlefish::Cuttlefish;
+use grizzco_lab::config::StudioConfig;
+use grizzco_lab::cuttlefish::Cuttlefish;
+use grizzco_lab::follow::{self, Follow};
+use grizzco_lab::inspect::Inspector;
+use grizzco_lab::pipeline::{self, Pipeline};
+use grizzco_lab::player::Player;
+use grizzco_lab::predictor::online::{Bot, Online};
+use grizzco_lab::predictor::{self, Predictor};
+use grizzco_lab::studio::{Command, SavedState, Studio};
+use grizzco_lab::video::Video;
+use grizzco_lab::vision::{self, Vision};
+use grizzco_lab::web::{self, LiveFeed};
+use procon::config;
 use procon::dump::MultiDumper;
-use procon::follow::{self, Follow};
-use procon::inspect::Inspector;
-use procon::pipeline::{self, Pipeline};
-use procon::player::Player;
-use procon::predictor::online::{Bot, Online};
-use procon::predictor::{self, Predictor};
 use procon::recorder::{Recorder, RecorderState};
 use procon::stream::{self, LinkStats};
-use procon::studio::{Command, SavedState, Studio};
-use procon::video::Video;
-use procon::vision::{self, Vision};
-use procon::web::{self, LiveFeed};
 use std::path::{Path, PathBuf};
 
 extern crate alloc;
@@ -221,7 +222,7 @@ fn main() -> anyhow::Result<()> {
         predictor_settings.results.clone(),
         settings,
         config.cuttlefish.translate_model,
-        procon::knowledge::AutoApply {
+        grizzco_lab::knowledge::AutoApply {
             on: config.cuttlefish.slang_auto_apply.unwrap_or(true),
             threshold: config
                 .cuttlefish
@@ -319,7 +320,7 @@ mod tests {
             "server connection error: hyper::Error(HeaderTimeout)"
         ));
         assert!(!is_client_abort(
-            "procon::web",
+            "grizzco_lab::web",
             "server connection error: hyper::Error(IncompleteMessage)"
         ));
     }

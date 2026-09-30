@@ -1,14 +1,27 @@
+//! USB proxy between the Pro Controller and the Switch, on the Raspberry Pi
+//!
+//! Resets the controller, presents itself to the Switch as a wired Pro
+//! Controller (a USB gadget) and forwards reports both ways, streaming each
+//! input report to the capture host and applying the actions replayed to it
+//! (see the `procon` crate for the frames, the link and the replay format).
+
+mod config;
+mod device;
+mod gadget;
+mod priority;
+mod proxy;
+mod wake;
+
 use anyhow::Context;
 use clap::Parser;
-use procon::config::Config;
-use procon::device;
+use config::Config;
+use gadget::ProConGadget;
+use priority::set_high_priority;
 use procon::dump::{AsyncDumper, MultiDumper};
-use procon::gadget::ProConGadget;
-use procon::priority::set_high_priority;
-use procon::proxy::Proxy;
 use procon::recorder::Recorder;
 use procon::replay::Replay;
 use procon::stream::FrameStreamer;
+use proxy::Proxy;
 
 /// Nintendo Switch Pro Controller HID Proxy
 #[derive(Parser)]

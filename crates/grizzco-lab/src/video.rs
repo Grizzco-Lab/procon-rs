@@ -59,7 +59,6 @@
 
 use crate::audio::{self, Audio};
 use crate::config::VideoConfig;
-use crate::dump::unix_ms;
 use crate::v4l2::{Capture, Dequeued};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
@@ -67,6 +66,7 @@ use anyhow::{Context, Result, ensure};
 use core::ops::Range;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use core::time::Duration;
+use procon::dump::unix_ms;
 use serde::Serialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
