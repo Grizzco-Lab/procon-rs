@@ -529,7 +529,10 @@ the CPU, memory and every process from `/proc`, which processes belong to
 which entry (running entries claim theirs first), each live entry's CPU,
 RSS and GPU memory, and when each was seen running; it keeps 12 hours of
 samples in memory for the timeline, averaged down to 720 points for a
-window. Progress comes from the run folder's `metrics.jsonl`, read as it
+window. Each sample is also appended to `pipeline-gpu.jsonl` in the local
+cache (`~/.cache/procon-cuttlefish`) and read back at start, so a restart
+keeps the timeline; the log keeps a week, older than 12 hours one row a
+minute. Progress comes from the run folder's `metrics.jsonl`, read as it
 grows (whole lines only, from the start again when the file shrinks), with
 the total from `args.json`, else from the last `N/M` in the log of a live
 entry; the ETA comes from the steps the sampler saw over the last ten

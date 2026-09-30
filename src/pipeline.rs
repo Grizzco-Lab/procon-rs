@@ -27,6 +27,14 @@
 //! (`metrics.jsonl` rows with `step` and `split`, `args.json` with `steps`)
 //! or else its log (the last `N/M` in it), with the rate and ETA it saw.
 //!
+//! Each sample is also appended to a log on this machine,
+//! `pipeline-gpu.jsonl` in the local cache (`cuttlefish::store::cache_dir`,
+//! never the synced knowledge folder), with the entries seen running then,
+//! so a restart keeps the timeline: the sampler reads back the last
+//! [`KEEP`] when it starts. The log is rewritten at start and every hour
+//! ([`compact`]): samples older than [`KEEP`] thinned to one a minute,
+//! those older than [`HISTORY_KEEP`] dropped, a torn last line skipped.
+//!
 //! Endpoints under `/api/pipeline/`:
 //!
 //! - `GET state[?since=<ms>]`: the machine now, the GPU's processes, the
@@ -69,6 +77,15 @@ pub const SAMPLE_EVERY: Duration = Duration::from_secs(5);
 
 /// How much of the samples the timeline keeps
 pub const KEEP: Duration = Duration::from_secs(12 * 3600);
+
+/// How much of the samples the log on disk keeps
+pub const HISTORY_KEEP: Duration = Duration::from_secs(7 * 24 * 3600);
+
+/// Width of the buckets samples older than [`KEEP`] are averaged into on disk
+const HISTORY_BUCKET_MS: u64 = 60_000;
+
+/// How often the log on disk is compacted
+const COMPACT_EVERY: Duration = Duration::from_secs(3600);
 
 /// Most points in a timeline answer; longer windows are averaged down
 pub const MAX_POINTS: usize = 720;
@@ -113,6 +130,8 @@ const BODY_LIMIT: u64 = 64 << 10;
 pub struct Settings {
     /// The queue file agents keep
     pub queue: PathBuf,
+    /// The samples' log on disk, if any
+    pub history: Option<PathBuf>,
 }
 
 impl Settings {
@@ -128,6 +147,7 @@ impl Settings {
                 || agentzero.join("runs").join("queue.json"),
                 |queue| config_dir.join(queue),
             ),
+            history: Some(cuttlefish::store::cache_dir().join("pipeline-gpu.jsonl")),
         }
     }
 }
@@ -1003,6 +1023,98 @@ pub fn downsample(samples: &[Sample], max: usize) -> Vec<Sample> {
     out
 }
 
+/// Extend an entry's spans of running with a sighting at `t_ms`
+fn note_running(spans: &mut Vec<(u64, u64)>, t_ms: u64) {
+    match spans.last_mut() {
+        Some((_, end)) if t_ms.saturating_sub(*end) <= SPAN_GAP_MS => *end = t_ms,
+        _ => spans.push((t_ms, t_ms)),
+    }
+}
+
+/// A line of the log on disk: the sample's row ([`Sample::row`]) with the
+/// entries seen running appended
+fn history_line((sample, running): &(Sample, Vec<String>)) -> String {
+    let mut row = sample.row();
+    if let Value::Array(values) = &mut row {
+        values.push(json!(running));
+    }
+    row.to_string()
+}
+
+/// A line of the log on disk back; `None` for a torn or foreign line
+fn parse_history(line: &str) -> Option<(Sample, Vec<String>)> {
+    let values: Vec<Value> = serde_json::from_str(line).ok()?;
+    let number = |i: usize| values.get(i).and_then(Value::as_f64).unwrap_or(f64::NAN);
+    let sample = Sample {
+        t_ms: values.first()?.as_u64()?,
+        util: number(1),
+        mem_mib: number(2),
+        jobs_mib: number(3),
+        temp_c: number(4),
+        power_w: number(5),
+        cpu: number(6),
+        ram_mib: number(7),
+    };
+    let running = values
+        .get(8)
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some((sample, running))
+}
+
+/// The log's rows as kept: in time order, none older than
+/// [`HISTORY_KEEP`], those older than [`KEEP`] averaged into buckets of
+/// [`HISTORY_BUCKET_MS`] ([`downsample`]'s rules) with every entry seen
+/// running in the bucket
+fn compact(mut rows: Vec<(Sample, Vec<String>)>, now: u64) -> Vec<(Sample, Vec<String>)> {
+    rows.sort_by_key(|(s, _)| s.t_ms);
+    let dropped = now.saturating_sub(HISTORY_KEEP.as_millis() as u64);
+    let thinned = now.saturating_sub(KEEP.as_millis() as u64);
+    rows.retain(|(s, _)| s.t_ms >= dropped);
+    let recent = rows.split_off(rows.partition_point(|(s, _)| s.t_ms < thinned));
+    let mut out = Vec::with_capacity(rows.len() / 12 + recent.len());
+    for bucket in rows.chunk_by(|a, b| a.0.t_ms / HISTORY_BUCKET_MS == b.0.t_ms / HISTORY_BUCKET_MS)
+    {
+        // Times from the bucket's first, so `downsample` sees one bucket
+        let first = bucket[0].0.t_ms;
+        let samples: Vec<Sample> = bucket
+            .iter()
+            .map(|(s, _)| Sample {
+                t_ms: s.t_ms - first,
+                ..*s
+            })
+            .collect();
+        let mut running: Vec<String> = bucket.iter().flat_map(|(_, ids)| ids.clone()).collect();
+        running.sort_unstable();
+        running.dedup();
+        for sample in downsample(&samples, 1) {
+            let t_ms = sample.t_ms + first;
+            out.push((Sample { t_ms, ..sample }, running.clone()));
+        }
+    }
+    out.extend(recent);
+    out
+}
+
+/// Append a row to the log on disk, creating its folder
+fn append_history(path: &Path, row: &(Sample, Vec<String>)) -> Result<()> {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    file.write_all(format!("{}\n", history_line(row)).as_bytes())?;
+    Ok(())
+}
+
 /// A process the page is told about
 #[derive(Clone, Debug, PartialEq, Serialize)]
 struct ProcInfo {
@@ -1101,9 +1213,21 @@ impl Pipeline {
         std::thread::Builder::new()
             .name(String::from("pipeline"))
             .spawn(move || {
+                let mut compacted = None;
                 loop {
                     let started = Instant::now();
-                    sampler.sample();
+                    if let Some(path) = &sampler.settings.history
+                        && compacted.is_none_or(|at: Instant| at.elapsed() >= COMPACT_EVERY)
+                    {
+                        sampler.load_history(path, compacted.is_none());
+                        compacted = Some(Instant::now());
+                    }
+                    let row = sampler.sample();
+                    if let Some(path) = &sampler.settings.history
+                        && let Err(e) = append_history(path, &row)
+                    {
+                        log::debug!("pipeline: cannot append to {}: {e:#}", path.display());
+                    }
                     std::thread::sleep(SAMPLE_EVERY.saturating_sub(started.elapsed()));
                 }
             })
@@ -1166,8 +1290,42 @@ impl Pipeline {
         inner.runs.retain(|dir, _| dirs.contains(dir));
     }
 
-    /// One sample of the machine, the queue's processes and their progress
-    fn sample(&self) {
+    /// Compact the log on disk ([`compact`]) and, the first time, take its
+    /// last [`KEEP`] as the timeline's start
+    fn load_history(&self, path: &Path, first: bool) {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(e) => {
+                log::warn!("pipeline: cannot read {}: {e}", path.display());
+                return;
+            }
+        };
+        let rows = compact(text.lines().filter_map(parse_history).collect(), unix_ms());
+        let mut out = String::new();
+        for row in &rows {
+            out.push_str(&history_line(row));
+            out.push('\n');
+        }
+        if let Err(e) = write_atomic(path, out.as_bytes()) {
+            log::warn!("pipeline: cannot rewrite {}: {e:#}", path.display());
+        }
+        if !first {
+            return;
+        }
+        let oldest = unix_ms().saturating_sub(KEEP.as_millis() as u64);
+        let mut inner = self.inner();
+        for (sample, running) in rows.into_iter().filter(|(s, _)| s.t_ms >= oldest) {
+            for id in running {
+                note_running(inner.spans.entry(id).or_default(), sample.t_ms);
+            }
+            inner.samples.push_back(sample);
+        }
+    }
+
+    /// One sample of the machine, the queue's processes and their progress;
+    /// answers the sample and the entries seen running
+    fn sample(&self) -> (Sample, Vec<String>) {
         let now = unix_ms();
         // The slow parts first, without the lock
         let gpu = nvidia_smi(&[
@@ -1348,7 +1506,7 @@ impl Pipeline {
 
         let reading = gpu.as_ref().ok().and_then(Option::as_ref);
         let number = |v: Option<f64>| v.unwrap_or(f64::NAN);
-        inner.samples.push_back(Sample {
+        let sample = Sample {
             t_ms: now,
             util: number(reading.and_then(|g| g.util)),
             mem_mib: number(reading.and_then(|g| g.mem_used_mib)),
@@ -1363,7 +1521,8 @@ impl Pipeline {
             ram_mib: memory.map_or(f64::NAN, |[total, available, ..]| {
                 total.saturating_sub(available) as f64 / (1 << 20) as f64
             }),
-        });
+        };
+        inner.samples.push_back(sample);
         let oldest = now.saturating_sub(KEEP.as_millis() as u64);
         while inner.samples.front().is_some_and(|s| s.t_ms < oldest) {
             inner.samples.pop_front();
@@ -1385,12 +1544,10 @@ impl Pipeline {
         inner.gpu_procs = gpu_procs;
 
         // When each entry was seen running
-        for id in live.keys() {
-            let spans = inner.spans.entry(id.clone()).or_default();
-            match spans.last_mut() {
-                Some((_, end)) if now.saturating_sub(*end) <= SPAN_GAP_MS => *end = now,
-                _ => spans.push((now, now)),
-            }
+        let mut seen_running: Vec<String> = live.keys().cloned().collect();
+        seen_running.sort_unstable();
+        for id in &seen_running {
+            note_running(inner.spans.entry(id.clone()).or_default(), now);
         }
         for spans in inner.spans.values_mut() {
             spans.retain(|&(_, end)| end >= oldest);
@@ -1420,6 +1577,7 @@ impl Pipeline {
         let ids: HashSet<&String> = running.iter().map(|entry| &entry.id).collect();
         inner.seen.retain(|id, _| ids.contains(id));
         inner.progress = progress;
+        (sample, seen_running)
     }
 
     /// An entry's progress now, from its run folder or its log, with the
@@ -2111,6 +2269,42 @@ mod tests {
         assert!(down.iter().all(|s| (s.util - 50.0).abs() <= 10.0));
         assert_eq!(down.last().unwrap().mem_mib, 999.0);
         assert_eq!(downsample(&samples[..10], 100).len(), 10);
+    }
+
+    #[test]
+    fn history_survives_the_disk_and_is_compacted() {
+        let hour = 3_600_000;
+        let now = 30 * 24 * hour;
+        let row = |t_ms: u64, ids: &[&str]| {
+            (
+                Sample {
+                    t_ms,
+                    util: 40.0,
+                    mem_mib: 1000.0,
+                    power_w: f64::NAN,
+                    ..Sample::default()
+                },
+                ids.iter().map(|id| String::from(*id)).collect::<Vec<_>>(),
+            )
+        };
+        let line = history_line(&row(5, &["a"]));
+        let back = parse_history(&line).unwrap();
+        assert_eq!(back.0.t_ms, 5);
+        assert!(back.0.power_w.is_nan());
+        assert_eq!(back.1, ["a"]);
+        // A torn last line is skipped
+        assert!(parse_history(&line[..line.len() - 3]).is_none());
+
+        let mut rows = vec![row(now - 8 * 24 * hour, &[])];
+        // Two minutes a day ago, every 5 s: one row a minute
+        let old = now - 24 * hour;
+        rows.extend((0..24).map(|i| row(old + i * 5000, if i == 3 { &["b"] } else { &[] })));
+        rows.extend((0..10).map(|i| row(now - i * 5000, &[])));
+        let kept = compact(rows, now);
+        assert_eq!(kept.len(), 2 + 10);
+        assert_eq!(kept[0].1, ["b"]);
+        assert!(kept.windows(2).all(|w| w[0].0.t_ms <= w[1].0.t_ms));
+        assert_eq!(kept.last().unwrap().0.t_ms, now);
     }
 
     #[test]
