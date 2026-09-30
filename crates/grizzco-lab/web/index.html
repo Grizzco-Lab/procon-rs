@@ -138,6 +138,13 @@
         aria-label="Status"
         data-i18n-aria-label="shell.status"
       >
+        <!-- Studio only: the capture card as the lab reads it, with the
+             frames it skipped or dropped -->
+        <span class="chip-group" data-app-only="studio">
+          <span class="chip" id="s-capture-chip" data-level="off" hidden>
+            <span class="chip-dot"></span><span class="chip-text"></span>
+          </span>
+        </span>
         <!-- Inkspector only: the session's delay -->
         <span class="chip-group" data-app-only="inspect">
           <span class="chip" id="i-delay-chip" data-level="off" hidden>

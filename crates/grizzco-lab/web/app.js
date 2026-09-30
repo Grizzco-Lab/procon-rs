@@ -1215,9 +1215,65 @@ for (const id of ["video-height", "video-fps"]) {
   );
 }
 
+/** The video status last shown, for redrawing its chip in another language */
+let shownVideo = null;
+
+/** How long after the capture card lost a frame its chip stays amber */
+const CAPTURE_LOSS_MS = 60 * 1000;
+
+/**
+ * The Studio's capture card chip, while the lab reads the card itself: the
+ * frames skipped (corrupted or short) or dropped by its driver since the
+ * reader started and in the file being recorded; amber while it loses
+ * frames, or once the recording lost some. None of them reach a file: the
+ * frame before stands in for each.
+ */
+function renderCaptureChip(status = shownVideo) {
+  shownVideo = status;
+  const chip = $("s-capture-chip");
+  const capture = status?.capture;
+  chip.hidden = !capture;
+  if (!capture) return;
+  const number = (n) => n.toLocaleString(i18nLocale());
+  const counts = (c) => ({
+    frames: number(c.frames),
+    corrupted: number(c.corrupted),
+    dropped: number(c.dropped),
+  });
+  const recording = capture.recording;
+  const recorded = recording ? recording.corrupted + recording.dropped : 0;
+  const losing =
+    capture.last_loss_ms != null &&
+    Date.now() - capture.last_loss_ms < CAPTURE_LOSS_MS;
+  const time = new Date(capture.started_ms).toLocaleTimeString(i18nLocale(), {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  setChip(
+    "s-capture-chip",
+    recorded > 0 || losing ? "warning" : "good",
+    recorded > 0
+      ? t("chip.capture.lost", { n: number(recorded) })
+      : t("chip.capture.ok"),
+    [
+      t("chip.capture.title", { input: status.input ?? "" }),
+      t("chip.capture.since", { time, ...counts(capture.since_start) }),
+      recording
+        ? t("chip.capture.recording", {
+            file: status.recording?.split("/").pop() ?? "",
+            ...counts(recording),
+          })
+        : t("chip.capture.idle"),
+      t("chip.capture.note"),
+    ].join("\n"),
+  );
+}
+
 function renderVideo(status) {
   player.encodeMs = status.preview_encode_ms;
   player.captureMs = status.capture_ms;
+  renderCaptureChip(status);
   // Rebuild the input list only when it changes, so an open menu stays open
   const select = $("video-input");
   const options = [{ id: "", name: "No video" }, ...status.inputs];
@@ -1614,6 +1670,7 @@ function frame(now) {
 window.addEventListener("lang-change", () => {
   markView();
   renderLinkChips();
+  renderCaptureChip();
   $("chip-rec").title = t(`chip.rec.${recorder.state}Title`);
 });
 

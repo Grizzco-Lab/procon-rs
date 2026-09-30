@@ -65,6 +65,17 @@ I18N.zh = {
   "chip.rec.idleTitle": "空闲：录制在工作室应用里进行",
   "chip.rec.recordingTitle": "录制中：录制在工作室应用里进行",
   "chip.rec.pausedTitle": "已暂停：录制在工作室应用里进行",
+  // The Studio's capture card chip
+  "chip.capture.ok": "采集卡",
+  "chip.capture.lost": "采集卡：丢失 {n} 帧",
+  "chip.capture.title": "采集卡 {input}，由实验室直接读取",
+  "chip.capture.since":
+    "读取器 {time} 启动以来：{frames} 帧，跳过 {corrupted} 帧（损坏或不完整），驱动丢弃 {dropped} 帧",
+  "chip.capture.recording":
+    "正在录制 {file}：{frames} 帧，跳过 {corrupted} 帧，丢弃 {dropped} 帧",
+  "chip.capture.idle": "未在录制",
+  "chip.capture.note":
+    "这两种帧都不会进入录像：由前一帧顶替，视频的时间不受影响。",
   "view.name": "视图",
   "view.theme": "主题",
   "view.theme.studio": "工作室",

@@ -8,7 +8,9 @@
 //!
 //! A session folder holds `controller.bin` (frames streamed from the proxy),
 //! `video-01.mkv`, `video-02.mkv`, … (one per stretch between pauses) and
-//! `session.json` describing how to line them up.
+//! `session.json` describing how to line them up, and for each file the
+//! capture card's frames while it was recorded, with those skipped or
+//! dropped (`capture`, see [`video::CaptureCounts`]).
 //!
 //! It also holds the replay [`Player`], which plays loaded actions to the
 //! Switch, and the [`Bot`], through which the Predictor's AgentZero plays it:
@@ -59,7 +61,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
-use video::Video;
+use video::{CaptureCounts, Video};
 
 /// The policy's actions of a bot run, one JSON line each, in the session
 /// folder (see [`BotRecord`])
@@ -321,6 +323,10 @@ struct Segment {
     /// Unix ms of the first sample of the file's sound track, if it has one
     #[serde(skip_serializing_if = "Option::is_none")]
     audio_start_unix_ms: Option<u64>,
+    /// The capture card's frames while the file was recorded, and those
+    /// skipped or dropped, when the lab read the card itself
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capture: Option<CaptureCounts>,
 }
 
 /// The session being recorded, or the last one
@@ -933,6 +939,7 @@ impl Studio {
                 file: name,
                 start_unix_ms: None,
                 audio_start_unix_ms: None,
+                capture: None,
             });
         }
     }
@@ -945,6 +952,7 @@ impl Studio {
         {
             segment.start_unix_ms = times.first_frame_ms;
             segment.audio_start_unix_ms = times.audio_start_ms;
+            segment.capture = times.capture;
         }
     }
 
@@ -1045,5 +1053,29 @@ mod tests {
         assert_eq!(roll.item, None);
         assert!(marked(" ", None, None, None).is_err());
         assert!(marked("Steelhead", None, None, Some(String::from("boss"))).is_err());
+    }
+
+    #[test]
+    fn segments_keep_the_capture_counts_as_gameplay_data_reads_them() {
+        let segment = |capture| Segment {
+            file: String::from("video-01.mkv"),
+            start_unix_ms: Some(1790369541479),
+            audio_start_unix_ms: None,
+            capture,
+        };
+        let counts = CaptureCounts {
+            frames: 5400,
+            corrupted: 2,
+            dropped: 1,
+        };
+        let read: gameplay_data::session::SegmentInfo =
+            serde_json::from_value(json!(segment(Some(counts)))).unwrap();
+        let capture = read.capture.unwrap();
+        assert_eq!(
+            (capture.frames, capture.corrupted, capture.dropped),
+            (5400, 2, 1)
+        );
+        // Not counted (ffmpeg read the input): left out
+        assert!(json!(segment(None)).get("capture").is_none());
     }
 }

@@ -3,10 +3,11 @@
 //! Frame `n` of a segment was captured at `start_unix_ms + n * 1000 / fps`
 //! on the host clock. Older sessions lack `video.fps` and `video.height`
 //! and have variable-rate video; newer ones may add `game_settings`,
-//! `video.audio`, per segment with sound, `audio_start_unix_ms`, and
-//! `markers` (spans labelled by hand: a technique practised, play with a
-//! Salmon Run weapon or a special). Fields that are absent stay absent when
-//! written back.
+//! `video.audio`, per segment with sound, `audio_start_unix_ms`, per
+//! segment `capture` (the capture card's frames skipped or dropped while it
+//! was recorded, [`CaptureInfo`]), and `markers` (spans labelled by hand: a
+//! technique practised, play with a Salmon Run weapon or a special). Fields
+//! that are absent stay absent when written back.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -171,6 +172,32 @@ pub struct SegmentInfo {
     /// the track starts with the first frame
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_start_unix_ms: Option<u64>,
+    /// The capture card's frames while the file was recorded; absent in
+    /// older sessions and when the lab did not read the card itself
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<CaptureInfo>,
+}
+
+/// The capture card's frames while a file was recorded, as the lab counted
+/// them reading the card itself. A frame skipped or dropped is not in the
+/// file: the frame before stands in for it, so the file keeps its constant
+/// rate and its timing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureInfo {
+    /// Frames the card's driver handed over, at the capture rate (not the
+    /// file's)
+    pub frames: u64,
+    /// Of those, corrupted or short ones, skipped
+    pub corrupted: u64,
+    /// Frames the driver dropped: gaps in its sequence numbers
+    pub dropped: u64,
+}
+
+impl CaptureInfo {
+    /// Frames lost: skipped or dropped
+    pub fn lost(&self) -> u64 {
+        self.corrupted + self.dropped
+    }
 }
 
 impl SegmentInfo {
@@ -229,13 +256,16 @@ mod tests {
             "proxy": {"address": "127.0.0.1:7397", "clock_offset_ms": -2},
             "started_at_unix_ms": 1790369541466, "stopped_at_unix_ms": 1790369546477,
             "video": {"audio": {"channels": 2, "codec": "opus", "sample_rate": 48000},
-                      "fps": 30, "height": 720, "input": "screen",
+                      "fps": 30, "height": 720, "input": "/dev/video0",
                       "segments": [{"audio_start_unix_ms": 1790369541479, "file": "video-01.mkv",
-                                    "start_unix_ms": 1790369541479}]}}"#;
+                                    "start_unix_ms": 1790369541479,
+                                    "capture": {"frames": 300, "corrupted": 2, "dropped": 1}}]}}"#;
         let info: SessionInfo = serde_json::from_str(text).unwrap();
         assert_eq!(info.video.fps, Some(30));
         assert_eq!(info.proxy.as_ref().unwrap().clock_offset_ms, Some(-2));
         assert!(info.video.segments[0].has_audio());
+        let capture = info.video.segments[0].capture.unwrap();
+        assert_eq!((capture.frames, capture.lost()), (300, 3));
         assert_eq!(info.game_settings.as_ref().unwrap().stick_sensitivity, -0.5);
         let again: SessionInfo =
             serde_json::from_str(&serde_json::to_string(&info).unwrap()).unwrap();
@@ -253,10 +283,11 @@ mod tests {
         assert_eq!(info.video.fps, None);
         assert!(info.game_settings.is_none());
         assert!(!info.video.segments[0].has_audio());
+        assert_eq!(info.video.segments[0].capture, None);
         assert!(info.markers.is_empty());
         let written = serde_json::to_string(&info).unwrap();
         assert!(!written.contains("fps") && !written.contains("audio"));
-        assert!(!written.contains("markers"));
+        assert!(!written.contains("markers") && !written.contains("capture"));
     }
 
     const WITH_MARKERS: &str = r#"{"controller": {"file": "controller.bin", "frames": 900},

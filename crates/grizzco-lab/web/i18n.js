@@ -85,6 +85,17 @@ const I18N = {
     "chip.rec.recordingTitle":
       "Recording: recording is run from the Studio app",
     "chip.rec.pausedTitle": "Paused: recording is run from the Studio app",
+    // The Studio's capture card chip
+    "chip.capture.ok": "Capture card",
+    "chip.capture.lost": "Card: {n} lost",
+    "chip.capture.title": "Capture card {input}, read by the lab itself",
+    "chip.capture.since":
+      "Since the reader started at {time}: {frames} frames, {corrupted} skipped (corrupted or short), {dropped} dropped by its driver",
+    "chip.capture.recording":
+      "Recording {file}: {frames} frames, {corrupted} skipped, {dropped} dropped",
+    "chip.capture.idle": "Not recording",
+    "chip.capture.note":
+      "Neither kind reaches a recording: the frame before stands in for each, so the video keeps its timing.",
     "view.name": "View",
     "view.theme": "Theme",
     "view.theme.studio": "Studio",

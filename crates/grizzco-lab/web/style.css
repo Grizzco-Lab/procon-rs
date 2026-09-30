@@ -2262,6 +2262,10 @@ input:focus-visible {
   --rail-mark-glow: none;
 }
 
+:root:not([data-app="studio"]) [data-app-only="studio"] {
+  display: none !important;
+}
+
 :root:not([data-app="inspect"]) [data-app-only="inspect"] {
   display: none !important;
 }

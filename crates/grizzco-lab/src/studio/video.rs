@@ -26,6 +26,15 @@
 //! When reading the device ourselves fails ([`DIRECT_TRIES`] starts without
 //! a frame), or its format is another, ffmpeg reads it (`v4l2_direct`).
 //!
+//! Our reader counts what the card delivers ([`CaptureCounts`]): frames,
+//! the corrupted or short ones it skips, and the ones the driver dropped
+//! (gaps in its sequence numbers); either way the frame before stands in
+//! for them on the constant rate, so no recording gets a broken frame or
+//! loses its timing. The status has the counts since the reader started
+//! and since the file being recorded started, each file keeps its own
+//! ([`FileTimes::capture`]), and the log has the first loss and, while
+//! losses go on, at most a line a [`LOSS_LOG_EVERY`] with their rate.
+//!
 //! Either way the Predictor's live policy gets its own frames ([`PolicySink`]):
 //! YUYV, the newest ready, [`POLICY_FPS`] of them a second, before the
 //! constant rate (which holds each frame until the next one arrives), each
@@ -126,6 +135,10 @@ const DEVICE_POLL: Duration = Duration::from_millis(100);
 /// Starts of our own V4L2 reader without a frame before ffmpeg reads the
 /// device instead (the Elgato 4K X streams only on every other start)
 pub const DIRECT_TRIES: u32 = 3;
+
+/// While the capture card keeps losing frames, the log sums them up at most
+/// this often
+const LOSS_LOG_EVERY: Duration = Duration::from_secs(60);
 
 /// Capture times queued for frames not read yet; more means the log and the
 /// frames are out of step, and the queue starts afresh
@@ -234,6 +247,9 @@ pub struct VideoStatus {
     pub capture_ms: Option<f64>,
     /// The capture card is read by the lab itself, not ffmpeg
     pub direct: bool,
+    /// What our reader counted of the card's frames; `None` while ffmpeg
+    /// reads the input
+    pub capture: Option<CaptureStatus>,
     /// The preview follows the recording size and rate
     pub preview_matches_recording: bool,
     /// Recordings get the sound track, when there is a sound source
@@ -243,6 +259,77 @@ pub struct VideoStatus {
     pub audio_live: bool,
     /// Why ffmpeg is not running
     pub error: Option<String>,
+}
+
+/// The capture card's frames as our V4L2 reader counts them: every frame
+/// its driver handed over, the corrupted or short ones among them (skipped),
+/// and the frames the driver dropped (gaps in its sequence numbers, never
+/// handed over). The frame before stands in for a skipped or dropped one on
+/// the constant rate, so recordings keep their timing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct CaptureCounts {
+    pub frames: u64,
+    pub corrupted: u64,
+    pub dropped: u64,
+}
+
+impl CaptureCounts {
+    /// What was counted since `start`, an earlier reading of the same
+    /// counters
+    pub fn since(self, start: Self) -> Self {
+        Self {
+            frames: self.frames.saturating_sub(start.frames),
+            corrupted: self.corrupted.saturating_sub(start.corrupted),
+            dropped: self.dropped.saturating_sub(start.dropped),
+        }
+    }
+
+    /// Frames lost: skipped or dropped
+    pub fn lost(self) -> u64 {
+        self.corrupted + self.dropped
+    }
+}
+
+/// [`CaptureCounts`] over the lab's life, which our reader adds to, and
+/// when it last lost a frame
+#[derive(Debug, Default)]
+pub struct CaptureCounters {
+    frames: AtomicU64,
+    corrupted: AtomicU64,
+    dropped: AtomicU64,
+    /// Unix ms of the last frame skipped or dropped, 0 before any
+    last_loss_ms: AtomicU64,
+}
+
+impl CaptureCounters {
+    /// The counts now
+    pub fn get(&self) -> CaptureCounts {
+        CaptureCounts {
+            frames: self.frames.load(Ordering::Relaxed),
+            corrupted: self.corrupted.load(Ordering::Relaxed),
+            dropped: self.dropped.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Count frames lost: `corrupted` skipped, `dropped` by the driver
+    fn lose(&self, corrupted: u64, dropped: u64) {
+        self.corrupted.fetch_add(corrupted, Ordering::Relaxed);
+        self.dropped.fetch_add(dropped, Ordering::Relaxed);
+        self.last_loss_ms.store(unix_ms(), Ordering::Relaxed);
+    }
+}
+
+/// The capture card as our reader counted it, for the dashboard
+#[derive(Debug, Serialize)]
+pub struct CaptureStatus {
+    /// When the reader started, Unix ms
+    pub started_ms: u64,
+    /// Since the reader started
+    pub since_start: CaptureCounts,
+    /// When it last lost a frame, Unix ms, if it did
+    pub last_loss_ms: Option<u64>,
+    /// Since the file being recorded started, while one is
+    pub recording: Option<CaptureCounts>,
 }
 
 /// A raw frame shared by the preview and the recording: 4:2:0 at 1920 x
@@ -374,6 +461,8 @@ struct Recording {
     audio_start_ms: Option<u64>,
     /// Frames lost because the encoder fell behind
     dropped: u64,
+    /// The capture card's counts when the file started
+    capture_from: CaptureCounts,
 }
 
 struct Inner {
@@ -393,6 +482,8 @@ struct Grabber {
     child: Child,
     /// Our own V4L2 reader, which holds the device until it ends
     reader: Option<JoinHandle<()>>,
+    /// When our reader started (Unix ms) and the capture card's counts then
+    counted_from: Option<(u64, CaptureCounts)>,
 }
 
 impl Grabber {
@@ -445,16 +536,22 @@ pub struct Video {
     direct_failures: Arc<AtomicU32>,
     /// The current grabber is our own V4L2 reader
     direct: Arc<AtomicBool>,
+    /// What our reader counted of the capture card's frames
+    capture: Arc<CaptureCounters>,
     /// The sound source, when one is configured
     audio: Option<Audio>,
 }
 
-/// When a finished video file starts
+/// When a finished video file starts, and what the capture card lost
+/// meanwhile
 pub struct FileTimes {
     /// Unix ms of its first frame
     pub first_frame_ms: Option<u64>,
     /// Unix ms of its first sound sample, if it has sound
     pub audio_start_ms: Option<u64>,
+    /// The capture card's frames while it was recorded, when our reader
+    /// read the card
+    pub capture: Option<CaptureCounts>,
 }
 
 /// Lock a mutex even if a holder panicked; the data stays usable
@@ -500,6 +597,7 @@ impl Video {
             capture_us: Arc::default(),
             direct_failures: Arc::default(),
             direct: Arc::default(),
+            capture: Arc::default(),
             audio,
         };
         let mut inner = video.lock();
@@ -670,6 +768,7 @@ impl Video {
                     audio_writer,
                     audio_start_ms: None,
                     dropped: 0,
+                    capture_from: self.capture.get(),
                 });
                 true
             }
@@ -700,18 +799,43 @@ impl Video {
                 recording.path.display()
             );
         }
+        // Counted only while our reader read the card
+        let capture = Some(self.capture.get().since(recording.capture_from))
+            .filter(|counts| counts.frames > 0);
+        if let Some(counts) = capture.filter(|counts| counts.lost() > 0) {
+            log::warn!(
+                "The capture card lost {} while {} was recorded; skipped, the frame before \
+                 standing in for each",
+                lost_frames(counts),
+                recording.path.display()
+            );
+        }
         Some(FileTimes {
             first_frame_ms: recording.first_frame_ms,
             audio_start_ms: recording.audio_start_ms,
+            capture,
         })
     }
 
     /// Take a snapshot for the dashboard
     pub fn status(&self) -> VideoStatus {
-        let recording = lock(&self.recording)
+        let (recording, recording_from) = lock(&self.recording)
             .as_ref()
-            .map(|r| r.path.display().to_string());
+            .map(|r| (r.path.display().to_string(), r.capture_from))
+            .unzip();
         let inner = self.lock();
+        let counts = self.capture.get();
+        let capture = inner
+            .grabber
+            .as_ref()
+            .and_then(|grabber| grabber.counted_from)
+            .map(|(started_ms, from)| CaptureStatus {
+                started_ms,
+                since_start: counts.since(from),
+                last_loss_ms: Some(self.capture.last_loss_ms.load(Ordering::Relaxed))
+                    .filter(|&ms| ms >= started_ms),
+                recording: recording_from.map(|from| counts.since(from)),
+            });
         let (preview_height, preview_fps) = preview_quality(&inner);
         let live = unix_ms().saturating_sub(self.last_preview_ms.load(Ordering::Relaxed)) < 2000;
         let encode_us = self.preview_encode_us.load(Ordering::Relaxed);
@@ -732,6 +856,7 @@ impl Video {
                 (fresh && us > 0).then(|| us as f64 / 1000.0)
             },
             direct: self.direct(),
+            capture,
             preview_matches_recording: inner.preview_matches_recording,
             record_audio: inner.record_audio,
             audio_input: Some(inner.config.audio_input.clone()).filter(|s| !s.is_empty()),
@@ -830,6 +955,7 @@ impl Video {
         Ok(Grabber {
             child,
             reader: Some(reader),
+            counted_from: Some((unix_ms(), self.capture.get())),
         })
     }
 
@@ -868,6 +994,7 @@ impl Video {
         Ok(Grabber {
             child,
             reader: None,
+            counted_from: None,
         })
     }
 
@@ -919,7 +1046,11 @@ impl Video {
         }
         let mut inner = self.lock();
         if self.grabber_is_current(generation) {
-            log::warn!("No frames from {}, reopening it", input);
+            log::warn!(
+                "No frames from {input} in {} ms, reopening it (the Elgato 4K X streams only on \
+                 every other start; without a picture from the console none come either)",
+                FIRST_FRAME_TIMEOUT.as_millis()
+            );
             self.restart_grabber(&mut inner);
             inner.error = Some(format!(
                 "No frames from {input} yet; retrying. Is the console on?"
@@ -1073,6 +1204,7 @@ impl Video {
             fps,
             &self.capture_times,
             &self.policy_sink,
+            &self.capture,
             running,
         ) && running()
         {
@@ -1330,12 +1462,15 @@ impl FrameSource for Capture {
 /// repeated for the slots the source skipped), its capture time into
 /// `capture_times` just before; corrupted or short frames are left out.
 /// The frame last written keeps its buffer until the next one, for repeats.
+/// Every frame, and every one skipped or dropped, goes into `counters`
+/// ([`CaptureCounts`]), whose losses the log sums up ([`LossLog`]).
 fn pump(
     source: &mut impl FrameSource,
     mut converter: impl Write,
     fps: u32,
     capture_times: &Mutex<VecDeque<u64>>,
     policy_sink: &Mutex<Option<Arc<dyn PolicySink>>>,
+    counters: &CaptureCounters,
     running: impl Fn() -> bool,
 ) -> Result<()> {
     let size = source.size();
@@ -1345,33 +1480,26 @@ fn pump(
     let mut held: Option<u32> = None;
     let mut policy_last: Option<u64> = None;
     let policy_gap = policy_gap_ns(fps);
-    let mut dropped = 0u64;
+    let mut losses = LossLog::new(counters.get());
     // Frames the driver dropped, for want of a free buffer (the reader fell
     // behind) or on the bus: gaps in its count
     let mut sequence: Option<u32> = None;
-    let mut missed = 0u64;
     while running() {
         let ready = source.ready(DEVICE_POLL)?;
         let dequeued = mono_ns();
         let whole = |frame: &Dequeued| !frame.error && frame.bytes as usize == frame_bytes;
         let newest = ready.iter().rev().find(|f| whole(f)).map(|f| f.index);
         for frame in &ready {
+            counters.frames.fetch_add(1, Ordering::Relaxed);
             if let Some(last) = sequence.replace(frame.sequence) {
                 let gap = u64::from(frame.sequence.wrapping_sub(last).saturating_sub(1));
                 if gap > 0 && gap < 1 << 16 {
-                    let before = missed;
-                    missed += gap;
-                    if missed.ilog2() > before.checked_ilog2().unwrap_or(0) || before == 0 {
-                        log::warn!("The capture card's driver dropped {missed} frames so far");
-                    }
+                    counters.lose(0, gap);
                 }
             }
             if !whole(frame) {
                 source.requeue(frame.index)?;
-                dropped += 1;
-                if dropped.is_power_of_two() {
-                    log::warn!("{dropped} corrupted or short frames from the capture card");
-                }
+                counters.lose(1, 0);
                 continue;
             }
             let captured = frame.captured.unwrap_or(dequeued);
@@ -1406,8 +1534,85 @@ fn pump(
             converter.write_all(source.frame(frame.index))?;
             held = Some(frame.index);
         }
+        losses.note(counters.get());
     }
     Ok(())
+}
+
+/// The log's account of the capture card's losses ([`CaptureCounts`]): the
+/// first at once, then, while more come, at most a line a
+/// [`LOSS_LOG_EVERY`] with how many since the line before and their rate,
+/// so a burst at the start reads apart from a steady loss
+struct LossLog {
+    /// The counters when the reader started, and when it did
+    start: (Instant, CaptureCounts),
+    /// When the last line was written, and the counters then
+    last: Option<(Instant, CaptureCounts)>,
+}
+
+impl LossLog {
+    fn new(start: CaptureCounts) -> Self {
+        Self {
+            start: (Instant::now(), start),
+            last: None,
+        }
+    }
+
+    /// The counters now: write a line when it is time
+    fn note(&mut self, now: CaptureCounts) {
+        if let Some(line) = self.line(now, Instant::now()) {
+            log::warn!("{line}");
+        }
+    }
+
+    /// The line to write at `at` with the counters `now`, if one is due
+    fn line(&mut self, now: CaptureCounts, at: Instant) -> Option<String> {
+        let (started, start) = self.start;
+        let total = now.since(start);
+        let line = match self.last {
+            None if total.lost() > 0 => format!(
+                "The capture card lost {}; skipped (the frame before stands in for each, so \
+                 recordings keep their timing). While it goes on, a line a minute sums it up",
+                lost_frames(total)
+            ),
+            Some((last, before))
+                if at.duration_since(last) >= LOSS_LOG_EVERY && now.since(before).lost() > 0 =>
+            {
+                let new = now.since(before);
+                // Of the frames the card sent meanwhile: handed over or dropped
+                let sent = (new.frames + new.dropped).max(1);
+                format!(
+                    "The capture card lost {} in the last {:.0} s ({:.1} per 1000 frames), all \
+                     skipped; {} since the reader started {:.0} min ago",
+                    lost_frames(new),
+                    at.duration_since(last).as_secs_f64(),
+                    new.lost() as f64 * 1000.0 / sent as f64,
+                    lost_frames(total),
+                    at.duration_since(started).as_secs_f64() / 60.0
+                )
+            }
+            _ => return None,
+        };
+        self.last = Some((at, now));
+        Some(line)
+    }
+}
+
+/// "3 frames (2 corrupted or short, 1 dropped by its driver)"
+fn lost_frames(counts: CaptureCounts) -> String {
+    let frames = |n: u64| {
+        if n == 1 {
+            "1 frame".into()
+        } else {
+            format!("{n} frames")
+        }
+    };
+    format!(
+        "{} ({} corrupted or short, {} dropped by its driver)",
+        frames(counts.lost()),
+        counts.corrupted,
+        counts.dropped
+    )
 }
 
 /// The size to read a V4L2 device `input` at ourselves: when the config
@@ -1829,9 +2034,10 @@ mod tests {
     }
 
     /// A device stand-in: frames of 4 x 2 YUYV (16 bytes) filled with their
-    /// number, handed out a batch per wait, each with its capture time
+    /// number, handed out a batch per wait, each with its capture time,
+    /// whether it is whole, and the driver's sequence number
     struct FakeDevice {
-        batches: VecDeque<Vec<(u64, bool)>>,
+        batches: VecDeque<Vec<(u64, bool, u32)>>,
         buffers: Vec<Option<u8>>,
         next: u8,
         /// The frames whose buffers went back
@@ -1846,14 +2052,14 @@ mod tests {
             let batch = self.batches.pop_front().unwrap_or_default();
             Ok(batch
                 .into_iter()
-                .map(|(captured, whole)| {
+                .map(|(captured, whole, sequence)| {
                     let index = self.buffers.iter().position(Option::is_none).unwrap() as u32;
                     self.buffers[index as usize] = Some(self.next);
                     self.next += 1;
                     Dequeued {
                         index,
                         captured: Some(captured),
-                        sequence: 0,
+                        sequence,
                         bytes: if whole { 16 } else { 8 },
                         error: false,
                     }
@@ -1897,13 +2103,13 @@ mod tests {
         let at = |t: u64| base + t * ms;
         let mut device = FakeDevice {
             batches: VecDeque::from([
-                vec![(at(0), true)],
-                vec![(at(17), true)],
+                vec![(at(0), true, 10)],
+                vec![(at(17), true, 11)],
                 // Behind: two ready at once, the second one short
-                vec![(at(33), true), (at(50), false)],
-                // The source skipped a frame
-                vec![(at(83), true)],
-                vec![(at(100), true), (at(117), true)],
+                vec![(at(33), true, 12), (at(50), false, 13)],
+                // The driver dropped a frame
+                vec![(at(83), true, 15)],
+                vec![(at(100), true, 16), (at(117), true, 17)],
             ]),
             buffers: vec![None; 4],
             next: 0,
@@ -1915,10 +2121,19 @@ mod tests {
         let sinks = Mutex::new(Some(sink));
         let mut converter = Vec::new();
         let waits = core::cell::Cell::new(0);
-        pump(&mut device, &mut converter, 60, &times, &sinks, || {
-            waits.set(waits.get() + 1);
-            waits.get() <= 5
-        })
+        let counters = CaptureCounters::default();
+        pump(
+            &mut device,
+            &mut converter,
+            60,
+            &times,
+            &sinks,
+            &counters,
+            || {
+                waits.set(waits.get() + 1);
+                waits.get() <= 5
+            },
+        )
         .unwrap();
         // Every slot from 0 ms to 117 ms: frame 2 again for the short one
         // (50 ms) and the one skipped (67 ms); 83 ms is slot 5
@@ -1934,6 +2149,56 @@ mod tests {
         // The short frame went back at once; the last one written is held
         assert_eq!(device.requeued, [0, 1, 3, 2, 4, 5]);
         assert_eq!(device.buffers.iter().flatten().collect::<Vec<_>>(), [&6]);
+        // Seven frames handed over, the short one skipped, one dropped
+        let counts = CaptureCounts {
+            frames: 7,
+            corrupted: 1,
+            dropped: 1,
+        };
+        assert_eq!(counters.get(), counts);
+        assert_eq!(counts.lost(), 2);
+        assert_eq!(
+            counts.since(CaptureCounts {
+                frames: 3,
+                corrupted: 1,
+                dropped: 0
+            }),
+            CaptureCounts {
+                frames: 4,
+                corrupted: 0,
+                dropped: 1
+            }
+        );
+    }
+
+    #[test]
+    fn losses_are_logged_first_then_summed_up_a_minute_apart() {
+        let counts = |frames, corrupted, dropped| CaptureCounts {
+            frames,
+            corrupted,
+            dropped,
+        };
+        let mut log = LossLog::new(counts(1000, 3, 0));
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        // Nothing lost since the reader started: nothing to say
+        assert_eq!(log.line(counts(1100, 3, 0), at(1)), None);
+        // The first loss at once
+        let first = log.line(counts(1200, 4, 0), at(2)).unwrap();
+        assert!(first.contains("lost 1 frame (1 corrupted or short, 0 dropped"));
+        assert!(first.contains("skipped"));
+        // More within the minute wait for the next line
+        assert_eq!(log.line(counts(2000, 6, 1), at(30)), None);
+        let next = log.line(counts(4800, 7, 1), at(62)).unwrap();
+        // 4 lost of the 3601 frames the card sent in those 60 s
+        assert!(next.contains("lost 4 frames (3 corrupted or short, 1 dropped"));
+        assert!(
+            next.contains("in the last 60 s (1.1 per 1000 frames)"),
+            "{next}"
+        );
+        assert!(next.contains("5 frames (4 corrupted or short, 1 dropped by its driver) since"));
+        // A burst that stopped says nothing more
+        assert_eq!(log.line(counts(9000, 7, 1), at(200)), None);
     }
 
     #[test]
