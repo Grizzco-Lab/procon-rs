@@ -45,10 +45,20 @@
 //! something else now (an evaluation after training, say). Neither has an
 //! ETA.
 //!
+//! The same thread watches the disks the work lands on ([`Storage`]): the
+//! Proxmox host's ZFS pools (`[pipeline] storage_host`, `pve`: every VM's
+//! disk is a thin zvol on its `rpool`, and a full pool hangs the host and
+//! both VMs), read once a minute over ssh without waiting for the answer
+//! ([`PoolProbe`]), this host's `/`, and the win11 VM's `C:` from its
+//! runner's file (`disk`). The watched pool's level ([`pool_level`], the
+//! thresholds of AgentZero's storage guard) goes to the page, which shows
+//! a banner here and a chip in every app while it is low.
+//!
 //! Each sample is also appended to a log on this machine,
 //! `pipeline-gpu.jsonl` in the local cache (`cuttlefish::store::cache_dir`,
 //! never the synced knowledge folder), with the entries seen running then
-//! and the CPU each took ([`Sample::line`]), so a restart keeps the
+//! and the CPU each took and the free space of each disk
+//! ([`Sample::line`]), so a restart keeps the
 //! timeline: the sampler reads back the last [`KEEP`] when it starts. The
 //! log is rewritten at start and every hour ([`compact`]): samples older
 //! than [`KEEP`] thinned to one a minute, those older than
@@ -57,8 +67,9 @@
 //! Endpoints under `/api/pipeline/`:
 //!
 //! - `GET state[?since=<ms>]`: the machine now, both GPUs and their
-//!   processes, the queue with each entry's processes, progress and
-//!   runner, and with `since` the samples taken after it
+//!   processes, the disks ([`Storage::to_json`]), the queue with each
+//!   entry's processes, progress and runner, and with `since` the samples
+//!   taken after it
 //! - `GET timeline?minutes=<n>`: the samples of the last `n` minutes (at
 //!   most [`KEEP`]), averaged down to [`MAX_POINTS`], and when each entry
 //!   was seen running
@@ -84,7 +95,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Instant, SystemTime};
 use warp::Filter;
@@ -186,6 +197,40 @@ const SPAN_GAP_MS: u64 = 4 * 5000;
 /// How long `POST order` waits for the queue's lock
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 
+/// The Proxmox host whose pools are read, by default (`[pipeline]
+/// storage_host`)
+pub const STORAGE_HOST: &str = "pve";
+
+/// What runs there, by default (`[pipeline] storage_command`)
+pub const STORAGE_COMMAND: &str = "zpool list -Hp -o name,size,alloc,free,cap,frag";
+
+/// The pool every VM's disk lives on, whose level the page shows
+pub const WATCHED_POOL: &str = "rpool";
+
+/// How often the pools are read
+const STORAGE_EVERY: Duration = Duration::from_secs(60);
+
+/// A reading of the pools not over by then is given up: a host whose pool
+/// filled up may hang
+const STORAGE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A reading of the pools older than this says nothing of now
+const STORAGE_STALE: Duration = Duration::from_secs(5 * 60);
+
+/// A GB as the thresholds count it (AgentZero's storage guard too)
+pub const GB: u64 = 1_000_000_000;
+
+/// The watched pool is low under this much free, or at [`LOW_CAP`] % used
+/// and more: AgentZero's runners then start nothing new
+pub const LOW_FREE: u64 = 300 * GB;
+
+/// See [`LOW_FREE`]
+pub const LOW_CAP: f64 = 85.0;
+
+/// The watched pool is critical under this much free: AgentZero's guard
+/// then stops the running jobs
+pub const CRITICAL_FREE: u64 = 150 * GB;
+
 /// Largest request body
 const BODY_LIMIT: u64 = 64 << 10;
 
@@ -199,6 +244,10 @@ pub struct Settings {
     /// The file the win11 runner writes the VM's GPU to: `win11/gpu.json`
     /// beside the queue file, as AgentZero's helper reads it
     pub remote: PathBuf,
+    /// The host whose ZFS pools are read over ssh (empty: none), and the
+    /// command it runs for them
+    pub storage_host: String,
+    pub storage_command: String,
 }
 
 impl Settings {
@@ -222,6 +271,14 @@ impl Settings {
             queue,
             history: Some(cuttlefish::store::cache_dir().join("pipeline-gpu.jsonl")),
             remote,
+            storage_host: config
+                .storage_host
+                .unwrap_or_else(|| String::from(STORAGE_HOST))
+                .trim()
+                .to_string(),
+            storage_command: config
+                .storage_command
+                .unwrap_or_else(|| String::from(STORAGE_COMMAND)),
         }
     }
 }
@@ -703,6 +760,9 @@ struct RemoteFile {
     job: Option<RemoteJob>,
     #[serde(default)]
     runner: Option<RemoteRunner>,
+    /// The VM's `C:`
+    #[serde(default)]
+    disk: Option<Disk>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -728,6 +788,9 @@ struct RemoteRunner {
     pid: Option<u32>,
     #[serde(default)]
     hold: bool,
+    /// Why it holds for storage, when it does
+    #[serde(default)]
+    space: Option<String>,
 }
 
 /// A compute process on a remote GPU (Windows does not tell its memory)
@@ -762,9 +825,12 @@ pub struct Remote {
     pub job: Option<String>,
     pub job_pid: Option<u64>,
     /// Whether its runner still runs here (its pid is alive), and whether
-    /// it holds new entries back (`HOLD`)
+    /// it holds new entries back (`HOLD`), and why when for storage
     pub runner: bool,
     pub hold: bool,
+    pub space: Option<String>,
+    /// The machine's system disk (`C:`), as its runner last read it
+    pub disk: Option<Disk>,
 }
 
 impl Remote {
@@ -818,6 +884,8 @@ pub fn parse_remote(host: &str, text: &str, now: u64, alive: impl Fn(u32) -> boo
         job_pid: file.job.and_then(|job| job.host_pid),
         runner: runner.pid.is_some_and(alive),
         hold: runner.hold,
+        space: runner.space.filter(|reason| !reason.trim().is_empty()),
+        disk: file.disk.filter(|disk| disk.total > 0),
     }
 }
 
@@ -969,6 +1037,232 @@ fn loadavg() -> Option<[f64; 3]> {
     let text = std::fs::read_to_string("/proc/loadavg").ok()?;
     let mut values = text.split_whitespace().map(|v| v.parse().ok());
     Some([values.next()??, values.next()??, values.next()??])
+}
+
+// ---------------------------------------------------------------- storage
+
+/// A ZFS pool as `zpool list -Hp -o name,size,alloc,free,cap,frag` gives it
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Pool {
+    pub name: String,
+    /// Bytes
+    pub size: u64,
+    pub alloc: u64,
+    pub free: u64,
+    /// Used, %
+    pub cap: f64,
+    /// Fragmentation of its free space, %; `-` in zpool's answer is none
+    pub frag: Option<f64>,
+}
+
+/// The pools of `zpool list -Hp -o name,size,alloc,free,cap,frag`'s lines
+/// (tab-separated, exact bytes); lines that do not read are left out
+pub fn parse_pools(text: &str) -> Vec<Pool> {
+    text.lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split('\t').map(str::trim).collect();
+            let [name, size, alloc, free, cap, frag] = fields[..] else {
+                return None;
+            };
+            let percent = |text: &str| text.trim_end_matches('%').parse::<f64>().ok();
+            Some(Pool {
+                name: name.to_string(),
+                size: size.parse().ok()?,
+                alloc: alloc.parse().ok()?,
+                free: free.parse().ok()?,
+                cap: percent(cap)?,
+                frag: percent(frag),
+            })
+        })
+        .collect()
+}
+
+/// A disk's free and total bytes
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize, Serialize)]
+pub struct Disk {
+    pub free: u64,
+    pub total: u64,
+}
+
+/// Where a pool stands: `critical` under [`CRITICAL_FREE`] free, `low`
+/// under [`LOW_FREE`] or at [`LOW_CAP`] % used and more, else `ok` (the
+/// levels of AgentZero's storage guard: `critical`, `hold`, `ok`)
+pub fn pool_level(pool: &Pool) -> &'static str {
+    if pool.free < CRITICAL_FREE {
+        "critical"
+    } else if pool.free < LOW_FREE || pool.cap >= LOW_CAP {
+        "low"
+    } else {
+        "ok"
+    }
+}
+
+/// Free space where the lab's work lands, as last read: the storage host's
+/// pools, this host's `/` and the win11 VM's `C:`
+#[derive(Clone, Debug, Default)]
+pub struct Storage {
+    /// The host whose pools are read, empty for none
+    pub host: String,
+    pub pools: Vec<Pool>,
+    /// When the pools were last read, Unix ms
+    pub pools_ms: Option<u64>,
+    /// Why the last reading failed, and when (they go on once a minute)
+    pub error: Option<String>,
+    pub failed_ms: Option<u64>,
+    /// This host's `/`
+    pub root: Option<Disk>,
+    /// The win11 VM's `C:`, while its runner's file is fresh
+    pub remote: Option<Disk>,
+}
+
+impl Storage {
+    /// The pools, while their reading is fresh
+    fn fresh_pools(&self, now: u64) -> &[Pool] {
+        let stale = STORAGE_STALE.as_millis() as u64;
+        match self.pools_ms {
+            Some(at) if now.saturating_sub(at) <= stale => &self.pools,
+            _ => &[],
+        }
+    }
+
+    /// The watched pool's level ([`pool_level`]), `unknown` once a reading
+    /// failed or lacks it and none is fresh; `None` without a storage host
+    /// or before the first answer
+    pub fn level(&self, now: u64) -> Option<&'static str> {
+        if self.host.is_empty() {
+            return None;
+        }
+        let watched = self
+            .fresh_pools(now)
+            .iter()
+            .find(|pool| pool.name == WATCHED_POOL);
+        match watched {
+            Some(pool) => Some(pool_level(pool)),
+            None if self.failed_ms.is_some() || self.pools_ms.is_some() => Some("unknown"),
+            None => None,
+        }
+    }
+
+    /// Free space in GB by disk, `<host>:<pool>` (while fresh), `linux:/`
+    /// and `win11:C:`, as the samples keep it
+    fn free_gb(&self, now: u64) -> Vec<(String, f64)> {
+        let in_gb = |bytes: u64| bytes as f64 / GB as f64;
+        let mut free: Vec<(String, f64)> = self
+            .fresh_pools(now)
+            .iter()
+            .map(|pool| (format!("{}:{}", self.host, pool.name), in_gb(pool.free)))
+            .collect();
+        if let Some(root) = self.root {
+            free.push((format!("{LOCAL}:/"), in_gb(root.free)));
+        }
+        if let Some(disk) = self.remote {
+            free.push((format!("{REMOTE_HOST}:C:"), in_gb(disk.free)));
+        }
+        free
+    }
+
+    /// For the page: the readings, the watched pool, its level and the
+    /// thresholds
+    pub fn to_json(&self, now: u64) -> Value {
+        json!({
+            "host": self.host,
+            "pools": self.fresh_pools(now),
+            "pools_ms": self.pools_ms,
+            "error": self.error,
+            "failed_ms": self.failed_ms,
+            "root": self.root,
+            "remote": self.remote,
+            "watched": WATCHED_POOL,
+            "level": self.level(now),
+            "low_free": LOW_FREE,
+            "low_cap": LOW_CAP,
+            "critical_free": CRITICAL_FREE,
+        })
+    }
+}
+
+/// The pools' reading over ssh: started at most once a [`STORAGE_EVERY`]
+/// and looked at by each sample without waiting, given up after
+/// [`STORAGE_TIMEOUT`]
+#[derive(Debug, Default)]
+struct PoolProbe {
+    /// The ssh under way, and when it started
+    running: Option<(Child, Instant)>,
+    /// When the last one started
+    started: Option<Instant>,
+}
+
+impl PoolProbe {
+    /// The reading that ended since the last look, if one did; starts the
+    /// next when it is due
+    fn poll(&mut self, host: &str, command: &str) -> Option<Result<Vec<Pool>>> {
+        if let Some((child, started)) = self.running.as_mut() {
+            let answer = match child.try_wait() {
+                Ok(Some(status)) => {
+                    let mut out = String::new();
+                    let mut err = String::new();
+                    if let Some(mut pipe) = child.stdout.take() {
+                        let _ = pipe.read_to_string(&mut out);
+                    }
+                    if let Some(mut pipe) = child.stderr.take() {
+                        let _ = pipe.read_to_string(&mut err);
+                    }
+                    let last = err.lines().rev().find(|l| !l.trim().is_empty());
+                    match parse_pools(&out) {
+                        _ if !status.success() => Err(anyhow::anyhow!(
+                            "ssh {host}: {}",
+                            last.map_or_else(|| status.to_string(), str::to_string)
+                        )),
+                        pools if pools.is_empty() => {
+                            Err(anyhow::anyhow!("ssh {host}: no pools in its answer"))
+                        }
+                        pools => Ok(pools),
+                    }
+                }
+                Ok(None) if started.elapsed() < STORAGE_TIMEOUT => return None,
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    Err(anyhow::anyhow!(
+                        "ssh {host}: no answer in {} s",
+                        STORAGE_TIMEOUT.as_secs()
+                    ))
+                }
+                Err(e) => Err(anyhow::Error::from(e).context("ssh")),
+            };
+            self.running = None;
+            return Some(answer);
+        }
+        if self.started.is_some_and(|at| at.elapsed() < STORAGE_EVERY) {
+            return None;
+        }
+        self.started = Some(Instant::now());
+        let spawned = Command::new("ssh")
+            .args([
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                host,
+                command,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        match spawned {
+            Ok(child) => {
+                self.running = Some((child, Instant::now()));
+                None
+            }
+            Err(e) => Some(Err(anyhow::Error::from(e).context("cannot run ssh"))),
+        }
+    }
+}
+
+/// A GB count for the log, `839.3 GB`
+fn gb(bytes: u64) -> String {
+    format!("{:.1} GB", bytes as f64 / GB as f64)
 }
 
 // ------------------------------------------------------------ run folders
@@ -1292,6 +1586,10 @@ pub struct Sample {
     /// The entries seen running, each with the CPU its processes here took,
     /// in cores (`NAN` for one on another machine)
     pub running: Vec<(String, f64)>,
+    /// Free space by disk, in GB (see [`Storage`]): the storage host's
+    /// pools (`pve:rpool`), this host's `/` (`linux:/`) and the VM's `C:`
+    /// (`win11:C:`), those read
+    pub free_gb: Vec<(String, f64)>,
 }
 
 impl Default for Sample {
@@ -1304,6 +1602,7 @@ impl Default for Sample {
             load: f64::NAN,
             ram_mib: f64::NAN,
             running: Vec::new(),
+            free_gb: Vec::new(),
         }
     }
 }
@@ -1354,30 +1653,54 @@ impl Sample {
         Value::Object(cores)
     }
 
+    /// The free space of each disk read, in GB: `{disk: GB}`
+    fn free(&self) -> Value {
+        let free: Map<String, Value> = self
+            .free_gb
+            .iter()
+            .filter(|(_, gb)| gb.is_finite())
+            .map(|(disk, gb)| (disk.clone(), rounded(*gb, 1)))
+            .collect();
+        Value::Object(free)
+    }
+
     /// As a row for the page: its [`Self::numbers`], then the CPU of each
-    /// entry ([`Self::cores`])
+    /// entry ([`Self::cores`]) and the free space of each disk
+    /// ([`Self::free`])
     fn row(&self) -> Value {
         let mut values = self.numbers();
         values.push(self.cores());
+        values.push(self.free());
         Value::Array(values)
     }
 
     /// As a line of the log on disk: its row with the ids of the entries
     /// seen running at index 8, where the log's first lines have them after
-    /// their eight numbers, so each version reads the other's lines
+    /// their eight numbers, so each version reads the other's lines (and
+    /// what a version adds goes at the end)
     pub fn line(&self) -> String {
         let mut values = self.numbers();
         let ids: Vec<&str> = self.running.iter().map(|(id, _)| id.as_str()).collect();
         values.insert(8, json!(ids));
         values.push(self.cores());
+        values.push(self.free());
         Value::Array(values).to_string()
     }
 
-    /// A line of the log on disk back ([`Self::line`], or a first version's
-    /// line, whose remote GPU, load and CPU per entry are not known);
-    /// `None` for a torn or foreign line
+    /// A line of the log on disk back ([`Self::line`], or an earlier
+    /// version's line, whose remote GPU, load, CPU per entry or free space
+    /// are not known); `None` for a torn or foreign line
     pub fn parse_line(line: &str) -> Option<Self> {
         let values: Vec<Value> = serde_json::from_str(line).ok()?;
+        let free_gb = values
+            .get(15)
+            .and_then(Value::as_object)
+            .map(|free| {
+                free.iter()
+                    .filter_map(|(disk, gb)| Some((disk.clone(), gb.as_f64()?)))
+                    .collect()
+            })
+            .unwrap_or_default();
         let number = |i: usize| values.get(i).and_then(Value::as_f64).unwrap_or(f64::NAN);
         let cores = values.get(14).and_then(Value::as_object);
         let running = values
@@ -1413,13 +1736,15 @@ impl Sample {
             },
             load: number(13),
             running,
+            free_gb,
         })
     }
 }
 
 /// Samples as one, at the last one's time: the mean utilization, power,
-/// CPU and load, the most memory, temperature and RAM, and every entry
-/// seen running with its mean CPU while it ran
+/// CPU and load, the most memory, temperature and RAM, every entry seen
+/// running with its mean CPU while it ran, and each disk's least free
+/// space
 pub fn merge(bucket: &[Sample]) -> Sample {
     let Some(last) = bucket.last() else {
         return Sample::default();
@@ -1456,6 +1781,13 @@ pub fn merge(bucket: &[Sample]) -> Sample {
         }
     }
     running.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut free_gb: Vec<(String, f64)> = Vec::new();
+    for (disk, gb) in bucket.iter().flat_map(|s| &s.free_gb) {
+        match free_gb.iter_mut().find(|(seen, _)| seen == disk) {
+            Some((_, least)) => *least = least.min(*gb),
+            None => free_gb.push((disk.clone(), *gb)),
+        }
+    }
     Sample {
         t_ms: last.t_ms,
         gpu: gpu(|s| &s.gpu),
@@ -1464,6 +1796,7 @@ pub fn merge(bucket: &[Sample]) -> Sample {
         load: mean(&|s| s.load),
         ram_mib: most(&|s| s.ram_mib),
         running,
+        free_gb,
     }
 }
 
@@ -1618,17 +1951,27 @@ struct Inner {
 pub struct Pipeline {
     settings: Settings,
     inner: Mutex<Inner>,
+    /// The disks as last read, apart from `inner`, so the dashboard's
+    /// status never waits for the sampler
+    storage: Mutex<Storage>,
+    /// The pools' reading under way
+    probe: Mutex<PoolProbe>,
 }
 
 impl Pipeline {
     /// Start sampling the machine on a thread of its own
     pub fn start(settings: Settings) -> Arc<Self> {
         let pipeline = Arc::new(Self {
+            storage: Mutex::new(Storage {
+                host: settings.storage_host.clone(),
+                ..Storage::default()
+            }),
             settings,
             inner: Mutex::new(Inner {
                 cores: num_cpus::get(),
                 ..Inner::default()
             }),
+            probe: Mutex::default(),
         });
         let sampler = Arc::clone(&pipeline);
         std::thread::Builder::new()
@@ -1658,6 +2001,79 @@ impl Pipeline {
 
     fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn storage(&self) -> std::sync::MutexGuard<'_, Storage> {
+        self.storage.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The disks now: the pools' reading if one ended ([`PoolProbe`]),
+    /// this host's `/`, and the VM's `C:` from its runner's fresh file; a
+    /// change of the watched pool's level is logged
+    fn read_storage(&self, remote: Option<&Remote>, now: u64) -> Storage {
+        let host = &self.settings.storage_host;
+        let answer = if host.is_empty() {
+            None
+        } else {
+            self.probe
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .poll(host, &self.settings.storage_command)
+        };
+        let mut storage = self.storage();
+        let before = storage.level(now);
+        match answer {
+            Some(Ok(pools)) => {
+                storage.pools = pools;
+                storage.pools_ms = Some(now);
+                storage.error = None;
+                storage.failed_ms = None;
+            }
+            Some(Err(e)) => {
+                storage.error = Some(format!("{e:#}"));
+                storage.failed_ms = Some(now);
+            }
+            None => {}
+        }
+        storage.root = crate::web::disk_space(Path::new("/"))
+            .map(|(free, total)| Disk { free, total })
+            .filter(|disk| disk.total > 0);
+        storage.remote = remote
+            .filter(|remote| remote.fresh)
+            .and_then(|remote| remote.disk);
+        let level = storage.level(now);
+        if level != before
+            && let Some(level) = level
+        {
+            let pool = storage.pools.iter().find(|pool| pool.name == WATCHED_POOL);
+            let told = match pool {
+                Some(pool) => format!(
+                    "{} free of {} ({:.0} % used)",
+                    gb(pool.free),
+                    gb(pool.size),
+                    pool.cap
+                ),
+                None => storage.error.clone().unwrap_or_default(),
+            };
+            let line = format!("{WATCHED_POOL} on {host}: {level}, {told}");
+            if level == "ok" {
+                log::info!("{line}");
+            } else {
+                log::warn!("{line}");
+            }
+        }
+        storage.clone()
+    }
+
+    /// The disks for the dashboard's status, while the watched pool is not
+    /// fine (low, critical or unknown); `null` otherwise
+    pub fn storage_alert(&self) -> Value {
+        let storage = self.storage();
+        let now = unix_ms();
+        match storage.level(now) {
+            Some("ok") | None => Value::Null,
+            Some(_) => storage.to_json(now),
+        }
     }
 
     /// A path from the queue: absolute, or from the queue file's folder
@@ -1770,6 +2186,7 @@ impl Pipeline {
             .map(|text| parse_apps(&text))
             .unwrap_or_default();
         let remote = read_remote(&self.settings.remote, now);
+        let storage = self.read_storage(remote.as_ref(), now);
         let (clk_tck, page) = clock();
         let cpu = cpu_ticks();
         let memory = meminfo();
@@ -1985,6 +2402,7 @@ impl Pipeline {
                 total.saturating_sub(available) as f64 / (1 << 20) as f64
             }),
             running,
+            free_gb: storage.free_gb(now),
         };
         inner.samples.push_back(sample.clone());
         inner.remote = remote;
@@ -2273,6 +2691,7 @@ impl Pipeline {
                 "swap_total": swap_total,
                 "swap_free": swap_free,
             })),
+            "storage": self.storage().to_json(unix_ms()),
             "queue": {
                 "path": self.settings.queue,
                 "updated_ms": inner.queue.updated.as_deref().and_then(parse_time),
@@ -2914,12 +3333,17 @@ mod tests {
                 (String::from("g-chunk-train"), f64::NAN),
                 (String::from("g-present-dropout"), 1.61),
             ],
+            free_gb: vec![
+                (String::from("pve:rpool"), 839.314),
+                (String::from("linux:/"), 841.9),
+            ],
         };
         let line = new.line();
         let values: Vec<Value> = serde_json::from_str(&line).unwrap();
         assert_eq!(values[1], json!(90));
         assert_eq!(values[8], json!(["g-chunk-train", "g-present-dropout"]));
         assert_eq!(values[14], json!({"g-present-dropout": 1.61}));
+        assert_eq!(values[15], json!({"pve:rpool": 839.3, "linux:/": 841.9}));
         let back = Sample::parse_line(&line).unwrap();
         assert_eq!(back.remote.util, 37.0);
         assert_eq!(back.remote.power_w, 105.0);
@@ -2927,11 +3351,122 @@ mod tests {
         assert_eq!(back.load, 6.68);
         assert!(back.running[0].1.is_nan());
         assert_eq!(back.running[1].1, 1.61);
-        // The page's row: the numbers, then the CPU of each entry
+        assert!(back.free_gb.contains(&(String::from("pve:rpool"), 839.3)));
+        // The version before this one wrote no free space: none read
+        let before: Vec<Value> = values[..15].to_vec();
+        let back = Sample::parse_line(&Value::Array(before).to_string()).unwrap();
+        assert!(back.free_gb.is_empty());
+        assert_eq!(back.running[1].1, 1.61);
+        // The page's row: the numbers, then the CPU of each entry and the
+        // free space of each disk
         let row = new.row();
         assert_eq!(row[8], json!(37));
         assert_eq!(row[12], json!(6.68));
         assert_eq!(row[13], json!({"g-present-dropout": 1.61}));
+        assert_eq!(row[14], json!({"pve:rpool": 839.3, "linux:/": 841.9}));
+    }
+
+    #[test]
+    fn pools_read_and_the_watched_one_tells_its_level() {
+        let text = "backup\t11991548690432\t8050604924928\t3940943765504\t67\t4\n\
+                    rpool\t3882650435584\t3043335847936\t839314587648\t78\t48\n\
+                    tank\t100\t50\t50\t50\t-\n\
+                    not a pool line\n";
+        let pools = parse_pools(text);
+        assert_eq!(pools.len(), 3);
+        let rpool = &pools[1];
+        assert_eq!(rpool.name, "rpool");
+        assert_eq!(rpool.free, 839_314_587_648);
+        assert_eq!((rpool.cap, rpool.frag), (78.0, Some(48.0)));
+        assert_eq!(pools[2].frag, None);
+        assert_eq!(pool_level(rpool), "ok");
+        let pool = |free: u64, cap: f64| Pool {
+            free,
+            cap,
+            ..rpool.clone()
+        };
+        // Low under 300 GB free or at 85 % used; critical under 150 GB
+        assert_eq!(pool_level(&pool(299 * GB, 70.0)), "low");
+        assert_eq!(pool_level(&pool(400 * GB, 85.0)), "low");
+        assert_eq!(pool_level(&pool(149 * GB, 97.0)), "critical");
+        assert_eq!(pool_level(&pool(300 * GB, 84.0)), "ok");
+
+        let now = 10 * 60_000;
+        let mut storage = Storage {
+            host: String::from("pve"),
+            ..Storage::default()
+        };
+        // Nothing asked yet
+        assert_eq!(storage.level(now), None);
+        storage.pools = pools.clone();
+        storage.pools_ms = Some(now - 60_000);
+        storage.root = Some(Disk {
+            free: 841_938_042_880,
+            total: 1_931_659_444_224,
+        });
+        assert_eq!(storage.level(now), Some("ok"));
+        let free = storage.free_gb(now);
+        assert!(free.contains(&(String::from("pve:rpool"), 839.314587648)));
+        assert!(free.contains(&(String::from("linux:/"), 841.93804288)));
+        // A reading that failed while the last one is fresh changes nothing
+        storage.failed_ms = Some(now);
+        assert_eq!(storage.level(now), Some("ok"));
+        // Once the last reading is stale: unknown, and its pools not kept
+        let later = now + STORAGE_STALE.as_millis() as u64;
+        assert_eq!(storage.level(later), Some("unknown"));
+        assert_eq!(
+            storage.free_gb(later),
+            [(String::from("linux:/"), 841.93804288)]
+        );
+        let json = storage.to_json(later);
+        assert_eq!(json["level"], "unknown");
+        assert_eq!(json["pools"], json!([]));
+        // No storage host: no level
+        storage.host.clear();
+        assert_eq!(storage.level(now), None);
+    }
+
+    #[test]
+    fn merged_samples_keep_each_disks_least_free_space() {
+        let sample = |t_ms: u64, rpool: f64| Sample {
+            t_ms,
+            free_gb: vec![
+                (String::from("pve:rpool"), rpool),
+                (String::from("linux:/"), 800.0),
+            ],
+            ..Sample::default()
+        };
+        let merged = merge(&[sample(1, 310.0), sample(2, 290.5), sample(3, 300.0)]);
+        assert_eq!(
+            merged.free_gb,
+            [
+                (String::from("pve:rpool"), 290.5),
+                (String::from("linux:/"), 800.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_files_give_the_vms_disk_and_why_its_runner_holds() {
+        let text = r#"{"host": "win11", "at": "2026-09-30T11:55:23-07:00", "ok": true,
+            "gpu": {"name": "NVIDIA GeForce RTX 4080 SUPER", "utilization_percent": 70.0},
+            "disk": {"free": 120000000000, "total": 999000000000},
+            "runner": {"pid": 1, "hold": true, "space": "C: under 50 GB"}}"#;
+        let now = parse_time("2026-09-30T11:55:30-07:00").unwrap() as u64;
+        let remote = parse_remote("win11", text, now, |_| true);
+        assert_eq!(
+            remote.disk,
+            Some(Disk {
+                free: 120_000_000_000,
+                total: 999_000_000_000
+            })
+        );
+        assert!(remote.hold);
+        assert_eq!(remote.space.as_deref(), Some("C: under 50 GB"));
+        // An older runner's file has neither
+        let older = r#"{"at": "2026-09-30T11:55:23-07:00", "ok": true, "runner": {"pid": 1}}"#;
+        let remote = parse_remote("win11", older, now, |_| true);
+        assert_eq!((remote.disk, remote.space), (None, None));
     }
 
     #[test]

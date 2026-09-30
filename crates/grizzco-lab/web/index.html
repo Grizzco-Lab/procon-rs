@@ -176,6 +176,10 @@
           </span>
         </span>
         <span class="chip-group">
+          <!-- The Proxmox pool every VM's disk lives on, while it runs low -->
+          <span class="chip" id="chip-storage" data-level="warning" hidden>
+            <span class="chip-dot"></span><span class="chip-text"></span>
+          </span>
           <span class="chip" id="chip-link" data-level="off">
             <span class="chip-dot"></span
             ><span class="chip-text">Connecting…</span>
@@ -4115,6 +4119,8 @@
          priorities), what came out and the history. pipeline.js draws it
          all from /api/pipeline (src/pipeline.rs). -->
     <div data-app-section="pipeline" hidden>
+      <!-- The Proxmox pool running low -->
+      <p class="notice pl-storage" id="pl-storage" role="alert" hidden></p>
       <main class="layout" id="pipeline-layout">
         <section class="panel p-pl-now" aria-labelledby="h-pl-now">
           <header class="panel-head">

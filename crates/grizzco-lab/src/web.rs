@@ -11,8 +11,10 @@
 //!   `/predictor.js`, `/pipeline.js`, `/i18n.js`, `/i18n-zh.js`:
 //!   the page, embedded from `web/`
 //! - `GET /ws`: WebSocket pushing `{"type":"state"}` text for every input
-//!   report, `{"type":"status"}` text twice a second, and the video preview
-//!   as binary fragmented-MP4 messages (an init segment, then one per frame)
+//!   report, `{"type":"status"}` text twice a second (with the Proxmox
+//!   pool's `storage` while it runs low, see [`Pipeline::storage_alert`]),
+//!   and the video preview as binary fragmented-MP4 messages (an init
+//!   segment, then one per frame)
 //! - `POST /api/command`: a [`Command`] such as `{"action":"start"}`, answered
 //!   with `{"recorder": ..., "replay": ..., "techniques": ...}` or
 //!   `{"error": "..."}`
@@ -120,7 +122,11 @@ pub async fn serve(
 ) {
     let port = web.port;
     let status = watch::Sender::new(String::new());
-    tokio::spawn(publish_status(Arc::clone(&studio), status.clone()));
+    tokio::spawn(publish_status(
+        Arc::clone(&studio),
+        Arc::clone(&pipeline),
+        status.clone(),
+    ));
 
     let index = warp::path::end().and(warp::get()).map(page);
     // The page again under every app path, after the asset and API routes;
@@ -628,7 +634,11 @@ struct Sample {
 }
 
 /// Publish a status snapshot twice a second
-async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
+async fn publish_status(
+    studio: Arc<Studio>,
+    pipeline: Arc<Pipeline>,
+    status: watch::Sender<String>,
+) {
     let mut tick = tokio::time::interval(STATUS_EVERY);
     let mut history: VecDeque<Sample> = VecDeque::new();
     let mut other_sessions: Option<(Instant, u64)> = None;
@@ -718,6 +728,8 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
                 },
                 "disk": { "free": disk_free, "total": disk_total },
                 "memory": { "available": mem_available, "total": mem_total },
+                // The Proxmox pool running low: a chip in every app
+                "storage": pipeline.storage_alert(),
             })
             .to_string(),
         );
@@ -725,7 +737,7 @@ async fn publish_status(studio: Arc<Studio>, status: watch::Sender<String>) {
 }
 
 /// Free and total bytes of the filesystem holding `path`
-fn disk_space(path: &Path) -> Option<(u64, u64)> {
+pub(crate) fn disk_space(path: &Path) -> Option<(u64, u64)> {
     let path = CString::new(path.as_os_str().as_bytes()).ok()?;
     // SAFETY: statvfs only writes into the zeroed struct we own
     let mut stat: libc::statvfs = unsafe { core::mem::zeroed() };

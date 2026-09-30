@@ -9356,6 +9356,20 @@ button.cf-cite {
     "history history history history history history history history history history history history";
 }
 
+/* The Proxmox pool running low: a banner over the layout, as wide */
+.pl-storage {
+  margin: var(--gap) max(var(--gap), (100% - 1760px) / 2 + var(--gap)) 0;
+}
+
+.pl-storage[data-level="warning"] {
+  border-color: color-mix(in oklab, var(--warning) 60%, transparent);
+  background: color-mix(in oklab, var(--warning) 12%, var(--panel));
+}
+
+[data-theme="joy"] .pl-storage {
+  margin-inline: max(var(--gap), (100% - 1360px) / 2 + var(--gap));
+}
+
 [data-theme="joy"] #pipeline-layout {
   --pl-c1: #2a78d6;
   --pl-c2: #eb6834;

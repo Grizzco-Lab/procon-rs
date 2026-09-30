@@ -1424,4 +1424,27 @@ I18N.zh = {
   "pl.chip.remote": "{host} {util}%",
   "pl.results.early":
     "在第 {step} / {total} 步提前停止（验证不再变好）；还没写结果。",
+  // Storage: the Proxmox pool every VM's disk lives on, the top bar's chip
+  // and the Pipeline's banner while it runs low
+  "pl.storage.chip.low": "{pool} 空间不足：剩 {free}",
+  "pl.storage.chip.critical": "{pool} 快满了：剩 {free}",
+  "pl.storage.chip.unknown": "{pool}：无读数",
+  "pl.storage.pool":
+    "{host} 上的 {pool}：{size} 中剩 {free}（已用 {cap}%，碎片 {frag}%）",
+  "pl.storage.noPool": "{host} 上的 {pool}：没有最新读数",
+  "pl.storage.read": "读取于 {time}，每分钟一次",
+  "pl.storage.error": "上次读取失败：{error}",
+  "pl.storage.noAnswer": "还没有回应",
+  "pl.storage.disk": "{name}：{size} 中剩 {free}",
+  "pl.storage.root": "本机的 /",
+  "pl.storage.remote": "win11 的 C:",
+  "pl.storage.limits":
+    "剩余少于 {low} 或已用 {cap}% 及以上为不足；少于 {critical} 为危急。",
+  "pl.storage.banner.low":
+    "{host} 上的 {pool} 空间不足：{size} 中只剩 {free}（已用 {cap}%）。",
+  "pl.storage.banner.critical":
+    "{host} 上的 {pool} 快满了：{size} 中只剩 {free}（已用 {cap}%）。",
+  "pl.storage.banner.unknown": "读不到 {host} 上 {pool} 的最新数据：{error}。",
+  "pl.storage.banner.why":
+    "每台虚拟机的磁盘都是它上面的精简卷：池一满，主机和两台虚拟机都会卡死。开大任务前先腾出空间。",
 };

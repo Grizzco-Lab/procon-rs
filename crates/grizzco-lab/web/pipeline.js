@@ -26,12 +26,16 @@
 //   follow (`agentzero-queue next`);
 // - Results and History: what came out, newest first, and entries whose run
 //   folder reached its last step (or stopped early) before the queue said
-//   so.
+//   so;
+// - a banner over it all while the Proxmox pool every VM's disk lives on
+//   (rpool) runs low or has no fresh reading (state's `storage`; the top
+//   bar's chip in app.js says the same in every app).
 //
 // Timeline rows (GET timeline, and state's samples) are arrays: 0 t, 1 busy
 // %, 2 memory MiB, 3 the queue's jobs' memory, 4 °C, 5 W, 6 CPU %, 7 RAM
 // MiB, 8 the remote GPU's busy %, 9 its memory, 10 its °C, 11 its W, 12
-// load, 13 {entry id: its CPU in cores}; null where nothing was read.
+// load, 13 {entry id: its CPU in cores}, 14 {disk: free GB} (pve:rpool,
+// linux:/, win11:C:, those read); null where nothing was read.
 //
 // It polls while shown (the state every 5 s, the running entries' curves
 // every 10 s) and stops while another app is shown or the tab is hidden.
@@ -645,6 +649,37 @@
     renderResults(entries, slots);
     renderHistory(entries, slots);
     renderChip(state);
+    renderStorage(state.storage);
+  }
+
+  /** The banner over the page while the Proxmox pool every VM's disk lives
+   * on runs low, or has no fresh reading; its title lists every disk
+   * (storageLines in app.js) */
+  function renderStorage(storage) {
+    const banner = $("pl-storage");
+    const level = storage?.level;
+    banner.hidden = !level || level === "ok";
+    if (banner.hidden) return;
+    const pool = storage.pools.find((p) => p.name === storage.watched);
+    banner.dataset.level = level === "critical" ? "critical" : "warning";
+    banner.textContent = [
+      pool
+        ? t(`pl.storage.banner.${level}`, {
+            pool: pool.name,
+            host: storage.host,
+            free: formatBytes(pool.free),
+            size: formatBytes(pool.size),
+            cap: Math.round(pool.cap),
+          })
+        : t("pl.storage.banner.unknown", {
+            pool: storage.watched,
+            host: storage.host,
+            error: storage.error ?? t("pl.storage.noAnswer"),
+          }),
+      t("pl.storage.banner.why"),
+      // Chinese sentences follow one another without a space
+    ].join(i18nLang() === "zh" ? "" : " ");
+    banner.title = storageLines(storage).join("\n");
   }
 
   function renderError() {

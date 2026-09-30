@@ -148,6 +148,12 @@ pub struct PipelineConfig {
     /// to this config file; by default `runs/queue.json` in the AgentZero
     /// folder (`[predictor] agentzero`)
     pub queue: Option<String>,
+    /// The Proxmox host whose ZFS pools hold the VMs' disks, read over ssh
+    /// once a minute; by default `pve`, `""` for none
+    pub storage_host: Option<String>,
+    /// What runs there for the pools; by default `zpool list -Hp -o
+    /// name,size,alloc,free,cap,frag`
+    pub storage_command: Option<String>,
 }
 
 /// The machine running `procon-proxy`

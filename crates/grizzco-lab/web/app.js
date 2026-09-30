@@ -1215,6 +1215,83 @@ for (const id of ["video-height", "video-fps"]) {
   );
 }
 
+/**
+ * The Pipeline's storage reading (GET /api/pipeline/state's `storage`, or
+ * the status's while the pool runs low) in words: the watched pool's line,
+ * when it was read or why not, the other disks and the thresholds, for the
+ * top bar's chip and the Pipeline's banner
+ */
+function storageLines(storage) {
+  const pool = storage.pools.find((p) => p.name === storage.watched);
+  const time = (ms) =>
+    new Date(ms).toLocaleTimeString(i18nLocale(), {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  const disk = (name, { free, total }) =>
+    t("pl.storage.disk", {
+      name,
+      free: formatBytes(free),
+      size: formatBytes(total),
+    });
+  return [
+    pool
+      ? t("pl.storage.pool", {
+          pool: pool.name,
+          host: storage.host,
+          free: formatBytes(pool.free),
+          size: formatBytes(pool.size),
+          cap: Math.round(pool.cap),
+          frag: pool.frag ?? "–",
+        })
+      : t("pl.storage.noPool", { pool: storage.watched, host: storage.host }),
+    storage.error
+      ? t("pl.storage.error", { error: storage.error })
+      : storage.pools_ms
+        ? t("pl.storage.read", { time: time(storage.pools_ms) })
+        : null,
+    ...storage.pools
+      .filter((p) => p !== pool)
+      .map((p) =>
+        disk(`${storage.host} ${p.name}`, { free: p.free, total: p.size }),
+      ),
+    storage.root ? disk(t("pl.storage.root"), storage.root) : null,
+    storage.remote ? disk(t("pl.storage.remote"), storage.remote) : null,
+    t("pl.storage.limits", {
+      low: formatBytes(storage.low_free),
+      cap: storage.low_cap,
+      critical: formatBytes(storage.critical_free),
+    }),
+  ].filter(Boolean);
+}
+
+/** The storage alert last shown, for redrawing its chip in another language */
+let shownStorage = null;
+
+/**
+ * The top bar's storage chip, in every app while the Proxmox pool every
+ * VM's disk lives on runs low (the Pipeline watches it): amber when low or
+ * not read, red when critical, the numbers in its title
+ */
+function renderStorageChip(storage = shownStorage) {
+  shownStorage = storage;
+  const chip = $("chip-storage");
+  chip.hidden = !storage;
+  if (!storage) return;
+  const pool = storage.pools.find((p) => p.name === storage.watched);
+  const level = pool ? storage.level : "unknown";
+  setChip(
+    "chip-storage",
+    level === "critical" ? "critical" : "warning",
+    t(`pl.storage.chip.${level}`, {
+      pool: storage.watched,
+      free: pool ? formatBytes(pool.free) : "",
+    }),
+    storageLines(storage).join("\n"),
+  );
+}
+
 /** The video status last shown, for redrawing its chip in another language */
 let shownVideo = null;
 
@@ -1387,6 +1464,7 @@ function renderLinkChips(link = shownLink) {
 function renderStatus(status) {
   const link = status.link;
   renderLinkChips(link);
+  renderStorageChip(status.storage ?? null);
   const offset = `${link.clock_offset_ms >= 0 ? "+" : "−"}${Math.abs(link.clock_offset_ms)} ms`;
   const input = link.connected && link.input_rate > 0;
   $("input-rate").textContent = input
@@ -1671,6 +1749,7 @@ window.addEventListener("lang-change", () => {
   markView();
   renderLinkChips();
   renderCaptureChip();
+  renderStorageChip();
   $("chip-rec").title = t(`chip.rec.${recorder.state}Title`);
 });
 

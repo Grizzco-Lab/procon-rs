@@ -1519,6 +1519,30 @@ const I18N = {
     "pl.chip.remote": "{host} {util}%",
     "pl.results.early":
       "Stopped early at step {step} of {total} (no better validation); no result written yet.",
+    // Storage: the Proxmox pool every VM's disk lives on, the top bar's
+    // chip and the Pipeline's banner while it runs low
+    "pl.storage.chip.low": "{pool} low: {free} free",
+    "pl.storage.chip.critical": "{pool} almost full: {free} free",
+    "pl.storage.chip.unknown": "{pool}: no reading",
+    "pl.storage.pool":
+      "{pool} on {host}: {free} free of {size} ({cap}% used, {frag}% fragmented)",
+    "pl.storage.noPool": "{pool} on {host}: no fresh reading",
+    "pl.storage.read": "Read at {time}, once a minute",
+    "pl.storage.error": "The last reading failed: {error}",
+    "pl.storage.noAnswer": "no answer yet",
+    "pl.storage.disk": "{name}: {free} free of {size}",
+    "pl.storage.root": "This host's /",
+    "pl.storage.remote": "win11 C:",
+    "pl.storage.limits":
+      "Low under {low} free or at {cap}% used; critical under {critical}.",
+    "pl.storage.banner.low":
+      "{pool} on {host} is running low: {free} free of {size} ({cap}% used).",
+    "pl.storage.banner.critical":
+      "{pool} on {host} is almost full: {free} free of {size} ({cap}% used).",
+    "pl.storage.banner.unknown":
+      "No fresh reading of {pool} on {host}: {error}.",
+    "pl.storage.banner.why":
+      "Every VM's disk is a thin volume on it: when it fills up, the host hangs and both VMs with it. Free space before big jobs.",
   },
 };
 
