@@ -1068,7 +1068,8 @@ I18N.zh = {
   "po.play.off": "关闭：AgentZero 只观看，不会向 Switch 发送任何操作。",
   "po.play.left":
     "正在操作 Switch，与你的手柄混合：剩余 {left}，已发送 {sent} 个操作，你接管了 {takeovers} 次。",
-  "po.play.ended": "已停止操作：{why}。",
+  "po.play.ended":
+    "已停止操作（操作了 {played}，发送了 {sent} 个操作）：{why}。",
   "po.record": "录制机器人的每次操作",
   "po.recordNote":
     "每次让 AgentZero 操作时，都像工作室的录制那样录下一个会话，放在你自己的会话旁，名为 bot-<时间>：带声音的视频、controller.bin 里真正到达 Switch 的输入、agentzero.jsonl 里策略模型自己的操作，以及 session.json 里的检查点、限制和你每次接管的时刻。若工作室正在录制，则记入正在录制的会话。",
@@ -1107,7 +1108,7 @@ I18N.zh = {
   "po.ended.page": "没有打开的控制台页面",
   "po.ended.replay": "回放面板占用了回放端口",
   "po.ended.link": "代理的数据流不再传到工作室",
-  "po.ended.stall": "策略模型没有回应",
+  "po.ended.stall": "策略模型半秒内没有给出操作",
   "po.ended.stopped": "AgentZero 已停止",
   "po.ended.proxy": "代理关闭了回放连接",
   "po.ended.recording": "无法开始录制",

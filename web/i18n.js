@@ -1146,7 +1146,8 @@ const I18N = {
       "Off: AgentZero only watches, and nothing reaches the Switch.",
     "po.play.left":
       "Playing the Switch, mixed with your controller: {left} left, {sent} actions sent, {takeovers} takeovers by you.",
-    "po.play.ended": "Stopped playing: {why}.",
+    "po.play.ended":
+      "Stopped playing after {played} ({sent} actions sent): {why}.",
     "po.record": "Record bot runs",
     "po.recordNote":
       "Each time AgentZero plays, a session is recorded as the Studio's Record does, bot-<time> beside your own: the video with sound, what reached the Switch in controller.bin, the policy's own actions in agentzero.jsonl, and in session.json the checkpoint, the limits and every moment you took over. A session being recorded takes the run instead.",
@@ -1187,7 +1188,7 @@ const I18N = {
     "po.ended.page": "no dashboard page was open",
     "po.ended.replay": "the Replay panel took the replay port",
     "po.ended.link": "the proxy's frames stopped reaching the studio",
-    "po.ended.stall": "the policy stopped answering",
+    "po.ended.stall": "no action came from the policy for half a second",
     "po.ended.stopped": "AgentZero stopped",
     "po.ended.proxy": "the proxy closed the replay connection",
     "po.ended.recording": "its recording could not start",

@@ -289,8 +289,6 @@ struct Session {
     open_span: Option<OpenSpan>,
     /// The bot's plays, once it played during the session
     bot: Option<BotRecord>,
-    /// [`BOT_LOG_FILE`], open from the bot's first play to the session's end
-    bot_log: Option<BufWriter<File>>,
 }
 
 impl Session {
@@ -307,7 +305,6 @@ impl Session {
             markers: Vec::new(),
             open_span: None,
             bot,
-            bot_log: None,
         }
     }
 
@@ -379,6 +376,13 @@ pub struct Studio {
     techniques: Mutex<Vec<Technique>>,
     /// The bot's runs are recorded
     record_bot_runs: AtomicBool,
+    /// [`BOT_LOG_FILE`] of the session recording the bot, open from its
+    /// first play to the session's end. Behind a lock of its own: the
+    /// policy's actions are logged on their way to the Switch, and must not
+    /// wait while the session lock is held for file work (a session started
+    /// on a network mount takes most of a second, longer than the bot may
+    /// go quiet, [`crate::predictor::online::STALL`])
+    bot_log: Mutex<Option<BufWriter<File>>>,
 }
 
 impl Studio {
@@ -407,11 +411,16 @@ impl Studio {
             game_settings: Mutex::new(game_settings),
             techniques: Mutex::new(techniques),
             record_bot_runs: AtomicBool::new(record_bot_runs),
+            bot_log: Mutex::new(None),
         }
     }
 
     fn lock_session(&self) -> MutexGuard<'_, Option<Session>> {
         self.session.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn lock_bot_log(&self) -> MutexGuard<'_, Option<BufWriter<File>>> {
+        self.bot_log.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Start recording a session (`infix` names it, see
@@ -423,6 +432,8 @@ impl Studio {
         bot: Option<BotRecord>,
     ) -> Result<()> {
         let dir = self.recorder.start(infix)?;
+        // The bot's log of a session that ended without a stop here
+        drop(self.lock_bot_log().take());
         let mut new = Session::new(self, dir, bot);
         self.start_segment(&mut new);
         self.write_session(&new)?;
@@ -441,7 +452,8 @@ impl Studio {
             current.reload_markers();
             current.close_span(stopped_at);
             self.finish_segment(current);
-            if let Some(mut log) = current.bot_log.take()
+            let log = self.lock_bot_log().take();
+            if let Some(mut log) = log
                 && let Err(e) = log.flush()
             {
                 log::warn!("Cannot finish {BOT_LOG_FILE}: {e}");
@@ -667,14 +679,15 @@ impl Studio {
             ended: None,
             sent: 0,
         });
-        if current.bot_log.is_none() {
+        // Opened outside the log's lock: the actions go on meanwhile
+        if self.lock_bot_log().is_none() {
             let path = current.dir.join(BOT_LOG_FILE);
             let file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&path)
                 .with_context(|| format!("cannot open {}", path.display()))?;
-            current.bot_log = Some(BufWriter::new(file));
+            *self.lock_bot_log() = Some(BufWriter::new(file));
         }
         self.write_session(current)?;
         log::info!("Recording the bot's run in {}", current.dir.display());
@@ -705,7 +718,7 @@ impl Studio {
             let own = record.own_session
                 && current.stopped_at_ms.is_none()
                 && self.recorder.status().state != RecorderState::Idle;
-            if let Some(log) = current.bot_log.as_mut() {
+            if let Some(log) = self.lock_bot_log().as_mut() {
                 log.flush()?;
             }
             if !own {
@@ -734,13 +747,11 @@ impl Studio {
     }
 
     /// One of the policy's actions, for the log of the session recording
-    /// the bot (`line` is made only then); a failed write ends the log
+    /// the bot (`line` is made only then); a failed write ends the log.
+    /// Never waits for the session lock (see `bot_log`)
     pub fn bot_action(&self, line: impl FnOnce() -> Value) {
-        let mut session = self.lock_session();
-        let Some(current) = session.as_mut() else {
-            return;
-        };
-        let Some(log) = current.bot_log.as_mut() else {
+        let mut guard = self.lock_bot_log();
+        let Some(log) = guard.as_mut() else {
             return;
         };
         let written = serde_json::to_writer(&mut *log, &line())
@@ -748,7 +759,7 @@ impl Studio {
             .and_then(|()| log.write_all(b"\n"));
         if let Err(e) = written {
             log::warn!("Stopped writing {BOT_LOG_FILE}: {e}");
-            current.bot_log = None;
+            *guard = None;
         }
     }
 

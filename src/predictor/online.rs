@@ -1347,6 +1347,10 @@ struct BotState {
     /// End of the time confirmed
     until: Option<Instant>,
     until_ms: u64,
+    /// When it was let play (Unix ms)
+    started_ms: u64,
+    /// How long the last play lasted, once it ended (ms)
+    played_ms: Option<u64>,
     /// When the last action went out
     last_sent: Option<Instant>,
     /// Actions written to the replay port since it was let play
@@ -1464,6 +1468,9 @@ pub struct BotStatus {
     pub sent: u64,
     /// Why sending last ended
     pub ended: Option<Ended>,
+    /// How long the last play lasted, once it ended (ms): a play that ends
+    /// at once is told apart from one stopped after a while
+    pub played_ms: Option<u64>,
     /// Where it sends
     pub address: String,
     /// What it may press
@@ -1534,6 +1541,7 @@ impl BotState {
             self.stream = None;
             self.until = None;
             self.ended = Some(Ended::Proxy);
+            self.played_ms = Some(now_ms().saturating_sub(self.started_ms));
             return false;
         }
         true
@@ -1611,7 +1619,9 @@ impl Bot {
         let now = Instant::now();
         state.stream = Some(stream);
         state.until = Some(now + Duration::from_secs_f64(seconds));
-        state.until_ms = now_ms() + (seconds * 1000.0) as u64;
+        state.started_ms = now_ms();
+        state.until_ms = state.started_ms + (seconds * 1000.0) as u64;
+        state.played_ms = None;
         state.last_sent = Some(now);
         state.sent = 0;
         state.ended = None;
@@ -1658,6 +1668,7 @@ impl Bot {
         state.stream = None;
         state.until = None;
         state.ended = Some(reason);
+        state.played_ms = Some(now_ms().saturating_sub(state.started_ms));
         state.recent.clear();
         state.close_takeover();
         log::info!("AgentZero stopped playing ({reason:?})");
@@ -1714,6 +1725,7 @@ impl Bot {
             until_ms: state.stream.as_ref().map(|_| state.until_ms),
             sent: state.sent,
             ended: state.ended,
+            played_ms: state.played_ms,
             address: self.0.address.clone(),
             limits: state.limits,
             tapping: state.tapping.as_ref().map(Tapping::status),

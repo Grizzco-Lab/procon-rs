@@ -710,11 +710,20 @@
         takeovers: bot.takeovers ?? 0,
       });
     } else if (bot?.ended) {
-      note = t("po.play.ended", { why: t(`po.ended.${bot.ended}`) });
+      note = t("po.play.ended", {
+        why: t(`po.ended.${bot.ended}`),
+        played: clockText((bot.played_ms ?? 0) / 1000),
+        sent: bot.sent,
+      });
     } else {
       note = t("po.play.off");
     }
     $("po-play-note").textContent = note;
+    // An end nobody asked for stands out, however short the play was
+    $("po-play-note").classList.toggle(
+      "notice",
+      !playing && Boolean(bot?.ended) && !["you", "time"].includes(bot.ended),
+    );
     renderRecord();
     $("po-live").dataset.state = playing ? "playing" : "watching";
     $("po-badge").textContent = playing
