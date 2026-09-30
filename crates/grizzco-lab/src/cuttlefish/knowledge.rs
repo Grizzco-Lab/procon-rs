@@ -1066,14 +1066,10 @@ impl Knowledge {
 
     /// The overview panel, what the store holds (the model need not be
     /// loaded): `docs` (every stored document) by source and format, the
-    /// glossary's terms by language and its name tables, assets by folder,
-    /// the inbox as `pending` lists it and the last imports
-    fn overview_of(
-        &self,
-        docs: &[Document],
-        glossaries: &Glossaries,
-        pending: &inbox::Pending,
-    ) -> Result<Value> {
+    /// glossary's terms by language and its name tables, assets by folder
+    /// and the last imports; the inbox (`inbox`, as `inbox::pending` lists
+    /// it) is added once walked
+    fn overview_of(&self, docs: &[Document], glossaries: &Glossaries) -> Result<Value> {
         let mut sources: BTreeMap<String, usize> = BTreeMap::new();
         let mut formats: BTreeMap<String, usize> = BTreeMap::new();
         for d in docs {
@@ -1114,7 +1110,6 @@ impl Knowledge {
                 "linked": catalogue.assets.iter().filter(|a| a.term.is_some()).count(),
                 "folders": catalogue.folders(),
             },
-            "inbox": pending,
             "reports": reports,
             "moved_aside": store::moved_aside(&store::legacy_root()),
             "credits": credits(docs),
@@ -1163,26 +1158,23 @@ impl Knowledge {
         }
     }
 
-    /// Makes the panels (on a thread of their own): every stored document
-    /// read once for the stats, the documents and the overview, the inbox
-    /// listed meanwhile, the glossary as the files are now and the index's
-    /// chunks ([`Knowledge::chunks`]); each panel as soon as it is made,
+    /// Makes the panels (on a thread of their own): the inbox listed from
+    /// the start, the longest; meanwhile every stored document read once
+    /// for the stats, the documents and the overview, with the glossary as
+    /// the files are now and the index's chunks ([`Knowledge::chunks`]);
+    /// each panel as soon as it is made, the overview once the inbox is,
     /// then all in the local cache. `changes` is the count of the lab's
     /// changes when it started.
     fn make_panels(&self, changes: u64) {
         let started = Instant::now();
-        let read = store::read_documents(&self.root).map_err(|e| format!("{e:#}"));
-        let docs = || read.as_ref().map_err(|e| anyhow::anyhow!("{e}"));
         std::thread::scope(|scope| {
-            scope.spawn(|| {
+            let walk = scope.spawn(|| {
                 let pending = inbox::pending(&self.root);
                 self.publish("inbox", Ok(json!(pending)));
-                let overview = (|| {
-                    let glossaries = self.glossaries.current()?;
-                    self.overview_of(docs()?, &glossaries, &pending)
-                })();
-                self.publish("overview", overview.map_err(|e| format!("{e:#}")));
+                pending
             });
+            let read = store::read_documents(&self.root).map_err(|e| format!("{e:#}"));
+            let docs = || read.as_ref().map_err(|e| anyhow::anyhow!("{e}"));
             let made = (|| {
                 let docs = docs()?;
                 let glossaries = self.glossaries.current()?;
@@ -1202,6 +1194,16 @@ impl Knowledge {
                     self.publish("documents", Err(format!("{e:#}")));
                 }
             }
+            let overview = (|| {
+                let glossaries = self.glossaries.current()?;
+                let mut overview = self.overview_of(docs()?, &glossaries)?;
+                let pending = walk
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("the inbox walk failed"))?;
+                overview["inbox"] = json!(pending);
+                Ok::<_, anyhow::Error>(overview)
+            })();
+            self.publish("overview", overview.map_err(|e| format!("{e:#}")));
         });
         let copy = {
             let state = self.panels.state.lock().unwrap();
