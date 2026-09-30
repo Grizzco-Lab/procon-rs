@@ -406,10 +406,31 @@ pub async fn serve(
         .or(under("api/pipeline").and(pipeline::routes(pipeline)));
     let routes = same_origin(web.allowed_hosts.clone())
         .and(routes)
-        .recover(forbidden);
+        .recover(forbidden)
+        .with(warp::log::custom(log_slow));
 
     log::info!("Dashboard on http://0.0.0.0:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;
+}
+
+/// A request answered later than this is logged (at debug level): the page
+/// shares six connections to the lab, so an answer that takes seconds holds
+/// every app up, and the slow ones should answer at once and work on a
+/// thread instead
+const SLOW_REQUEST: Duration = Duration::from_millis(300);
+
+/// Logs a request answered later than [`SLOW_REQUEST`], with its path and
+/// time (to its answer's head; a streamed body may take longer)
+fn log_slow(info: warp::log::Info) {
+    if info.elapsed() > SLOW_REQUEST {
+        log::debug!(
+            "Slow request: {} {} answered {} in {} ms",
+            info.method(),
+            info.path(),
+            info.status().as_u16(),
+            info.elapsed().as_millis()
+        );
+    }
 }
 
 /// A request from another site, or for a host name the dashboard does not

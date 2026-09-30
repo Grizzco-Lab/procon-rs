@@ -107,10 +107,32 @@ const REVIEWED_FOR: Duration = Duration::from_secs(60);
 /// (`glossary.toml`, the `terms/` folder, `glossary-user.toml`, the corpus)
 type Inputs = (PathBuf, [(u64, Option<SystemTime>); 4]);
 
+/// The Pedia is being made for the first time in this run, on a thread: a
+/// request answers `202`, and the page asks again ([`Pedia::load`])
+#[derive(Debug)]
+pub struct Making;
+
+impl core::fmt::Display for Making {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("the Pedia is being made; ask again")
+    }
+}
+
+impl std::error::Error for Making {}
+
+/// The first making of a run, on a thread ([`Pedia::load`])
+#[derive(Default)]
+struct First {
+    making: bool,
+    /// Why it failed, told to the next request
+    error: Option<String>,
+}
+
 /// What the Pedia keeps between requests
 #[derive(Default)]
 pub struct Pedia {
     loaded: Mutex<Option<(Inputs, Arc<Loaded>)>>,
+    first: Mutex<First>,
     wild: Mutex<Option<Arc<Wild>>>,
     cards: Arc<Mutex<CardState>>,
     /// The ids of the reviews here of #vod-review VODs, and when they were
@@ -182,14 +204,41 @@ fn inputs(root: &Path) -> Inputs {
 impl Pedia {
     /// The glossary and the terms in scope, made again when one of their
     /// files changed (an edit through the slang endpoints writes the user
-    /// file)
-    fn load(&self, root: &Path) -> Result<Arc<Loaded>> {
+    /// file, and shows at once). The first of a run takes seconds on a cold
+    /// network mount, so it is made on a thread: [`Making`] until then.
+    fn load(self: &Arc<Self>, root: &Path) -> Result<Arc<Loaded>> {
         let now = inputs(root);
-        if let Some((seen, loaded)) = &*self.loaded.lock().unwrap()
-            && *seen == now
-        {
-            return Ok(Arc::clone(loaded));
+        match &*self.loaded.lock().unwrap() {
+            Some((seen, loaded)) if *seen == now => return Ok(Arc::clone(loaded)),
+            Some(_) => {}
+            None => return Err(self.first(root)),
         }
+        self.make_now(root, now)
+    }
+
+    /// The first making of the run, on a thread; the error to answer with
+    /// meanwhile ([`Making`]), or why it failed
+    fn first(self: &Arc<Self>, root: &Path) -> anyhow::Error {
+        let mut first = self.first.lock().unwrap();
+        if let Some(e) = first.error.take() {
+            return anyhow::anyhow!("{e}");
+        }
+        if !first.making {
+            first.making = true;
+            let pedia = Arc::clone(self);
+            let root = root.to_path_buf();
+            std::thread::spawn(move || {
+                let made = pedia.make_now(&root, inputs(&root));
+                let mut first = pedia.first.lock().unwrap();
+                first.making = false;
+                first.error = made.err().map(|e| format!("{e:#}"));
+            });
+        }
+        anyhow::Error::new(Making)
+    }
+
+    /// Make it now from the files as they are (`now`), and keep it
+    fn make_now(&self, root: &Path, now: Inputs) -> Result<Arc<Loaded>> {
         let started = Instant::now();
         let loaded = Arc::new(self.make(root)?);
         log::debug!(
@@ -384,7 +433,7 @@ impl Pedia {
     }
 
     /// `GET pedia`: every term in scope and the sections
-    pub fn list(&self, root: &Path) -> Result<Value> {
+    pub fn list(self: &Arc<Self>, root: &Path) -> Result<Value> {
         let loaded = self.load(root)?;
         let mut sections: BTreeMap<Section, usize> = BTreeMap::new();
         let terms: Vec<Value> = loaded
@@ -432,7 +481,7 @@ impl Pedia {
 
     /// `GET pedia/<id>`: one entry, with up to `quotes` quotes
     pub fn entry(
-        &self,
+        self: &Arc<Self>,
         root: &Path,
         reviews: &Path,
         catalogue: &Catalogue,
@@ -589,7 +638,7 @@ impl Pedia {
     /// `GET source`: the context of a cited source or a quote (see the
     /// module's endpoints)
     pub fn source(
-        &self,
+        self: &Arc<Self>,
         root: &Path,
         reviews: &Path,
         query: &std::collections::HashMap<String, String>,

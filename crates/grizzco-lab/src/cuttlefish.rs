@@ -83,7 +83,7 @@
 //!   specials of Lean's datamine in the store, for the Studio's Techniques
 //!   panel (see [`cuttlefish::leanny::items`]), as kept in memory and in the
 //!   local cache, at once; `refreshing` while a thread looks at the files
-//!   they are made from again ([`GameItems`]); `GET game-icon?path=<an item's icon>`:
+//!   they are made from again ([`kept`], [`item_files`]); `GET game-icon?path=<an item's icon>`:
 //!   its picture from Lean's site (leanny.github.io), fetched once into the
 //!   local cache; the page credits him where it shows them
 //! - `POST download` with `{"url", "start_s", "end_s", "review"?}` starts
@@ -133,6 +133,7 @@
 //! Errors are `{"error": "..."}` with status 400 (404 for a missing review).
 
 mod frames;
+mod kept;
 pub mod knowledge;
 pub mod pedia;
 
@@ -153,6 +154,7 @@ use cuttlefish::{corpus, corpus_reviews, expert};
 use frames::FrameSource;
 use gameplay_data::labels::{self, Label};
 use gameplay_data::session::SessionInfo;
+use kept::Kept;
 use knowledge::{AutoApply, Knowledge, Status, Translation, now_ms};
 use pedia::Pedia;
 use serde::{Deserialize, Serialize};
@@ -162,7 +164,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Condvar, Mutex};
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::{Method, Response, StatusCode};
@@ -190,12 +192,8 @@ const LIST_READERS: usize = 16;
 /// background, for reviews written by others (`cuttlefish corpus reviews`)
 const LIST_FRESH: Duration = Duration::from_secs(30);
 
-/// The Studio's game items in the local cache ([`GameItems`])
+/// The Studio's game items in the local cache ([`item_files`])
 const GAME_ITEMS_FILE: &str = "game-items.json";
-
-/// How long the game items are served as they are before their files are
-/// looked at again, on the next request
-const GAME_ITEMS_FRESH: Duration = Duration::from_secs(10);
 
 /// Gungee's community Salmon Run tools, whose stage maps the page shows
 const GUNGEE: &str = "https://salmon-learn-nw.gungee.jp";
@@ -599,6 +597,8 @@ struct ListState {
     /// The lab's changes while a reading is under way, applied over its
     /// result (`None`: deleted)
     changed: Vec<(String, Option<Listed>)>,
+    /// Why the first reading failed
+    error: Option<String>,
 }
 
 impl ReviewList {
@@ -610,35 +610,51 @@ impl ReviewList {
         }
     }
 
-    /// Every review and whether the list is being read again; the first
-    /// call waits for the list to be read
-    fn rows(self: &Arc<Self>) -> Result<(Vec<Listed>, bool)> {
+    /// Every review and whether the list is being read again, at once;
+    /// none while it was never read, which a thread does now (a request
+    /// answers `202`: ask again)
+    fn rows(self: &Arc<Self>) -> Result<Option<(Vec<Listed>, bool)>> {
         let mut state = self.state.lock().unwrap();
-        loop {
-            if let Some(reviews) = &state.reviews {
-                let rows = reviews.values().cloned().collect();
-                if !state.reading && state.read_at.is_none_or(|t| t.elapsed() > LIST_FRESH) {
-                    state.reading = true;
-                    state.changed.clear();
-                    let list = Arc::clone(self);
-                    std::thread::spawn(move || {
-                        if let Err(e) = list.read_all() {
-                            log::warn!("Could not read the reviews again: {:#}", e);
-                        }
-                    });
-                }
-                return Ok((rows, state.reading));
+        if let Some(reviews) = &state.reviews {
+            let rows = reviews.values().cloned().collect();
+            if !state.reading && state.read_at.is_none_or(|t| t.elapsed() > LIST_FRESH) {
+                self.read_on_a_thread(&mut state);
             }
-            if state.reading {
-                state = self.read.wait(state).unwrap();
-                continue;
-            }
-            state.reading = true;
-            state.changed.clear();
-            drop(state);
-            self.read_all()?;
-            state = self.state.lock().unwrap();
+            return Ok(Some((rows, state.reading)));
         }
+        if let Some(e) = state.error.take() {
+            bail!("{e}");
+        }
+        if !state.reading {
+            self.read_on_a_thread(&mut state);
+        }
+        Ok(None)
+    }
+
+    /// Every review, waiting while the list was never read (for a change
+    /// that must see every review)
+    fn rows_read(self: &Arc<Self>) -> Result<Vec<Listed>> {
+        loop {
+            if let Some((rows, _)) = self.rows()? {
+                return Ok(rows);
+            }
+            let state = self.state.lock().unwrap();
+            if state.reading && state.reviews.is_none() {
+                drop(self.read.wait(state).unwrap());
+            }
+        }
+    }
+
+    /// Read the list on a thread of its own (no reading is under way)
+    fn read_on_a_thread(self: &Arc<Self>, state: &mut ListState) {
+        state.reading = true;
+        state.changed.clear();
+        let list = Arc::clone(self);
+        std::thread::spawn(move || {
+            if let Err(e) = list.read_all() {
+                log::warn!("Could not read the reviews: {:#}", e);
+            }
+        });
     }
 
     /// Read the list now, unless a reading is under way
@@ -662,6 +678,8 @@ impl ReviewList {
         state.reading = false;
         self.read.notify_all();
         let changed = core::mem::take(&mut state.changed);
+        // Told to the next listing while none was ever read
+        state.error = result.as_ref().err().map(|e| format!("{e:#}"));
         let mut reviews = result?;
         log::debug!(
             "Read {} reviews in {} ms",
@@ -700,192 +718,23 @@ impl ReviewList {
     }
 }
 
-/// The Salmon Run weapons and specials of the Studio's Techniques panel
-/// ([`cuttlefish::leanny::items`]), kept in memory and in the local cache
-/// ([`GAME_ITEMS_FILE`] in [`cuttlefish::store::cache_dir`]). They are made
-/// from the store's glossary and Lean's copies, on a network mount maybe,
-/// which takes seconds, so a request answers at once with the items kept,
-/// while a thread looks at their files ([`item_files`]: sizes and times,
-/// nothing read) and makes them again when those changed. A request waits
-/// only while none were ever made on this machine.
-struct GameItems {
-    /// The knowledge folder
-    root: PathBuf,
-    /// The copy in the local cache
-    file: PathBuf,
-    state: Mutex<ItemsState>,
-    /// Signalled when a look at the files ends
-    looked: Condvar,
-}
-
-#[derive(Default)]
-struct ItemsState {
-    /// The items as last made, with the files they were made from: at
-    /// first the local copy of an earlier run
-    kept: Option<KeptItems>,
-    /// The local copy was read (on the first request)
-    opened: bool,
-    /// A thread looks at the files, or makes the items, now
-    looking: bool,
-    /// When the files were last looked at
-    looked_at: Option<Instant>,
-    /// Why the items could not be made the last time
-    error: Option<String>,
-}
-
-/// Game items as the local cache keeps them
-#[derive(Serialize, Deserialize)]
-struct KeptItems {
-    /// The knowledge folder they were made from
-    root: PathBuf,
-    /// Its files they were made from ([`item_files`])
-    files: Vec<FileStamp>,
-    /// The items, as `GET game-items` answers them
-    items: Value,
-}
-
-/// A file by its path in the knowledge folder, with its size and time
-type FileStamp = (String, u64, Option<SystemTime>);
-
-impl GameItems {
-    /// The items of the knowledge folder `root`, kept in `file` too
-    fn new(root: PathBuf, file: PathBuf) -> Self {
-        Self {
-            root,
-            file,
-            state: Mutex::default(),
-            looked: Condvar::new(),
-        }
-    }
-
-    /// Look at the files on a thread, unless one does or they were looked
-    /// at lately
-    fn refresh(self: &Arc<Self>) {
-        let mut state = self.state.lock().unwrap();
-        if state.looking
-            || state
-                .looked_at
-                .is_some_and(|t| t.elapsed() < GAME_ITEMS_FRESH)
-        {
-            return;
-        }
-        state.looking = true;
-        let items = Arc::clone(self);
-        std::thread::spawn(move || items.look());
-    }
-
-    /// The items and whether their files are being looked at again; waits
-    /// only while none are kept
-    fn get(self: &Arc<Self>) -> Result<(Value, bool)> {
-        {
-            let mut state = self.state.lock().unwrap();
-            if !state.opened {
-                state.opened = true;
-                // The copy of an earlier run, when it is of this folder
-                state.kept = std::fs::read(&self.file)
-                    .ok()
-                    .and_then(|bytes| serde_json::from_slice::<KeptItems>(&bytes).ok())
-                    .filter(|kept| kept.root == self.root);
-            }
-        }
-        self.refresh();
-        let mut state = self.state.lock().unwrap();
-        loop {
-            if let Some(kept) = &state.kept {
-                return Ok((kept.items.clone(), state.looking));
-            }
-            if !state.looking {
-                bail!("{}", state.error.as_deref().unwrap_or("no game items"));
-            }
-            state = self.looked.wait(state).unwrap();
-        }
-    }
-
-    /// Look at the files the items are made from, and make the items again
-    /// when those changed (or none are kept), into the local cache too
-    fn look(&self) {
-        let files = item_files(&self.root);
-        let same = self
-            .state
-            .lock()
-            .unwrap()
-            .kept
-            .as_ref()
-            .is_some_and(|kept| kept.files == files);
-        let made = (!same).then(|| {
-            let started = Instant::now();
-            let kept = make_items(&self.root).map(|items| KeptItems {
-                root: self.root.clone(),
-                files,
-                items,
-            });
-            if let Ok(kept) = &kept {
-                log::debug!("Game items made in {} ms", started.elapsed().as_millis());
-                let written = serde_json::to_vec(kept)
-                    .map_err(anyhow::Error::from)
-                    .and_then(|bytes| write_atomic(&self.file, &bytes));
-                if let Err(e) = written {
-                    log::warn!("Could not keep the game items: {:#}", e);
-                }
-            }
-            kept
-        });
-        let mut state = self.state.lock().unwrap();
-        state.looking = false;
-        state.looked_at = Some(Instant::now());
-        match made {
-            Some(Ok(kept)) => {
-                state.kept = Some(kept);
-                state.error = None;
-            }
-            Some(Err(e)) => {
-                log::warn!("Could not make the game items: {:#}", e);
-                state.error = Some(format!("{e:#}"));
-            }
-            None => {}
-        }
-        self.looked.notify_all();
-    }
-}
-
-/// The files the game items are made from, with their sizes and times (as
-/// their folders list them; none is read): the glossary's (`glossary.toml`,
-/// the user's `glossary-user.toml`, each name table in `terms/`) and the
-/// state of Lean's copies (`raw/leanny/state.json`, which each fetch
-/// rewrites, and `splat3/versions.json`, which names the newest version)
-fn item_files(root: &Path) -> Vec<FileStamp> {
+/// The files the Studio's weapons and specials ([`cuttlefish::leanny::items`],
+/// kept: see [`kept`]) are made from: the glossary's
+/// ([`knowledge::glossary_files`]) and the state of Lean's copies
+/// (`raw/leanny/state.json`, which each fetch rewrites, and
+/// `splat3/versions.json`, which names the newest version)
+fn item_files(root: &Path) -> Vec<PathBuf> {
     let lean = root.join("raw").join(cuttlefish::leanny::RAW);
-    let mut paths = vec![
-        root.join("glossary.toml"),
-        root.join(cuttlefish::slang::FILE),
-        lean.join(cuttlefish::leanny::STATE_FILE),
-        lean.join("splat3").join("versions.json"),
-    ];
-    if let Ok(entries) = std::fs::read_dir(cuttlefish::tables::dir(root)) {
-        let mut tables: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
-        tables.sort();
-        paths.extend(tables);
-    }
-    paths
-        .into_iter()
-        .map(|path| {
-            let meta = std::fs::metadata(&path).ok();
-            let name = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .display()
-                .to_string();
-            let size = meta.as_ref().map_or(0, |m| m.len());
-            (name, size, meta.and_then(|m| m.modified().ok()))
-        })
-        .collect()
+    let mut files = knowledge::glossary_files(root);
+    files.push(lean.join(cuttlefish::leanny::STATE_FILE));
+    files.push(lean.join("splat3").join("versions.json"));
+    files
 }
 
 /// The game items of the knowledge folder `root` as `GET game-items`
-/// answers them: made from the store's glossary and Lean's raw copies
-fn make_items(root: &Path) -> Result<Value> {
-    let glossary = cuttlefish::store::Store::load_glossary(root)?;
-    Ok(json!(cuttlefish::leanny::items(root, &glossary)?))
+/// answers them: made from `glossary` (the store's) and Lean's raw copies
+fn make_items(root: &Path, glossary: &cuttlefish::glossary::Glossary) -> Result<Value> {
+    Ok(json!(cuttlefish::leanny::items(root, glossary)?))
 }
 
 /// Reviews and the downloads under way
@@ -903,8 +752,8 @@ pub struct Cuttlefish {
     /// Held while a picture of another site (Gungee's stage maps, Lean's
     /// icons) is fetched, so each is fetched once
     pictures: Mutex<()>,
-    /// The Studio's weapons and specials, kept
-    game_items: Arc<GameItems>,
+    /// The Studio's weapons and specials, kept ([`item_files`])
+    game_items: Arc<Kept<Value>>,
     /// The `cuttlefish` crate's store, shared by the reviewer and the
     /// knowledge view
     knowledge: Arc<Knowledge>,
@@ -912,7 +761,7 @@ pub struct Cuttlefish {
     /// the controller input of videos without a recording
     predictions: PathBuf,
     /// The Overfishing Pedia's mentions and fact cards
-    pedia: Pedia,
+    pedia: Arc<Pedia>,
     /// The reviewer's frames, cached per video ([`frames`])
     frame_cache: PathBuf,
 }
@@ -952,15 +801,34 @@ impl Reply {
 }
 
 impl Cuttlefish {
+    /// The reviews in `reviews`, the knowledge store in `knowledge`; `cache`
+    /// is this machine's cache folder (`cuttlefish::store::cache_dir()`):
+    /// the reviewer's frames, the glossary, the game items and the
+    /// Knowledge view's panels are kept there
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         inspector: Arc<Inspector>,
         reviews: PathBuf,
         knowledge: PathBuf,
         predictions: PathBuf,
+        cache: PathBuf,
         settings: Settings,
         translate_model: Option<String>,
         auto_apply: AutoApply,
     ) -> Self {
+        let knowledge = Arc::new(
+            Knowledge::new(knowledge, cache.clone(), settings, translate_model)
+                .with_auto_apply(auto_apply),
+        );
+        // Made from the store's glossary as the files are now
+        let glossaries = Arc::clone(knowledge.glossaries());
+        let game_items = Kept::new(
+            "game items",
+            knowledge.root().to_path_buf(),
+            cache.join(GAME_ITEMS_FILE),
+            item_files,
+            Box::new(move |root| make_items(root, &glossaries.current()?.glossary)),
+        );
         Self {
             inspector,
             list: Arc::new(ReviewList::new(reviews.clone())),
@@ -970,16 +838,11 @@ impl Cuttlefish {
             lookups: Arc::default(),
             thumbs: Mutex::default(),
             pictures: Mutex::default(),
-            game_items: Arc::new(GameItems::new(
-                knowledge.clone(),
-                cuttlefish::store::cache_dir().join(GAME_ITEMS_FILE),
-            )),
-            knowledge: Arc::new(
-                Knowledge::new(knowledge, settings, translate_model).with_auto_apply(auto_apply),
-            ),
+            game_items: Arc::new(game_items),
+            knowledge,
             predictions,
-            pedia: Pedia::default(),
-            frame_cache: cuttlefish::store::cache_dir().join("frames"),
+            pedia: Arc::default(),
+            frame_cache: cache.join("frames"),
         }
     }
 
@@ -999,8 +862,13 @@ impl Cuttlefish {
     /// Every review: its id, video, comment and message counts, the first
     /// message of its chat and its last change, newest first; from memory
     /// ([`ReviewList`])
-    pub fn reviews(&self) -> Result<Value> {
-        let (mut rows, refreshing) = self.list.rows()?;
+    pub fn reviews(&self) -> Result<Value, Status> {
+        let Some((mut rows, refreshing)) = self.list.rows()? else {
+            return Err(Status(
+                StatusCode::ACCEPTED,
+                anyhow::anyhow!("the reviews are being read; ask again"),
+            ));
+        };
         for listed in &rows {
             if let (Some(id), Some(video)) = (listed.row["id"].as_str(), &listed.video) {
                 self.look_up_meta(id, video);
@@ -1118,7 +986,7 @@ impl Cuttlefish {
 
     /// The review of the same video whose folder holds it, if any
     fn review_with_video(&self, video: &VideoRef) -> Option<String> {
-        let (rows, _) = self.list.rows().ok()?;
+        let rows = self.list.rows_read().ok()?;
         rows.into_iter().find_map(|listed| {
             let id = listed.row["id"].as_str()?;
             let stored = listed.video.as_ref().filter(|v| v.same(video))?;
@@ -1463,11 +1331,17 @@ impl Cuttlefish {
     /// Studio's Techniques panel ([`cuttlefish::leanny::items`]: from the
     /// store's raw copies, named by its glossary, each with its Pedia term
     /// and picture); empty until the Game data (Lean) import has run. The
-    /// items kept are answered at once ([`GameItems`]), `refreshing` while
-    /// their files are looked at again, after which they may differ.
-    fn game_items(&self) -> Result<Value> {
-        let (items, refreshing) = self.game_items.get()?;
-        Ok(json!({ "items": items, "refreshing": refreshing }))
+    /// items kept are answered at once ([`Kept`]), `refreshing` while their
+    /// files are looked at again, after which they may differ; `202` while
+    /// none were ever made on this machine (a thread makes them)
+    fn game_items(&self) -> Result<Value, Status> {
+        match self.game_items.get()? {
+            Some((items, refreshing)) => Ok(json!({ "items": *items, "refreshing": refreshing })),
+            None => Err(Status(
+                StatusCode::ACCEPTED,
+                anyhow::anyhow!("the game items are being made; ask again"),
+            )),
+        }
     }
 
     /// A picture of Lean's site an item shows (its `icon`, see
@@ -2057,7 +1931,7 @@ impl Cuttlefish {
         let bad = |e: anyhow::Error| Status(StatusCode::BAD_REQUEST, e);
         let video = || video_query(query).map_err(bad);
         match path.split_once('/') {
-            None if path == "reviews" => Ok(Reply::json(self.reviews().map_err(bad)?)),
+            None if path == "reviews" => Ok(Reply::json(self.reviews()?)),
             None if path == "downloads" => Ok(Reply::json(self.downloads())),
             None if path == "translations" => Ok(Reply::json(self.translations().map_err(bad)?)),
             None if path == "video" => self
@@ -2075,7 +1949,7 @@ impl Cuttlefish {
                 let arg = |name: &str| query.get(name).map_or("", String::as_str);
                 self.stage_map(arg("stage"), arg("tide")).map_err(bad)
             }
-            None if path == "game-items" => Ok(Reply::json(self.game_items().map_err(bad)?)),
+            None if path == "game-items" => Ok(Reply::json(self.game_items()?)),
             None if path == "game-icon" => self
                 .game_icon(query.get("path").map_or("", String::as_str))
                 .map_err(bad),
@@ -2085,12 +1959,14 @@ impl Cuttlefish {
             )),
             Some(("knowledge", rest)) => Ok(Reply::json(self.knowledge.get(rest, query)?)),
             None if path == "pedia" => Ok(Reply::json(
-                self.pedia.list(self.knowledge.root()).map_err(bad)?,
+                self.pedia
+                    .list(self.knowledge.root())
+                    .map_err(pedia_error)?,
             )),
             None if path == "source" => Ok(Reply::json(
                 self.pedia
                     .source(self.knowledge.root(), &self.reviews, query)
-                    .map_err(bad)?,
+                    .map_err(pedia_error)?,
             )),
             Some(("pedia", id)) => {
                 let quotes = query
@@ -2101,7 +1977,7 @@ impl Cuttlefish {
                 Ok(Reply::json(
                     self.pedia
                         .entry(root, &self.reviews, &self.knowledge.catalogue(), id, quotes)
-                        .map_err(bad)?,
+                        .map_err(pedia_error)?,
                 ))
             }
             Some(("reviews", id)) => {
@@ -2221,6 +2097,17 @@ pub fn routes(cuttlefish: Arc<Cuttlefish>) -> BoxedFilter<(Response<Vec<u8>>,)> 
             },
         );
     knowledge.or(get).unify().or(change).unify().boxed()
+}
+
+/// A Pedia error as answered: `202` while it is made for the first time
+/// in this run ([`pedia::Making`]: ask again), else `400`
+fn pedia_error(e: anyhow::Error) -> Status {
+    let status = if e.is::<pedia::Making>() {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    Status(status, e)
 }
 
 /// Run `answer` on a blocking thread, named `what` for the exit, and turn
@@ -2769,6 +2656,7 @@ mod tests {
             dir.join("reviews"),
             dir.join("knowledge"),
             dir.join("predictions"),
+            dir.join("cache"),
             Settings::default(),
             None,
             AutoApply::default(),
@@ -2837,6 +2725,7 @@ mod tests {
     #[test]
     fn reviews_are_folders() {
         let (dir, cuttlefish) = scratch("folders");
+        cuttlefish.warm().unwrap();
         assert_eq!(cuttlefish.reviews().unwrap()["reviews"], json!([]));
         let review: Review = serde_json::from_str(REVIEW).unwrap();
         cuttlefish.save_review("r-1", &review).unwrap();
@@ -2867,6 +2756,27 @@ mod tests {
         cuttlefish.delete_review("r-1").unwrap();
         assert!(!dir.join("reviews/r-1").exists());
         assert!(cuttlefish.review("r-1").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_first_listing_answers_at_once() {
+        let (dir, cuttlefish) = scratch("first");
+        let review: Review = serde_json::from_str(REVIEW).unwrap();
+        cuttlefish.save_review("r-1", &review).unwrap();
+        // Never read: 202 at once while a thread reads it, then the list
+        let first = cuttlefish.reviews().err().map(|s| s.0);
+        assert_eq!(first, Some(StatusCode::ACCEPTED));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let list = loop {
+            match cuttlefish.reviews() {
+                Ok(list) => break list,
+                Err(Status(status, _)) => assert_eq!(status, StatusCode::ACCEPTED),
+            }
+            assert!(Instant::now() < deadline, "never read");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(list["reviews"][0]["id"], "r-1");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -3049,6 +2959,7 @@ mod tests {
         assert_eq!(written["messages"][1]["backend"], "claude-cli");
         assert_eq!(written["messages"][1]["effort"], "medium");
         assert_eq!(cuttlefish.review("c").unwrap(), review);
+        cuttlefish.warm().unwrap();
         let list = cuttlefish.reviews().unwrap();
         assert_eq!(list["reviews"][0]["video"], Value::Null);
         assert_eq!(list["reviews"][0]["messages"], 2);
@@ -3232,6 +3143,7 @@ mod tests {
         let (dir, cuttlefish) = scratch("imported");
         std::fs::create_dir_all(dir.join("reviews/discord-300")).unwrap();
         std::fs::write(dir.join("reviews/discord-300/review.json"), text).unwrap();
+        cuttlefish.warm().unwrap();
         let listed = cuttlefish.reviews().unwrap();
         assert_eq!(listed["reviews"][0]["from"], "discord");
         assert_eq!(listed["reviews"][0]["title"], "Cy, 2023-06-01");
@@ -3424,44 +3336,25 @@ mod tests {
     }
 
     #[test]
-    fn game_items_come_from_the_local_copy_until_their_files_change() {
-        let dir = std::env::temp_dir().join(format!("procon-game-items-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let root = dir.join("knowledge");
+    fn game_items_follow_the_glossary_and_leans_copies() {
+        let root = std::env::temp_dir().join(format!("procon-game-items-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("terms")).unwrap();
-        let file = dir.join(GAME_ITEMS_FILE);
-        // No copy yet: the first request waits for them (none before Lean's
-        // data is fetched), and they are kept in the local cache
-        let first = Arc::new(GameItems::new(root.clone(), file.clone()));
-        assert_eq!(first.get().unwrap().0, json!([]));
-        let kept: KeptItems = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
-        assert_eq!(kept.files, item_files(&root));
-
-        // A later run answers with its copy at once, and keeps it while the
-        // files are the same
-        let copy = KeptItems {
-            root: root.clone(),
-            files: item_files(&root),
-            items: json!(["kept"]),
-        };
-        std::fs::write(&file, serde_json::to_vec(&copy).unwrap()).unwrap();
-        let items = Arc::new(GameItems::new(root.clone(), file.clone()));
-        assert_eq!(items.get().unwrap().0, json!(["kept"]));
-        {
-            let mut state = items.state.lock().unwrap();
-            while state.looking {
-                state = items.looked.wait(state).unwrap();
-            }
-        }
-        assert_eq!(items.get().unwrap(), (json!(["kept"]), false));
-        // A name table imported since: they are made again
         std::fs::write(root.join("terms").join("0123456789abcdef.json"), "{}").unwrap();
-        items.look();
-        assert_eq!(items.get().unwrap().0, json!([]));
-        // The copy of another knowledge folder is not taken
-        let other = Arc::new(GameItems::new(dir.join("other"), file.clone()));
-        std::fs::write(&file, serde_json::to_vec(&copy).unwrap()).unwrap();
-        assert_eq!(other.get().unwrap().0, json!([]));
-        std::fs::remove_dir_all(&dir).unwrap();
+        let names: Vec<String> = item_files(&root)
+            .iter()
+            .map(|path| path.strip_prefix(&root).unwrap().display().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "glossary.toml",
+                "glossary-user.toml",
+                "terms/0123456789abcdef.json",
+                "raw/leanny/state.json",
+                "raw/leanny/splat3/versions.json",
+            ]
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

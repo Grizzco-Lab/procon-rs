@@ -264,6 +264,7 @@ fn main() -> anyhow::Result<()> {
         reviews,
         knowledge,
         predictor_settings.results.clone(),
+        cuttlefish::store::cache_dir(),
         settings,
         config.cuttlefish.translate_model,
         grizzco_lab::cuttlefish::knowledge::AutoApply {

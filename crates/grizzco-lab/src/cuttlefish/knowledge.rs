@@ -106,7 +106,9 @@
 //! history): the glossary terms a text uses, and the model's translation
 //! when a backend is there.
 
-use alloc::collections::BTreeMap;
+use super::kept::{self, Kept};
+use crate::inspect::objects::write_atomic;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -115,10 +117,11 @@ use cuttlefish::assets::{self, Catalogue};
 use cuttlefish::crawl::Fetcher;
 use cuttlefish::discord::Bot;
 use cuttlefish::doc::{Document, SourceKind};
-use cuttlefish::embed::{E5Embedder, Embedder};
+use cuttlefish::embed::E5Embedder;
 use cuttlefish::glossary::AliasStatus;
 use cuttlefish::glossary::{Glossary, Term};
 use cuttlefish::google::{self, GoogleFile};
+use cuttlefish::index::FlatIndex;
 use cuttlefish::ingest::{self, Meta, Web};
 use cuttlefish::llm::{Client, Settings};
 use cuttlefish::notes::{self, Note};
@@ -133,7 +136,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use warp::filters::BoxedFilter;
 use warp::http::{Response, StatusCode};
 use warp::hyper::body::Buf;
@@ -166,6 +169,132 @@ const MAX_TRANSLATED: usize = 4000;
 
 /// Most terms a search as you type answers with
 const MAX_TERMS_FOUND: usize = 12;
+
+/// The glossary in the local cache ([`Glossaries`])
+const GLOSSARY_FILE: &str = "glossary.json";
+
+/// The Knowledge view's panels in the local cache ([`Panels`])
+const PANELS_FILE: &str = "knowledge-panels.json";
+
+/// How long the panels are answered as they are before they are made
+/// again, on the next request
+const PANELS_FRESH: Duration = Duration::from_secs(10);
+
+/// The panels, as their endpoints name them
+const PANELS: [&str; 4] = ["stats", "documents", "overview", "inbox"];
+
+/// The glossary of the knowledge folder as every view reads it (the
+/// Translate view, the Knowledge view's overview and assets, the slang
+/// panel, the Studio's weapons and specials), kept ([`Kept`]): the folder's
+/// own `glossary.toml` (or the seed) with the name tables of `terms/`
+/// merged in and the user's `glossary-user.toml` applied, as
+/// `Store::load_glossary` makes it, with that user glossary and the tables
+/// merged. Building it takes a good part of a second, and more on a cold
+/// mount; it is made again on a thread when the sizes or times of those
+/// files change ([`glossary_files`]), and at once after the lab's own
+/// changes to them.
+#[derive(Serialize, Deserialize)]
+pub struct Glossaries {
+    pub glossary: Glossary,
+    /// The user glossary it applies
+    pub user: UserGlossary,
+    /// The name tables merged in, as the overview lists them
+    pub tables: Vec<TableInfo>,
+}
+
+/// A name table of the glossary, without its terms
+#[derive(Serialize, Deserialize)]
+pub struct TableInfo {
+    /// The file, or the family of files
+    pub source: String,
+    /// Terms kept
+    pub terms: usize,
+    /// Languages of the kept terms
+    pub languages: Vec<String>,
+    /// Files read
+    pub files: usize,
+    /// What was kept and why, in words
+    pub note: String,
+}
+
+/// The files the glossary is made from: `glossary.toml`, the user's
+/// `glossary-user.toml` and every name table in `terms/`
+pub fn glossary_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = vec![root.join("glossary.toml"), root.join(slang::FILE)];
+    files.extend(kept::files_in(&tables::dir(root)));
+    files
+}
+
+/// The glossary of the knowledge folder `root`, made from its files as
+/// `Store::load_glossary` makes it, keeping the user glossary and the
+/// tables' summaries
+fn make_glossaries(root: &Path) -> Result<Glossaries> {
+    let tables = tables::load_all(root);
+    let mut glossary = Store::own_glossary(root)?;
+    for table in &tables {
+        glossary.merge(&table.terms);
+    }
+    let user = UserGlossary::load(root)?;
+    user.apply(&mut glossary);
+    let tables = tables
+        .iter()
+        .map(|t| TableInfo {
+            source: t.source.clone(),
+            terms: t.terms.len(),
+            languages: t.languages.clone(),
+            files: t.files.len(),
+            note: t.note.clone(),
+        })
+        .collect();
+    Ok(Glossaries {
+        glossary,
+        user,
+        tables,
+    })
+}
+
+/// The Knowledge view's panels that read many files of the knowledge
+/// folder: `GET stats` and `documents` (every stored document, and the
+/// index's chunks: the loaded store's, else its files, so the view never
+/// loads the embedding model), `overview` (the documents, the glossary, the
+/// inbox) and `inbox` (every file in it). They are made together on a
+/// thread and kept in memory and in the local cache ([`PANELS_FILE`]), so
+/// a request answers at once: with `refreshing` while a thread makes them
+/// again (when asked for more than [`PANELS_FRESH`] after they were made,
+/// or after the lab changed the folder, [`Knowledge::changed`]), and with
+/// `202` while none was ever made on this machine, which the page asks
+/// again. No request waits for the folder, which may be a network mount,
+/// so the view never holds the browser's six connections to the lab.
+struct Panels {
+    /// The copy in the local cache
+    file: PathBuf,
+    state: Mutex<PanelsState>,
+}
+
+/// The index's chunks, for the panels: how many each document has, and the
+/// embedder their vectors came from
+#[derive(Default)]
+struct Chunks {
+    embedder: String,
+    by_document: HashMap<String, usize>,
+}
+
+#[derive(Default)]
+struct PanelsState {
+    /// The local copy was read (on the first request)
+    opened: bool,
+    /// Each panel's answer as made last, or why it could not be made
+    answers: BTreeMap<String, Result<Value, String>>,
+    /// A thread makes the panels now
+    running: bool,
+    /// The panels it has not made yet
+    making: BTreeSet<&'static str>,
+    /// When the panels were made last, and the count of the lab's changes
+    /// they saw
+    made: Option<(Instant, u64)>,
+    /// The lab's changes to the knowledge folder so far ([`Knowledge::changed`])
+    changes: u64,
+}
 
 /// A translation: what the glossary knows of the text, and the model's part
 /// when a backend is there
@@ -252,7 +381,9 @@ fn translate_with(
     Ok(out)
 }
 
-/// An error with the status it answers with
+/// An error with the status it answers with (`202`: not made yet, ask
+/// again)
+#[derive(Debug)]
 pub struct Status(pub StatusCode, pub anyhow::Error);
 
 impl From<anyhow::Error> for Status {
@@ -596,6 +727,10 @@ pub struct Knowledge {
     eval: Mutex<()>,
     /// Whether slang suggestions are approved at once by default
     auto_apply: AutoApply,
+    /// The glossary, kept
+    glossaries: Arc<Kept<Glossaries>>,
+    /// The view's panels, kept
+    panels: Panels,
 }
 
 /// Auto-apply of slang suggestions by default: suggestions the model is at
@@ -624,14 +759,33 @@ impl Default for AutoApply {
 }
 
 impl Knowledge {
-    pub fn new(root: PathBuf, settings: Settings, translate_model: Option<String>) -> Self {
+    /// The knowledge folder `root`, with this machine's `cache` folder
+    /// (`store::cache_dir()`), where the glossary and the view's panels are
+    /// kept too
+    pub fn new(
+        root: PathBuf,
+        cache: PathBuf,
+        settings: Settings,
+        translate_model: Option<String>,
+    ) -> Self {
         let translate = Settings {
             model: translate_model.or_else(|| settings.model.clone()),
             ..settings.clone()
         };
         Self {
+            glossaries: Arc::new(Kept::new(
+                "glossary",
+                root.clone(),
+                cache.join(GLOSSARY_FILE),
+                glossary_files,
+                Box::new(make_glossaries),
+            )),
+            panels: Panels {
+                file: cache.join(PANELS_FILE),
+                state: Mutex::default(),
+            },
             root,
-            cache: store::cache_dir(),
+            cache,
             settings,
             translate,
             loaded: Mutex::default(),
@@ -641,6 +795,23 @@ impl Knowledge {
             slang: Mutex::default(),
             eval: Mutex::default(),
             auto_apply: AutoApply::default(),
+        }
+    }
+
+    /// The glossary, kept (see [`Glossaries`])
+    pub fn glossaries(&self) -> &Arc<Kept<Glossaries>> {
+        &self.glossaries
+    }
+
+    /// The glossary as kept, at once (see [`Kept::get`]); `202` while none
+    /// was ever made on this machine (a thread makes it: ask again)
+    fn glossary_kept(&self) -> Result<Arc<Glossaries>, Status> {
+        match self.glossaries.get()? {
+            Some((glossaries, _)) => Ok(glossaries),
+            None => Err(Status(
+                StatusCode::ACCEPTED,
+                anyhow::anyhow!("the glossary is being read; ask again"),
+            )),
         }
     }
 
@@ -776,29 +947,61 @@ impl Knowledge {
         })
     }
 
-    /// Documents, chunks, glossary, digest, embedder, the model backend and
-    /// whether the Discord token is set
-    pub fn stats(&self) -> Result<Value> {
-        let loaded = self.loaded()?;
-        let store = loaded.store.read().unwrap();
-        let (counts, chunks) = store.stats()?;
+    /// The stats panel: `docs` (every stored document) by source, the
+    /// index's `chunks`, the glossary, digest, embedder, the model backend
+    /// and whether the Discord token is set
+    fn stats_of(&self, docs: &[Document], glossaries: &Glossaries, chunks: &Chunks) -> Value {
+        // By source kind in the order they first come, as `Store::stats`
+        let mut counts: Vec<(SourceKind, usize)> = Vec::new();
+        for d in docs {
+            match counts.iter_mut().find(|(kind, _)| *kind == d.source) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((d.source, 1)),
+            }
+        }
         let sources: Vec<Value> = counts
             .iter()
             .map(|(kind, documents)| json!({ "source": kind, "documents": documents }))
             .collect();
-        Ok(json!({
+        // As `Store::digest` reads it
+        let digest = std::fs::read_to_string(self.root.join("digest.md"))
+            .is_ok_and(|d| !d.trim().is_empty());
+        json!({
             "data": self.root,
-            "documents": counts.iter().map(|(_, n)| n).sum::<usize>(),
+            "documents": docs.len(),
             "sources": sources,
-            "chunks": chunks,
-            "glossary_terms": store.glossary().terms.len(),
+            "chunks": chunks.by_document.values().sum::<usize>(),
+            "glossary_terms": glossaries.glossary.terms.len(),
             "own_glossary": self.root.join("glossary.toml").is_file(),
-            "digest": store.digest().is_some(),
-            "embedder": loaded.embedder.name(),
+            "digest": digest,
+            "embedder": chunks.embedder,
             "model": self.settings.model,
             "backend": self.settings.detect(),
             "discord_token": is_set("DISCORD_BOT_TOKEN"),
-        }))
+        })
+    }
+
+    /// The index's chunks by document and the embedder they came from: the
+    /// loaded store's, else read from the index's files (the panels do not
+    /// load the embedding model, nor wait while it loads)
+    fn chunks(&self) -> Result<Chunks> {
+        let count = |index: &FlatIndex| {
+            let mut by_document: HashMap<String, usize> = HashMap::new();
+            for entry in index.entries() {
+                *by_document.entry(entry.doc_id.clone()).or_default() += 1;
+            }
+            Chunks {
+                embedder: index.embedder().to_string(),
+                by_document,
+            }
+        };
+        let loaded = self.loaded.try_lock().ok().and_then(|l| l.clone());
+        Ok(match loaded {
+            Some(loaded) => count(loaded.store.read().unwrap().index()),
+            None => FlatIndex::load(&self.root.join("index"))?
+                .map(|index| count(&index))
+                .unwrap_or_default(),
+        })
     }
 
     /// The `k` chunks nearest to a query among those the chat may be given
@@ -814,19 +1017,15 @@ impl Knowledge {
         Ok(json!({ "hits": hits }))
     }
 
-    /// Every document without its text, newest first, with its chunks
-    pub fn documents(&self) -> Result<Value> {
-        let loaded = self.loaded()?;
-        let store = loaded.store.read().unwrap();
-        let mut chunks: HashMap<&str, usize> = HashMap::new();
-        for entry in store.index().entries() {
-            *chunks.entry(&entry.doc_id).or_default() += 1;
-        }
-        let mut documents = store.documents()?;
+    /// The documents panel: `docs` (every stored document) without their
+    /// text, newest first, with their `chunks`
+    fn documents_of(&self, docs: &[Document], chunks: &Chunks) -> Value {
+        let chunks = &chunks.by_document;
+        let mut documents: Vec<&Document> = docs.iter().collect();
         documents.sort_by_key(|d| core::cmp::Reverse(d.fetched_at));
         let documents: Vec<Value> = documents
             .iter()
-            .map(|d: &Document| {
+            .map(|d| {
                 json!({
                     "id": d.id,
                     "source": d.source,
@@ -844,7 +1043,7 @@ impl Knowledge {
                 })
             })
             .collect();
-        Ok(json!({ "documents": documents }))
+        json!({ "documents": documents })
     }
 
     /// Deletes documents and their chunks, and writes the index
@@ -864,33 +1063,26 @@ impl Knowledge {
         Ok(json!({ "deleted": deleted }))
     }
 
-    /// What the store holds, read from its files (the model need not be
-    /// loaded): documents by source and format, glossary terms by language,
-    /// name tables, assets by folder, the inbox and the last imports
-    pub fn overview(&self) -> Result<Value> {
-        let docs = store::read_documents(&self.root)?;
+    /// The overview panel, what the store holds (the model need not be
+    /// loaded): `docs` (every stored document) by source and format, the
+    /// glossary's terms by language and its name tables, assets by folder,
+    /// the inbox as `pending` lists it and the last imports
+    fn overview_of(
+        &self,
+        docs: &[Document],
+        glossaries: &Glossaries,
+        pending: &inbox::Pending,
+    ) -> Result<Value> {
         let mut sources: BTreeMap<String, usize> = BTreeMap::new();
         let mut formats: BTreeMap<String, usize> = BTreeMap::new();
-        for d in &docs {
+        for d in docs {
             let source = serde_json::to_value(d.source)?;
             *sources
                 .entry(source.as_str().unwrap_or_default().to_string())
                 .or_default() += 1;
             *formats.entry(format_of(d)).or_default() += 1;
         }
-        let glossary = Store::load_glossary(&self.root)?;
-        let tables: Vec<Value> = tables::load_all(&self.root)
-            .iter()
-            .map(|t| {
-                json!({
-                    "source": t.source,
-                    "terms": t.terms.len(),
-                    "languages": t.languages,
-                    "files": t.files.len(),
-                    "note": t.note,
-                })
-            })
-            .collect();
+        let glossary = &glossaries.glossary;
         let catalogue = self.catalogue();
         let reports: Vec<Value> = inbox::reports(&self.root, REPORTS_SHOWN)
             .iter()
@@ -914,18 +1106,136 @@ impl Knowledge {
                 "terms": glossary.terms.len(),
                 "imported": glossary.terms.iter().filter(|t| !t.from.is_empty()).count(),
                 "languages": glossary.languages(),
-                "tables": tables,
+                "tables": glossaries.tables,
             },
             "assets": {
                 "total": catalogue.assets.len(),
                 "linked": catalogue.assets.iter().filter(|a| a.term.is_some()).count(),
                 "folders": catalogue.folders(),
             },
-            "inbox": inbox::pending(&self.root),
+            "inbox": pending,
             "reports": reports,
             "moved_aside": store::moved_aside(&store::legacy_root()),
-            "credits": credits(&docs),
+            "credits": credits(docs),
         }))
+    }
+
+    /// Panel `name` of the view (see [`Panels`]): as made last, with
+    /// `refreshing` while a thread makes it again, which starts here when
+    /// the panels are older than [`PANELS_FRESH`] or the lab changed the
+    /// folder since; `202` while it was never made
+    fn panel(self: &Arc<Self>, name: &'static str) -> Result<Value, Status> {
+        let mut state = self.panels.state.lock().unwrap();
+        if !state.opened {
+            state.opened = true;
+            // The copy of an earlier run, when it is of this folder
+            let copy = std::fs::read(&self.panels.file)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .filter(|copy| copy["root"] == json!(self.root));
+            if let Some(Value::Object(answers)) = copy.map(|mut c| c["answers"].take()) {
+                state.answers = answers.into_iter().map(|(k, v)| (k, Ok(v))).collect();
+            }
+        }
+        let fresh = state
+            .made
+            .is_some_and(|(at, changes)| at.elapsed() < PANELS_FRESH && changes == state.changes);
+        if !state.running && !fresh {
+            state.running = true;
+            state.making = PANELS.into_iter().collect();
+            let knowledge = Arc::clone(self);
+            let changes = state.changes;
+            std::thread::spawn(move || knowledge.make_panels(changes));
+        }
+        let making = state.making.contains(name);
+        match state.answers.get(name) {
+            Some(Ok(answer)) => {
+                let mut answer = answer.clone();
+                answer["refreshing"] = json!(making);
+                Ok(answer)
+            }
+            Some(Err(e)) if !making => Err(anyhow::anyhow!("{e}").into()),
+            _ => Err(Status(
+                StatusCode::ACCEPTED,
+                anyhow::anyhow!("{name} is being read; ask again"),
+            )),
+        }
+    }
+
+    /// Makes the panels (on a thread of their own): every stored document
+    /// read once for the stats, the documents and the overview, the inbox
+    /// listed meanwhile, the glossary as the files are now and the index's
+    /// chunks ([`Knowledge::chunks`]); each panel as soon as it is made,
+    /// then all in the local cache. `changes` is the count of the lab's
+    /// changes when it started.
+    fn make_panels(&self, changes: u64) {
+        let started = Instant::now();
+        let read = store::read_documents(&self.root).map_err(|e| format!("{e:#}"));
+        let docs = || read.as_ref().map_err(|e| anyhow::anyhow!("{e}"));
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let pending = inbox::pending(&self.root);
+                self.publish("inbox", Ok(json!(pending)));
+                let overview = (|| {
+                    let glossaries = self.glossaries.current()?;
+                    self.overview_of(docs()?, &glossaries, &pending)
+                })();
+                self.publish("overview", overview.map_err(|e| format!("{e:#}")));
+            });
+            let made = (|| {
+                let docs = docs()?;
+                let glossaries = self.glossaries.current()?;
+                let chunks = self.chunks()?;
+                Ok::<_, anyhow::Error>((
+                    self.stats_of(docs, &glossaries, &chunks),
+                    self.documents_of(docs, &chunks),
+                ))
+            })();
+            match made {
+                Ok((stats, documents)) => {
+                    self.publish("stats", Ok(stats));
+                    self.publish("documents", Ok(documents));
+                }
+                Err(e) => {
+                    self.publish("stats", Err(format!("{e:#}")));
+                    self.publish("documents", Err(format!("{e:#}")));
+                }
+            }
+        });
+        let copy = {
+            let state = self.panels.state.lock().unwrap();
+            let answers: serde_json::Map<String, Value> = state
+                .answers
+                .iter()
+                .filter_map(|(name, answer)| Some((name.clone(), answer.as_ref().ok()?.clone())))
+                .collect();
+            json!({ "root": self.root, "answers": answers })
+        };
+        if let Err(e) = write_atomic(&self.panels.file, copy.to_string().as_bytes()) {
+            log::warn!("Could not keep the knowledge panels: {:#}", e);
+        }
+        let mut state = self.panels.state.lock().unwrap();
+        state.made = Some((Instant::now(), changes));
+        state.running = false;
+        state.making.clear();
+        log::debug!(
+            "Knowledge panels made in {} ms",
+            started.elapsed().as_millis()
+        );
+    }
+
+    /// A panel made: its answer, or why it could not be made
+    fn publish(&self, name: &'static str, answer: Result<Value, String>) {
+        let mut state = self.panels.state.lock().unwrap();
+        state.answers.insert(name.to_string(), answer);
+        state.making.remove(name);
+    }
+
+    /// The lab changed what the knowledge folder holds (an import, a
+    /// delete, a note, an upload, a glossary edit): the panels are made
+    /// again when next asked for
+    pub fn changed(&self) {
+        self.panels.state.lock().unwrap().changes += 1;
     }
 
     /// The asset catalogue, read again when its file changed
@@ -946,9 +1256,10 @@ impl Knowledge {
 
     /// Images and icons whose name, path or term matches `query`, in
     /// `folder` (and below) when given, with their term's names
-    pub fn assets(&self, query: &str, folder: &str) -> Result<Value> {
+    pub fn assets(&self, query: &str, folder: &str) -> Result<Value, Status> {
         let catalogue = self.catalogue();
-        let glossary = Store::load_glossary(&self.root)?;
+        let glossaries = self.glossary_kept()?;
+        let glossary = &glossaries.glossary;
         let query = query.trim().to_lowercase();
         let mut shown = Vec::new();
         let mut matching = 0;
@@ -1050,10 +1361,12 @@ impl Knowledge {
         written
     }
 
-    /// The term named `query`, or else the terms a text mentions; read from
-    /// the data folder's glossary (or the seed) without loading the model
-    pub fn glossary(&self, query: &str) -> Result<Value> {
-        let glossary = Store::load_glossary(&self.root)?;
+    /// The term named `query`, or else the terms a text mentions; from the
+    /// data folder's glossary (or the seed) as kept, without loading the
+    /// model
+    pub fn glossary(&self, query: &str) -> Result<Value, Status> {
+        let glossaries = self.glossary_kept()?;
+        let glossary = &glossaries.glossary;
         let query = query.trim();
         let terms = match glossary.lookup(query) {
             Some(term) => vec![term],
@@ -1067,9 +1380,10 @@ impl Knowledge {
     /// answers without the store or the model; the model's part needs a
     /// backend, and its failure is a `502`
     pub fn translate(&self, text: &str, target: &str) -> Result<Translation, Status> {
-        let glossary = Store::load_glossary(&self.root)?;
+        // A change of the history, which may wait for the first glossary
+        let glossaries = self.glossaries.wait()?;
         let client = self.translate_client().ok();
-        translate_with(&glossary, client.as_ref(), text, target).map_err(|e| {
+        translate_with(&glossaries.glossary, client.as_ref(), text, target).map_err(|e| {
             let status = if client.is_some() {
                 StatusCode::BAD_GATEWAY
             } else {
@@ -1145,6 +1459,13 @@ impl Knowledge {
                 if let Err(e) = &result {
                     log::warn!("Job failed: {:#}", e);
                 }
+                // Before the job shows as ended, which has the page read
+                // the panels again: the glossary follows the name tables
+                // it brought, and the panels are made again
+                if let Err(e) = knowledge.glossaries.current() {
+                    log::warn!("The glossary after the job: {:#}", e);
+                }
+                knowledge.changed();
                 knowledge.update(id, |job| {
                     job.finished_ms = Some(now_ms());
                     match result {
@@ -1380,9 +1701,10 @@ struct SuggestRequest {
 }
 
 impl Knowledge {
-    /// The loaded store reads its glossary again, after the user glossary
-    /// changed
+    /// The kept glossary is made again, and the loaded store reads its
+    /// glossary again, after the user glossary changed
     fn glossary_changed(&self) -> Result<()> {
+        self.glossaries.remake()?;
         let loaded = self.loaded.lock().unwrap().clone();
         if let Some(loaded) = loaded {
             loaded.store.write().unwrap().reload_glossary()?;
@@ -1392,9 +1714,9 @@ impl Knowledge {
 
     /// Terms whose names contain `query` (see `Glossary::search`), for
     /// picking one as you type
-    pub fn terms(&self, query: &str) -> Result<Value> {
-        let glossary = Store::load_glossary(&self.root)?;
-        Ok(json!({ "terms": glossary.search(query, MAX_TERMS_FOUND) }))
+    pub fn terms(&self, query: &str) -> Result<Value, Status> {
+        let glossaries = self.glossary_kept()?;
+        Ok(json!({ "terms": glossaries.glossary.search(query, MAX_TERMS_FOUND) }))
     }
 
     /// The user glossary: every alias taught or suggested, newest first,
@@ -1402,16 +1724,18 @@ impl Knowledge {
     /// term is gone; a new term's name while it waits) and, for a new
     /// term's alias, that term's status (`term_status`); the new terms,
     /// newest first; the old aliases that could move to a new term; how
-    /// many suggestions wait; the auto-apply default
+    /// many suggestions wait; the auto-apply default. As the files are now
+    /// (a run of `cuttlefish` or a hand may have edited the user file): the
+    /// kept glossary once their sizes and times are looked at.
     pub fn slang(&self) -> Result<Value> {
-        let glossary = Store::load_glossary(&self.root)?;
-        let user = UserGlossary::load(&self.root)?;
+        let glossaries = self.glossaries.current()?;
+        let (glossary, user) = (&glossaries.glossary, &glossaries.user);
         let aliases: Vec<Value> = user
             .aliases
             .iter()
             .rev()
             .map(|a| {
-                let term = a.find(&glossary).map(|i| &glossary.terms[i]);
+                let term = a.find(glossary).map(|i| &glossary.terms[i]);
                 let new = user.term(&a.term);
                 let mut value = json!(a);
                 value["term_forms"] = match (term, new) {
@@ -1470,9 +1794,10 @@ impl Knowledge {
     ) -> Result<Value> {
         let answer = {
             let _held = self.slang.lock().unwrap();
-            let glossary = Store::load_glossary(&self.root)?;
+            // The glossary as the files are now, whatever the kept one says
+            let glossaries = self.glossaries.current()?;
             let mut user = UserGlossary::load(&self.root)?;
-            let answer = change(&glossary, &mut user)?;
+            let answer = change(&glossaries.glossary, &mut user)?;
             user.save(&self.root)?;
             answer
         };
@@ -1956,20 +2281,24 @@ impl Knowledge {
 
 impl Knowledge {
     /// Answer a `GET` under `/api/cuttlefish/knowledge/`
-    pub fn get(&self, path: &str, query: &HashMap<String, String>) -> Result<Value, Status> {
+    pub fn get(
+        self: &Arc<Self>,
+        path: &str,
+        query: &HashMap<String, String>,
+    ) -> Result<Value, Status> {
         let text = |key: &str| query.get(key).map(String::as_str).unwrap_or_default();
         let k = || text("k").parse().unwrap_or(K);
         match path {
-            "stats" => Ok(self.stats()?),
+            "stats" => self.panel("stats"),
             "model" => Ok(self.model()),
             "search" => Ok(self.search(text("q"), k())?),
-            "documents" => Ok(self.documents()?),
-            "overview" => Ok(self.overview()?),
-            "glossary" => Ok(self.glossary(text("q"))?),
-            "terms" => Ok(self.terms(text("q"))?),
+            "documents" => self.panel("documents"),
+            "overview" => self.panel("overview"),
+            "glossary" => self.glossary(text("q")),
+            "terms" => self.terms(text("q")),
             "slang" => Ok(self.slang()?),
-            "assets" => Ok(self.assets(text("q"), text("folder"))?),
-            "inbox" => Ok(json!(inbox::pending(&self.root))),
+            "assets" => self.assets(text("q"), text("folder")),
+            "inbox" => self.panel("inbox"),
             "reports" => Ok(json!({ "reports": inbox::reports(&self.root, REPORTS_SHOWN) })),
             "report" => Ok(json!(inbox::report(&self.root, text("id"))?)),
             "jobs" => Ok(self.jobs()),
@@ -1986,6 +2315,16 @@ impl Knowledge {
 
     /// Answer a `POST` under `/api/cuttlefish/knowledge/`
     pub fn post(self: &Arc<Self>, path: &str, body: &[u8]) -> Result<Value, Status> {
+        let answer = self.post_change(path, body);
+        // What the folder holds may have changed: the panels are made again
+        // when next asked for
+        self.changed();
+        answer
+    }
+
+    /// A `POST` under `/api/cuttlefish/knowledge/`, as [`Knowledge::post`]
+    /// answers it
+    fn post_change(self: &Arc<Self>, path: &str, body: &[u8]) -> Result<Value, Status> {
         let json_body = || -> Result<Value, Status> {
             serde_json::from_slice(body).map_err(|e| anyhow::anyhow!("bad JSON: {e}").into())
         };
@@ -2050,7 +2389,12 @@ async fn upload(
     let busy = crate::exit::Busy::new(format!("POST /api/cuttlefish/knowledge/upload?path={rel}"));
     let writer = tokio::task::spawn_blocking(move || {
         let _busy = busy;
-        knowledge.write_upload(&path, rx)
+        let written = knowledge.write_upload(&path, rx);
+        // The inbox holds one more file
+        if written.is_ok() {
+            knowledge.changed();
+        }
+        written
     });
     let mut complete = true;
     while let Some(chunk) = body.next().await {
@@ -2273,15 +2617,119 @@ mod tests {
     #[test]
     fn glossary_without_the_model() {
         let dir = std::env::temp_dir().join(format!("procon-knowledge-{}", std::process::id()));
-        let knowledge = Knowledge::new(dir.clone(), Settings::default(), None);
+        let cache =
+            std::env::temp_dir().join(format!("procon-knowledge-cache-{}", std::process::id()));
+        let knowledge = Knowledge::new(dir.clone(), cache.clone(), Settings::default(), None);
+        // None kept yet: 202 while a thread makes it
+        let first = knowledge.glossary("Steelhead").err().map(|s| s.0);
+        assert_eq!(first, Some(StatusCode::ACCEPTED));
+        knowledge.glossaries().wait().unwrap();
         let found = knowledge.glossary("Steelhead").unwrap();
         assert_eq!(found["terms"][0]["id"], "steelhead");
         assert!(found["size"].as_u64().unwrap() > 10);
         let mentioned = knowledge.glossary("the Steelhead and the Stinger").unwrap();
         assert_eq!(mentioned["terms"].as_array().unwrap().len(), 2);
         assert_eq!(knowledge.glossary("").unwrap()["terms"], json!([]));
-        // Nothing was written
+        // Nothing was written into the knowledge folder; the glossary is
+        // kept in the local cache
         assert!(!dir.exists());
+        assert!(cache.join(GLOSSARY_FILE).is_file());
+        std::fs::remove_dir_all(&cache).unwrap();
+    }
+
+    #[test]
+    fn the_glossary_is_kept_and_made_again_after_changes() {
+        let dir = std::env::temp_dir().join(format!("procon-glossaries-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("knowledge");
+        std::fs::create_dir_all(&root).unwrap();
+        let knowledge = Knowledge::new(root.clone(), dir.join("cache"), Settings::default(), None);
+        let seed = knowledge.glossaries().wait().unwrap().glossary.terms.len();
+        // An alias taught by hand in the user file: seen once the files are
+        // looked at again
+        std::fs::write(
+            root.join(slang::FILE),
+            "[[alias]]\nid = \"a1\"\nterm = \"maws\"\nterm_name = \"Maws\"\ntext = \"shark\"\nlang = \"en\"\nstatus = \"approved\"\nsource = \"user\"\ncreated_ms = 1\n",
+        )
+        .unwrap();
+        let now = knowledge.glossaries().current().unwrap();
+        assert_eq!(now.glossary.lookup("shark").unwrap().id, "maws");
+        assert_eq!(now.user.aliases.len(), 1);
+        assert_eq!(now.glossary.terms.len(), seed);
+        // A later run answers with the local copy, the same glossary
+        let again = Knowledge::new(root.clone(), dir.join("cache"), Settings::default(), None);
+        let kept = again.glossary_kept().unwrap();
+        assert_eq!(kept.glossary, now.glossary);
+        assert_eq!(kept.user, now.user);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn panels_answer_at_once_and_are_made_again_after_changes() {
+        let dir = std::env::temp_dir().join(format!("procon-panels-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("knowledge");
+        std::fs::create_dir_all(root.join(inbox::INBOX)).unwrap();
+        std::fs::write(root.join(inbox::INBOX).join("eggs.md"), "# Eggs").unwrap();
+        let open = || {
+            Arc::new(Knowledge::new(
+                root.clone(),
+                dir.join("cache"),
+                Settings::default(),
+                None,
+            ))
+        };
+        // The panel as made, once its thread is done
+        let settled = |knowledge: &Arc<Knowledge>, name| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let idle = !knowledge.panels.state.lock().unwrap().running;
+                if idle && let Ok(answer) = knowledge.panel(name) {
+                    return answer;
+                }
+                assert!(std::time::Instant::now() < deadline, "never made");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        let knowledge = open();
+        // None made yet: 202 at once, while a thread makes them
+        let first = knowledge.panel("inbox").err().map(|s| s.0);
+        assert_eq!(first, Some(StatusCode::ACCEPTED));
+        let inbox = settled(&knowledge, "inbox");
+        assert_eq!(
+            (inbox["files"].as_u64(), inbox["refreshing"].as_bool()),
+            (Some(1), Some(false))
+        );
+        let stats = settled(&knowledge, "stats");
+        assert_eq!(
+            (stats["documents"].as_u64(), stats["chunks"].as_u64()),
+            (Some(0), Some(0))
+        );
+        assert!(stats["glossary_terms"].as_u64().unwrap() > 10);
+        assert!(
+            settled(&knowledge, "overview")["glossary"]["terms"]
+                .as_u64()
+                .unwrap()
+                > 10
+        );
+        // A change by the lab: the panel as kept at once, then made again
+        std::fs::write(root.join(inbox::INBOX).join("waves.md"), "# Waves").unwrap();
+        knowledge.changed();
+        let kept = knowledge.panel("inbox").ok().unwrap();
+        assert_eq!(
+            (kept["files"].as_u64(), kept["refreshing"].as_bool()),
+            (Some(1), Some(true))
+        );
+        assert_eq!(settled(&knowledge, "inbox")["files"], 2);
+        // A later run answers with the local copy at once, and reads again
+        let again = open();
+        let copy = again.panel("inbox").ok().unwrap();
+        assert_eq!(
+            (copy["files"].as_u64(), copy["refreshing"].as_bool()),
+            (Some(2), Some(true))
+        );
+        assert_eq!(settled(&again, "inbox")["files"], 2);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -2289,7 +2737,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("procon-slang-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let knowledge = Arc::new(Knowledge::new(dir.clone(), Settings::default(), None));
+        let knowledge = Arc::new(Knowledge::new(
+            dir.clone(),
+            dir.join("cache"),
+            Settings::default(),
+            None,
+        ));
         let post = |path: &str, body: Value| knowledge.post(path, body.to_string().as_bytes());
         let added = post(
             "slang/add",
@@ -2429,10 +2882,14 @@ mod tests {
             std::env::temp_dir().join(format!("procon-knowledge-lock-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let held = lock::acquire(&root, "cuttlefish ingest").unwrap();
-        let knowledge = Arc::new(Knowledge::new(root.clone(), Settings::default(), None));
+        let knowledge = Arc::new(Knowledge::new(
+            root.clone(),
+            root.join("cache"),
+            Settings::default(),
+            None,
+        ));
         let job = knowledge
             .ingest(request(r#"{"kind": "youtube", "url": "https://youtu.be/x"}"#).unwrap())
-            .ok()
             .expect("the job starts");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let error = loop {
@@ -2483,7 +2940,12 @@ mod tests {
 
     #[test]
     fn jobs_run_one_at_a_time() {
-        let knowledge = Knowledge::new(PathBuf::from("/nonexistent"), Settings::default(), None);
+        let knowledge = Knowledge::new(
+            PathBuf::from("/nonexistent"),
+            PathBuf::from("/nonexistent/cache"),
+            Settings::default(),
+            None,
+        );
         knowledge.jobs.lock().unwrap().push(IngestJob {
             id: 1,
             what: "x".into(),
