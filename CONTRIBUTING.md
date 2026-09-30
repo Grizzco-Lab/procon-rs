@@ -112,7 +112,7 @@ stays there), and `uv` rebuilds it when the Rust sources change.
 | `src/vision/detector.rs` | The Salmon Run detector's client: AgentZero's `agentzero-detect-serve`, its health, runs streamed as JSON lines, and starting it |
 | `src/predictor.rs` | Predictor app backend: `agentzero-predict` runs as a child process, stored predictions, windows of predictions and truth, agreement numbers |
 | `src/predictor/online.rs` | The Predictor's online mode: `agentzero-play --json` on a paced video or the live capture's piped frames, the loop's latency, and the bot (`Bot`) that plays the Switch through the replay port with a person's input taking over |
-| `src/pipeline.rs` | Pipeline app backend: the experiment queue file (read, reordered under its lock, what each runner takes next), both GPUs (this host's, and the win11 VM's from its runner's file) and the machine sampled on a thread, each entry's processes, CPU and progress (ended, stalled), the timeline |
+| `src/pipeline.rs` | Pipeline app backend: the experiment queue file (read, reordered under its lock, what each runner takes next), both machines (this host, and the win11 VM's GPU, CPU and memory from its runner's file) sampled on a thread, each entry's processes (with its main one), CPU, progress (ended, stalled) and what its log says it runs, the timeline |
 | `web/` | Dashboard page (`index.html`, `style.css`, `app.js`, `controller3d.js`, `player.js` the video player of the apps, `inspect.js`, `sketch.js` drawing layer, `label.js`, `cuttlefish.js`, `knowledge.js`, `translate.js`, `vision.js`, `predictor.js`, `pipeline.js`, `i18n.js` and `i18n-zh.js` for the language, `icons/` icon set and gallery), embedded into the binary |
 | **Libraries and CLIs** | |
 | `crates/gameplay-data` | Recording format, alignment, labels, calibration, the camera turn from AgentZero's fits; Python bindings |
@@ -574,11 +574,14 @@ waits for nothing; the VM's only with a `command`).
 
 The second GPU is the win11 VM's: AgentZero's `agentzero-win11 run` marks
 the entries it takes `host: win11`, copies their logs and metrics into the
-same paths here every minute and writes the VM's GPU to `win11/gpu.json`
-beside the queue every 10 s. An entry of another machine is never looked
-for among this host's processes; it runs while that file, fresh (a
-minute), names it as the runner's job. A stale file makes the VM's GPU
-unknown, never 0, and its entries "no word" rather than "no process".
+same paths here every minute and writes the VM's GPU (with its power limit,
+fan, clock and P-state), CPU (`cpu`: `percent`, `cores`) and memory
+(`memory`: `used`, `total`) to `win11/gpu.json` beside the queue every 10 s;
+a runner of before writes the GPU alone, and the page says its runner does
+not read the rest yet. An entry of another machine is never looked for
+among this host's processes; it runs while that file, fresh (a minute),
+names it as the runner's job. A stale file makes the VM unknown, never 0,
+and its entries "no word" rather than "no process".
 
 The sampling runs in a process of its own, `grizzco-lab sample`
 (`pipeline::run_sampler`), so the timeline has no hole while the lab is
@@ -590,17 +593,21 @@ exit leave it running; its output goes to `pipeline-sampler.log`. It exits
 when its binary is rebuilt (its mtime changes), and the lab starts the new
 build. The lab samples nothing itself: it reads the sampler's snapshot,
 `pipeline-now.json` (rewritten after every sample: the GPUs, their
-processes, CPU, memory, each entry's processes and progress, the disks),
+processes, CPU, memory, each entry's processes, progress and what its
+log says it runs, the disks),
 and follows the history file's new lines (by inode and offset; all of it
 again once the compaction replaced the file). A snapshot older than 30 s
 says nothing of now: the state's GPU and processes are left out and its
 `gpu_error` names the sampler's log.
 
 The sampler samples every 5 s: the GPU with `nvidia-smi` (one query for the
-GPU, one for its compute processes), the VM's GPU from its file, the CPU,
+GPU, one for its compute processes), the VM's GPU, CPU and memory from
+its file, the CPU,
 load, memory and every process from `/proc`, which processes belong to
 which entry (running entries claim theirs first), each live entry's CPU,
-RSS and GPU memory, and when each was seen running; the lab keeps 12 hours
+RSS and GPU memory and its main process (the one holding the most GPU
+memory, else the busiest, else the newest, by its short name), and when
+each was seen running; the lab keeps 12 hours
 of samples in memory for the timeline, averaged down to 720 points for a
 window, each sample with the entries seen running and the cores each took.
 The sampler also watches the disks (`Storage`): the Proxmox host's ZFS pools
@@ -621,7 +628,13 @@ Each sample is appended to `pipeline-gpu.jsonl` in the local cache
 every hour; the log keeps a week, older than 12 hours one row a minute.
 Its lines keep the first version's layout (eight numbers, then the running
 ids) and add the VM's GPU, the load, each entry's cores and each disk's
-free space in GB after it, so every version reads the others' lines. Progress comes from the run
+free space in GB, and the VM's CPU and memory after it, so every version
+reads the others' lines. A live entry's log is read once a sample, for
+its progress and for what it does (`log_activity`): the step its job
+script started last (the agents' `== start <name> (step N of the job)
+<date> <time>`, until its `== end <name>`), whether a counter came after
+that start (else the counter is an earlier step's), and its last line.
+Progress comes from the run
 folder's `metrics.jsonl`, read as it grows (whole lines only, from the
 start again when the file shrinks), with the total from `args.json`, else
 from the last `N/M` in the log of a live entry; the ETA comes from the
@@ -637,7 +650,17 @@ atomically, with the fields in the helper's order, so the two write the same
 bytes. `web/pipeline.js` polls `state` (with the samples since the last)
 while the app is shown, redraws only what changed (a focused handle, an open
 log and a chart keep their place), and reorders by pointer events, so a
-touch drags as a mouse does.
+touch drags as a mouse does. It draws both machines from one model
+(`machinesOf`: title, GPU, CPU, memory and disk readings, their rows in the
+samples, the runner of its GPU), so the two panels are alike; their head,
+vitals and processes share rows (`grid-template-rows: subgrid`, which a
+size container would break: the vitals box is the container instead), and
+the running cards come last, where the columns may differ in length. A
+card's phase (`phaseOf`) is counting, working (no counter of its own: a
+step its script started after the counter's last line, its training over,
+or none at all; named by the step or the main process), stalled or ended.
+The timeline is a chart per GPU (`drawChart`) with the same lanes' height
+on both, so their rows line up, and one crosshair time for both.
 
 ### gameplay-data
 

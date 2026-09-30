@@ -44,7 +44,7 @@ const I18N = {
       "VOD review / cross-language slang translation / Overfishing Pedia",
     "app.vision.sub": "vision and 3D reconstruction",
     "app.predictor.sub": "controller action prediction",
-    "app.pipeline.sub": "the GPU and the experiment queue",
+    "app.pipeline.sub": "the GPUs and the experiment queue",
     // The guide: how the apps fit together
     "guide.open": "How it fits together",
     "guide.title": "How it fits together",

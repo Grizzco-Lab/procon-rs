@@ -14,8 +14,9 @@ comments, drawings and an AI coach, and to manage its knowledge; **Vision**,
 to detect and track objects in recorded sessions; **Predictor**, to see
 what the inverse dynamics model reads off any video, and to run AgentZero's
 policy online, on a video or on the live capture, where it can play the
-Switch; and **Pipeline**, to follow the GPU and the experiment queue that
-trains the models: what runs, what waits and why, and what came out.
+Switch; and **Pipeline**, to follow both machines' GPUs and the experiment
+queue that trains the models: what runs on each, what waits and why, and
+what came out.
 
 > [!TIP]
 > **[See the setup guide and dashboard tour →](https://htmlpreview.github.io/?https://github.com/Grizzco-Lab/procon-rs/blob/main/doc/index.html)**
@@ -128,7 +129,7 @@ Inkspector inspects and labels them frame by frame (labels), Cuttlefish
 reviews videos, translates slang across languages and keeps the Overfishing
 Pedia (reviews and knowledge), Vision detects objects toward 3D
 reconstruction (detections), the Pipeline follows the models' training on
-the GPU (checkpoints), and the Predictor predicts controller actions (IDM
+both GPUs (checkpoints), and the Predictor predicts controller actions (IDM
 predictions, which go back to the Inkspector next to the labels). The
 guide **How it fits together** draws this pipeline with a link to each app;
 it opens by itself on a first visit and again from the **?** button or the
@@ -800,37 +801,46 @@ runs now, what waits and why, and what came out.
   and the win11 VM's RTX 4080 SUPER (`gpu:win11`; `gpu` is either), which
   AgentZero's `agentzero-win11 run` feeds. The runner marks what it takes
   `host: win11`, copies its log and metrics back here every minute and
-  writes the VM's GPU to `runs/win11/gpu.json` every 10 s; the lab reads
-  that file for the VM's GPU and for whether its entry still runs. A file
-  older than a minute says nothing: the GPU shows no reading (never 0) and
-  its entry "no word", not "no process".
-- **Running**: a card per running entry, labelled with where it runs
-  (Linux · RTX 4070 SUPER, win11 · RTX 4080 SUPER, or CPU), with its
-  progress and ETA (from its run folder's `metrics.jsonl` and `args.json`,
-  else the last `N/M` in its log), its loss curves (train, validation,
-  held-out) drawn across the steps still to run, its latest validation
-  scores and AgentZero's copycat scores (keyframe buttons, anticipation,
-  turn over half a second, press F1: what the policy gets right beyond
-  repeating the present; hover one for what it means), its processes' GPU
-  memory, CPU and RAM (on the VM, its GPU), and its log. Once a run's
-  training is over while its job goes on (an evaluation after it, say), the
-  card says so ("Another step, running for 16 min") with the log's latest
-  line instead of a stuck bar; a step that has not moved for 5 minutes
-  says that too, and neither has an ETA. A run that stopped early (no
-  better validation) reads "Stopped early at step 600 of 2,000". The lab
-  finds an entry's processes by its process group, its process or a piece
-  of its command line, so it also shows an entry that runs while the file
-  still says queued, and warns about one the file says runs when none of
-  its processes is left.
-- **Machine**: this host's GPU (busy, memory with the queue's share,
-  temperature, power), CPU (with the queue's share in cores) and memory,
-  and the VM's GPU, each with its last half hour, and each GPU's processes
-  with the entries they belong to.
-- **GPU timeline**: one section per GPU, over the last 1 to 12 hours: busy
-  % (with this host's CPU over it), memory (the queue's jobs against the
-  rest) and lanes of what ran on it when, each bar holding its job's CPU in
-  cores, so a CPU-bound step of a GPU job stands out; stretches without a
-  reading are shaded. A sampler samples every 5 s, 12 hours kept in
+  writes the VM's GPU, CPU and memory to `runs/win11/gpu.json` every 10 s;
+  the lab reads that file for the VM and for whether its entry still runs.
+  A file older than a minute says nothing: the VM shows no reading (never
+  0) and its entry "no word", not "no process".
+- **The machines**, side by side and alike, so the first screen says what
+  runs on each GPU, how far along it is, what comes next and whether
+  anything is wrong. Each machine's head names it with its GPU and shows
+  its state as lights (1 running, idle, busy with work the queue does not
+  list, the VM runner's last word, and one amber light for each thing to
+  look at: an entry with no process or no word left, a stalled step, the
+  VM's runner stopped) and what its GPU takes next. Under it, its vitals in
+  one grammar: GPU busy, memory (on this host with the queue's share),
+  temperature and power, then CPU, memory and disk, each tile its value,
+  its last half hour or a meter, a short note and the rest on hover; then
+  the processes on its GPU with the entries they belong to; the two
+  machines' tiles and processes line up. Then a card per entry running
+  there, or, while none does, what comes next there and what ran last.
+- **A running entry's card**: its progress and ETA while it counts steps
+  (from its run folder's `metrics.jsonl` and `args.json`, else the last
+  `N/M` in its log); for a step without a counter (a scoring or an
+  evaluation, say), its name and how long it runs ("freeze · running 38
+  min", the step its job script started, else its main process) with its
+  log's latest line; a step that has not moved for 5 minutes says so; a run
+  that stopped early (no better validation) reads "Stopped early at step
+  600 of 2,000". Its loss curves (train, validation, held-out) are drawn
+  across the steps still to run, beside its latest validation scores and
+  AgentZero's copycat scores (keyframe buttons, anticipation, turn over
+  half a second, press F1: what the policy gets right beyond repeating the
+  present; hover one for what it means), with its processes' GPU memory,
+  CPU and RAM (on the VM, its GPU), and its log. The lab finds an entry's
+  processes by its process group, its process or a piece of its command
+  line, so it also shows an entry that runs while the file still says
+  queued, and warns about one the file says runs when none of its
+  processes is left.
+- **GPU timeline**: a compact chart per GPU, side by side, over the last 1
+  to 12 hours: busy % with its machine's CPU over it, memory (the queue's
+  jobs against the rest) and lanes of what ran on it when, each bar holding
+  its job's CPU in cores, so a CPU-bound step of a GPU job stands out;
+  stretches without a reading are shaded, and one crosshair follows the
+  pointer over both. A sampler samples every 5 s, 12 hours kept in
   memory and a week on disk. It is a process of its own, so nothing is
   missing while the lab is stopped: the lab starts it when none runs
   (`grizzco-lab sample`, detached, logging to
