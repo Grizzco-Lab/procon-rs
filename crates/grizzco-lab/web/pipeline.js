@@ -2169,13 +2169,23 @@
             },
           );
     const gpu = m.gpu;
-    // Why a value is missing: no reading, or one its runner does not take
-    const none = m.fresh ? t("pl.tile.notRead") : t("pl.tile.noReading");
+    // Why a value is missing: no reading, or, of the VM's CPU and memory, a
+    // runner that does not read them yet (its file fresh and whole)
+    const noReading = t("pl.tile.noReading");
+    const notRead =
+      m.key === "remote" && m.fresh && !m.gpuError
+        ? t("pl.tile.notRead")
+        : noReading;
     const tiles = [];
     const tile = (row, label, value, extra = {}) =>
       pulseTile(row, label, value ?? "–", {
         ...extra,
-        note: value == null && extra.note == null ? none : extra.note,
+        note:
+          value == null && extra.note == null
+            ? row === "host"
+              ? notRead
+              : noReading
+            : extra.note,
       });
     tiles.push(
       tile(
