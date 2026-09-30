@@ -11,20 +11,23 @@ const $ = (id) => document.getElementById(id);
 // up, and the whole page with them. So at most REQUESTS_AT_ONCE run at a
 // time, whole bodies included: changes (POST, PUT, DELETE) at once, then
 // the open app's requests, its pictures (`priority: "low"`) after its data,
-// then the rest. A GET belongs to the app open when it was asked; leaving
-// that app aborts it, queued or under way (one AbortController per app), so
-// the next app never waits for the one left: its promise rejects with an
-// AbortError (`isAbort`) and the app asks again when shown. The page's own
-// requests (`keep: true`, such as the icons, or asked before an app is
-// open) are never aborted. A GET the lab answers with 202 (still reading:
-// it answers at once and works on a thread) is asked again every
-// ASK_AGAIN_MS until it answers. A caller may add a signal of its own.
+// then the rest; the last place is kept for the open app's data, so slow
+// pictures never hold it up. A GET belongs to the app open when it was
+// asked; leaving that app aborts it, queued or under way (one
+// AbortController per app), so the next app never waits for the one left:
+// its promise rejects with an AbortError (`isAbort`) and the app asks again
+// when shown. The page's own requests (`keep: true`, such as the icons, or
+// asked before an app is open) are never aborted. A GET the lab answers
+// with 202 (still reading: it answers at once and works on a thread) is
+// asked again every ASK_AGAIN_MS until it answers. A caller may add a
+// signal of its own.
 
 /** Requests to the lab running at once; the browser's other two
  * connections stay free for the video and what the page loads itself */
 const REQUESTS_AT_ONCE = 4;
-/** How soon a request the lab answered with 202 is asked again, in ms */
-const ASK_AGAIN_MS = 1000;
+/** How soon a request the lab answered with 202 is asked again, in ms: a
+ * 202 costs the lab nothing, and what it made waits half this on average */
+const ASK_AGAIN_MS = 500;
 
 const requests = {
   /** Running now */
@@ -66,7 +69,7 @@ function requestRank(job) {
 }
 
 /** Start waiting requests while there is room, the best turn first; a
- * change never waits */
+ * change never waits, and only the open app's data takes the last place */
 function nextRequests() {
   for (;;) {
     let best = -1;
@@ -81,7 +84,9 @@ function nextRequests() {
     }
     if (best < 0) return;
     const job = requests.queue[best];
-    const room = requests.running < REQUESTS_AT_ONCE;
+    const places =
+      requestRank(job) <= 1 ? REQUESTS_AT_ONCE : REQUESTS_AT_ONCE - 1;
+    const room = requests.running < places;
     if (!room && !job.change && !job.signal?.aborted) return;
     requests.queue.splice(best, 1);
     job.run();

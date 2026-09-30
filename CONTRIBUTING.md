@@ -235,12 +235,12 @@ aborts it, so the next app never waits for the one left (a loader treats
 answers at once: slow data is made on a thread and kept (`Kept` in
 `src/cuttlefish/kept.rs` for the glossary and the game items, the Knowledge
 view's panels, the reviews list, the Pedia), `refreshing` while made again,
-`202` while it never was, which the queue asks again every second; every
-request answered in more than 300 ms is logged at debug level (`Slow
-request:`). On the main thread, no long task of ours runs in an app switch:
-long lists are built as one HTML string, laid out once they come into view
-(`content-visibility: auto`), and the 3D controller builds after the
-Studio's first paint, step by step, only while the Studio is open.
+`202` while it never was, which the queue asks again every half second;
+every request answered in more than 300 ms is logged at debug level
+(`Slow request:`). On the main thread, no long task of ours runs in an app
+switch: long lists are built as one HTML string, laid out once they come
+into view (`content-visibility: auto`), and the 3D controller builds after
+the Studio's first paint, step by step, only while the Studio is open.
 CLAUDE.md's Dashboard section has the same rules in short.
 
 Ctrl-C stops the lab in steps, each logged (`exit::step`): AgentZero (the
