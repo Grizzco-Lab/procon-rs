@@ -47,7 +47,7 @@ use crate::predictor::online::{Bot, Ended, Takeover};
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use anyhow::{Context, Result, bail, ensure};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use gameplay_data::session::{
     MARKER_KINDS, MARKER_TECHNIQUE, Marker, SessionInfo, write_atomic, write_markers,
 };
@@ -70,6 +70,10 @@ pub const BOT_LOG_FILE: &str = "agentzero.jsonl";
 /// Between the prefix and the stamp of a session the bot's run starts:
 /// `<prefix>bot-2026-09-28_21-00-00/`, easy to tell from one's own
 pub const BOT_INFIX: &str = "bot-";
+
+/// Session folders read at once when the sessions' sizes are counted: on a
+/// network mount each folder not listed lately is a round trip of its own
+const COUNT_READERS: usize = 16;
 
 /// The game's controller settings, as set in Splatoon 3's options (TV mode)
 ///
@@ -902,7 +906,8 @@ impl Studio {
     /// Bytes of the other sessions under the path prefix (folders holding a
     /// `session.json`), leaving out the current or last one, which is counted live
     ///
-    /// Walks the folder, so call it now and then rather than on every tick.
+    /// Walks the folder, [`COUNT_READERS`] sessions at once, so call it now
+    /// and then, on a thread of its own, rather than on every tick.
     pub fn other_sessions_bytes(&self) -> u64 {
         let current = self
             .session
@@ -915,16 +920,13 @@ impl Studio {
         let Ok(entries) = std::fs::read_dir(self.recorder.prefix_dir()) else {
             return 0;
         };
-        entries
+        let dirs: Vec<PathBuf> = entries
             .flatten()
             .filter(|entry| entry.file_name().to_string_lossy().starts_with(&name))
             .map(|entry| entry.path())
-            .filter(|dir| dir.join("session.json").is_file() && Some(dir) != current.as_ref())
-            .filter_map(|dir| std::fs::read_dir(dir).ok())
-            .flat_map(|files| files.flatten())
-            .filter_map(|file| file.metadata().ok())
-            .map(|meta| meta.len())
-            .sum()
+            .filter(|dir| Some(dir) != current.as_ref())
+            .collect();
+        sessions_bytes(&dirs)
     }
 
     /// Record the next video file of the session, if there is a video input
@@ -1024,6 +1026,37 @@ impl Studio {
     }
 }
 
+/// Bytes of the session folders among `dirs`, [`COUNT_READERS`] read at once
+fn sessions_bytes(dirs: &[PathBuf]) -> u64 {
+    let next = AtomicUsize::new(0);
+    let total = AtomicU64::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..COUNT_READERS.min(dirs.len()) {
+            scope.spawn(|| {
+                while let Some(dir) = dirs.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    total.fetch_add(session_bytes(dir), Ordering::Relaxed);
+                }
+            });
+        }
+    });
+    total.into_inner()
+}
+
+/// Bytes of the files in `dir` when it is a session folder (it holds a
+/// `session.json`), else 0
+fn session_bytes(dir: &Path) -> u64 {
+    if !dir.join("session.json").is_file() {
+        return 0;
+    }
+    std::fs::read_dir(dir).map_or(0, |files| {
+        files
+            .flatten()
+            .filter_map(|file| file.metadata().ok())
+            .map(|meta| meta.len())
+            .sum()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1077,5 +1110,32 @@ mod tests {
         );
         // Not counted (ffmpeg read the input): left out
         assert!(json!(segment(None)).get("capture").is_none());
+    }
+
+    #[test]
+    fn sessions_are_counted_by_their_files() {
+        let dir = std::env::temp_dir().join(format!("procon-sizes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // More sessions than readers, each 10 bytes of session.json and n
+        // of video; a folder without session.json is no session
+        let mut dirs = Vec::new();
+        for n in 0..(COUNT_READERS as u64 + 5) {
+            let session = dir.join(format!("2026-09-30_12-00-{n:02}"));
+            std::fs::create_dir_all(&session).unwrap();
+            std::fs::write(session.join("session.json"), "0123456789").unwrap();
+            std::fs::write(session.join("video-01.mkv"), vec![0; n as usize]).unwrap();
+            dirs.push(session);
+        }
+        let other = dir.join("notes");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("todo.txt"), "not counted").unwrap();
+        dirs.push(other);
+        let sessions = COUNT_READERS as u64 + 5;
+        assert_eq!(
+            sessions_bytes(&dirs),
+            10 * sessions + sessions * (sessions - 1) / 2
+        );
+        assert_eq!(sessions_bytes(&[]), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

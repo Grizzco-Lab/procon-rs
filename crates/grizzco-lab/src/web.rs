@@ -57,6 +57,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Instant;
 use tokio::sync::{broadcast, watch};
 use warp::Filter;
@@ -122,9 +123,13 @@ pub async fn serve(
 ) {
     let port = web.port;
     let status = watch::Sender::new(String::new());
+    let sessions = Arc::new(Mutex::new(Sessions::default()));
+    let (watched, watching) = (Arc::clone(&studio), Arc::clone(&sessions));
+    std::thread::spawn(move || watch_sessions(&watched, &watching));
     tokio::spawn(publish_status(
         Arc::clone(&studio),
         Arc::clone(&pipeline),
+        sessions,
         status.clone(),
     ));
 
@@ -575,7 +580,14 @@ async fn stream_to_client(
                 Err(_) => break,
             },
             changed = status.changed() => match changed {
-                Ok(()) => Message::text(status.borrow_and_update().clone()),
+                Ok(()) => {
+                    let text = status.borrow_and_update().clone();
+                    // Nothing is published before the first tick
+                    if text.is_empty() {
+                        continue;
+                    }
+                    Message::text(text)
+                }
                 Err(_) => break,
             },
             changed = agent.changed() => match changed {
@@ -623,7 +635,7 @@ const RATE_WINDOW: usize = 7;
 const ALL_SESSIONS_EVERY: Duration = Duration::from_secs(10);
 
 /// The status's blocking work, as the exit names it ([`exit::Busy`])
-const STATUS_WORK: &str = "the status (the recording, the capture, session sizes and free space)";
+const STATUS_WORK: &str = "the status (the recording, the capture and the session's files)";
 
 /// Counters at one status tick, for rates
 struct Sample {
@@ -633,42 +645,73 @@ struct Sample {
     video_bytes: u64,
 }
 
+/// What the status tells of the sessions' folder, as [`watch_sessions`]
+/// read it last: the bytes of the earlier sessions, and the free and total
+/// bytes of its disk; none before the first reading
+#[derive(Clone, Copy, Default)]
+struct Sessions {
+    other_sessions: Option<u64>,
+    disk: Option<(u64, u64)>,
+}
+
+/// Read the sessions' folder for the status, on a thread of its own: it may
+/// be a network mount (rclone on Dropbox), where each folder not listed
+/// lately is a round trip, so counting every session takes seconds after a
+/// remount; the status never waits for it and tells what was read last
+fn watch_sessions(studio: &Studio, sessions: &Mutex<Sessions>) {
+    let mut counted: Option<Instant> = None;
+    loop {
+        let disk = disk_space(&studio.recorder.prefix_dir());
+        sessions.lock().unwrap().disk = disk;
+        if counted.is_none_or(|at| at.elapsed() >= ALL_SESSIONS_EVERY) {
+            let bytes = studio.other_sessions_bytes();
+            sessions.lock().unwrap().other_sessions = Some(bytes);
+            counted = Some(Instant::now());
+        }
+        std::thread::sleep(STATUS_EVERY);
+    }
+}
+
 /// Publish a status snapshot twice a second
 async fn publish_status(
     studio: Arc<Studio>,
     pipeline: Arc<Pipeline>,
+    sessions: Arc<Mutex<Sessions>>,
     status: watch::Sender<String>,
 ) {
     let mut tick = tokio::time::interval(STATUS_EVERY);
     let mut history: VecDeque<Sample> = VecDeque::new();
-    let mut other_sessions: Option<(Instant, u64)> = None;
 
     loop {
         tick.tick().await;
 
-        let recount = other_sessions.is_none_or(|(at, _)| at.elapsed() >= ALL_SESSIONS_EVERY);
         let snapshot = {
             let studio = Arc::clone(&studio);
-            // Status reads files and locks shared by blocking code
+            // Status reads files and locks shared by blocking code: a
+            // command holds the session while ffmpeg stops and session.json
+            // is written
             exit::blocking(STATUS_WORK, move || {
                 (
                     studio.recorder.status(),
                     studio.video.status(),
                     studio.video_bytes(),
-                    recount.then(|| studio.other_sessions_bytes()),
-                    disk_space(&studio.recorder.prefix_dir()),
                     // Its lock is held while a line goes to the proxy
                     studio.bot.status(),
+                    studio.game_settings(),
+                    studio.techniques_status(),
+                    studio.player.status(),
                 )
             })
             .await
         };
-        let Ok((recorder, video, video_bytes, recounted, disk, bot)) = snapshot else {
+        let Ok((recorder, video, video_bytes, bot, game_settings, techniques, replay)) = snapshot
+        else {
             continue;
         };
-        if let Some(bytes) = recounted {
-            other_sessions = Some((Instant::now(), bytes));
-        }
+        let Sessions {
+            other_sessions,
+            disk,
+        } = *sessions.lock().unwrap();
 
         let link = &studio.link;
         let now = Sample {
@@ -711,9 +754,9 @@ async fn publish_status(
                         .map(|(mean, max)| json!({ "mean": mean, "max": max })),
                 },
                 "recorder": recorder,
-                "game_settings": studio.game_settings(),
-                "techniques": studio.techniques_status(),
-                "replay": studio.player.status(),
+                "game_settings": game_settings,
+                "techniques": techniques,
+                "replay": replay,
                 // AgentZero playing the Switch: every app shows Stop bot
                 "bot": bot,
                 "video": video,
@@ -724,7 +767,7 @@ async fn publish_status(
                     "video": video_bytes,
                     // Earlier sessions, recounted now and then, plus this one live
                     "all_sessions": other_sessions
-                        .map(|(_, bytes)| bytes + recorder.bytes + video_bytes),
+                        .map(|bytes| bytes + recorder.bytes + video_bytes),
                 },
                 "disk": { "free": disk_free, "total": disk_total },
                 "memory": { "available": mem_available, "total": mem_total },
