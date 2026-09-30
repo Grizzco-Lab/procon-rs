@@ -91,17 +91,22 @@ const TECH_FOUND = 12;
 const gameItems = { list: null, loading: null, failed: "" };
 
 /** Read Lean's weapons and specials once (again after a failure, or while
- * the store has none); the panel and the Inkspector's markers redraw when
- * they come */
-function loadGameItems() {
-  if (gameItems.list?.length || gameItems.loading) return;
+ * the store has none, or `again`); the panel and the Inkspector's markers
+ * redraw when they come. The lab answers at once with the items it kept,
+ * `refreshing` while it looks at their files again: then they are read
+ * once more a moment later, as they may have changed, and the Inkspector's
+ * markers (whose inputs a redraw would reset) are drawn again only if they
+ * did. */
+function loadGameItems(again = false) {
+  if ((gameItems.list?.length && !again) || gameItems.loading) return;
+  let changed = true;
   gameItems.loading = fetch("/api/cuttlefish/game-items")
     .then(async (response) => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       // In the lab's order: the weapons, the Grizzco ones last, then the
       // specials
-      gameItems.list = data.items.map((item) => ({
+      const list = data.items.map((item) => ({
         id: item.key,
         // The groups of the weapons and specials are named as their kinds
         group: item.kind,
@@ -113,7 +118,10 @@ function loadGameItems() {
         grizzco: item.grizzco,
         search: item.search,
       }));
+      changed = JSON.stringify(list) !== JSON.stringify(gameItems.list);
+      gameItems.list = list;
       gameItems.failed = "";
+      if (data.refreshing) setTimeout(() => loadGameItems(true), 2000);
     })
     .catch((error) => {
       gameItems.failed = error.message;
@@ -121,7 +129,7 @@ function loadGameItems() {
     .finally(() => {
       gameItems.loading = null;
       drawTechniques();
-      window.dispatchEvent(new Event("tech-items"));
+      if (changed) window.dispatchEvent(new Event("tech-items"));
     });
 }
 

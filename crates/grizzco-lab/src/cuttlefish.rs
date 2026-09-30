@@ -78,9 +78,11 @@
 //! - `GET stage-map?stage=<Gungee's key>&tide=<Low|Mid|High>`: Gungee's
 //!   top-down map of a Salmon Run stage (salmon-learn-nw.gungee.jp), fetched
 //!   once into the local cache; the page credits him wherever it shows one
-//! - `GET game-items`: `{"items"}`, the Salmon Run weapons and specials of
-//!   Lean's datamine in the store, for the Studio's Techniques panel (see
-//!   [`cuttlefish::leanny::items`]); `GET game-icon?path=<an item's icon>`:
+//! - `GET game-items`: `{"items", "refreshing"}`, the Salmon Run weapons and
+//!   specials of Lean's datamine in the store, for the Studio's Techniques
+//!   panel (see [`cuttlefish::leanny::items`]), as kept in memory and in the
+//!   local cache, at once; `refreshing` while a thread looks at the files
+//!   they are made from again ([`GameItems`]); `GET game-icon?path=<an item's icon>`:
 //!   its picture from Lean's site (leanny.github.io), fetched once into the
 //!   local cache; the page credits him where it shows them
 //! - `POST download` with `{"url", "start_s", "end_s", "review"?}` starts
@@ -159,7 +161,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Condvar, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 use warp::Filter;
 use warp::filters::BoxedFilter;
 use warp::http::{Method, Response, StatusCode};
@@ -186,6 +188,13 @@ const LIST_READERS: usize = 16;
 /// How long the list is served as it is before it is read again in the
 /// background, for reviews written by others (`cuttlefish corpus reviews`)
 const LIST_FRESH: Duration = Duration::from_secs(30);
+
+/// The Studio's game items in the local cache ([`GameItems`])
+const GAME_ITEMS_FILE: &str = "game-items.json";
+
+/// How long the game items are served as they are before their files are
+/// looked at again, on the next request
+const GAME_ITEMS_FRESH: Duration = Duration::from_secs(10);
 
 /// Gungee's community Salmon Run tools, whose stage maps the page shows
 const GUNGEE: &str = "https://salmon-learn-nw.gungee.jp";
@@ -687,6 +696,194 @@ impl ReviewList {
     }
 }
 
+/// The Salmon Run weapons and specials of the Studio's Techniques panel
+/// ([`cuttlefish::leanny::items`]), kept in memory and in the local cache
+/// ([`GAME_ITEMS_FILE`] in [`cuttlefish::store::cache_dir`]). They are made
+/// from the store's glossary and Lean's copies, on a network mount maybe,
+/// which takes seconds, so a request answers at once with the items kept,
+/// while a thread looks at their files ([`item_files`]: sizes and times,
+/// nothing read) and makes them again when those changed. A request waits
+/// only while none were ever made on this machine.
+struct GameItems {
+    /// The knowledge folder
+    root: PathBuf,
+    /// The copy in the local cache
+    file: PathBuf,
+    state: Mutex<ItemsState>,
+    /// Signalled when a look at the files ends
+    looked: Condvar,
+}
+
+#[derive(Default)]
+struct ItemsState {
+    /// The items as last made, with the files they were made from: at
+    /// first the local copy of an earlier run
+    kept: Option<KeptItems>,
+    /// The local copy was read (on the first request)
+    opened: bool,
+    /// A thread looks at the files, or makes the items, now
+    looking: bool,
+    /// When the files were last looked at
+    looked_at: Option<Instant>,
+    /// Why the items could not be made the last time
+    error: Option<String>,
+}
+
+/// Game items as the local cache keeps them
+#[derive(Serialize, Deserialize)]
+struct KeptItems {
+    /// The knowledge folder they were made from
+    root: PathBuf,
+    /// Its files they were made from ([`item_files`])
+    files: Vec<FileStamp>,
+    /// The items, as `GET game-items` answers them
+    items: Value,
+}
+
+/// A file by its path in the knowledge folder, with its size and time
+type FileStamp = (String, u64, Option<SystemTime>);
+
+impl GameItems {
+    /// The items of the knowledge folder `root`, kept in `file` too
+    fn new(root: PathBuf, file: PathBuf) -> Self {
+        Self {
+            root,
+            file,
+            state: Mutex::default(),
+            looked: Condvar::new(),
+        }
+    }
+
+    /// Look at the files on a thread, unless one does or they were looked
+    /// at lately
+    fn refresh(self: &Arc<Self>) {
+        let mut state = self.state.lock().unwrap();
+        if state.looking
+            || state
+                .looked_at
+                .is_some_and(|t| t.elapsed() < GAME_ITEMS_FRESH)
+        {
+            return;
+        }
+        state.looking = true;
+        let items = Arc::clone(self);
+        std::thread::spawn(move || items.look());
+    }
+
+    /// The items and whether their files are being looked at again; waits
+    /// only while none are kept
+    fn get(self: &Arc<Self>) -> Result<(Value, bool)> {
+        {
+            let mut state = self.state.lock().unwrap();
+            if !state.opened {
+                state.opened = true;
+                // The copy of an earlier run, when it is of this folder
+                state.kept = std::fs::read(&self.file)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<KeptItems>(&bytes).ok())
+                    .filter(|kept| kept.root == self.root);
+            }
+        }
+        self.refresh();
+        let mut state = self.state.lock().unwrap();
+        loop {
+            if let Some(kept) = &state.kept {
+                return Ok((kept.items.clone(), state.looking));
+            }
+            if !state.looking {
+                bail!("{}", state.error.as_deref().unwrap_or("no game items"));
+            }
+            state = self.looked.wait(state).unwrap();
+        }
+    }
+
+    /// Look at the files the items are made from, and make the items again
+    /// when those changed (or none are kept), into the local cache too
+    fn look(&self) {
+        let files = item_files(&self.root);
+        let same = self
+            .state
+            .lock()
+            .unwrap()
+            .kept
+            .as_ref()
+            .is_some_and(|kept| kept.files == files);
+        let made = (!same).then(|| {
+            let started = Instant::now();
+            let kept = make_items(&self.root).map(|items| KeptItems {
+                root: self.root.clone(),
+                files,
+                items,
+            });
+            if let Ok(kept) = &kept {
+                log::debug!("Game items made in {} ms", started.elapsed().as_millis());
+                let written = serde_json::to_vec(kept)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|bytes| write_atomic(&self.file, &bytes));
+                if let Err(e) = written {
+                    log::warn!("Could not keep the game items: {:#}", e);
+                }
+            }
+            kept
+        });
+        let mut state = self.state.lock().unwrap();
+        state.looking = false;
+        state.looked_at = Some(Instant::now());
+        match made {
+            Some(Ok(kept)) => {
+                state.kept = Some(kept);
+                state.error = None;
+            }
+            Some(Err(e)) => {
+                log::warn!("Could not make the game items: {:#}", e);
+                state.error = Some(format!("{e:#}"));
+            }
+            None => {}
+        }
+        self.looked.notify_all();
+    }
+}
+
+/// The files the game items are made from, with their sizes and times (as
+/// their folders list them; none is read): the glossary's (`glossary.toml`,
+/// the user's `glossary-user.toml`, each name table in `terms/`) and the
+/// state of Lean's copies (`raw/leanny/state.json`, which each fetch
+/// rewrites, and `splat3/versions.json`, which names the newest version)
+fn item_files(root: &Path) -> Vec<FileStamp> {
+    let lean = root.join("raw").join(cuttlefish::leanny::RAW);
+    let mut paths = vec![
+        root.join("glossary.toml"),
+        root.join(cuttlefish::slang::FILE),
+        lean.join(cuttlefish::leanny::STATE_FILE),
+        lean.join("splat3").join("versions.json"),
+    ];
+    if let Ok(entries) = std::fs::read_dir(cuttlefish::tables::dir(root)) {
+        let mut tables: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+        tables.sort();
+        paths.extend(tables);
+    }
+    paths
+        .into_iter()
+        .map(|path| {
+            let meta = std::fs::metadata(&path).ok();
+            let name = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            let size = meta.as_ref().map_or(0, |m| m.len());
+            (name, size, meta.and_then(|m| m.modified().ok()))
+        })
+        .collect()
+}
+
+/// The game items of the knowledge folder `root` as `GET game-items`
+/// answers them: made from the store's glossary and Lean's raw copies
+fn make_items(root: &Path) -> Result<Value> {
+    let glossary = cuttlefish::store::Store::load_glossary(root)?;
+    Ok(json!(cuttlefish::leanny::items(root, &glossary)?))
+}
+
 /// Reviews and the downloads under way
 pub struct Cuttlefish {
     /// Sessions are read from the Inkspector's root
@@ -702,6 +899,8 @@ pub struct Cuttlefish {
     /// Held while a picture of another site (Gungee's stage maps, Lean's
     /// icons) is fetched, so each is fetched once
     pictures: Mutex<()>,
+    /// The Studio's weapons and specials, kept
+    game_items: Arc<GameItems>,
     /// The `cuttlefish` crate's store, shared by the reviewer and the
     /// knowledge view
     knowledge: Arc<Knowledge>,
@@ -767,6 +966,10 @@ impl Cuttlefish {
             lookups: Arc::default(),
             thumbs: Mutex::default(),
             pictures: Mutex::default(),
+            game_items: Arc::new(GameItems::new(
+                knowledge.clone(),
+                cuttlefish::store::cache_dir().join(GAME_ITEMS_FILE),
+            )),
             knowledge: Arc::new(
                 Knowledge::new(knowledge, settings, translate_model).with_auto_apply(auto_apply),
             ),
@@ -1255,12 +1458,12 @@ impl Cuttlefish {
     /// The Salmon Run weapons and specials of Lean's datamine for the
     /// Studio's Techniques panel ([`cuttlefish::leanny::items`]: from the
     /// store's raw copies, named by its glossary, each with its Pedia term
-    /// and picture); empty until the Game data (Lean) import has run
+    /// and picture); empty until the Game data (Lean) import has run. The
+    /// items kept are answered at once ([`GameItems`]), `refreshing` while
+    /// their files are looked at again, after which they may differ.
     fn game_items(&self) -> Result<Value> {
-        let root = self.knowledge.root();
-        let glossary = cuttlefish::store::Store::load_glossary(root)?;
-        let items = cuttlefish::leanny::items(root, &glossary)?;
-        Ok(json!({ "items": items }))
+        let (items, refreshing) = self.game_items.get()?;
+        Ok(json!({ "items": items, "refreshing": refreshing }))
     }
 
     /// A picture of Lean's site an item shows (its `icon`, see
@@ -3201,5 +3404,47 @@ mod tests {
         assert!(cuttlefish.stage_map("../Shakeup", "Mid").is_err());
         assert!(cuttlefish.stage_map("Shakeup", "Mid/../x").is_err());
         assert!(cuttlefish.stage_map("", "").is_err());
+    }
+
+    #[test]
+    fn game_items_come_from_the_local_copy_until_their_files_change() {
+        let dir = std::env::temp_dir().join(format!("procon-game-items-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("knowledge");
+        std::fs::create_dir_all(root.join("terms")).unwrap();
+        let file = dir.join(GAME_ITEMS_FILE);
+        // No copy yet: the first request waits for them (none before Lean's
+        // data is fetched), and they are kept in the local cache
+        let first = Arc::new(GameItems::new(root.clone(), file.clone()));
+        assert_eq!(first.get().unwrap().0, json!([]));
+        let kept: KeptItems = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(kept.files, item_files(&root));
+
+        // A later run answers with its copy at once, and keeps it while the
+        // files are the same
+        let copy = KeptItems {
+            root: root.clone(),
+            files: item_files(&root),
+            items: json!(["kept"]),
+        };
+        std::fs::write(&file, serde_json::to_vec(&copy).unwrap()).unwrap();
+        let items = Arc::new(GameItems::new(root.clone(), file.clone()));
+        assert_eq!(items.get().unwrap().0, json!(["kept"]));
+        {
+            let mut state = items.state.lock().unwrap();
+            while state.looking {
+                state = items.looked.wait(state).unwrap();
+            }
+        }
+        assert_eq!(items.get().unwrap(), (json!(["kept"]), false));
+        // A name table imported since: they are made again
+        std::fs::write(root.join("terms").join("0123456789abcdef.json"), "{}").unwrap();
+        items.look();
+        assert_eq!(items.get().unwrap().0, json!([]));
+        // The copy of another knowledge folder is not taken
+        let other = Arc::new(GameItems::new(dir.join("other"), file.clone()));
+        std::fs::write(&file, serde_json::to_vec(&copy).unwrap()).unwrap();
+        assert_eq!(other.get().unwrap().0, json!([]));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

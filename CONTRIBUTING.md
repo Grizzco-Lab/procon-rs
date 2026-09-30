@@ -216,7 +216,13 @@ fragments as binary), `POST /api/command` (a `studio::Command` such as
 `/api/pipeline/...` (see `src/pipeline.rs`). Everything
 that reads files, runs ffmpeg or a model is kept off the async workers
 (`exit::blocking`, tokio's `spawn_blocking` with the work named, or a
-thread of its own for jobs).
+thread of its own for jobs). The status never waits on the sessions'
+folder, which may be a network mount where every folder not listed lately
+is a round trip: a thread of its own counts the earlier sessions' sizes (16
+folders at once, every 10 s) and reads the disk's free space, and each
+status tells what it read last. Likewise the Studio's weapons and specials
+(`GET /api/cuttlefish/game-items`) come at once from a copy kept in the
+local cache, made again on a thread when their files change.
 
 Ctrl-C stops the lab in steps, each logged (`exit::step`): AgentZero (the
 controller first), the recording (ffmpeg finishes the file,
