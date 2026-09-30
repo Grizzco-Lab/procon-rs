@@ -799,7 +799,7 @@ impl Cuttlefish {
                 self.look_up_meta(id, video);
             }
         }
-        rows.sort_by_key(|listed| core::cmp::Reverse(listed.modified_ms));
+        newest_first(&mut rows);
         let reviews: Vec<Value> = rows.into_iter().map(|listed| listed.row).collect();
         let fetching = self.lookups.lock().unwrap().running.clone();
         Ok(json!({
@@ -2143,6 +2143,20 @@ fn newest_prediction(
     best.map(|(_, dir, job)| (dir, job))
 }
 
+/// The library's order: the last changed first, and among reviews changed
+/// in the same millisecond the higher id first (ids are local times or
+/// Discord's growing ones, so the newer one), the same every time
+fn newest_first(rows: &mut [Listed]) {
+    fn id(listed: &Listed) -> Option<&str> {
+        listed.row["id"].as_str()
+    }
+    rows.sort_by(|a, b| {
+        b.modified_ms
+            .cmp(&a.modified_ms)
+            .then_with(|| id(b).cmp(&id(a)))
+    });
+}
+
 /// Every review in `dir` by id, [`LIST_READERS`] files at once; folders
 /// without a readable `review.json` are left out
 fn read_listing(dir: &Path) -> Result<BTreeMap<String, Listed>> {
@@ -2637,8 +2651,19 @@ mod tests {
     #[test]
     fn the_list_is_kept_in_memory() {
         let (dir, cuttlefish) = scratch("list");
-        let review: Review = serde_json::from_str(REVIEW).unwrap();
+        let mut review: Review = serde_json::from_str(REVIEW).unwrap();
+        // Its title known, so listing it starts no yt-dlp lookup that
+        // might write it meanwhile
+        review.video.as_mut().unwrap().title = Some(String::from("A shift"));
         cuttlefish.save_review("r-1", &review).unwrap();
+        // Written an hour ago: the next write is newer, however coarse the
+        // clocks of the file system and the list
+        std::fs::File::options()
+            .write(true)
+            .open(dir.join("reviews/r-1/review.json"))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
         cuttlefish.warm().unwrap();
         let ids = |cuttlefish: &Cuttlefish| {
             let list = cuttlefish.reviews().unwrap();
@@ -2660,11 +2685,26 @@ mod tests {
 
         // Another program's review shows once the list is read again
         std::fs::create_dir_all(dir.join("reviews/r-3")).unwrap();
-        std::fs::write(dir.join("reviews/r-3/review.json"), REVIEW).unwrap();
+        let written = serde_json::to_vec(&review).unwrap();
+        std::fs::write(dir.join("reviews/r-3/review.json"), written).unwrap();
         assert_eq!(ids(&cuttlefish), ["r-2"]);
         cuttlefish.warm().unwrap();
         assert_eq!(ids(&cuttlefish).len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reviews_changed_in_the_same_millisecond_keep_one_order() {
+        let review: Review = serde_json::from_str(REVIEW).unwrap();
+        let listed = |id: &str, ms: u64| Listed::new(id, &review, ms);
+        for mut rows in [
+            vec![listed("a", 5), listed("b", 5), listed("c", 9)],
+            vec![listed("b", 5), listed("c", 9), listed("a", 5)],
+        ] {
+            newest_first(&mut rows);
+            let ids: Vec<&str> = rows.iter().map(|r| r.row["id"].as_str().unwrap()).collect();
+            assert_eq!(ids, ["c", "b", "a"]);
+        }
     }
 
     #[test]
