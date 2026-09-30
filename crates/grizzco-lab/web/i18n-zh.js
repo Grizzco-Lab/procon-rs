@@ -1375,7 +1375,7 @@ I18N.zh = {
   "pl.log.lastAgo": "最新一行（{ago}）",
   "pl.files.hostPid": "{host} 上的进程",
   "pl.files.command": "命令",
-  "pl.copycat": "照抄检查",
+  "pl.copycat": "复读机检查",
   "pl.copycat.sub": "当前动作之外做对的",
   "pl.copycat.note":
     "动作会延续，所以策略只要重复所见帧里的动作就能得高分，却从不自己行动。这些分数只计它在当前动作之外做对的部分。",
@@ -1393,9 +1393,9 @@ I18N.zh = {
   "pl.score.onset_f1_wide": "按下时刻 F1 ±4",
   "pl.score.hold_iou": "按住 IoU",
   "pl.score.tip.keyframe_button_acc":
-    "目标动作相对所见帧改变按键（ZR、ZL、B、A、R、Y）的时刻里，它猜对的比例。照抄当前动作得 0。",
+    "目标动作相对所见帧改变按键（ZR、ZL、B、A、R、Y）的时刻里，它猜对的比例。复读当前动作得 0。",
   "pl.score.tip.anticipation_left_x":
-    "它的左摇杆（x）在所见帧之外对目标还能说明多少：去掉当前动作后的偏相关。照抄当前动作得 0。",
+    "它的左摇杆（x）在所见帧之外对目标还能说明多少：去掉当前动作后的偏相关。复读当前动作得 0。",
   "pl.score.tip.turn_corr_x_500ms":
     "镜头转动在半秒内累计后与玩家的相关（x）：看一小段时间里瞄准的方向对不对，而不是逐帧。",
   "pl.score.tip.press_f1":
