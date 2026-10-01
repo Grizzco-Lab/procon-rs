@@ -864,9 +864,15 @@ impl Online {
                 online.studio.video.set_policy_sink(None);
                 online.studio.bot.release(Ended::Stopped);
                 let stopped = online.stop.load(Ordering::Relaxed);
+                online.update(|run| run.status.finished_ms = Some(now_ms()));
+                // Kept before it shows as over: the page stops asking then,
+                // and finds them by `stored`
+                if let Err(e) = online.store(started.elapsed()) {
+                    log::warn!("Cannot keep AgentZero's predictions: {:#}", e);
+                    online.update(|run| run.status.error = Some(format!("{e:#}")));
+                }
                 online.update(|run| {
                     let status = &mut run.status;
-                    status.finished_ms = Some(now_ms());
                     status.stopping = false;
                     status.loading = false;
                     status.state = match &result {
@@ -879,10 +885,6 @@ impl Online {
                         }
                     };
                 });
-                if let Err(e) = online.store(started.elapsed()) {
-                    log::warn!("Cannot keep AgentZero's predictions: {:#}", e);
-                    online.update(|run| run.status.error = Some(format!("{e:#}")));
-                }
             })?;
         Ok(status)
     }
