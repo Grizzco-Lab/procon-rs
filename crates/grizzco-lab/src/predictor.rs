@@ -40,6 +40,8 @@
 //!   applied to the recorded gyro and stick, see [`gameplay_data::turn`])
 //! - `GET agreement?key=&ckpt=&start=&stop=`: only the agreement, over up
 //!   to an hour of frames
+//! - `GET video?kind=&s=&seg=` (or `id=`, `path=`: a [`Source`]'s fields):
+//!   the video as a run of it plays it, before any run ([`Predictor::describe`])
 //! - `POST run` with a [`RunRequest`] starts a run (409 while one runs)
 //! - `POST cancel` stops the current run: SIGTERM to its process group, then
 //!   SIGKILL after [`KILL_AFTER`]; nothing of it is kept
@@ -309,6 +311,14 @@ fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// The video a query names by the fields of a [`Source`] (`kind`, then `s`
+/// and `seg`, `id` or `path`), as the page's address of a video does; its
+/// other keys (the checkpoint, the time) are left out
+fn source_of(query: &HashMap<String, String>) -> Result<Source> {
+    serde_json::from_value(json!(query))
+        .context("name a video: kind=session&s=&seg=, kind=review&id= or kind=file&path=")
 }
 
 /// A session, segment, review or checkpoint name: no path in it
@@ -623,6 +633,21 @@ impl Predictor {
                 })
             }
         }
+    }
+
+    /// A video as a run of it plays it, before any run: its results folder
+    /// (`key`), `title`, frame rate, `/api/cuttlefish/video` query (`play`)
+    /// and `session`, so the page shows the very video the form would
+    /// predict
+    pub fn describe(&self, source: &Source) -> Result<Value> {
+        let video = self.video(source)?;
+        Ok(json!({
+            "key": video.key,
+            "title": video.title,
+            "fps": self.fps(&video),
+            "play": video.play,
+            "session": video.session,
+        }))
     }
 
     /// The frame rate of a video: a session's recorded rate, else ffprobe's
@@ -1223,6 +1248,7 @@ impl Predictor {
             "agreement" => {
                 Ok(self.agreement(text("key"), text("ckpt"), number("start")?, number("stop")?)?)
             }
+            "video" => Ok(self.describe(&source_of(query)?)?),
             _ => Err(Status(
                 StatusCode::NOT_FOUND,
                 anyhow::anyhow!("no endpoint {path}"),
@@ -1532,6 +1558,124 @@ options:
         stdout.read_to_end(&mut Vec::new()).unwrap();
         assert!(sent.elapsed() < Duration::from_secs(5));
         assert!(!child.wait().unwrap().success());
+    }
+
+    #[test]
+    fn a_video_is_described_as_its_run_plays_it() {
+        let dir =
+            std::env::temp_dir().join(format!("procon-predictor-video-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // A session, a review of a YouTube range downloaded into its folder,
+        // and a file
+        let session = dir.join("sessions/2026-09-01_10-00-00");
+        std::fs::create_dir_all(&session).unwrap();
+        std::fs::write(
+            session.join("session.json"),
+            r#"{"controller": {"file": "controller.bin"},
+                "video": {"segments": [{"file": "video-01.mkv"}, {"file": "video-02.mkv"}]}}"#,
+        )
+        .unwrap();
+        let review = dir.join("reviews/yt");
+        std::fs::create_dir_all(&review).unwrap();
+        std::fs::write(
+            review.join("review.json"),
+            r#"{"video": {"kind": "youtube", "ref": "https://youtu.be/x", "start_s": 30,
+                          "end_s": 40, "file": "video.mp4"}}"#,
+        )
+        .unwrap();
+        for file in [
+            session.join("video-02.mkv"),
+            review.join("video.mp4"),
+            dir.join("run.mp4"),
+        ] {
+            std::fs::write(file, b"").unwrap();
+        }
+        let inspector = Arc::new(Inspector::new(
+            Some(dir.join("sessions")),
+            procon_core::recorder::Recorder::new("/tmp/procon-test-"),
+            dir.join("calibration.json"),
+            dir.join("annotations"),
+        ));
+        let cuttlefish = Arc::new(Cuttlefish::new(
+            Arc::clone(&inspector),
+            dir.join("reviews"),
+            dir.join("knowledge"),
+            dir.join("predictions"),
+            dir.join("cache"),
+            ::cuttlefish::llm::Settings::default(),
+            None,
+            crate::cuttlefish::knowledge::AutoApply::default(),
+        ));
+        let predictor = Predictor::new(
+            inspector,
+            cuttlefish,
+            Settings {
+                agentzero: dir.join("agentzero"),
+                results: dir.join("predictions"),
+            },
+        );
+        // The page's address of a video: its source's fields, the checkpoint
+        // and the time
+        let describe = |pairs: &[(&str, &str)]| {
+            let query = pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect();
+            predictor.get("video", &query)
+        };
+        let video = |pairs: &[(&str, &str)]| {
+            describe(pairs).unwrap_or_else(|Status(_, e)| panic!("{pairs:?}: {e:#}"))
+        };
+
+        let segment = video(&[
+            ("kind", "session"),
+            ("s", "2026-09-01_10-00-00"),
+            ("seg", "video-02.mkv"),
+            ("ckpt", "v3"),
+            ("t", "12.50"),
+        ]);
+        assert_eq!(segment["key"], "2026-09-01_10-00-00.video-02");
+        assert_eq!(
+            segment["play"],
+            json!({"kind": "session", "ref": "2026-09-01_10-00-00/video-02.mkv"})
+        );
+        assert_eq!(
+            segment["session"],
+            json!(["2026-09-01_10-00-00", "video-02.mkv"])
+        );
+
+        // A review's video plays from its folder
+        let range = video(&[("kind", "review"), ("id", "yt"), ("ckpt", "policy-p1")]);
+        assert_eq!(range["key"], "review-yt");
+        assert_eq!(range["title"], "Review yt");
+        assert_eq!(
+            range["play"],
+            json!({"kind": "youtube", "ref": "https://youtu.be/x", "r": "yt", "file": "video.mp4"})
+        );
+        assert_eq!(range["session"], Value::Null);
+
+        let path = dir.join("run.mp4").display().to_string();
+        let file = video(&[("kind", "file"), ("path", &path)]);
+        assert_eq!(file["play"], json!({"kind": "file", "ref": path}));
+        assert_eq!(file["title"], "run.mp4");
+        // Where a run of it would be stored
+        let source = Source::File { path: path.clone() };
+        assert_eq!(file["key"], predictor.video(&source).unwrap().key);
+
+        // What names no video is refused
+        for pairs in [
+            &[("kind", "review")][..],
+            &[("ckpt", "v1")],
+            &[("kind", "live")],
+            &[
+                ("kind", "session"),
+                ("s", "2026-09-01_10-00-00"),
+                ("seg", "video-09.mkv"),
+            ],
+        ] {
+            assert!(describe(pairs).is_err(), "{pairs:?}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

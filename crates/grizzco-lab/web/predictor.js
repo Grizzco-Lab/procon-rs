@@ -8,7 +8,13 @@
 // after app.js, player.js and stages.js and uses their helpers ($,
 // escapeHtml, stickPercent, appUrl, StageMap). Runs go through /api/predictor (see
 // src/predictor.rs); the video plays from /api/cuttlefish/video. State lives
-// in the address: /predictor/<video>/<checkpoint>?t=<seconds>.
+// in the address: /predictor/<video>/<checkpoint>?t=<seconds>, or for a
+// video without predictions of the checkpoint yet its source's fields,
+// /predictor?kind=session&s=&seg=&ckpt=&t= (id= for a review, path= for a
+// file). The viewer always shows what the form names: a change of the
+// form opens its video (with its stored predictions, or AgentZero running
+// on it), and whatever opens (an address, a stored run, AgentZero's run)
+// fills the form in.
 //
 // The online mode (the model switch's "AgentZero online") runs AgentZero's
 // policy instead, frame by frame as if live, through /api/predictor/online
@@ -116,7 +122,23 @@
     patched: null,
     /** The newest action from the socket, drawn at the next frame */
     agent: null,
+    /** Routes so far: what an older one was waiting for is dropped */
+    turn: 0,
   };
+
+  /** Route `turn` is over: another came, or another app is shown */
+  const stale = (turn) => turn !== pred.turn || !pred.shown;
+
+  /** A video's source (a run's `source`, the form's choice), field by field */
+  const SOURCE_KEYS = ["kind", "s", "seg", "id", "path"];
+
+  /** Whether two sources name the same video */
+  const sameSource = (a, b) =>
+    Boolean(a && b) &&
+    SOURCE_KEYS.every((key) => (a[key] ?? "") === (b[key] ?? ""));
+
+  /** AgentZero's runs are stored as `policy-<checkpoint>` (online.rs) */
+  const POLICY_PREFIX = "policy-";
 
   const canvas = $("p-timeline");
 
@@ -189,6 +211,13 @@
     );
     fillCheckpoints();
     renderCaps();
+  }
+
+  /** The checkpoints of the form's model (and what its command can do) */
+  function loadModelInfo() {
+    const loading = pred.model === "policy" ? loadOnlineInfo() : loadInfo();
+    loading.catch((error) => isAbort(error) || showRunError(error.message));
+    return loading;
   }
 
   /** The checkpoints of the form's model, the one chosen before kept */
@@ -316,8 +345,13 @@
   /** A review of a session's recording, which has controller data */
   const sessionReview = (r) => r?.video.kind === "session" && !r.video.file;
 
-  async function loadReviews() {
-    if (pred.reviews) return;
+  /** The reviews with a video, read once: a second call waits for the first */
+  function loadReviews() {
+    pred.reviewsLoading ??= readReviews();
+    return pred.reviewsLoading;
+  }
+
+  async function readReviews() {
     try {
       const response = await fetch("/api/cuttlefish/reviews");
       const data = await response.json();
@@ -325,6 +359,11 @@
       // A review started from Cuttlefish's chat may have no video yet
       pred.reviews = data.reviews.filter((r) => r.video);
     } catch (error) {
+      // The app was left: read again when asked
+      if (isAbort(error)) {
+        pred.reviewsLoading = null;
+        return;
+      }
       pred.reviews = [];
       $("p-review").replaceChildren(
         new Option(`No reviews: ${error.message}`, ""),
@@ -344,7 +383,8 @@
     if (!pred.reviews.length) $("p-review").add(new Option("No reviews", ""));
   }
 
-  /** Show the inputs of the chosen kind of video (or the live capture) */
+  /** Show the inputs of the chosen kind of video (or the live capture);
+   * answers once its list (sessions, reviews) is in */
   function showKind() {
     const kind = $("p-kind").value;
     remember(pred.model === "policy" ? "policyKind" : "kind", kind);
@@ -353,10 +393,12 @@
     $("p-file").hidden = kind !== "file";
     // The live capture has no range
     for (const id of ["p-start", "p-end"]) $(id).hidden = kind === "live";
-    if (kind === "session") loadSessions();
-    if (kind === "review") loadReviews().then(checkForm);
+    let list = null;
+    if (kind === "session") list = loadSessions();
+    if (kind === "review") list = loadReviews().then(checkForm);
     if (pred.model === "policy") renderOnlineCaps();
     checkForm();
+    return Promise.resolve(list);
   }
 
   /** The source the form names */
@@ -365,6 +407,7 @@
     if (kind === "session")
       return { kind, s: $("p-session").value, seg: $("p-segment").value };
     if (kind === "review") return { kind, id: $("p-review").value };
+    if (kind === "live") return { kind };
     return { kind, path: $("p-file").value.trim() };
   }
 
@@ -396,13 +439,21 @@
       : "";
   }
 
-  $("p-kind").onchange = showKind;
+  // A change of the video or the checkpoint shows it
+  $("p-kind").onchange = () => showKind().then(showSelected);
   $("p-session").onchange = () => {
     remember("session", $("p-session").value);
     fillSegments();
+    showSelected();
   };
-  $("p-review").onchange = checkForm;
+  $("p-segment").onchange = showSelected;
+  $("p-review").onchange = () => {
+    checkForm();
+    showSelected();
+  };
   $("p-file").oninput = checkForm;
+  $("p-file").onchange = showSelected;
+  $("p-ckpt").onchange = showSelected;
   $("p-cpu").onchange = () => pred.model === "policy" && renderOnlineCaps();
   $("p-recheck").onclick = () =>
     (pred.model === "policy" ? loadOnlineInfo(true) : loadInfo(true)).catch(
@@ -410,7 +461,8 @@
     );
 
   /** Switch the form between the IDM and AgentZero online; with `load`,
-   * read the model's checkpoints (the app does when shown) */
+   * read the model's checkpoints (the app does when shown), and answer
+   * once the kind's list is in */
   function setModel(model, load = true) {
     pred.model = model === "policy" ? "policy" : "idm";
     remember("model", pred.model);
@@ -433,14 +485,14 @@
     $("p-run").textContent = policy ? t("po.start") : "Run the IDM";
     fillCheckpoints();
     renderCaps();
-    if (!load) return;
-    showKind();
-    const loading = policy ? loadOnlineInfo() : loadInfo();
-    loading.catch((error) => isAbort(error) || showRunError(error.message));
+    if (!load) return Promise.resolve();
+    const list = showKind();
+    loadModelInfo();
+    return list;
   }
 
   for (const button of document.querySelectorAll("[data-model]")) {
-    button.onclick = () => setModel(button.dataset.model);
+    button.onclick = () => setModel(button.dataset.model).then(showSelected);
   }
   setModel(remembered("model", "idm"), false);
 
@@ -466,6 +518,8 @@
     }
     renderJob();
     poll();
+    // The video being predicted is the one on screen
+    showSelected();
   };
 
   $("p-cancel").onclick = async () => {
@@ -501,10 +555,19 @@
     if (running(pred.job) && pred.shown && !document.hidden) {
       pred.pollTimer = setTimeout(poll, POLL_MS);
     }
-    // Just finished: list it and show it
+    // Just finished: listed, and its predictions shown if its video and
+    // checkpoint are on screen (the form may name another by now)
     if (running(before) && pred.job?.state === "done") {
       await loadRuns();
-      navigate(runUrl(pred.job.key, pred.job.checkpoint, 0));
+      const job = pred.job;
+      const shown =
+        sameSource(pred.run?.source, job.source) &&
+        pred.run.checkpoint === job.checkpoint;
+      if (!shown || !pred.shown) return;
+      const url = runUrl(job.key, job.checkpoint, player.time());
+      // Run again at the same moment: the same address, opened afresh
+      if (new URL(url, location.href).href === location.href) routeApp();
+      else navigate(url, { replace: true });
     }
   }
 
@@ -631,6 +694,9 @@
       const every = measuring() ? MEASURE_POLL_MS : ONLINE_POLL_MS;
       pred.onlineTimer = setTimeout(pollOnline, every);
     }
+    // A video's actions kept as a run since the list was read
+    const kept = pred.online?.stored;
+    if (kept && !findRun(pred.online.key, kept)) await loadRuns();
   }
 
   /** The run's state in the form panel, the loop and "Let AgentZero play";
@@ -1010,17 +1076,26 @@
 
   // ---------------------------------------------------- watching it run
 
-  /** The viewer follows AgentZero's run: the live capture, or its video */
+  /** The viewer follows AgentZero's run: the live capture, or its video;
+   * the form names the run */
   function followOnline() {
     const run = pred.online;
     if (!run) {
       hideLive();
+      player.close();
+      pred.run = null;
+      renderRuns();
       $("p-empty").hidden = false;
       $("p-viewer-note").textContent = t("po.notYet");
       return;
     }
+    if (pred.watchedId !== run.id) {
+      const src = run.live ? { kind: "live" } : run.source;
+      selectForm("policy", src, run.checkpoint, pred.turn);
+    }
     if (run.live) {
       showLive(run);
+      pred.watchedId = run.id;
       return;
     }
     hideLive();
@@ -1053,8 +1128,9 @@
     pred.run = {
       online: true,
       id: run.id,
+      source: run.source,
       key: run.key,
-      checkpoint: `policy-${run.checkpoint}`,
+      checkpoint: `${POLICY_PREFIX}${run.checkpoint}`,
       title: run.title,
       fps: run.fps,
       frame_offset: run.frame_offset,
@@ -1206,6 +1282,10 @@
     renderRuns();
   }
 
+  /** A stored run in the list */
+  const findRun = (key, ckpt) =>
+    pred.runs.find((r) => r.key === key && r.checkpoint === ckpt);
+
   /** The state of a run's view at `t` seconds */
   const runState = (key, ckpt, t) => ({ key, ckpt, t: t.toFixed(2) });
   const runUrl = (...view) => appUrl("predictor", runState(...view));
@@ -1271,15 +1351,21 @@
     },
   });
 
-  /** Open a stored run */
-  function openRun(key, ckpt, t) {
-    const run = pred.runs.find((r) => r.key === key && r.checkpoint === ckpt);
+  /** Open a stored run (of route `turn`); the form names it */
+  async function openRun(key, ckpt, t, turn) {
+    // Stored since the list was read (a run that ended while away)
+    if (!findRun(key, ckpt)) await loadRuns();
+    if (stale(turn)) return;
+    const run = findRun(key, ckpt);
     if (!run) {
       $("p-viewer-note").textContent = `No stored run ${key} / ${ckpt}.`;
       return;
     }
     const same = pred.run === run;
     pred.run = run;
+    const policy = ckpt.startsWith(POLICY_PREFIX);
+    const name = policy ? ckpt.slice(POLICY_PREFIX.length) : ckpt;
+    selectForm(policy ? "policy" : "idm", run.source, name, turn);
     renderRuns();
     $("p-empty").hidden = true;
     $("p-viewer-note").textContent =
@@ -1305,6 +1391,91 @@
     );
   }
 
+  /** Whether a source names a video: a session's segment, a review, a file */
+  const named = (src) =>
+    src.kind === "session"
+      ? Boolean(src.s && src.seg)
+      : src.kind === "review"
+        ? Boolean(src.id)
+        : src.kind === "file" && Boolean(src.path);
+
+  /** A video without predictions of the checkpoint yet, as the address
+   * names it (of route `turn`): the form names it and the player shows it
+   * alone, as a run of it would play it; once predictions of it are
+   * stored, or AgentZero runs on it, those are shown instead */
+  async function openVideo(state, turn) {
+    const src = {};
+    for (const key of SOURCE_KEYS) {
+      if (state.get(key)) src[key] = state.get(key);
+    }
+    const name = state.get("ckpt") ?? "";
+    const at = Number(state.get("t")) || 0;
+    const policy = name.startsWith(POLICY_PREFIX);
+    const ckpt = policy ? name.slice(POLICY_PREFIX.length) : name;
+    selectForm(policy ? "policy" : "idm", src, ckpt, turn);
+    const predicted = predictedUrl(src, name, at);
+    if (predicted) return navigate(predicted, { replace: true });
+    const same =
+      pred.run?.bare &&
+      sameSource(pred.run.source, src) &&
+      pred.run.checkpoint === name;
+    if (same) {
+      const n = Math.round(at * player.fps);
+      if (player.frame !== n) player.go(n);
+      return;
+    }
+    let video = null;
+    let note = src.kind === "live" ? t("po.kind.live") : "";
+    if (named(src)) {
+      try {
+        video = await api(`video?${new URLSearchParams(src)}`);
+      } catch (error) {
+        note = error.message;
+      }
+      if (stale(turn)) return;
+    }
+    // Nothing of another video stays
+    pred.chunk = { start: 0, pred: [], truth: null };
+    $("p-rows").replaceChildren();
+    $("p-agree-mode").hidden = true;
+    if (!video) {
+      player.close();
+      pred.run = null;
+      renderRuns();
+      $("p-empty").hidden = false;
+      $("p-viewer-note").textContent = note;
+      drawMini(undefined);
+      drawProbs(undefined, undefined);
+      scheduleAgreement();
+      return;
+    }
+    const rate = video.fps || 30;
+    pred.run = {
+      bare: true,
+      source: src,
+      checkpoint: name,
+      title: video.title,
+      play: video.play,
+      fps: rate,
+    };
+    renderRuns();
+    $("p-empty").hidden = true;
+    const by = policy ? `AgentZero ${ckpt}` : ckpt;
+    $("p-viewer-note").textContent =
+      `${video.title} · ${by} · no predictions yet`;
+    drawStage(pred.run);
+    player.open(
+      {
+        video: `/api/cuttlefish/video?${new URLSearchParams(video.play)}`,
+        fps: rate,
+        sound: true,
+        thumb: thumbOf(video.play),
+        title: video.title,
+      },
+      Math.round(at * rate),
+    );
+  }
+
   /** Links to Gungee's maps of the run's stage, when its review (or a
    * review of the same video) names it, or its title does */
   const stageMap = new StageMap($("p-stage"));
@@ -1327,7 +1498,7 @@
     let p = chunk.pred[i];
     // AgentZero skips frames while busy, as live; its last action holds
     // until the next (for as long as the bot's would, STALL in online.rs)
-    if (!p && pred.run?.checkpoint?.startsWith("policy-")) {
+    if (!p && pred.run?.checkpoint?.startsWith(POLICY_PREFIX)) {
       for (let k = i - 1; k >= Math.max(0, i - HOLD_FRAMES) && !p; k--) {
         p = chunk.pred[k];
       }
@@ -1343,8 +1514,10 @@
     return [t, loaded ? (p ?? null) : undefined];
   }
 
-  /** Load the frames around n unless they are loaded */
+  /** Load the frames around n unless they are loaded (a video without
+   * predictions has none) */
   async function ensureChunk(n) {
+    if (!pred.run || pred.run.bare) return;
     const chunk = pred.chunk;
     const half = Math.ceil((pred.span * fps()) / 2) + 30;
     const low = Math.max(0, n - half);
@@ -1387,7 +1560,10 @@
     scheduleAgreement();
     // AgentZero's run keeps its own address
     if (pred.run.online) return;
-    const state = runState(pred.run.key, pred.run.checkpoint, n / fps());
+    const { bare, source, key, checkpoint } = pred.run;
+    const state = bare
+      ? videoState(source, checkpoint, n / fps())
+      : runState(key, checkpoint, n / fps());
     rememberView(replaceRoute("predictor", state));
   }
 
@@ -1664,8 +1840,12 @@
    * second while playing */
   function scheduleAgreement() {
     if (!pred.run?.session) {
-      $("p-agree").innerHTML =
-        `<p class="panel-note">${pred.run ? "No controller recording for this video: predictions only." : "Open a prediction."}</p>`;
+      const note = pred.run?.bare
+        ? "No predictions of this video yet."
+        : pred.run
+          ? "No controller recording for this video: predictions only."
+          : "Open a prediction.";
+      $("p-agree").innerHTML = `<p class="panel-note">${note}</p>`;
       $("p-agree-note").textContent = "";
       return;
     }
@@ -1745,6 +1925,81 @@
       </table>`;
   }
 
+  // ---------------------------------------- the form names what is shown
+
+  /** The address state of a video without predictions of the checkpoint
+   * (`policy-<checkpoint>` for AgentZero's) yet: its source's fields,
+   * `ckpt` and the time `t` */
+  function videoState(src, name, at) {
+    const state = {};
+    for (const [key, value] of Object.entries({ ...src, ckpt: name })) {
+      if (value) state[key] = value;
+    }
+    if (at) state.t = at.toFixed(2);
+    return state;
+  }
+
+  /** The address that shows predictions of a video by a checkpoint:
+   * AgentZero running on it (online), or its stored run; else null */
+  function predictedUrl(src, name, at) {
+    const online = pred.online;
+    const watch =
+      online?.state === "running" &&
+      name === POLICY_PREFIX + online.checkpoint &&
+      (src.kind === "live" ? online.live : sameSource(online.source, src));
+    if (watch) return appUrl("predictor", { view: "online" });
+    const run = pred.runs.find(
+      (r) => r.checkpoint === name && sameSource(r.source, src),
+    );
+    return run ? runUrl(run.key, run.checkpoint, at) : null;
+  }
+
+  /** The address of what the form names; the same moment if the video
+   * stays (another checkpoint of it) */
+  function selectedUrl() {
+    const src = source();
+    const ckpt = $("p-ckpt").value;
+    const name = pred.model === "policy" ? POLICY_PREFIX + ckpt : ckpt;
+    const at = sameSource(pred.run?.source, src) ? player.time() : 0;
+    return (
+      predictedUrl(src, name, at) ??
+      appUrl("predictor", videoState(src, name, at))
+    );
+  }
+
+  /** Show what the form names, after a change of it (its model's
+   * checkpoints read first) */
+  async function showSelected() {
+    await loadModelInfo().catch(() => {});
+    if (pred.shown) navigate(selectedUrl());
+  }
+
+  /** Put what the viewer shows (for route `turn`) in the form: the model,
+   * the kind, the video once its list is in, and the checkpoint (taken
+   * when the model's list comes, if it has not) */
+  async function selectForm(model, src, ckpt, turn) {
+    if (model !== pred.model) {
+      setModel(model, false);
+      loadModelInfo();
+    }
+    $("p-kind").value = src.kind;
+    await showKind();
+    if (turn !== pred.turn) return;
+    if (src.kind === "session") {
+      $("p-session").value = src.s ?? "";
+      fillSegments();
+      $("p-segment").value = src.seg ?? "";
+    } else if (src.kind === "review") $("p-review").value = src.id ?? "";
+    else if (src.kind === "file") $("p-file").value = src.path ?? "";
+    const select = $("p-ckpt");
+    if (select.dataset.model === pred.model) {
+      if ([...select.options].some((o) => o.value === ckpt))
+        select.value = ckpt;
+    } else if (ckpt)
+      remember(pred.model === "policy" ? "policy" : "ckpt", ckpt);
+    checkForm();
+  }
+
   // -------------------------------------------------------------- routing
 
   /** The last view, for the app link after leaving or a reload */
@@ -1754,10 +2009,10 @@
   }
 
   async function route(state) {
+    const turn = ++pred.turn;
     // Reading the command's options takes seconds; the viewer does not wait
-    const loading = pred.model === "policy" ? loadOnlineInfo() : loadInfo();
-    loading.catch((error) => isAbort(error) || showRunError(error.message));
-    showKind();
+    const info = loadModelInfo();
+    const list = showKind();
     poll();
     const watching = state.get("view") === "online";
     const was = pred.watching;
@@ -1765,6 +2020,8 @@
     if (!watching) hideLive();
     await pollOnline();
     if (!pred.runs.length) await loadRuns();
+    // Another route since, or another app
+    if (stale(turn)) return;
     if (watching) {
       // Opened afresh: the run as it is now
       if (!was) pred.watchedId = null;
@@ -1774,8 +2031,13 @@
     }
     const key = state.get("key");
     const ckpt = state.get("ckpt");
-    if (key && ckpt) openRun(key, ckpt, Number(state.get("t")) || 0);
-    else draw();
+    if (key && ckpt) openRun(key, ckpt, Number(state.get("t")) || 0, turn);
+    else if (state.get("kind")) openVideo(state, turn);
+    else {
+      // Nothing named: what the form names, once it can tell
+      await Promise.all([list, info.catch(() => {})]);
+      if (!stale(turn)) navigate(selectedUrl(), { replace: true });
+    }
   }
 
   window.addEventListener("app-route", (event) => {
